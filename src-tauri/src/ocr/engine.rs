@@ -1,5 +1,4 @@
-use std::sync::OnceLock;
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 // NOTE: Since you are using paddle-ocr-rs, we import the necessary structs.
 // Please check the exact API from the paddle-ocr-rs docs, as it might differ slightly.
@@ -10,35 +9,56 @@ use kreuzberg_paddle_ocr::ocr_lite::OcrLite;
 use ort::session::Session;
 
 // `OcrResult` is the unified struct we use in pipeline.rs
-#[allow(dead_code)]
 pub struct OcrResult {
     pub text: String,
-    pub score: f32,
-    pub box_points: [(f32, f32); 4],
 }
 
 // Wrapping OcrLite in a Mutex because inference might require mutability or exclusive access
-static ENGINE: OnceLock<Mutex<OcrLite>> = OnceLock::new();
+static ENGINE: OnceLock<Mutex<Option<OcrLite>>> = OnceLock::new();
 
-/// 初始化引擎，加入 use_cuda 开关
+fn lock_recover<'a, T>(mutex: &'a Mutex<T>, label: &str) -> MutexGuard<'a, T> {
+    match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            crate::logger::log_msg(
+                "WARN",
+                "OCR",
+                &format!("{label} mutex was poisoned; recovering its protected state"),
+            );
+            mutex.clear_poison();
+            poisoned.into_inner()
+        }
+    }
+}
+
+/// 初始化 OCR 引擎。
 /// @param app_data_dir 主数据目录（如 &lt;exe&gt;/config），引擎优先从此加载
 /// @param resource_dir Tauri 资源目录（NSIS 安装时位于 &lt;exe&gt; 同级），
 ///                    若 app_data_dir 下无模型则回退到 resource_dir/_up_/assets/models
-/// @param use_cuda 是否启用 CUDA
-pub fn init_engine(app_data_dir: &str, resource_dir: Option<&std::path::Path>, use_cuda: bool) -> Result<(), String> {
-    if ENGINE.get().is_some() {
+pub fn init_engine(
+    app_data_dir: &str,
+    resource_dir: Option<&std::path::Path>,
+) -> Result<(), String> {
+    let engine_mutex = ENGINE.get_or_init(|| Mutex::new(None));
+    if lock_recover(engine_mutex, "OCR engine").is_some() {
         return Ok(());
     }
 
     // 主路径：app_data_dir/assets/models/
-    let mut model_dir = std::path::PathBuf::from(app_data_dir).join("assets").join("models");
+    let mut model_dir = std::path::PathBuf::from(app_data_dir)
+        .join("assets")
+        .join("models");
 
     // 若主路径不存在，尝试 NSIS _up_ 回退路径
     if !model_dir.exists() {
         if let Some(res_dir) = resource_dir {
             let fallback = res_dir.join("_up_").join("assets").join("models");
             if fallback.exists() {
-                crate::logger::log_msg("INFO", "OCR", &format!("主路径模型不存在，使用 _up_ 回退: {}", fallback.display()));
+                crate::logger::log_msg(
+                    "INFO",
+                    "OCR",
+                    &format!("主路径模型不存在，使用 _up_ 回退: {}", fallback.display()),
+                );
                 model_dir = fallback;
             }
         }
@@ -49,15 +69,7 @@ pub fn init_engine(app_data_dir: &str, resource_dir: Option<&std::path::Path>, u
 
     let mut ocr = OcrLite::new();
 
-    // 初始化模型。
-    // 如果 paddle-ocr-rs 的 API 支持开启 CUDA，你需要在这里进行配置
-    // (有些是通过环境变量或 OcrLite 的其他设置来控制 Execution Provider)
-    if use_cuda {
-        crate::logger::log_msg("INFO", "OCR", "User requested CUDA execution provider. Attempting to enable...");
-        // TODO: 依据 paddle-ocr-rs 文档启用 CUDA
-        // ocr.enable_cuda();
-    }
-
+    // 当前打包的 ONNX Runtime 使用 CPU provider。
     // PP-OCRv5 模型用 CTC 训练，输出 index 0 是 blank token "#"。
     // 但 ONNX 元数据里只有字符没有 "#"，score_to_text_line 显式跳过 index 0，
     // 所以 keys[0] 必须是 "#"，否则索引 1..N 全部错位 1 → 乱码。
@@ -71,13 +83,16 @@ pub fn init_engine(app_data_dir: &str, resource_dir: Option<&std::path::Path>, u
         } else {
             // 从模型元数据提取原字典，补 "#" 后持久化
             let chars = {
-                let mut builder = Session::builder()
-                    .map_err(|e| format!("ort Session::builder 失败: {}", e))?;
-                let session = builder.commit_from_file(&rec_model)
+                let mut builder =
+                    Session::builder().map_err(|e| format!("ort Session::builder 失败: {}", e))?;
+                let session = builder
+                    .commit_from_file(&rec_model)
                     .map_err(|e| format!("ort commit_from_file 失败: {}", e))?;
-                let metadata = session.metadata()
+                let metadata = session
+                    .metadata()
                     .map_err(|e| format!("ort metadata 失败: {}", e))?;
-                metadata.custom("character")
+                metadata
+                    .custom("character")
                     .ok_or_else(|| "模型元数据缺少 'character' 字段".to_string())?
             };
             let fixed_content = format!("#\n{}", chars.trim_end());
@@ -87,38 +102,61 @@ pub fn init_engine(app_data_dir: &str, resource_dir: Option<&std::path::Path>, u
         }
     };
 
+    let det_model = det_model
+        .to_str()
+        .ok_or_else(|| "OCR 检测模型路径不是有效 Unicode".to_string())?;
+    let cls_model = cls_model
+        .to_str()
+        .ok_or_else(|| "OCR 分类模型路径不是有效 Unicode".to_string())?;
+    let rec_model = rec_model
+        .to_str()
+        .ok_or_else(|| "OCR 识别模型路径不是有效 Unicode".to_string())?;
+    let fixed_path = fixed_path
+        .to_str()
+        .ok_or_else(|| "OCR 字典路径不是有效 Unicode".to_string())?;
     ocr.init_models_with_dict(
-        det_model.to_str().unwrap(),
-        cls_model.to_str().unwrap(),
-        rec_model.to_str().unwrap(),
-        fixed_path.to_str().unwrap(),
-        2, // thread_num
-    ).map_err(|e| format!("Failed to init paddle-ocr models: {:?}", e))?;
+        det_model, cls_model, rec_model, fixed_path, 2, // thread_num
+    )
+    .map_err(|e| format!("Failed to init paddle-ocr models: {:?}", e))?;
 
-    ENGINE.get_or_init(|| Mutex::new(ocr));
+    *lock_recover(engine_mutex, "OCR engine") = Some(ocr);
 
-    crate::logger::log_msg("INFO", "OCR", &format!("paddle-ocr-rs Engine initialized successfully (CUDA: {})", use_cuda));
+    crate::logger::log_msg(
+        "INFO",
+        "OCR",
+        "paddle-ocr-rs CPU engine initialized successfully",
+    );
     Ok(())
 }
 
-#[allow(dead_code)]
-pub struct OcrOptions<'a> {
-    pub single_line: bool,
-    pub whitelist: Option<&'a str>,
+pub fn release_engine() {
+    if let Some(engine_mutex) = ENGINE.get() {
+        let mut engine = lock_recover(engine_mutex, "OCR engine");
+        if engine.take().is_some() {
+            crate::logger::log_msg("INFO", "OCR", "OCR engine released");
+        }
+    }
 }
 
 /// Returns a list of recognized text blocks
-pub fn recognize_rgba(rgba: &[u8], w: u32, h: u32, _opts: Option<&OcrOptions>) -> Result<Vec<OcrResult>, String> {
+pub fn recognize_rgba(rgba: &[u8], w: u32, h: u32) -> Result<Vec<OcrResult>, String> {
     if w == 0 || h == 0 || rgba.is_empty() {
         return Ok(Vec::new());
     }
 
     if rgba.len() != (w * h * 4) as usize {
-        return Err(format!("Invalid buffer size: expected {}, got {}", w * h * 4, rgba.len()));
+        return Err(format!(
+            "Invalid buffer size: expected {}, got {}",
+            w * h * 4,
+            rgba.len()
+        ));
     }
 
     let engine_mutex = ENGINE.get().ok_or("OCR Engine not initialized")?;
-    let ocr = engine_mutex.lock().map_err(|e| format!("Failed to lock OCR engine: {}", e))?;
+    let mut engine = lock_recover(engine_mutex, "OCR engine");
+    let ocr = engine
+        .as_mut()
+        .ok_or_else(|| "OCR Engine not initialized".to_string())?;
 
     // Create an RgbImage directly from the RGBA slice in a single pass, avoiding extra copies
     let mut rgb_data = Vec::with_capacity((w * h * 3) as usize);
@@ -133,23 +171,34 @@ pub fn recognize_rgba(rgba: &[u8], w: u32, h: u32, _opts: Option<&OcrOptions>) -
     // 假设 paddle_ocr_rs 有针对 DynamicImage 的 detect 方法，
     // 或者可能需要先转成 RGB 等格式。具体请参考其包文档。
     // 这里做个示例：
-    let detect_res = ocr.detect(&rgb_img, 50, 1024, 0.5, 0.3, 1.6, false, false)
+    let detect_res = ocr
+        .detect(&rgb_img, 50, 1024, 0.5, 0.3, 1.6, false, false)
         .map_err(|e| format!("paddle-ocr-rs inference failed: {:?}", e))?;
 
     let mut final_results = Vec::new();
     for block in detect_res.text_blocks {
-        let box_pts = [
-            (block.box_points[0].x as f32, block.box_points[0].y as f32),
-            (block.box_points[1].x as f32, block.box_points[1].y as f32),
-            (block.box_points[2].x as f32, block.box_points[2].y as f32),
-            (block.box_points[3].x as f32, block.box_points[3].y as f32),
-        ];
-        final_results.push(OcrResult {
-            text: block.text,
-            score: block.text_score,
-            box_points: box_pts,
-        });
+        final_results.push(OcrResult { text: block.text });
     }
 
     Ok(final_results)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::lock_recover;
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+    use std::sync::Mutex;
+
+    #[test]
+    fn poisoned_mutex_is_recovered_and_cleared() {
+        let mutex = Mutex::new(7_u8);
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _guard = mutex.lock().expect("test mutex should initially lock");
+            panic!("poison test mutex");
+        }));
+
+        assert!(mutex.is_poisoned());
+        assert_eq!(*lock_recover(&mutex, "test"), 7);
+        assert!(!mutex.is_poisoned());
+    }
 }

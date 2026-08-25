@@ -21,7 +21,8 @@ import {
   usePreventDragRegionDoubleClick,
 } from "./hooks/useAppEffects";
 
-import UpdateConfirmModal from "./components/ui/UpdateConfirmModal";import {
+import UpdateConfirmModal from "./components/ui/UpdateConfirmModal";
+import {
   Dashboard,
   AccountGrid,
   SortableAccountCard,
@@ -129,9 +130,16 @@ function App() {
   // Load configuration, accounts, and start config listener
   useEffect(() => {
     (async () => { await load(); await loadAccounts(); })();
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then(fn => { unlisten = fn; });
-    return () => { if (unlisten) unlisten(); };
+    initConfigListener().then(fn => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, []);
 
   // Update view state

@@ -13,8 +13,6 @@ pub fn is_black_pixel(r: u8, g: u8, b: u8) -> bool {
     r < 10 && g < 10 && b < 10
 }
 
-
-
 /// 自适应二值化通道A：先提取 V = max(0, R - G) 作为红色信号灰度，然后用 Otsu 算法计算阈值，大于等于阈值的部分为文本。
 /// 输出到可复用的 `out` 缓冲区：目标(文本)→0(黑)，背景→255(白)
 pub fn binarize_adaptive_ch_a_raw(raw: &[u8], w: u32, h: u32, out: &mut Vec<u8>) {
@@ -30,7 +28,7 @@ pub fn binarize_adaptive_ch_a_raw(raw: &[u8], w: u32, h: u32, out: &mut Vec<u8>)
         let idx = i * 4;
         let r = raw[idx] as i32;
         let g = raw[idx + 1] as i32;
-        let diff = (r - g).max(0).min(255) as u8;
+        let diff = (r - g).clamp(0, 255) as u8;
         gray_vals.push(diff);
         histogram[diff as usize] += 1;
         total_val += diff as u64;
@@ -45,13 +43,17 @@ pub fn binarize_adaptive_ch_a_raw(raw: &[u8], w: u32, h: u32, out: &mut Vec<u8>)
     let total_pixels = pixels as u32;
     let sum1 = total_val as f64;
 
-    for t in 0..256 {
-        w_b += histogram[t];
-        if w_b == 0 { continue; }
+    for (t, count) in histogram.iter().copied().enumerate() {
+        w_b += count;
+        if w_b == 0 {
+            continue;
+        }
         let w_f = total_pixels - w_b;
-        if w_f == 0 { break; }
+        if w_f == 0 {
+            break;
+        }
 
-        sum_b += (t as u32 * histogram[t]) as f64;
+        sum_b += (t as u32 * count) as f64;
         let m_b = sum_b / w_b as f64;
         let m_f = (sum1 - sum_b) / w_f as f64;
 
@@ -65,9 +67,13 @@ pub fn binarize_adaptive_ch_a_raw(raw: &[u8], w: u32, h: u32, out: &mut Vec<u8>)
     // 3. 应用阈值（Otsu 往往偏低，增加一个保底阈值防止暗背景噪点）
     let final_threshold = threshold.max(15);
 
-    for i in 0..pixels {
+    for (i, out_pixel) in out.iter_mut().enumerate().take(pixels) {
         // 大于等于阈值认为是红色文字，输出0(黑)，否则255(白)
-        out[i] = if gray_vals[i] >= final_threshold { 0 } else { 255 };
+        *out_pixel = if gray_vals[i] >= final_threshold {
+            0
+        } else {
+            255
+        };
     }
 }
 
@@ -202,15 +208,21 @@ pub fn crop_by_vertical_projection(gray_buf: &[u8], w: u32, h: u32, scale_x: f32
 }
 
 /// 灰度图裁切
-pub fn crop_gray_buf(gray_buf: &[u8], old_w: u32, h: u32, new_start_x: u32, new_w: u32, out: &mut Vec<u8>) {
+pub fn crop_gray_buf(
+    gray_buf: &[u8],
+    old_w: u32,
+    h: u32,
+    new_start_x: u32,
+    new_w: u32,
+    out: &mut Vec<u8>,
+) {
     let pixels = (new_w * h) as usize;
     out.resize(pixels, 0);
     for y in 0..h {
         let src_start = (y * old_w + new_start_x) as usize;
         let dst_start = (y * new_w) as usize;
-        out[dst_start..dst_start + (new_w as usize)].copy_from_slice(
-            &gray_buf[src_start..src_start + (new_w as usize)]
-        );
+        out[dst_start..dst_start + (new_w as usize)]
+            .copy_from_slice(&gray_buf[src_start..src_start + (new_w as usize)]);
     }
 }
 
@@ -236,7 +248,9 @@ pub fn get_y_centers_std_dev(gray_buf: &[u8], w: u32, h: u32) -> f32 {
                     // 8-way connectivity
                     for dy in -1i32..=1 {
                         for dx in -1i32..=1 {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let nx = cx as i32 + dx;
                             let ny = cy as i32 + dy;
                             if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
@@ -265,8 +279,6 @@ pub fn get_y_centers_std_dev(gray_buf: &[u8], w: u32, h: u32) -> f32 {
     let variance = centers.iter().map(|c| (c - mean) * (c - mean)).sum::<f32>() / n;
     variance.sqrt()
 }
-
-
 
 /// RGB to OpenCV-style HSV (H: 0-179, S: 0-255, V: 0-255)
 pub fn rgb_to_hsv_cv(r: u8, g: u8, b: u8) -> (i32, i32, i32) {
@@ -298,7 +310,14 @@ pub fn rgb_to_hsv_cv(r: u8, g: u8, b: u8) -> (i32, i32, i32) {
 
 /// Extract mask based on base RGB color and a range.
 /// Returns a Vec<u8> where 255 is foreground, 0 is background.
-pub fn extract_mask_by_hsv(raw: &[u8], w: u32, h_img: u32, base_rgb: [u8; 3], hsv_range: [u8; 3], out: &mut Vec<u8>) {
+pub fn extract_mask_by_hsv(
+    raw: &[u8],
+    w: u32,
+    h_img: u32,
+    base_rgb: [u8; 3],
+    hsv_range: [u8; 3],
+    out: &mut Vec<u8>,
+) {
     let pixels = (w * h_img) as usize;
     out.resize(pixels, 0);
 
@@ -314,7 +333,7 @@ pub fn extract_mask_by_hsv(raw: &[u8], w: u32, h_img: u32, base_rgb: [u8; 3], hs
     let v_min = (base_v - range_v).max(0);
     let v_max = (base_v + range_v).min(255);
 
-    for i in 0..pixels {
+    for (i, out_pixel) in out.iter_mut().enumerate().take(pixels) {
         let idx = i * 4;
         let r = raw[idx];
         let g = raw[idx + 1];
@@ -330,9 +349,9 @@ pub fn extract_mask_by_hsv(raw: &[u8], w: u32, h_img: u32, base_rgb: [u8; 3], hs
         };
 
         if h_match && px_s >= s_min && px_s <= s_max && px_v >= v_min && px_v <= v_max {
-            out[i] = 255;
+            *out_pixel = 255;
         } else {
-            out[i] = 0;
+            *out_pixel = 0;
         }
     }
 }
@@ -345,7 +364,11 @@ pub fn morphology_close(mask: &mut [u8], w: u32, h: u32) {
     for y in 0..h.saturating_sub(1) {
         for x in 0..w.saturating_sub(1) {
             let idx = (y * w + x) as usize;
-            if mask[idx] == 255 || mask[idx + 1] == 255 || mask[idx + w as usize] == 255 || mask[idx + w as usize + 1] == 255 {
+            if mask[idx] == 255
+                || mask[idx + 1] == 255
+                || mask[idx + w as usize] == 255
+                || mask[idx + w as usize + 1] == 255
+            {
                 temp[idx] = 255;
             }
         }
@@ -356,7 +379,11 @@ pub fn morphology_close(mask: &mut [u8], w: u32, h: u32) {
     for y in 0..h.saturating_sub(1) {
         for x in 0..w.saturating_sub(1) {
             let idx = (y * w + x) as usize;
-            if temp[idx] == 255 && temp[idx + 1] == 255 && temp[idx + w as usize] == 255 && temp[idx + w as usize + 1] == 255 {
+            if temp[idx] == 255
+                && temp[idx + 1] == 255
+                && temp[idx + w as usize] == 255
+                && temp[idx + w as usize + 1] == 255
+            {
                 temp2[idx] = 255;
             }
         }
@@ -365,7 +392,12 @@ pub fn morphology_close(mask: &mut [u8], w: u32, h: u32) {
 }
 
 /// Find solid rectangle bounding boxes from the mask (specifically for Rune drop backgrounds).
-pub fn find_rect_contours(mask: &[u8], w: u32, h: u32, _max_height: u32) -> Vec<(u32, u32, u32, u32)> {
+pub fn find_rect_contours(
+    mask: &[u8],
+    w: u32,
+    h: u32,
+    _max_height: u32,
+) -> Vec<(u32, u32, u32, u32)> {
     let mut visited = vec![false; mask.len()];
     let mut rois = Vec::new();
 
@@ -389,7 +421,9 @@ pub fn find_rect_contours(mask: &[u8], w: u32, h: u32, _max_height: u32) -> Vec<
 
                     for dy in -1..=1 {
                         for dx in -1..=1 {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let nx = cx as i32 + dx;
                             let ny = cy as i32 + dy;
                             if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
@@ -414,7 +448,7 @@ pub fn find_rect_contours(mask: &[u8], w: u32, h: u32, _max_height: u32) -> Vec<
                 }
 
                 let aspect_ratio = box_w as f32 / box_h as f32;
-                if aspect_ratio < 0.5 || aspect_ratio > 12.0 {
+                if !(0.5..=12.0).contains(&aspect_ratio) {
                     continue;
                 }
 
@@ -426,7 +460,13 @@ pub fn find_rect_contours(mask: &[u8], w: u32, h: u32, _max_height: u32) -> Vec<
 }
 
 /// Find text bounding boxes from the mask.
-pub fn find_text_contours(mask: &[u8], w: u32, h: u32, _max_height: u32, debug_ctx: Option<(&std::path::Path, &str)>) -> Vec<(u32, u32, u32, u32)> {
+pub fn find_text_contours(
+    mask: &[u8],
+    w: u32,
+    h: u32,
+    _max_height: u32,
+    debug_ctx: Option<(&std::path::Path, &str)>,
+) -> Vec<(u32, u32, u32, u32)> {
     let mut visited = vec![false; mask.len()];
     let mut rois = Vec::new();
 
@@ -450,7 +490,9 @@ pub fn find_text_contours(mask: &[u8], w: u32, h: u32, _max_height: u32, debug_c
 
                     for dy in -1..=1 {
                         for dx in -1..=1 {
-                            if dx == 0 && dy == 0 { continue; }
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
                             let nx = cx as i32 + dx;
                             let ny = cy as i32 + dy;
                             if nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32 {
@@ -473,7 +515,7 @@ pub fn find_text_contours(mask: &[u8], w: u32, h: u32, _max_height: u32, debug_c
                 if let Some((dir, prefix)) = debug_ctx {
                     let fail_reason = if box_w < 10 || box_h < 10 {
                         Some("too_small")
-                    } else if aspect_ratio < 2.0 || aspect_ratio > 20.0 {
+                    } else if !(2.0..=20.0).contains(&aspect_ratio) {
                         Some("bad_aspect")
                     } else {
                         None
@@ -488,12 +530,25 @@ pub fn find_text_contours(mask: &[u8], w: u32, h: u32, _max_height: u32, debug_c
                                 fail_buf[dst_idx] = mask[src_idx];
                             }
                         }
-                        let _ = image::save_buffer(dir.join(format!("{}_fail_{}_{}_{}_{}_{}.png", prefix, reason, box_w, box_h, min_x, min_y)), &fail_buf, box_w, box_h, image::ColorType::L8);
+                        let _ = image::save_buffer(
+                            dir.join(format!(
+                                "{}_fail_{}_{}_{}_{}_{}.png",
+                                prefix, reason, box_w, box_h, min_x, min_y
+                            )),
+                            &fail_buf,
+                            box_w,
+                            box_h,
+                            image::ColorType::L8,
+                        );
                         continue;
                     }
                 } else {
-                    if box_w < 10 || box_h < 10 { continue; }
-                    if aspect_ratio < 2.0 || aspect_ratio > 20.0 { continue; }
+                    if box_w < 10 || box_h < 10 {
+                        continue;
+                    }
+                    if !(2.0..=20.0).contains(&aspect_ratio) {
+                        continue;
+                    }
                 }
 
                 rois.push((min_x, min_y, box_w, box_h));
@@ -505,7 +560,18 @@ pub fn find_text_contours(mask: &[u8], w: u32, h: u32, _max_height: u32, debug_c
 }
 
 /// Convert mask to RGBA so we can feed it into Windows OCR Engine
-pub fn mask_to_rgba(mask: &[u8], w: u32, _h: u32, px: u32, py: u32, pw: u32, ph: u32, out: &mut Vec<u8>) {
+// Keeping explicit ROI coordinates avoids allocating a transient crop descriptor per frame.
+#[allow(clippy::too_many_arguments)]
+pub fn mask_to_rgba(
+    mask: &[u8],
+    w: u32,
+    _h: u32,
+    px: u32,
+    py: u32,
+    pw: u32,
+    ph: u32,
+    out: &mut Vec<u8>,
+) {
     let req_size = (pw * ph * 4) as usize;
     out.resize(req_size, 0);
     for dy in 0..ph {
@@ -532,9 +598,13 @@ pub fn mask_to_rgba(mask: &[u8], w: u32, _h: u32, px: u32, py: u32, pw: u32, ph:
 /// Adaptive morphology close: square kernel, resolution-tiered, 2 iterations
 /// Matches competitor's cv2.morphologyEx(MORPH_CLOSE, kernel, iterations=2)
 pub fn morphology_close_adaptive(mask: &mut [u8], w: u32, h: u32, fw: u32) {
-    let k: i32 = if fw >= 2500 { 12 }
-            else if fw >= 1900 { 8 }
-            else { 6 };
+    let k: i32 = if fw >= 2500 {
+        12
+    } else if fw >= 1900 {
+        8
+    } else {
+        6
+    };
     let w_i = w as i32;
     let h_i = h as i32;
 
@@ -548,8 +618,14 @@ pub fn morphology_close_adaptive(mask: &mut [u8], w: u32, h: u32, fw: u32) {
                     for dx in -k..=k {
                         let nx = x + dx;
                         let ny = y + dy;
-                        if nx >= 0 && nx < w_i && ny >= 0 && ny < h_i {
-                            if src[(ny * w_i + nx) as usize] == 255 { hit = true; break 'outer; }
+                        if nx >= 0
+                            && nx < w_i
+                            && ny >= 0
+                            && ny < h_i
+                            && src[(ny * w_i + nx) as usize] == 255
+                        {
+                            hit = true;
+                            break 'outer;
                         }
                     }
                 }
@@ -565,8 +641,14 @@ pub fn morphology_close_adaptive(mask: &mut [u8], w: u32, h: u32, fw: u32) {
                     for dx in -k..=k {
                         let nx = x + dx;
                         let ny = y + dy;
-                        if nx >= 0 && nx < w_i && ny >= 0 && ny < h_i {
-                            if src[(ny * w_i + nx) as usize] != 255 { all = false; break 'outer2; }
+                        if nx >= 0
+                            && nx < w_i
+                            && ny >= 0
+                            && ny < h_i
+                            && src[(ny * w_i + nx) as usize] != 255
+                        {
+                            all = false;
+                            break 'outer2;
                         }
                     }
                 }
@@ -597,6 +679,8 @@ pub fn find_text_bbox(mask: &[u8], w: u32, h: u32) -> Option<(u32, u32, u32, u32
     let min_y = row_sums.iter().position(|&r| r > 0)? as u32;
     let max_y = row_sums.iter().rposition(|&r| r > 0)? as u32;
 
-    if max_x < min_x || max_y < min_y { return None; }
+    if max_x < min_x || max_y < min_y {
+        return None;
+    }
     Some((min_x, min_y, max_x - min_x + 1, max_y - min_y + 1))
 }

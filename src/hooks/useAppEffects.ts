@@ -9,6 +9,22 @@ import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig, LaunchProgress } from "../store/types";
 import { validateOcrTarget } from "../utils/ocrTarget";
 
+async function retryWindowAction(
+  action: () => Promise<boolean>,
+  isCancelled: () => boolean,
+  initialDelayMs: number,
+) {
+  const wait = (delayMs: number) =>
+    new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
+
+  await wait(initialDelayMs);
+  const deadline = Date.now() + 4_000;
+  while (!isCancelled() && Date.now() < deadline) {
+    if (await action()) return;
+    await wait(200);
+  }
+}
+
 export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null) {
   const prevEnabledRef = useRef(config?.enable_bongo_cat);
   const prevScaleRef = useRef(config?.bongo_cat_scale);
@@ -16,15 +32,15 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
   useEffect(() => {
     if (loading || !config) return;
 
-    let timer: ReturnType<typeof setInterval> | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
 
     const showCat = async () => {
       try {
-        await new Promise(r => setTimeout(r, 300));
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        if (cancelled) return true;
         const catWin = await WebviewWindow.getByLabel("bongo-cat");
         if (catWin) {
+          if (cancelled) return true;
           await catWin.show();
           await invoke("set_bongo_cat_input_visible", { visible: true }).catch(() => {});
           return true;
@@ -36,8 +52,10 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
     const hideCat = async () => {
       try {
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        if (cancelled) return;
         const catWin = await WebviewWindow.getByLabel("bongo-cat");
         if (catWin) {
+          if (cancelled) return;
           await catWin.hide();
           await invoke("set_bongo_cat_input_visible", { visible: false }).catch(() => {});
         }
@@ -45,25 +63,16 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
     };
 
     if (config.enable_bongo_cat) {
-      showCat().then((success) => {
-        if (!success) {
-          timer = setInterval(async () => {
-            const done = await showCat();
-            if (done) { if (timer) clearInterval(timer); }
-          }, 200);
-          timeout = setTimeout(() => { if (timer) clearInterval(timer); }, 4000);
-        }
-      });
+      void retryWindowAction(showCat, () => cancelled, 300);
     } else if (prevEnabledRef.current) {
       // 配置变更：从开启变为关闭 → 隐藏猫咪窗口
-      hideCat();
+      void hideCat();
     }
 
     prevEnabledRef.current = config.enable_bongo_cat;
 
     return () => {
-      if (timer) clearInterval(timer);
-      if (timeout) clearTimeout(timeout);
+      cancelled = true;
     };
   }, [loading, config?.enable_bongo_cat]);
 
@@ -73,17 +82,22 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
     const scale = config.bongo_cat_scale;
     if (scale === prevScaleRef.current) return;
     prevScaleRef.current = scale;
+    let cancelled = false;
 
     (async () => {
       try {
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        if (cancelled) return;
         const catWin = await WebviewWindow.getByLabel("bongo-cat");
-        if (catWin) {
+        if (catWin && !cancelled) {
           // 原始尺寸 240×400，等比缩放
           await catWin.setSize(new LogicalSize(240 * scale, 400 * scale));
         }
       } catch {}
     })();
+    return () => {
+      cancelled = true;
+    };
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
 }
 
@@ -91,15 +105,15 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
   useEffect(() => {
     if (loading || !config) return;
 
-    let timer: ReturnType<typeof setInterval> | undefined;
-    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let cancelled = false;
 
     const manageOverlay = async () => {
       try {
-        await new Promise(r => setTimeout(r, 600));
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        if (cancelled) return true;
         const overlayWin = await WebviewWindow.getByLabel("overlay");
         if (overlayWin) {
+          if (cancelled) return true;
           if (config.enable_overlay) {
             await overlayWin.show();
             const visible = await overlayWin.isVisible();
@@ -114,25 +128,12 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
       return false;
     };
 
-    manageOverlay().then((success) => {
-      if (!success) {
-        timer = setInterval(async () => {
-          const done = await manageOverlay();
-          if (done) {
-            if (timer) clearInterval(timer);
-          }
-        }, 200);
-        timeout = setTimeout(() => {
-          if (timer) clearInterval(timer);
-        }, 4000);
-      }
-    });
+    void retryWindowAction(manageOverlay, () => cancelled, 600);
 
     return () => {
-      if (timer) clearInterval(timer);
-      if (timeout) clearTimeout(timeout);
+      cancelled = true;
     };
-  }, [loading, config]);
+  }, [loading, config?.enable_overlay]);
 }
 
 export function useLaunchEvents(config: GlobalConfig | null) {
@@ -141,17 +142,24 @@ export function useLaunchEvents(config: GlobalConfig | null) {
   const prevLaunchingRef = useRef(launching);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        unlisten = await listen<LaunchProgress>("launch-progress", (event) => {
+        const stopListening = await listen<LaunchProgress>("launch-progress", (event) => {
           useLaunch.getState().addProgressAndLog(event.payload);
         });
+        if (cancelled) {
+          stopListening();
+        } else {
+          unlisten = stopListening;
+        }
       } catch (err) {
         console.error("Failed to setup launch-progress listener:", err);
       }
     })();
     return () => {
+      cancelled = true;
       if (unlisten) unlisten();
     };
   }, []);
@@ -266,14 +274,23 @@ export function useFirstLaunch(
 export function usePreventDragRegionDoubleClick() {
   useEffect(() => {
     const preventDoubleClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
+      const target = e.target;
+      if (!(target instanceof Element)) return;
       const dragRegion = target.closest('[data-tauri-drag-region]') as HTMLElement | null;
+      // Overlay owns this double-click gesture (mini/expanded toggle). Its handler
+      // still filters buttons and account pills before changing window mode.
+      if (target.closest('[data-allow-drag-region-double-click="true"]')) {
+        return;
+      }
       if (!dragRegion) return;
 
       // 如果双击目标与拖拽区域之间存在显式声明 no-drag 的元素，放行双击（如悬浮窗账号胶囊）
-      let el: HTMLElement | null = target;
+      let el: Element | null = target;
       while (el && el !== dragRegion) {
-        if ((el.style as CSSStyleDeclaration & { WebkitAppRegion?: string }).WebkitAppRegion === 'no-drag') {
+        if (
+          el instanceof HTMLElement
+          && (el.style as CSSStyleDeclaration & { WebkitAppRegion?: string }).WebkitAppRegion === 'no-drag'
+        ) {
           return; // 允许双击事件正常触发
         }
         el = el.parentElement;

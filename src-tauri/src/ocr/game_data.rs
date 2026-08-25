@@ -18,45 +18,277 @@ pub struct RuneInfo {
 
 pub static RUNE_NAME_MAP: LazyLock<HashMap<&'static str, RuneInfo>> = LazyLock::new(|| {
     HashMap::from([
-        ("艾尔", RuneInfo { level: 1, english_name: "El", chinese_name: "艾尔" }),
-        ("艾德", RuneInfo { level: 2, english_name: "Eld", chinese_name: "艾德" }),
-        ("特尔", RuneInfo { level: 3, english_name: "Tir", chinese_name: "特尔" }),
-        ("那夫", RuneInfo { level: 4, english_name: "Nef", chinese_name: "那夫" }),
-        ("爱斯", RuneInfo { level: 5, english_name: "Eth", chinese_name: "爱斯" }),
-        ("伊司", RuneInfo { level: 6, english_name: "Ith", chinese_name: "伊司" }),
-        ("塔尔", RuneInfo { level: 7, english_name: "Tal", chinese_name: "塔尔" }),
-        ("拉尔", RuneInfo { level: 8, english_name: "Ral", chinese_name: "拉尔" }),
-        ("欧特", RuneInfo { level: 9, english_name: "Ort", chinese_name: "欧特" }),
-        ("书尔", RuneInfo { level: 10, english_name: "Thul", chinese_name: "书尔" }),
-        ("安姆", RuneInfo { level: 11, english_name: "Amn", chinese_name: "安姆" }),
-        ("索尔", RuneInfo { level: 12, english_name: "Sol", chinese_name: "索尔" }),
-        ("夏", RuneInfo { level: 13, english_name: "Shael", chinese_name: "夏" }),
-        ("多尔", RuneInfo { level: 14, english_name: "Dol", chinese_name: "多尔" }),
-        ("海尔", RuneInfo { level: 15, english_name: "Hel", chinese_name: "海尔" }),
-        ("艾欧", RuneInfo { level: 16, english_name: "Io", chinese_name: "艾欧" }),
-        ("卢姆", RuneInfo { level: 17, english_name: "Lum", chinese_name: "卢姆" }),
-        ("科", RuneInfo { level: 18, english_name: "Ko", chinese_name: "科" }),
-        ("法尔", RuneInfo { level: 19, english_name: "Fal", chinese_name: "法尔" }),
-        ("蓝姆", RuneInfo { level: 20, english_name: "Lem", chinese_name: "蓝姆" }),
-        ("普尔", RuneInfo { level: 21, english_name: "Pul", chinese_name: "普尔" }),
-        ("乌姆", RuneInfo { level: 22, english_name: "Um", chinese_name: "乌姆" }),
-        ("马尔", RuneInfo { level: 23, english_name: "Mal", chinese_name: "马尔" }),
-        ("伊斯特", RuneInfo { level: 24, english_name: "Ist", chinese_name: "伊斯特" }),
-        ("古尔", RuneInfo { level: 25, english_name: "Gul", chinese_name: "古尔" }),
-        ("伐克斯", RuneInfo { level: 26, english_name: "Vex", chinese_name: "伐克斯" }),
-        ("欧姆", RuneInfo { level: 27, english_name: "Ohm", chinese_name: "欧姆" }),
-        ("罗", RuneInfo { level: 28, english_name: "Lo", chinese_name: "罗" }),
-        ("瑟", RuneInfo { level: 29, english_name: "Sur", chinese_name: "瑟" }),
-        ("贝", RuneInfo { level: 30, english_name: "Ber", chinese_name: "贝" }),
-        ("乔", RuneInfo { level: 31, english_name: "Jah", chinese_name: "乔" }),
-        ("查姆", RuneInfo { level: 32, english_name: "Cham", chinese_name: "查姆" }),
-        ("萨德", RuneInfo { level: 33, english_name: "Zod", chinese_name: "萨德" }),
+        (
+            "艾尔",
+            RuneInfo {
+                level: 1,
+                english_name: "El",
+                chinese_name: "艾尔",
+            },
+        ),
+        (
+            "艾德",
+            RuneInfo {
+                level: 2,
+                english_name: "Eld",
+                chinese_name: "艾德",
+            },
+        ),
+        (
+            "特尔",
+            RuneInfo {
+                level: 3,
+                english_name: "Tir",
+                chinese_name: "特尔",
+            },
+        ),
+        (
+            "那夫",
+            RuneInfo {
+                level: 4,
+                english_name: "Nef",
+                chinese_name: "那夫",
+            },
+        ),
+        (
+            "爱斯",
+            RuneInfo {
+                level: 5,
+                english_name: "Eth",
+                chinese_name: "爱斯",
+            },
+        ),
+        (
+            "伊司",
+            RuneInfo {
+                level: 6,
+                english_name: "Ith",
+                chinese_name: "伊司",
+            },
+        ),
+        (
+            "塔尔",
+            RuneInfo {
+                level: 7,
+                english_name: "Tal",
+                chinese_name: "塔尔",
+            },
+        ),
+        (
+            "拉尔",
+            RuneInfo {
+                level: 8,
+                english_name: "Ral",
+                chinese_name: "拉尔",
+            },
+        ),
+        (
+            "欧特",
+            RuneInfo {
+                level: 9,
+                english_name: "Ort",
+                chinese_name: "欧特",
+            },
+        ),
+        (
+            "书尔",
+            RuneInfo {
+                level: 10,
+                english_name: "Thul",
+                chinese_name: "书尔",
+            },
+        ),
+        (
+            "安姆",
+            RuneInfo {
+                level: 11,
+                english_name: "Amn",
+                chinese_name: "安姆",
+            },
+        ),
+        (
+            "索尔",
+            RuneInfo {
+                level: 12,
+                english_name: "Sol",
+                chinese_name: "索尔",
+            },
+        ),
+        (
+            "夏",
+            RuneInfo {
+                level: 13,
+                english_name: "Shael",
+                chinese_name: "夏",
+            },
+        ),
+        (
+            "多尔",
+            RuneInfo {
+                level: 14,
+                english_name: "Dol",
+                chinese_name: "多尔",
+            },
+        ),
+        (
+            "海尔",
+            RuneInfo {
+                level: 15,
+                english_name: "Hel",
+                chinese_name: "海尔",
+            },
+        ),
+        (
+            "艾欧",
+            RuneInfo {
+                level: 16,
+                english_name: "Io",
+                chinese_name: "艾欧",
+            },
+        ),
+        (
+            "卢姆",
+            RuneInfo {
+                level: 17,
+                english_name: "Lum",
+                chinese_name: "卢姆",
+            },
+        ),
+        (
+            "科",
+            RuneInfo {
+                level: 18,
+                english_name: "Ko",
+                chinese_name: "科",
+            },
+        ),
+        (
+            "法尔",
+            RuneInfo {
+                level: 19,
+                english_name: "Fal",
+                chinese_name: "法尔",
+            },
+        ),
+        (
+            "蓝姆",
+            RuneInfo {
+                level: 20,
+                english_name: "Lem",
+                chinese_name: "蓝姆",
+            },
+        ),
+        (
+            "普尔",
+            RuneInfo {
+                level: 21,
+                english_name: "Pul",
+                chinese_name: "普尔",
+            },
+        ),
+        (
+            "乌姆",
+            RuneInfo {
+                level: 22,
+                english_name: "Um",
+                chinese_name: "乌姆",
+            },
+        ),
+        (
+            "马尔",
+            RuneInfo {
+                level: 23,
+                english_name: "Mal",
+                chinese_name: "马尔",
+            },
+        ),
+        (
+            "伊斯特",
+            RuneInfo {
+                level: 24,
+                english_name: "Ist",
+                chinese_name: "伊斯特",
+            },
+        ),
+        (
+            "古尔",
+            RuneInfo {
+                level: 25,
+                english_name: "Gul",
+                chinese_name: "古尔",
+            },
+        ),
+        (
+            "伐克斯",
+            RuneInfo {
+                level: 26,
+                english_name: "Vex",
+                chinese_name: "伐克斯",
+            },
+        ),
+        (
+            "欧姆",
+            RuneInfo {
+                level: 27,
+                english_name: "Ohm",
+                chinese_name: "欧姆",
+            },
+        ),
+        (
+            "罗",
+            RuneInfo {
+                level: 28,
+                english_name: "Lo",
+                chinese_name: "罗",
+            },
+        ),
+        (
+            "瑟",
+            RuneInfo {
+                level: 29,
+                english_name: "Sur",
+                chinese_name: "瑟",
+            },
+        ),
+        (
+            "贝",
+            RuneInfo {
+                level: 30,
+                english_name: "Ber",
+                chinese_name: "贝",
+            },
+        ),
+        (
+            "乔",
+            RuneInfo {
+                level: 31,
+                english_name: "Jah",
+                chinese_name: "乔",
+            },
+        ),
+        (
+            "查姆",
+            RuneInfo {
+                level: 32,
+                english_name: "Cham",
+                chinese_name: "查姆",
+            },
+        ),
+        (
+            "萨德",
+            RuneInfo {
+                level: 33,
+                english_name: "Zod",
+                chinese_name: "萨德",
+            },
+        ),
     ])
 });
 
 #[allow(dead_code)]
 pub static HIGH_RUNE_NAME_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    RUNE_NAME_MAP.iter()
+    RUNE_NAME_MAP
+        .iter()
         .filter(|(_, info)| info.level >= 20)
         .map(|(name, _)| *name)
         .collect()
@@ -377,103 +609,102 @@ pub static ACCEPTABLE_RUNE_NAME_SET: LazyLock<HashSet<&'static str>> = LazyLock:
 // 4. 纠错映射
 // ============================================================
 
-pub static RUNE_NAME_TRANS_MAPPING: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
-    HashMap::from([
-        ("提尔", "特尔"),
-        ("奈夫", "那夫"),
-        ("沙伊", "夏"),
-        ("兰姆", "蓝姆"),
-        ("玛尔", "马尔"),
-        ("伊司特", "伊斯特"),
-        ("扎哈", "乔"),
-        ("佐德", "萨德"),
-        ("图尔", "书尔"),
-        ("艾斯", "爱斯"),
-        ("伊斯", "伊司"),
-        ("埃欧", "艾欧"),
-    ])
-});
+pub static RUNE_NAME_TRANS_MAPPING: LazyLock<HashMap<&'static str, &'static str>> =
+    LazyLock::new(|| {
+        HashMap::from([
+            ("提尔", "特尔"),
+            ("奈夫", "那夫"),
+            ("沙伊", "夏"),
+            ("兰姆", "蓝姆"),
+            ("玛尔", "马尔"),
+            ("伊司特", "伊斯特"),
+            ("扎哈", "乔"),
+            ("佐德", "萨德"),
+            ("图尔", "书尔"),
+            ("艾斯", "爱斯"),
+            ("伊斯", "伊司"),
+            ("埃欧", "艾欧"),
+        ])
+    });
 
 // ============================================================
 // 英文符文名 → 标准简体中文名（不区分大小写，存储为小写）
 // ============================================================
 pub static RUNE_NAME_EN_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
-        ("el",   "艾尔"),
-        ("eld",  "艾德"),
-        ("tir",  "特尔"),
-        ("nef",  "那夫"),
-        ("eth",  "爱斯"),
-        ("ith",  "伊司"),
-        ("tal",  "塔尔"),
-        ("ral",  "拉尔"),
-        ("ort",  "欧特"),
+        ("el", "艾尔"),
+        ("eld", "艾德"),
+        ("tir", "特尔"),
+        ("nef", "那夫"),
+        ("eth", "爱斯"),
+        ("ith", "伊司"),
+        ("tal", "塔尔"),
+        ("ral", "拉尔"),
+        ("ort", "欧特"),
         ("thul", "书尔"),
-        ("amn",  "安姆"),
-        ("sol",  "索尔"),
-        ("shael","夏"),
-        ("dol",  "多尔"),
-        ("hel",  "海尔"),
-        ("io",   "艾欧"),
-        ("lum",  "卢姆"),
-        ("ko",   "科"),
-        ("fal",  "法尔"),
-        ("lem",  "蓝姆"),
-        ("pul",  "普尔"),
-        ("um",   "乌姆"),
-        ("mal",  "马尔"),
-        ("ist",  "伊斯特"),
-        ("gul",  "古尔"),
-        ("vex",  "伐克斯"),
-        ("ohm",  "欧姆"),
-        ("lo",   "罗"),
-        ("sur",  "瑟"),
-        ("ber",  "贝"),
-        ("jah",  "乔"),
+        ("amn", "安姆"),
+        ("sol", "索尔"),
+        ("shael", "夏"),
+        ("dol", "多尔"),
+        ("hel", "海尔"),
+        ("io", "艾欧"),
+        ("lum", "卢姆"),
+        ("ko", "科"),
+        ("fal", "法尔"),
+        ("lem", "蓝姆"),
+        ("pul", "普尔"),
+        ("um", "乌姆"),
+        ("mal", "马尔"),
+        ("ist", "伊斯特"),
+        ("gul", "古尔"),
+        ("vex", "伐克斯"),
+        ("ohm", "欧姆"),
+        ("lo", "罗"),
+        ("sur", "瑟"),
+        ("ber", "贝"),
+        ("jah", "乔"),
         ("cham", "查姆"),
-        ("zod",  "萨德"),
+        ("zod", "萨德"),
     ])
 });
 
 /// 英文符文名模糊匹配键集合（小写）
-pub static EN_RUNE_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    RUNE_NAME_EN_MAP.keys().copied().collect()
-});
+pub static EN_RUNE_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| RUNE_NAME_EN_MAP.keys().copied().collect());
 
 // ============================================================
 // 繁体中文符文名 → 标准简体中文名（OCR 可能识出繁体字形）
 // ============================================================
 pub static RUNE_NAME_TC_MAP: LazyLock<HashMap<&'static str, &'static str>> = LazyLock::new(|| {
     HashMap::from([
-        ("艾爾",   "艾尔"),
-        ("特爾",   "特尔"),
-        ("書爾",   "书尔"),
-        ("愛斯",   "爱斯"),
-        ("索爾",   "索尔"),
-        ("夏爾",   "夏"),
-        ("多爾",   "多尔"),
-        ("海爾",   "海尔"),
-        ("艾歐",   "艾欧"),
-        ("盧姆",   "卢姆"),
-        ("法爾",   "法尔"),
-        ("藍姆",   "蓝姆"),
-        ("普爾",   "普尔"),
-        ("烏姆",   "乌姆"),
-        ("馬爾",   "马尔"),
+        ("艾爾", "艾尔"),
+        ("特爾", "特尔"),
+        ("書爾", "书尔"),
+        ("愛斯", "爱斯"),
+        ("索爾", "索尔"),
+        ("夏爾", "夏"),
+        ("多爾", "多尔"),
+        ("海爾", "海尔"),
+        ("艾歐", "艾欧"),
+        ("盧姆", "卢姆"),
+        ("法爾", "法尔"),
+        ("藍姆", "蓝姆"),
+        ("普爾", "普尔"),
+        ("烏姆", "乌姆"),
+        ("馬爾", "马尔"),
         ("維克斯", "伐克斯"),
-        ("歐姆",   "欧姆"),
-        ("羅",     "罗"),
-        ("貝",     "贝"),
-        ("喬",     "乔"),
-        ("查姆",   "查姆"),
-        ("薩德",   "萨德"),
+        ("歐姆", "欧姆"),
+        ("羅", "罗"),
+        ("貝", "贝"),
+        ("喬", "乔"),
+        ("查姆", "查姆"),
+        ("薩德", "萨德"),
     ])
 });
 
 /// 繁体符文名模糊匹配键集合
-pub static TC_RUNE_SET: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    RUNE_NAME_TC_MAP.keys().copied().collect()
-});
+pub static TC_RUNE_SET: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| RUNE_NAME_TC_MAP.keys().copied().collect());
 
 /// 数字 → 符文名（1-33）
 pub fn rune_name_from_number(n: u32) -> Option<&'static str> {
@@ -481,58 +712,35 @@ pub fn rune_name_from_number(n: u32) -> Option<&'static str> {
 }
 
 static RUNE_NUMBER_MAP: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
-    RUNE_NAME_MAP.iter().map(|(name, info)| (info.level, *name)).collect()
+    RUNE_NAME_MAP
+        .iter()
+        .map(|(name, info)| (info.level, *name))
+        .collect()
 });
 
 /// 场景名称首字 OCR 易错字 → 修正为"进"
-pub static SCENE_REPLACE_FIRST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "辽",
-        "迎",
-        "近",
-        "道",
-    ])
-});
+pub static SCENE_REPLACE_FIRST: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["辽", "迎", "近", "道"]));
 
 /// 场景名称第二字 OCR 易错字 → 修正为"入"
-pub static SCENE_REPLACE_SECOND: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "人",
-        "儿",
-        "八",
-    ])
-});
+pub static SCENE_REPLACE_SECOND: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["人", "儿", "八"]));
 
 /// 符文首字 OCR 易错字 → 修正为"符"
-pub static RUNE_REPLACE_FIRST: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "付",
-    ])
-});
+pub static RUNE_REPLACE_FIRST: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["付"]));
 
 /// 符文第二字 OCR 易错字 → 修正为"文"
-pub static RUNE_REPLACE_SECOND: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "义",
-    ])
-});
+pub static RUNE_REPLACE_SECOND: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["义"]));
 
 /// 符文识别中的无用词（过滤掉）
-pub static RUNE_UNUSEFUL_WORD: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "出货",
-        "恭喜出货",
-    ])
-});
+pub static RUNE_UNUSEFUL_WORD: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["出货", "恭喜出货"]));
 
 /// 需要从符文名中剥离的分类词
-pub static RUNE_NEED_CLEAN_WORD: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
-    HashSet::from([
-        "顶级符文",
-        "高等符文",
-        "高级符文",
-    ])
-});
+pub static RUNE_NEED_CLEAN_WORD: LazyLock<HashSet<&'static str>> =
+    LazyLock::new(|| HashSet::from(["顶级符文", "高等符文", "高级符文"]));
 
 // ============================================================
 // 4.5. 符文别名全集 — 任意别名→编号(1-33)，按长度降序
@@ -570,13 +778,13 @@ pub static ALL_RUNE_ALIASES: LazyLock<Vec<(&'static str, u32)>> = LazyLock::new(
     }
 
     // 5. 额外方言别名（仅存在于旧 rune_data::RUNE_NAMES，尚未被上述覆盖）
-    map.entry("提尔").or_insert(3);   // 特尔
-    map.entry("奈夫").or_insert(4);   // 那夫
-    map.entry("沙伊").or_insert(13);  // 夏
-    map.entry("扎").or_insert(31);    // 乔/扎哈 的短称（OCR 常只识别出"扎"）
+    map.entry("提尔").or_insert(3); // 特尔
+    map.entry("奈夫").or_insert(4); // 那夫
+    map.entry("沙伊").or_insert(13); // 夏
+    map.entry("扎").or_insert(31); // 乔/扎哈 的短称（OCR 常只识别出"扎"）
 
     let mut aliases: Vec<(&'static str, u32)> = map.into_iter().collect();
-    aliases.sort_by(|a, b| b.0.chars().count().cmp(&a.0.chars().count()));
+    aliases.sort_by_key(|entry| std::cmp::Reverse(entry.0.chars().count()));
     aliases
 });
 

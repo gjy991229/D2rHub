@@ -40,7 +40,7 @@ pub fn get_rune_number(text: &str) -> Option<u32> {
     let mut valid_numbers = Vec::new();
     for part in sanitized.split(|c: char| !c.is_ascii_digit()) {
         if let Ok(n) = part.parse::<u32>() {
-            if n >= 1 && n <= 33 {
+            if (1..=33).contains(&n) {
                 valid_numbers.push(n);
             }
         }
@@ -56,7 +56,7 @@ pub fn is_high_rune(number: u32) -> bool {
 
 /// 根据编号获取符文标准名称（1-based）
 pub fn get_rune_name(number: u32) -> Option<&'static str> {
-    if number >= 1 && number <= 33 {
+    if (1..=33).contains(&number) {
         Some(RUNE_NAMES[(number - 1) as usize])
     } else {
         None

@@ -21,14 +21,6 @@ pub struct RuneDropEntry {
     pub screenshot_path: Option<String>,
 }
 
-/// 旧版格式：符文名 → 数量（用于迁移）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[allow(dead_code)]
-struct LegacyDrops {
-    #[serde(flatten)]
-    map: HashMap<String, u32>,
-}
-
 /// 单条场景记录（新版）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SceneRecord {
@@ -52,14 +44,6 @@ pub struct StatsData {
 /// 懒初始化数据库连接
 static DB: std::sync::OnceLock<Mutex<Connection>> = std::sync::OnceLock::new();
 
-#[allow(dead_code)]
-fn get_state_data_dir(app_data_dir: &str) -> String {
-    Path::new(app_data_dir)
-        .join("stateData")
-        .to_string_lossy()
-        .to_string()
-}
-
 fn get_db_path(app_data_dir: &str) -> String {
     Path::new(app_data_dir)
         .join("stateData")
@@ -81,7 +65,11 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
     let old_db_path = Path::new(app_data_dir).join("data.db");
     let new_db_path = Path::new(&db_path);
     if old_db_path.exists() && !new_db_path.exists() {
-        eprintln!("[DB] 检测到旧数据库，正在迁移: {} → {}", old_db_path.display(), new_db_path.display());
+        eprintln!(
+            "[DB] 检测到旧数据库，正在迁移: {} → {}",
+            old_db_path.display(),
+            new_db_path.display()
+        );
         if let Err(e) = std::fs::copy(&old_db_path, new_db_path) {
             eprintln!("[DB] 迁移失败: {}，将创建新数据库", e);
         } else {
@@ -104,7 +92,7 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
     )
     .map_err(|e| format!("初始化数据表失败: {}", e))?;
     let _ = DB.set(Mutex::new(conn));
-    Ok(DB.get().unwrap())
+    DB.get().ok_or_else(|| "数据库初始化状态不可用".to_string())
 }
 
 /// 将旧版 drops HashMap 格式迁移为新版 Vec<RuneDropEntry> 格式
@@ -246,7 +234,10 @@ pub fn get_scene_stats(
             let avg: Option<f64> = row.get(0)?;
             let count: i64 = row.get(1)?;
             if let Some(a) = avg {
-                Ok(Some(SceneStats { avg_time: a, total_runs: count }))
+                Ok(Some(SceneStats {
+                    avg_time: a,
+                    total_runs: count,
+                }))
             } else {
                 Ok(None)
             }
@@ -260,15 +251,15 @@ pub fn get_scene_stats(
 
 /// 删除一条场景记录（不可恢复）
 #[tauri::command]
-pub fn delete_scene_record(
-    state: tauri::State<'_, SharedState>,
-    id: i64,
-) -> Result<(), String> {
+pub fn delete_scene_record(state: tauri::State<'_, SharedState>, id: i64) -> Result<(), String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
     let affected = conn
-        .execute("DELETE FROM scene_records WHERE id = ?1", rusqlite::params![id])
+        .execute(
+            "DELETE FROM scene_records WHERE id = ?1",
+            rusqlite::params![id],
+        )
         .map_err(|e| format!("删除记录失败: {}", e))?;
 
     if affected == 0 {
@@ -318,17 +309,27 @@ static STATS_API_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
-fn start_stats_api(app_data_dir: String) -> u16 {
+fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
     if STATS_API_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return *STATS_API_PORT.get().unwrap_or(&0);
+        return STATS_API_PORT
+            .get()
+            .copied()
+            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string());
     }
 
-    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("绑定统计 API 端口失败");
-    let port = listener.local_addr().unwrap().port();
-    STATS_API_PORT.set(port).ok();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| {
+        STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        format!("绑定统计 API 端口失败: {error}")
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| {
+            STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+            format!("读取统计 API 端口失败: {error}")
+        })?
+        .port();
 
-    std::thread::Builder::new().name("stats-api".into()).spawn(move || {
+    let api_thread = std::thread::Builder::new().name("stats-api".into()).spawn(move || {
         for stream in listener.incoming() {
             if !STATS_API_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
@@ -548,9 +549,14 @@ fn start_stats_api(app_data_dir: String) -> u16 {
                 let _ = stream.write_all(resp_body.as_bytes());
             }
         }
-    }).expect("启动统计 API 线程失败");
+    });
+    if let Err(error) = api_thread {
+        STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        return Err(format!("启动统计 API 线程失败: {error}"));
+    }
 
-    port
+    let _ = STATS_API_PORT.set(port);
+    Ok(port)
 }
 
 /// 转义 JSON 字符串以安全地嵌入 HTML `<script>` 标签中
@@ -570,8 +576,8 @@ pub fn open_stats_page(
 ) -> Result<(), String> {
     // 1. 查询统计数据
     let stats_data = get_stats_data_inner(&state.app_data_dir)?;
-    let stats_json = serde_json::to_string(&stats_data)
-        .map_err(|e| format!("JSON 序列化失败: {}", e))?;
+    let stats_json =
+        serde_json::to_string(&stats_data).map_err(|e| format!("JSON 序列化失败: {}", e))?;
 
     // 2. 读取 stats.html 模板（优先资源目录，开发模式回退项目目录）
     let resource_dir = app_handle
@@ -609,11 +615,15 @@ pub fn open_stats_page(
     }
 
     let template = std::fs::read_to_string(&template_path).map_err(|e| {
-        format!("读取 stats.html 模板失败 ({}): {}", template_path.display(), e)
+        format!(
+            "读取 stats.html 模板失败 ({}): {}",
+            template_path.display(),
+            e
+        )
     })?;
 
     // 3. 启动统计 API 服务并注入端口号
-    let api_port = start_stats_api(state.app_data_dir.clone());
+    let api_port = start_stats_api(state.app_data_dir.clone())?;
     let stats_json = escape_json_for_html_script(&stats_json);
     let html = template
         .replace("{{STATS_DATA}}", &stats_json)
@@ -624,8 +634,7 @@ pub fn open_stats_page(
     std::fs::create_dir_all(&state_data_dir)
         .map_err(|e| format!("创建 stateData 目录失败: {}", e))?;
     let html_path = state_data_dir.join("stats.html");
-    std::fs::write(&html_path, html)
-        .map_err(|e| format!("写入 stats.html 失败: {}", e))?;
+    std::fs::write(&html_path, html).map_err(|e| format!("写入 stats.html 失败: {}", e))?;
 
     // 5. 用默认浏览器打开
     open::that(html_path.to_string_lossy().as_ref())
