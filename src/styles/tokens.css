@@ -45,52 +45,60 @@
 
 /* ── Onyx (default, restrained dark) ── */
 [data-theme="onyx"] {
-  --surface-base-rgb: 26 27 30;
-  --surface-glass-rgb: 38 39 42;
-  --surface-card-rgb: 35 37 41;
+  --surface-base-rgb: 0 0 0;
+  --surface-glass-rgb: 8 8 8;
+  --surface-card-rgb: 13 13 13;
   --surface-hover-rgb: 255 255 255;
   --surface-active-rgb: 255 255 255;
-  --surface-base: #1a1b1e;
-  --surface-glass: #26272a;
-  --surface-card: #242529;
-  --surface-tile: #282a2f;
-  --surface-tile-soft: #222429;
-  --surface-control: rgba(255, 255, 255, 0.06);
-  --surface-modal: #28292d;
-  --surface-hover: rgba(255, 255, 255, 0.06);
-  --surface-active: rgba(255, 255, 255, 0.09);
-  --border-default: #36383d;
-  --border-strong: rgba(255, 255, 255, 0.20);
-  --border-focus: rgba(255, 255, 255, 0.40);
-  --text-primary: #f3f4f6;
-  --text-secondary: #b7bac1;
-  --text-muted: #858994;
-  --input-text: #f3f4f6;
-  --input-bg: rgba(255, 255, 255, 0.06);
-  --accent: #f3f4f6;
-  --accent-rgb: 243 244 246;
+  --surface-base: #000000;
+  --surface-glass: #080808;
+  --surface-card: #0d0d0d;
+  --surface-tile: #121212;
+  --surface-tile-soft: #0d0d0d;
+  --surface-control: #121212;
+  --surface-modal: #0d0d0d;
+  --surface-hover: #171717;
+  --surface-active: #1f1f1f;
+  --border-default: #2e2e2e;
+  --border-strong: #505050;
+  --border-focus: #b8b8b8;
+  --text-primary: #f5f5f5;
+  --text-secondary: #d0d0d0;
+  --text-muted: #a3a3a3;
+  --input-text: #f5f5f5;
+  --input-bg: #0d0d0d;
+  --accent: #f5f5f5;
+  --accent-rgb: 245 245 245;
   --accent-hover: #ffffff;
-  --accent-glow: rgba(243, 244, 246, 0.08);
-  --cta-bg: #f3f4f6;
-  --cta-text: #1a1b1e;
-  --success: #32d74b;
-  --warning: #ffd60a;
-  --error: #ff453a;
-  --info: #64d2ff;
+  --accent-glow: rgba(245, 245, 245, 0.10);
+  --cta-bg: #f5f5f5;
+  --cta-text: #080808;
+  --success: #4ade80;
+  --warning: #facc15;
+  --error: #fb7185;
+  --info: #60a5fa;
+  --tz-accent: #c084fc;
+
+  /* On black, separation comes from solid surfaces and borders, not haze or glow. */
+  --shadow-xs: none;
+  --shadow-sm: 0 2px 6px rgba(0,0,0,0.72);
+  --shadow-card: 0 2px 8px rgba(0,0,0,0.72);
+  --shadow-elevated: 0 6px 12px rgba(0,0,0,0.78);
+  --shadow-glow: none;
 
   /* Toast notification variables */
-  --toast-success-bg: rgba(50, 215, 75, 0.08);
-  --toast-success-border: rgba(50, 215, 75, 0.22);
-  --toast-success-glow: rgba(50, 215, 75, 0.12);
-  --toast-warning-bg: rgba(255, 214, 10, 0.08);
-  --toast-warning-border: rgba(255, 214, 10, 0.22);
-  --toast-warning-glow: rgba(255, 214, 10, 0.12);
-  --toast-error-bg: rgba(255, 69, 58, 0.08);
-  --toast-error-border: rgba(255, 69, 58, 0.22);
-  --toast-error-glow: rgba(255, 69, 58, 0.12);
-  --toast-info-bg: rgba(100, 210, 255, 0.08);
-  --toast-info-border: rgba(100, 210, 255, 0.22);
-  --toast-info-glow: rgba(100, 210, 255, 0.12);
+  --toast-success-bg: #0d0d0d;
+  --toast-success-border: rgba(74, 222, 128, 0.48);
+  --toast-success-glow: transparent;
+  --toast-warning-bg: #0d0d0d;
+  --toast-warning-border: rgba(250, 204, 21, 0.48);
+  --toast-warning-glow: transparent;
+  --toast-error-bg: #0d0d0d;
+  --toast-error-border: rgba(251, 113, 133, 0.52);
+  --toast-error-glow: transparent;
+  --toast-info-bg: #0d0d0d;
+  --toast-info-border: rgba(96, 165, 250, 0.52);
+  --toast-info-glow: transparent;
 }
 
 /* ── Light (Apple-inspired light mode) ── */
@@ -127,6 +135,7 @@
   --warning: #ff9f0a;
   --error: #ff3b30;
   --info: #5ac8fa;
+  --tz-accent: #7e22ce;
 
   /* Toast notification variables */
   --toast-success-bg: rgba(52, 199, 89, 0.06);

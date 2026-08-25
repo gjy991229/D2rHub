@@ -124,7 +124,6 @@ export function AboutModal({ open, onClose }: Props) {
           <div className="text-center">
             <img src="/logo.png" alt="D2RHub"
               className="w-12 h-12 rounded-xl object-contain mx-auto mb-3"
-              style={{ filter: "drop-shadow(0 0 10px var(--accent-glow))" }}
             />
             <h3 className="text-sm font-semibold text-text-primary">D2RHub</h3>
             <p className="text-sm text-text-muted mt-0.5">
@@ -240,7 +239,7 @@ export function AboutModal({ open, onClose }: Props) {
       {/* Full-screen preview */}
       {previewImage && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center"
-          style={{ background: "rgba(0,0,0,0.85)", backdropFilter: "blur(8px)" }}
+          style={{ background: "rgba(0,0,0,0.85)" }}
           onClick={() => setPreviewImage(null)}>
           <button onClick={() => setPreviewImage(null)}
             className="absolute top-4 right-4 p-2 rounded-lg text-white/70 hover:text-white

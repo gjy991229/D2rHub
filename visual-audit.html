@@ -1,53 +1,11 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>D2RHub Visual Audit</title>
-    <script>
-      const params = new URLSearchParams(location.search);
-      document.documentElement.dataset.auditSurface = params.get("surface") || "main";
-      document.documentElement.dataset.theme = params.get("theme") === "dark" ? "onyx" : "light";
-    </script>
-    <style>
-      html,
-      body,
-      #root {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-      }
-
-      body {
-        background: #d9dde6;
-      }
-
-      html[data-audit-surface="overlay"] body,
-      html[data-audit-surface="bongo"] body {
-        background: transparent;
-      }
-
-      .visual-audit-loading,
-      .visual-audit-error {
-        width: 100%;
-        height: 100%;
-        display: grid;
-        place-items: center;
-        font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        color: #182033;
-        background: #eef1f6;
-      }
-
-      .visual-audit-error {
-        color: #a42b2b;
-        white-space: pre-wrap;
-        padding: 24px;
-        box-sizing: border-box;
-      }
-    </style>
   </head>
-  <body>
+  <body class="text-text-primary bg-transparent overflow-hidden">
     <div id="root"></div>
     <script type="module" src="/src/visual-audit.tsx"></script>
   </body>
