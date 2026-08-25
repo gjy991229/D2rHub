@@ -7,8 +7,19 @@ import { Input } from "../ui/Input";
 import { useAccounts } from "../../store/accounts";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { showToast } from "../ui/Toast";
-import type { AccountMeta } from "../../store/types";
+import type { AccountMeta, LaunchProgress } from "../../store/types";
+import {
+  firstConfiguredRegion,
+  hasConfiguredPathsForRegion,
+  type AccountRegion,
+} from "../../utils/regionPaths";
+import {
+  accountIdToDeleteOnCancel,
+  shouldCleanupOnDialogClose,
+  shouldStartBnetInitialization,
+} from "../../utils/accountInitLifecycle";
 
 interface Props {
   open: boolean;
@@ -40,6 +51,8 @@ const bnetSteps = [
 
 // ---------- Token wizard steps ----------
 type TokenWizardStep = "token_nick" | "token_auth" | "token_guide" | "token_paste" | "token_settings";
+const CANCEL_RETRY_INTERVAL_MS = 500;
+const CANCEL_TIMEOUT_MS = 5_000;
 
 const getTokenUrl = (region: string): string => {
   switch (region) {
@@ -66,7 +79,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   const [error, setError] = useState<string | null>(null);
   const [nickname, setNickname] = useState("");
   const [authMode, setAuthMode] = useState<"bnet" | "token">("token");
-  const [region, setRegion] = useState<"CN" | "KR" | "NA" | "EU">("CN");
+  const [region, setRegion] = useState<AccountRegion>("CN");
   const [token, setToken] = useState("");
   const [language, setLanguage] = useState("zhCN");
   const [voicelanguage, setVoicelanguage] = useState("zhCN");
@@ -79,8 +92,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
 
   const cancelledRef = useRef(false);
   const accountIdRef = useRef("");
+  const createdAccountIdRef = useRef("");
+  const activeInitializationRef = useRef<Promise<void> | null>(null);
+  const cancellingRef = useRef(false);
 
-  const { createAccount, collectSnapshot } = useAccounts();
+  const { createAccount, initializeBnetAccount } = useAccounts();
   const { config } = useGlobalConfig();
 
   const markDone = (step: InitStep) => setCompletedSteps(prev => new Set([...prev, step]));
@@ -102,6 +118,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
         }
         setRegion(initialRegion);
         setToken("");
+        const initialLocale = initialRegion === "CN" ? "zhCN" : initialRegion === "KR" ? "zhTW" : "enUS";
+        setLanguage(updateAccount.language || initialLocale);
+        setVoicelanguage(updateAccount.voicelanguage || initialLocale);
         setNicknameLocked(true);
         setTokenWizard("token_guide");
       } else {
@@ -109,23 +128,81 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
         accountIdRef.current = "";
         setNickname("");
         setAuthMode("token");
-        setRegion("CN");
+        const initialRegion = firstConfiguredRegion(config, "token") || "CN";
+        setRegion(initialRegion);
         setToken("");
-        setLanguage("zhCN");
-        setVoicelanguage("zhCN");
+        const initialLocale = initialRegion === "CN" ? "zhCN" : initialRegion === "KR" ? "zhTW" : "enUS";
+        setLanguage(initialLocale);
+        setVoicelanguage(initialLocale);
         setNicknameLocked(false);
         setTokenWizard("token_nick");
       }
       setShowGuide(false);
       setTokenGuideLoading(false);
       cancelledRef.current = false;
+      createdAccountIdRef.current = "";
+      activeInitializationRef.current = null;
+      cancellingRef.current = false;
     }
-  }, [open, updateAccount]);
+  }, [open, updateAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_battle_net_path, config?.global_game_path, config?.global_saved_games_path]);
 
   useEffect(() => {
-    if (!open || !config || !nicknameLocked || currentStep !== "input_nickname") return;
-    runInit();
-  }, [open, nicknameLocked]);
+    if (!shouldStartBnetInitialization({
+      open,
+      hasConfig: Boolean(config),
+      nicknameLocked,
+      currentStep,
+      authMode,
+      isUpdating: Boolean(updateAccount),
+    })) return;
+    const initialization = runInit();
+    activeInitializationRef.current = initialization;
+    const clearActive = () => {
+      if (activeInitializationRef.current === initialization) {
+        activeInitializationRef.current = null;
+      }
+    };
+    void initialization.then(clearActive, clearActive);
+  }, [open, config, nicknameLocked, currentStep, authMode, updateAccount]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listen<LaunchProgress>("launch-progress", ({ payload }) => {
+      if (payload.account_id !== accountIdRef.current) return;
+      const succeeded = payload.status === "ok";
+      switch (payload.step) {
+        case "browser":
+          if (!succeeded) setCurrentStep("browser_setup");
+          if (succeeded) {
+            markDone("browser_setup");
+            markDone("browser_launch");
+          }
+          break;
+        case "launch":
+          if (!succeeded) setCurrentStep("launching_bnet");
+          if (succeeded) markDone("launching_bnet");
+          break;
+        case "login":
+          setCurrentStep("waiting_login");
+          if (succeeded) markDone("waiting_login");
+          break;
+        case "snapshot":
+          setCurrentStep("collecting");
+          if (succeeded) markDone("collecting");
+          break;
+      }
+    }).then((stop) => {
+      if (disposed) stop();
+      else unlisten = stop;
+    }).catch((eventError) => {
+      console.error("Failed to listen for account initialization progress:", eventError);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Auto-trigger browser launch when entering token guide step
   useEffect(() => {
@@ -143,145 +220,104 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   }, [currentStep]);
 
   const handleCancel = async () => {
+    if (cancellingRef.current) return;
+    cancellingRef.current = true;
     cancelledRef.current = true;
     setError("已取消初始化流程");
-    const id = accountIdRef.current;
 
     try {
-      await invoke("kill_bnet_processes").catch(() => {});
-      if (config?.auto_close_browser && config && config.browser_type) {
-        await invoke("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
-      }
-      if (id) {
-        await invoke("delete_account", { accountId: id }).catch(() => {});
+      const activeInitialization = activeInitializationRef.current;
+      const id = accountIdToDeleteOnCancel({
+        isUpdating: Boolean(updateAccount),
+        createdAccountId: createdAccountIdRef.current,
+      });
+      const cleanupAfterInitialization = async () => {
+        if (config?.auto_close_browser && config.browser_type) {
+          await invoke("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
+        }
+        if (id) {
+          await invoke("delete_account", { accountId: id });
+        }
+      };
+
+      const settled = authMode !== "bnet"
+        || await requestInitializationCancellation(activeInitialization);
+      if (!settled && activeInitialization) {
+        showToast("warning", "取消请求已发送，后台仍在安全清理；完成后会自动删除未完成账号");
+        void activeInitialization
+          .catch(() => {})
+          .then(cleanupAfterInitialization)
+          .catch((cleanupError) => console.error("Deferred cancel cleanup failed:", cleanupError));
+      } else {
+        await activeInitialization?.catch(() => {});
+        await cleanupAfterInitialization();
       }
     } catch (e) {
       console.error("Cancel cleanup failed:", e);
+    } finally {
+      activeInitializationRef.current = null;
+      setCurrentStep("input_nickname");
+      setNicknameLocked(false);
+      setCompletedSteps(new Set());
+      setAccountId("");
+      accountIdRef.current = "";
+      createdAccountIdRef.current = "";
+      cancellingRef.current = false;
     }
-
-    setCurrentStep("input_nickname");
-    setNicknameLocked(false);
-    setCompletedSteps(new Set());
-    setAccountId("");
-    accountIdRef.current = "";
   };
 
   const handleClose = () => {
-    if (currentStep !== "done" && currentStep !== "input_nickname" && tokenWizard !== "token_nick") {
-      handleCancel();
+    if (shouldCleanupOnDialogClose({ authMode, tokenWizard, currentStep })) {
+      void handleCancel().finally(onClose);
+      return;
     }
     onClose();
   };
 
-  const runInit = async () => {
+  const runInit = async (): Promise<void> => {
     setError(null);
-    const shouldAutoClose = config?.auto_close_browser ?? false;
     if (cancelledRef.current) return;
 
+    setCurrentStep("creating");
+    const id = (await createAccount(
+      nickname.trim(),
+      authMode,
+      region,
+      undefined,
+      language || undefined,
+      voicelanguage || undefined,
+    )) ?? "";
+    if (!id) {
+      if (!cancelledRef.current) setError("创建账号失败");
+      return;
+    }
+
+    accountIdRef.current = id;
+    createdAccountIdRef.current = id;
+    setAccountId(id);
+    markDone("creating");
+
+    if (cancelledRef.current) return;
+    setCurrentStep("browser_setup");
+
     try {
-      setCurrentStep("creating");
-      let id = "";
-      try {
-        if (cancelledRef.current) return;
-        id = (await createAccount(nickname.trim(), authMode, region, undefined, language || undefined, voicelanguage || undefined)) ?? "";
-        if (!id) throw new Error("创建账号失败");
-        accountIdRef.current = id;
-        setAccountId(id);
-        markDone("creating");
-      } catch (e) {
-        if (cancelledRef.current) return;
-        setError(String(e));
-        return;
-      }
-
-      if (config!.browser_path && config!.browser_type) {
-        if (cancelledRef.current) return;
-        setCurrentStep("browser_setup");
-        try {
-          await invoke("launch_browser_for_account", {
-            browserPath: config!.browser_path,
-            accountId: id,
-          });
-          if (cancelledRef.current) return;
-          markDone("browser_setup");
-          setCurrentStep("browser_launch");
-          markDone("browser_launch");
-          await sleep(1500);
-        } catch (e) {
-          if (cancelledRef.current) return;
-          markDone("browser_setup");
-          markDone("browser_launch");
-          showToast("warning", `浏览器启动失败（不影响核心功能）: ${e}`);
-        }
-      } else {
-        markDone("browser_setup");
-        markDone("browser_launch");
-      }
-
+      // 清理、启动、登录检测、快照采集和最终清理由一个后端事务完成。
+      await initializeBnetAccount(id);
       if (cancelledRef.current) return;
-      setCurrentStep("launching_bnet");
-      try {
-        await invoke("clear_auth_registry");
-        await invoke("launch_configured_battle_net");
-        if (cancelledRef.current) {
-          await invoke("kill_bnet_processes").catch(() => {});
-          return;
-        }
-        await invoke("bring_bnet_to_foreground").catch(() => {});
-        markDone("launching_bnet");
-      } catch (e) {
-        if (cancelledRef.current) return;
-        setError("启动战网失败: " + String(e));
-        return;
-      }
 
-      if (cancelledRef.current) return;
-      setCurrentStep("waiting_login");
-      let loggedIn = false;
-      for (let i = 0; i < 120; i++) {
-        if (cancelledRef.current) {
-          await invoke("kill_bnet_processes").catch(() => {});
-          return;
-        }
-        await sleep(1000);
-        if (cancelledRef.current) {
-          await invoke("kill_bnet_processes").catch(() => {});
-          return;
-        }
-        try {
-          if (await invoke<boolean>("check_bnet_logged_in")) {
-            loggedIn = true;
-            break;
-          }
-        } catch {}
-      }
-      if (!loggedIn) {
-        if (cancelledRef.current) return;
-        setError("等待登录超时（120秒），请确认已登录战网后重试");
-        return;
-      }
+      // 事件监听负责实时推进；这里补齐完成态，兼容事件监听初始化失败。
+      markDone("browser_setup");
+      markDone("browser_launch");
+      markDone("launching_bnet");
       markDone("waiting_login");
-
+      markDone("collecting");
+      setCurrentStep("done");
+      showToast("success", "账号 " + nickname.trim() + " 初始化完成！");
+    } catch (initializationError) {
       if (cancelledRef.current) return;
-      setCurrentStep("collecting");
-      try {
-        if (!id) return;
-        await collectSnapshot(id);
-        if (cancelledRef.current) return;
-        markDone("collecting");
-        setCurrentStep("done");
-        showToast("success", "账号 " + nickname.trim() + " 初始化完成！");
-      } catch (e) {
-        if (cancelledRef.current) return;
-        setError("采集快照失败: " + String(e));
-      }
-    } finally {
-      if (shouldAutoClose && config && config.browser_type) {
-        await invoke("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
-      }
+      setError("账号初始化失败: " + String(initializationError));
     }
   };
-
   // ── Token wizard handlers ──
 
   const tokenStepNickNext = () => {
@@ -291,12 +327,20 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   };
 
   const tokenStepSettingsNext = () => {
+    if (!hasConfiguredPathsForRegion(config, region, "token")) {
+      setError(`${region === "CN" ? "国服" : "国际服"}游戏与存档路径尚未完整配置，请先前往设置补全`);
+      return;
+    }
     setError(null);
     setTokenWizard("token_auth");
   };
 
   const tokenStepAuthNext = () => {
     if (authMode === "bnet") {
+      if (!hasConfiguredPathsForRegion(config, region, "bnet")) {
+        setError(`${region === "CN" ? "国服" : "国际服"} Battle.net.exe 尚未配置，战网认证无法继续`);
+        return;
+      }
       // Bnet mode: lock and proceed to old flow
       handleConfirmNickname();
     } else {
@@ -322,6 +366,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
         const newId = await createAccount(nickname.trim(), "token", region, undefined, language || undefined, voicelanguage || undefined);
         if (!newId) throw new Error("创建账号失败");
         accountIdRef.current = newId;
+        createdAccountIdRef.current = newId;
         setAccountId(newId);
         id = newId;
       }
@@ -457,6 +502,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                     {(["CN", "KR", "NA", "EU"] as const).map(r => (
                       <button
                         key={r}
+                        type="button"
+                        disabled={!hasConfiguredPathsForRegion(config, r, "token")}
+                        title={!hasConfiguredPathsForRegion(config, r, "token")
+                          ? `${r === "CN" ? "国服" : "国际服"}游戏与存档路径尚未完整配置`
+                          : undefined}
                         onClick={() => {
                           setRegion(r);
                           if (r === "CN") {
@@ -474,7 +524,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                           region === r
                             ? "bg-accent text-white shadow-sm scale-[1.03]"
                             : "bg-surface-hover text-text-secondary hover:bg-surface-active"
-                        }`}
+                        } disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-surface-hover`}
                       >
                         {r === "CN" && "国服"}
                         {r === "KR" && "亚服"}
@@ -483,6 +533,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                       </button>
                     ))}
                   </div>
+                  {!firstConfiguredRegion(config, "token") && (
+                    <p className="text-xs text-error mt-2">尚未完整配置任何版本的游戏与存档路径，暂时无法创建账号。</p>
+                  )}
                 </div>
 
                 {/* Language buttons */}
@@ -556,6 +609,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                   <input type="radio" checked={authMode === "bnet"} onChange={() => { setAuthMode("bnet"); setError(null); }} className="accent-accent" />
                   <span className="text-md">战网客户端认证（需要通过战网启动）</span>
                 </label>
+                {authMode === "bnet" && (
+                  <p className="text-xs text-text-muted px-1">
+                    战网认证沿用该账号的客户端快照语言；上一步的语言与配音选择仅用于 Token 直启。
+                  </p>
+                )}
               </div>
               <Button variant="primary" size="sm" onClick={tokenStepAuthNext}>下一步</Button>
             </>
@@ -665,4 +723,22 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   );
 }
 
-function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+function sleep(ms: number) { return new Promise<void>(resolve => setTimeout(resolve, ms)); }
+
+async function requestInitializationCancellation(
+  initialization: Promise<void> | null,
+): Promise<boolean> {
+  if (!initialization) return true;
+  const settled = initialization.then(() => true, () => true);
+  const attempts = Math.ceil(CANCEL_TIMEOUT_MS / CANCEL_RETRY_INTERVAL_MS);
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    void invoke("cancel_launch").catch((error) => {
+      console.warn("Failed to send initialization cancellation:", error);
+    });
+    if (await Promise.race([settled, sleep(CANCEL_RETRY_INTERVAL_MS).then(() => false)])) {
+      return true;
+    }
+  }
+  return false;
+}

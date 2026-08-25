@@ -5,11 +5,17 @@ use std::sync::atomic::Ordering;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
-use crate::commands::account::{copy_account_settings_to_system, AccountManager};
+use crate::battle_net_config::update_mod_args;
+use crate::commands::account::{
+    copy_account_settings_to_system, recover_interrupted_replacement, remove_path_if_exists,
+    replace_path_with_backup, resolve_account_runtime_snapshot, sibling_with_suffix,
+    AccountManager, RegistrySnapshotPath,
+};
 use crate::commands::system::LaunchProgress;
 use crate::commands::utils::silent_cmd;
 use crate::error::AppError;
-use crate::state::SharedState;
+use crate::launch_context::{AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext};
+use crate::state::{AccountLifecycleLease, SharedState};
 
 /// 启动进度详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,12 +32,52 @@ const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
 
+fn acquire_account_leases(
+    state: &SharedState,
+    account_ids: &[String],
+) -> Result<Vec<AccountLifecycleLease>, AppError> {
+    let mut canonical_ids: Vec<String> = account_ids
+        .iter()
+        .map(|account_id| account_id.to_ascii_lowercase())
+        .collect();
+    canonical_ids.sort();
+    canonical_ids.dedup();
+    if canonical_ids.len() != account_ids.len() {
+        return Err(AppError::ConfigReadError(
+            "启动列表包含重复账号，已拒绝执行".to_string(),
+        ));
+    }
+    let mut ids = account_ids.to_vec();
+    ids.sort_by_key(|account_id| account_id.to_ascii_lowercase());
+    ids.iter()
+        .map(|account_id| AccountLifecycleLease::try_acquire(state, account_id))
+        .collect()
+}
+
+fn persist_window_position(
+    state: &SharedState,
+    accounts_dir: &str,
+    account_id: &str,
+    position: (i32, i32),
+) -> bool {
+    let Ok(_lease) = AccountLifecycleLease::try_acquire(state, account_id) else {
+        return false;
+    };
+    let Ok(mut meta) = AccountManager::load_meta(accounts_dir, account_id) else {
+        return false;
+    };
+    meta.window_x = Some(position.0);
+    meta.window_y = Some(position.1);
+    AccountManager::save_meta(accounts_dir, &meta).is_ok()
+}
+
 // ── 取消启动 ──
 
 /// 前端点「停止」时调用，后端在下一个检查点中止所有未完成的账号
 #[tauri::command]
 pub fn cancel_launch(state: tauri::State<'_, SharedState>) -> Result<(), AppError> {
     state.cancel_launch.store(true, Ordering::SeqCst);
+    state.cancel_generation.fetch_add(1, Ordering::SeqCst);
     Ok(())
 }
 
@@ -58,14 +104,232 @@ fn checked_account_dir(
         .map_err(|e| account_path_error(account_id, e))
 }
 
+const UNIFIED_AUTH_SUBKEY: &str = r"Software\Blizzard Entertainment\Battle.net\UnifiedAuth";
+const UNIFIED_AUTH_REG_SECTION: &str =
+    r"HKEY_CURRENT_USER\Software\Blizzard Entertainment\Battle.net\UnifiedAuth";
+
+fn validate_legacy_reg_sections(content: &str) -> Result<(), String> {
+    let mut section_count = 0usize;
+    for (line_index, line) in content.lines().enumerate() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with('[') {
+            continue;
+        }
+        if !trimmed.ends_with(']') {
+            return Err(format!(
+                "注册表文件第 {} 行包含未闭合的 section",
+                line_index + 1
+            ));
+        }
+        let section = trimmed[1..trimmed.len() - 1].trim();
+        if !section.eq_ignore_ascii_case(UNIFIED_AUTH_REG_SECTION) {
+            return Err(format!("注册表文件包含不允许的 section: [{section}]"));
+        }
+        section_count += 1;
+    }
+    if section_count == 0 {
+        return Err("注册表文件不包含 UnifiedAuth section".to_string());
+    }
+    Ok(())
+}
+
+fn clear_unified_auth_registry_strict() -> Result<(), AppError> {
+    use winreg::enums::HKEY_CURRENT_USER;
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    match hkcu.delete_subkey_all(UNIFIED_AUTH_SUBKEY) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(AppError::RegistryError(format!(
+            "清空 UnifiedAuth 注册表失败: {error}"
+        ))),
+    }
+}
+
+fn replace_bnet_roaming_snapshot(source: &Path, target: &Path) -> Result<(), AppError> {
+    if !source.is_dir() {
+        return Err(AppError::FileError(format!(
+            "Battle.net 快照目录不存在: {}",
+            source.display()
+        )));
+    }
+    let staged = sibling_with_suffix(target, ".tmp")?;
+    let backup = sibling_with_suffix(target, ".bak")?;
+
+    // 此处已持有 HostRuntimeLease；遗留 `.tmp` 必然来自中断事务，可安全丢弃。
+    // 先恢复 `.bak`，保证后续复制失败时宿主仍保有上一份完整状态。
+    remove_path_if_exists(&staged)?;
+    recover_interrupted_replacement(target)?;
+    crate::commands::utils::copy_dir_recursive(source, &staged).map_err(|error| {
+        let _ = remove_path_if_exists(&staged);
+        AppError::FileError(format!(
+            "暂存 Battle.net 配置失败: {} -> {} ({error})",
+            source.display(),
+            staged.display()
+        ))
+    })?;
+    replace_path_with_backup(&staged, target, &backup)
+}
+
+fn validate_bnet_snapshot(
+    config: &crate::commands::global_config::GlobalConfig,
+    meta: &crate::commands::account::AccountMeta,
+    expected_edition: crate::launch_context::ClientEdition,
+) -> Result<(), AppError> {
+    let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, &meta.id)?;
+    let snapshot = resolve_account_runtime_snapshot(&account_dir, meta, expected_edition)?;
+    if let RegistrySnapshotPath::LegacyReg(reg_path) = snapshot.registry {
+        let bytes = std::fs::read(&reg_path)?;
+        if bytes.is_empty() {
+            return Err(AppError::ConfigReadError(format!(
+                "账号 {} 的注册表快照为空",
+                meta.id
+            )));
+        }
+        let content = decode_reg_file(&bytes).ok_or_else(|| {
+            AppError::ConfigReadError(format!("账号 {} 的注册表快照编码无法识别", meta.id))
+        })?;
+        validate_legacy_reg_sections(&content).map_err(|error| {
+            AppError::ConfigReadError(format!("账号 {} 的注册表快照无效: {error}", meta.id))
+        })?;
+    }
+    Ok(())
+}
+
+fn preflight_accounts(
+    config: &crate::commands::global_config::GlobalConfig,
+    account_ids: &[String],
+    purpose: ContextPurpose,
+) -> Result<(), AppError> {
+    for account_id in account_ids {
+        AccountManager::validate_account_id(account_id)?;
+        let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
+        let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
+        if purpose == ContextPurpose::BattleNetOnly && auth_mode == AuthMode::Token {
+            return Err(AppError::ConfigReadError(format!(
+                "Token 认证账号不支持仅启动 Battle.net: {account_id}"
+            )));
+        }
+        if !meta.initialized {
+            return Err(AppError::ConfigReadError(format!(
+                "账号 {account_id} 尚未初始化"
+            )));
+        }
+
+        let context = LaunchContext::for_account(config, &meta, purpose)?;
+        if purpose == ContextPurpose::LaunchGame && meta.has_customized_settings {
+            let settings_path =
+                AccountManager::account_dir_checked(&config.accounts_dir, account_id)?
+                    .join("Settings.json");
+            if !settings_path.is_file() {
+                return Err(AppError::ConfigReadError(format!(
+                    "账号 {account_id} 已启用独立画质配置，但 Settings.json 不存在"
+                )));
+            }
+            let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
+                &settings_path,
+            )?)
+            .map_err(|error| {
+                AppError::ConfigReadError(format!(
+                    "账号 {account_id} 的 Settings.json 无效: {error}"
+                ))
+            })?;
+            if settings.as_object().is_none_or(|object| object.is_empty()) {
+                return Err(AppError::ConfigReadError(format!(
+                    "账号 {account_id} 的 Settings.json 为空或根节点不是对象"
+                )));
+            }
+        }
+        match auth_mode {
+            AuthMode::Token => {
+                let token = meta
+                    .token
+                    .as_deref()
+                    .filter(|value| !value.trim().is_empty())
+                    .ok_or_else(|| {
+                        AppError::ConfigReadError(format!("账号 {account_id} 缺少 Token"))
+                    })?;
+                let bytes = crate::commands::crypto::hex_decode(token).map_err(|error| {
+                    AppError::ConfigReadError(format!(
+                        "账号 {account_id} 的 Token 数据损坏: {error}"
+                    ))
+                })?;
+                if bytes.is_empty() {
+                    return Err(AppError::ConfigReadError(format!(
+                        "账号 {account_id} 的 Token 数据为空"
+                    )));
+                }
+                if purpose == ContextPurpose::LaunchGame && !meta.mod_args.trim().is_empty() {
+                    parse_windows_command_line(&meta.mod_args).map_err(|error| {
+                        AppError::ConfigReadError(format!(
+                            "账号 {account_id} 的 Mod 启动参数无效: {error}"
+                        ))
+                    })?;
+                }
+            }
+            AuthMode::BattleNet => {
+                validate_bnet_snapshot(config, &meta, context.installation.edition)?;
+                if purpose == ContextPurpose::LaunchGame
+                    && crate::commands::account::is_token_expired(&meta.last_reset_at)
+                {
+                    return Err(AppError::ConfigReadError(format!(
+                        "账号 {account_id} 的认证已超过 30 天，请重新初始化账号"
+                    )));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Terminate only Battle.net processes owned by this installation profile.
+/// `/T` includes descendants of the matched process without claiming unrelated Agent.exe trees.
+fn kill_battle_net_for_context(context: &LaunchContext, flush_before_kill: bool) {
+    let Ok(expected_path) = context.battle_net_executable() else {
+        return;
+    };
+    if flush_before_kill {
+        std::thread::sleep(std::time::Duration::from_millis(1500));
+    }
+
+    let mut system = sysinfo::System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All);
+    let process_ids: Vec<u32> = system
+        .processes()
+        .values()
+        .filter(|process| {
+            process
+                .name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("Battle.net.exe")
+                && process.exe().is_some_and(|actual| {
+                    crate::commands::system::executable_paths_match(actual, expected_path)
+                })
+        })
+        .map(|process| process.pid().as_u32())
+        .collect();
+    for process_id in process_ids {
+        let _ = silent_cmd("taskkill")
+            .args(["/F", "/T", "/PID", &process_id.to_string()])
+            .output();
+    }
+}
+
 /// 取消前检查战网状态：
 /// - 已登录（进程≥7）：先优雅关闭战网让其 flush 注册表，再回写备份
 /// - 运行中但未登录：直接强杀，不回写（注册表中是刚恢复的旧数据，无保存价值）
 async fn cancel_with_cleanup(
     config: &crate::commands::global_config::GlobalConfig,
+    context: &LaunchContext,
     account_id: &str,
 ) -> LaunchResult {
-    let bnet_count = crate::commands::system::count_bnet_processes();
+    // 取消清理只能认领当前 Launch Context 对应的 Battle.net，绝不回退到其他版本。
+    let bnet_count = context
+        .battle_net_executable()
+        .ok()
+        .map(|path| crate::commands::system::count_bnet_processes_for_path(&path.to_string_lossy()))
+        .unwrap_or(0);
     let bnet_logged_in = bnet_count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD;
 
     if bnet_logged_in {
@@ -78,9 +342,8 @@ async fn cancel_with_cleanup(
             ),
         );
 
-        // 先优雅关闭战网（给 BNet 时间 flush 注册表），再读取并回写
-        crate::commands::system::graceful_kill_bnet(30);
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        // 给当前版本的 BNet 时间 flush，再只终止其进程树。
+        kill_battle_net_for_context(context, true);
 
         let account_dir = match checked_account_dir(config, account_id) {
             Ok(dir) => dir,
@@ -131,7 +394,7 @@ async fn cancel_with_cleanup(
                 account_id, bnet_count
             ),
         );
-        crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]);
+        kill_battle_net_for_context(context, false);
     }
 
     LaunchResult {
@@ -152,16 +415,18 @@ pub async fn launch_battle_net_only(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    state.cancel_launch.store(false, Ordering::SeqCst);
-
+    if account_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let _account_leases = acquire_account_leases(state.inner(), &account_ids)?;
     let config = {
         let cfg = state.config.read();
         cfg.clone()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
     };
-    for account_id in &account_ids {
-        AccountManager::validate_account_id(account_id)?;
-    }
+    preflight_accounts(&config, &account_ids, ContextPurpose::BattleNetOnly)?;
+    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
+    state.cancel_launch.store(false, Ordering::SeqCst);
 
     let mut results = Vec::new();
     let total = account_ids.len();
@@ -225,7 +490,35 @@ async fn prepare_bnet_environment(
     state: &SharedState,
     account_id: &str,
     wait_login: bool,
-) -> Result<(), LaunchResult> {
+) -> Result<LaunchContext, LaunchResult> {
+    // Resolve the complete account context before any process, file, or registry mutation.
+    let meta = AccountManager::load_meta(&config.accounts_dir, account_id)
+        .map_err(|error| account_path_error(account_id, error))?;
+    let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())
+        .map_err(|error| account_path_error(account_id, error))?;
+    if auth_mode != AuthMode::BattleNet {
+        return Err(account_path_error(
+            account_id,
+            AppError::ConfigReadError("Token 认证账号不能进入 Battle.net 启动流程".to_string()),
+        ));
+    }
+    let purpose = if wait_login {
+        ContextPurpose::BattleNetOnly
+    } else {
+        ContextPurpose::LaunchGame
+    };
+    let context = LaunchContext::for_account(config, &meta, purpose)
+        .map_err(|error| account_path_error(account_id, error))?;
+    let battle_net_path = context
+        .battle_net_executable()
+        .map_err(|error| account_path_error(account_id, error))?
+        .to_string_lossy()
+        .to_string();
+    let saved_games_path = context.installation.saved_games_directory.clone();
+    let battle_net_config_game_key = context.edition.battle_net_config_game_key;
+    let has_customized_settings = meta.has_customized_settings;
+    let mod_args = meta.mod_args.clone();
+
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
             "INFO",
@@ -251,19 +544,34 @@ async fn prepare_bnet_environment(
     // ── Step 1: 环境清理 ──
     emit("clean", "running", "正在清理战网和 Agent 进程...");
     let clean_res = tokio::task::spawn_blocking(|| {
-        crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]);
+        crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"])
     })
     .await;
 
-    if clean_res.is_err() {
-        emit("clean", "error", "清理环境线程异常");
-        return Err(LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
-            error: Some("清理环境线程异常".to_string()),
-            mutex_killed: false,
-        });
+    match clean_res {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => {
+            let message = format!("清理共享进程失败: {error}");
+            emit("clean", "error", &message);
+            return Err(LaunchResult {
+                account_id: account_id.to_string(),
+                success: false,
+                d2r_pid: None,
+                error: Some(message),
+                mutex_killed: false,
+            });
+        }
+        Err(error) => {
+            let message = format!("清理环境线程异常: {error}");
+            emit("clean", "error", &message);
+            return Err(LaunchResult {
+                account_id: account_id.to_string(),
+                success: false,
+                d2r_pid: None,
+                error: Some(message),
+                mutex_killed: false,
+            });
+        }
     }
 
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -279,86 +587,63 @@ async fn prepare_bnet_environment(
 
     let accounts_dir = config.accounts_dir.clone();
     let app_data_roaming_bnet_path = config.app_data_roaming_bnet_path.clone();
-    let saved_games_path = config.saved_games_path.clone();
     let account_id_str = account_id.to_string();
+    let snapshot_meta = meta.clone();
+    let snapshot_edition = context.installation.edition;
 
     let copy_res = tokio::task::spawn_blocking(move || -> Result<(), String> {
         let account_dir = AccountManager::account_dir_checked(&accounts_dir, &account_id_str)
             .map_err(|e| e.to_string())?;
 
-        // 2.1 复制 Battle.net Roaming 配置
-        let bnet_src = account_dir.join("Battle.net");
+        let snapshot =
+            resolve_account_runtime_snapshot(&account_dir, &snapshot_meta, snapshot_edition)
+                .map_err(|error| format!("解析账号运行时快照失败: {error}"))?;
+
+        // 2.1 精确替换 Battle.net Roaming 配置
         let bnet_dst = Path::new(&app_data_roaming_bnet_path);
-        if bnet_src.exists() {
-            if bnet_dst.exists() {
-                let _ = std::fs::remove_dir_all(bnet_dst);
-            }
-            if let Err(e) = crate::commands::utils::copy_dir_recursive(&bnet_src, bnet_dst) {
-                return Err(format!("复制 Battle.net 配置失败: {}", e));
-            }
-        }
+        replace_bnet_roaming_snapshot(&snapshot.bnet_directory, bnet_dst)
+            .map_err(|error| error.to_string())?;
 
         // 2.2 导入注册表（已初始化账号必须成功，否则战网无法自动登录）
-        let json_path = account_dir.join("unified_auth.json");
-        if json_path.exists() {
-            crate::commands::account::restore_registry_from_json(&json_path)
-                .map_err(|e| format!("恢复注册表失败: {}", e))?;
-        } else {
-            let reg_path = account_dir.join("unified_auth.reg");
-            if reg_path.exists() {
-                // ── 安全校验：读取 .reg 文件并扫描危险键路径 ──
-                // Windows regedit 导出的 .reg 默认为 UTF-16LE（带 BOM），
-                // read_to_string 只支持 UTF-8，故用原始字节 + BOM 检测解码
+        match snapshot.registry {
+            RegistrySnapshotPath::Json(json_path) => {
+                // JSON 恢复函数在验证完整快照后自行清空并写入，调用方不得重复预清空。
+                crate::commands::account::restore_registry_from_json(&json_path)
+                    .map_err(|e| format!("恢复注册表失败: {e}"))?;
+            }
+            RegistrySnapshotPath::LegacyReg(reg_path) => {
                 let reg_bytes =
-                    std::fs::read(&reg_path).map_err(|e| format!("读取注册表文件失败: {}", e))?;
+                    std::fs::read(&reg_path).map_err(|e| format!("读取注册表文件失败: {e}"))?;
                 if reg_bytes.is_empty() {
                     return Err("注册表文件为空，导入被拒绝".to_string());
                 }
                 let reg_content = decode_reg_file(&reg_bytes).ok_or_else(|| {
                     "注册表文件编码无法识别（需 UTF-8 或 UTF-16LE），导入被拒绝".to_string()
                 })?;
-                let lower = reg_content.to_lowercase();
-                if lower.contains(
-                    "hkey_local_machine\\software\\microsoft\\windows\\currentversion\\run",
-                ) || lower.contains("hkey_classes_root")
-                {
-                    crate::logger::log_msg(
-                        "WARN",
-                        "Launch",
-                        &format!(
-                            "[Account {}] .reg 文件包含可疑系统键路径，已拒绝导入",
-                            account_id_str
-                        ),
-                    );
-                    return Err(format!("注册表文件包含危险键路径，导入被拒绝"));
-                }
+                validate_legacy_reg_sections(&reg_content)?;
+                clear_unified_auth_registry_strict().map_err(|error| error.to_string())?;
                 let output = silent_cmd("reg")
                     .args(["import", &reg_path.to_string_lossy()])
                     .output()
-                    .map_err(|e| format!("执行 reg import 失败: {}", e))?;
+                    .map_err(|e| format!("执行 reg import 失败: {e}"))?;
                 if !output.status.success() {
-                    crate::logger::log_msg(
-                        "WARN",
-                        "Launch",
-                        &format!(
-                            "[Account {}] reg import 返回非零退出码: {}",
-                            account_id_str,
-                            String::from_utf8_lossy(&output.stderr)
-                        ),
+                    let import_error = format!(
+                        "reg import 返回非零退出码: {}",
+                        String::from_utf8_lossy(&output.stderr)
                     );
+                    return match clear_unified_auth_registry_strict() {
+                        Ok(()) => Err(import_error),
+                        Err(cleanup_error) => Err(format!(
+                            "{import_error}；清理部分导入也失败: {cleanup_error}"
+                        )),
+                    };
                 }
             }
         }
 
-        let meta_res = AccountManager::load_meta(&accounts_dir, &account_id_str);
-
         // 2.3 覆盖 Settings.json
-        if meta_res
-            .as_ref()
-            .map(|meta| meta.has_customized_settings)
-            .unwrap_or(false)
-        {
-            copy_account_settings_to_system(&account_dir, Path::new(&saved_games_path))
+        if has_customized_settings {
+            copy_account_settings_to_system(&account_dir, &saved_games_path)
                 .map_err(|e| e.to_string())?;
         } else {
             crate::logger::log_msg(
@@ -374,11 +659,9 @@ async fn prepare_bnet_environment(
         let bnet_config_path = bnet_dst.join("Battle.net.config");
 
         // 2.3.5 注入 Mod 参数
-        if let Ok(ref meta) = meta_res {
-            if bnet_config_path.exists() {
-                let _ =
-                    crate::commands::account::inject_mod_args(&bnet_config_path, &meta.mod_args);
-            }
+        if bnet_config_path.exists() {
+            update_mod_args(&bnet_config_path, battle_net_config_game_key, &mod_args)
+                .map_err(|error| format!("注入 Mod 参数失败: {error}"))?;
         }
 
         // 2.4 强制确保 SingleInstance
@@ -432,7 +715,6 @@ async fn prepare_bnet_environment(
     // ── Step 3: 启动战网并等待登录 ──
     emit("launch", "running", "正在启动战网客户端...");
 
-    let battle_net_path = config.battle_net_path.clone();
     // 基础安全校验：确保路径指向预期的可执行文件
     if !battle_net_path.to_lowercase().ends_with("battle.net.exe") {
         let msg = format!("战网路径异常，预期 Battle.net.exe: {}", battle_net_path);
@@ -445,8 +727,9 @@ async fn prepare_bnet_environment(
             mutex_killed: false,
         });
     }
+    let battle_net_spawn_path = battle_net_path.clone();
     let spawn_res =
-        tokio::task::spawn_blocking(move || Command::new(&battle_net_path).spawn()).await;
+        tokio::task::spawn_blocking(move || Command::new(&battle_net_spawn_path).spawn()).await;
 
     match spawn_res {
         Ok(Ok(_)) => {}
@@ -482,10 +765,10 @@ async fn prepare_bnet_environment(
         for i in 1..=60 {
             if is_cancelled(state) {
                 emit("done", "error", "已取消，正在保存状态...");
-                return Err(cancel_with_cleanup(config, account_id).await);
+                return Err(cancel_with_cleanup(config, &context, account_id).await);
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let count = crate::commands::system::count_bnet_processes();
+            let count = crate::commands::system::count_bnet_processes_for_path(&battle_net_path);
             if count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD {
                 bnet_ready = true;
                 emit(
@@ -536,10 +819,10 @@ async fn prepare_bnet_environment(
 
     if is_cancelled(state) {
         emit("done", "error", "已取消，正在保存状态...");
-        return Err(cancel_with_cleanup(config, account_id).await);
+        return Err(cancel_with_cleanup(config, &context, account_id).await);
     }
 
-    Ok(())
+    Ok(context)
 }
 
 async fn launch_single_bnet_only(
@@ -610,17 +893,21 @@ pub async fn launch_accounts(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    // 每次启动前重置取消标志
-    state.cancel_launch.store(false, Ordering::SeqCst);
-
+    if account_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let _account_leases = acquire_account_leases(state.inner(), &account_ids)?;
     let config = {
         let cfg = state.config.read();
         cfg.clone()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
     };
-    for account_id in &account_ids {
-        AccountManager::validate_account_id(account_id)?;
-    }
+    preflight_accounts(&config, &account_ids, ContextPurpose::LaunchGame)?;
+    // Token 启动同样会覆盖机器级 Launch Options\OSI 与存档目录中的 Settings.json。
+    // 因此所有启动批次都必须持有宿主租约，避免 Token/战网流程并发串号或串配置。
+    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
+    // Reset only after the lease is held, so a rejected concurrent request cannot alter the active flow.
+    state.cancel_launch.store(false, Ordering::SeqCst);
 
     let mut results = Vec::new();
     let total = account_ids.len();
@@ -739,41 +1026,44 @@ async fn launch_single(
         );
     };
 
-    let _cancelled = || -> LaunchResult {
-        LaunchResult {
+    let meta = match AccountManager::load_meta(&config.accounts_dir, account_id) {
+        Ok(meta) => meta,
+        Err(error) => return account_path_error(account_id, error),
+    };
+    let preflight_context =
+        match LaunchContext::for_account(config, &meta, ContextPurpose::LaunchGame) {
+            Ok(context) => context,
+            Err(error) => return account_path_error(account_id, error),
+        };
+
+    // ── Token 过期检查（仅战网模式）──
+    if preflight_context.auth_mode == AuthMode::BattleNet
+        && crate::commands::account::is_token_expired(&meta.last_reset_at)
+    {
+        return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
             d2r_pid: None,
-            error: Some("启动已被用户取消".to_string()),
+            error: Some("Token 已过期（超过30天），请重新初始化账号".to_string()),
             mutex_killed: false,
-        }
-    };
-
-    // ── Token 过期检查（仅战网模式）──
-    let meta_opt = AccountManager::load_meta(&config.accounts_dir, account_id).ok();
-    if let Some(ref meta) = meta_opt {
-        if meta.auth_mode.as_deref() != Some("token")
-            && crate::commands::account::is_token_expired(&meta.last_reset_at)
-        {
-            return LaunchResult {
-                account_id: account_id.to_string(),
-                success: false,
-                d2r_pid: None,
-                error: Some("Token 已过期（超过30天），请重新初始化账号".to_string()),
-                mutex_killed: false,
-            };
-        }
+        };
     }
 
-    let is_token_auth = meta_opt.as_ref().and_then(|m| m.auth_mode.as_deref()) == Some("token");
-    if is_token_auth {
-        return launch_single_token(app, config, state, account_id, meta_opt.as_ref().unwrap())
+    if preflight_context.auth_mode == AuthMode::Token {
+        return launch_single_token(app, config, state, account_id, &meta, &preflight_context)
             .await;
     }
 
-    if let Err(res) = prepare_bnet_environment(app, config, state, account_id, false).await {
-        return res;
-    }
+    let context = match prepare_bnet_environment(app, config, state, account_id, false).await {
+        Ok(context) => context,
+        Err(result) => return result,
+    };
+    let product_code = context.edition.battle_net_launch_product;
+    let battle_net_path = match context.battle_net_executable() {
+        Ok(path) => path.to_string_lossy().to_string(),
+        Err(error) => return account_path_error(account_id, error),
+    };
+    let expected_game_path = context.installation.game_executable.clone();
 
     // ── Step 4: 记录当前 D2R 进程快照 ──
     let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
@@ -796,7 +1086,7 @@ async fn launch_single(
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state) {
             emit("done", "error", "已取消，正在保存状态...");
-            return cancel_with_cleanup(config, account_id).await;
+            return cancel_with_cleanup(config, &context, account_id).await;
         }
 
         struct SysStatus {
@@ -805,6 +1095,8 @@ async fn launch_single(
             d2r_pids: Vec<u32>,
         }
 
+        let monitored_bnet_path = battle_net_path.clone();
+        let monitored_game_path = expected_game_path.clone();
         let (status, sys_ret) = tokio::task::spawn_blocking(move || {
             sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
 
@@ -816,9 +1108,23 @@ async fn launch_single(
                 let name = proc.name().to_string_lossy();
                 if name.eq_ignore_ascii_case("Agent.exe") {
                     agent_pids.push(pid.as_u32());
-                } else if name == "Battle.net.exe" {
-                    bnet_count += 1;
-                } else if name == "D2R.exe" {
+                } else if name.eq_ignore_ascii_case("Battle.net.exe") {
+                    if proc.exe().is_some_and(|actual| {
+                        crate::commands::system::executable_paths_match(
+                            actual,
+                            Path::new(&monitored_bnet_path),
+                        )
+                    }) {
+                        bnet_count += 1;
+                    }
+                } else if name.eq_ignore_ascii_case("D2R.exe")
+                    && proc.exe().is_some_and(|actual| {
+                        crate::commands::system::executable_paths_match(
+                            actual,
+                            &monitored_game_path,
+                        )
+                    })
+                {
                     d2r_pids.push(pid.as_u32());
                 }
             }
@@ -950,7 +1256,8 @@ async fn launch_single(
             };
 
             if should_send {
-                let battle_net_path = config.battle_net_path.clone();
+                let battle_net_path = battle_net_path.clone();
+                let launch_argument = format!("--exec=launch {}", product_code);
                 emit(
                     "game",
                     "running",
@@ -960,9 +1267,7 @@ async fn launch_single(
                     ),
                 );
                 let _ = tokio::task::spawn_blocking(move || {
-                    Command::new(&battle_net_path)
-                        .arg("--exec=launch OSI")
-                        .spawn()
+                    Command::new(&battle_net_path).arg(&launch_argument).spawn()
                 })
                 .await;
                 last_launch_sent = Some(std::time::Instant::now());
@@ -1004,6 +1309,7 @@ async fn launch_single(
                 let title_copy = win_title.clone();
                 let accounts_dir = config.accounts_dir.clone();
                 let account_id_owned = account_id.to_string();
+                let state_for_position = state.clone();
                 tokio::task::spawn_blocking(move || {
                     // Phase 1: 10 次重试重命名 + 初始定位
                     for _ in 0..10 {
@@ -1031,13 +1337,15 @@ async fn launch_single(
                             if let Some(pos) = crate::commands::system::get_window_rect(hwnd) {
                                 // 过滤最小化时的异常坐标（Windows 对最小化窗口返回 ~-32000）
                                 if pos.0 > -10000 && pos.1 > -10000 && last_pos != Some(pos) {
-                                    last_pos = Some(pos);
-                                    if let Ok(mut meta) =
-                                        AccountManager::load_meta(&accounts_dir, &account_id_owned)
-                                    {
-                                        meta.window_x = Some(pos.0);
-                                        meta.window_y = Some(pos.1);
-                                        let _ = AccountManager::save_meta(&accounts_dir, &meta);
+                                    // 只有真正落盘后才更新 last_pos；租约忙时保留旧值，
+                                    // 下一轮会在启动事务释放账号租约后自动重试。
+                                    if persist_window_position(
+                                        &state_for_position,
+                                        &accounts_dir,
+                                        &account_id_owned,
+                                        pos,
+                                    ) {
+                                        last_pos = Some(pos);
                                     }
                                 }
                             }
@@ -1061,7 +1369,7 @@ async fn launch_single(
 
     if is_cancelled(state) {
         emit("done", "error", "已取消，正在保存状态...");
-        return cancel_with_cleanup(config, account_id).await;
+        return cancel_with_cleanup(config, &context, account_id).await;
     }
 
     // ── Step 7: 互斥句柄清除 (后台任务，与 Step 8 并发) ──
@@ -1076,19 +1384,18 @@ async fn launch_single(
                 if is_cancelled(&state_clone) {
                     break;
                 }
-                match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
-                    Ok(Some(hid)) => {
-                        found.store(true, std::sync::atomic::Ordering::SeqCst);
-                        let _ = crate::commands::system::close_handle(d2r_pid, &hid);
-                        match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
-                            Ok(None) | Err(_) => {
-                                killed.store(true, std::sync::atomic::Ordering::SeqCst);
-                                break;
-                            }
-                            _ => {}
+                if let Ok(Some(hid)) =
+                    crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                {
+                    found.store(true, std::sync::atomic::Ordering::SeqCst);
+                    let _ = crate::commands::system::close_handle(d2r_pid, &hid);
+                    match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
+                        Ok(None) | Err(_) => {
+                            killed.store(true, std::sync::atomic::Ordering::SeqCst);
+                            break;
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
@@ -1111,7 +1418,7 @@ async fn launch_single(
         if is_cancelled(state) {
             emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
-            return cancel_with_cleanup(config, account_id).await;
+            return cancel_with_cleanup(config, &context, account_id).await;
         }
 
         let _ = crate::commands::system::send_keys_to_window(d2r_pid);
@@ -1149,7 +1456,7 @@ async fn launch_single(
             if is_cancelled(state) {
                 emit("done", "error", "已取消，正在保存状态...");
                 mutex_task.abort();
-                return cancel_with_cleanup(config, account_id).await;
+                return cancel_with_cleanup(config, &context, account_id).await;
             }
             if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
@@ -1230,6 +1537,7 @@ async fn launch_single_token(
     state: &SharedState,
     account_id: &str,
     meta: &crate::commands::account::AccountMeta,
+    context: &LaunchContext,
 ) -> LaunchResult {
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -1264,13 +1572,13 @@ async fn launch_single_token(
         Ok(dir) => dir,
         Err(res) => return res,
     };
-    let saved_games_path = config.saved_games_path.clone();
 
     // 1. 覆盖 Settings.json
     if meta.has_customized_settings {
-        if let Err(e) =
-            copy_account_settings_to_system(&account_dir, Path::new(&saved_games_path))
-        {
+        if let Err(e) = copy_account_settings_to_system(
+            &account_dir,
+            &context.installation.saved_games_directory,
+        ) {
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
@@ -1319,31 +1627,39 @@ async fn launch_single_token(
         }
     };
 
-    {
+    let registry_result = (|| -> Result<(), AppError> {
         use winreg::enums::*;
         use winreg::RegKey;
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        if let Ok((key, _)) =
-            hkcu.create_subkey(r"Software\Blizzard Entertainment\Battle.net\Launch Options\OSI")
-        {
-            let region = meta.region.as_deref().unwrap_or("CN");
-            let _ = key.set_value("REGION", &region);
-            let default_locale = match region {
-                "KR" | "Global" => "zhTW",
-                "NA" | "EU" => "enUS",
-                _ => "zhCN",
-            };
-            let locale = meta.language.as_deref().unwrap_or(default_locale);
-            let audio = meta.voicelanguage.as_deref().unwrap_or(default_locale);
-            let _ = key.set_value("LOCALE", &locale);
-            let _ = key.set_value("LOCALE_AUDIO", &audio);
+        let registry_path = context.token_registry_path();
+        let (key, _) = hkcu.create_subkey(&registry_path).map_err(|error| {
+            AppError::RegistryError(format!("打开 Token 注册表路径失败: {error}"))
+        })?;
+        key.set_value("REGION", &context.region.registry_region)
+            .map_err(|error| AppError::RegistryError(format!("写入 REGION 失败: {error}")))?;
+        let locale = meta
+            .language
+            .as_deref()
+            .unwrap_or(context.region.default_locale);
+        let audio = meta
+            .voicelanguage
+            .as_deref()
+            .unwrap_or(context.region.default_locale);
+        key.set_value("LOCALE", &locale)
+            .map_err(|error| AppError::RegistryError(format!("写入 LOCALE 失败: {error}")))?;
+        key.set_value("LOCALE_AUDIO", &audio)
+            .map_err(|error| AppError::RegistryError(format!("写入 LOCALE_AUDIO 失败: {error}")))?;
 
-            let val = winreg::RegValue {
-                bytes: protected_bytes,
-                vtype: RegType::REG_BINARY,
-            };
-            let _ = key.set_raw_value("WEB_TOKEN", &val);
-        }
+        let val = winreg::RegValue {
+            bytes: protected_bytes,
+            vtype: RegType::REG_BINARY,
+        };
+        key.set_raw_value("WEB_TOKEN", &val)
+            .map_err(|error| AppError::RegistryError(format!("写入 WEB_TOKEN 失败: {error}")))?;
+        Ok(())
+    })();
+    if let Err(error) = registry_result {
+        return account_path_error(account_id, error);
     }
     emit("copy", "ok", "配置覆盖完成");
 
@@ -1352,19 +1668,24 @@ async fn launch_single_token(
 
     emit("game", "running", "正在直接启动 D2R.exe...");
     // 4. 启动 D2R.exe
-    let game_path = Path::new(&config.game_path)
-        .join("D2R.exe")
-        .to_string_lossy()
-        .to_string();
-    let region = meta.region.as_deref().unwrap_or("CN");
-    let uid_arg = if region == "CN" { "osic" } else { "OSI" };
+    let game_path = context.installation.game_executable.clone();
+    let expected_game_path = game_path.clone();
+    // The executable UID is edition-specific; the shared token registry key is not.
+    let uid_arg = context.edition.token_auth_app;
 
     let mut cmd = Command::new(&game_path);
+    cmd.current_dir(&context.installation.game_directory);
     cmd.arg("-uid").arg(uid_arg);
 
     if !meta.mod_args.is_empty() {
-        let args: Vec<&str> = meta.mod_args.split_whitespace().collect();
-        cmd.args(args);
+        match parse_windows_command_line(&meta.mod_args) {
+            Ok(args) => {
+                cmd.args(args);
+            }
+            Err(error) => {
+                return account_path_error(account_id, AppError::ConfigReadError(error));
+            }
+        }
     }
 
     let spawn_res = tokio::task::spawn_blocking(move || cmd.spawn()).await;
@@ -1392,7 +1713,8 @@ async fn launch_single_token(
             return cancelled();
         }
 
-        let (d2r_pids, sys_ret) = tokio::task::spawn_blocking(move || {
+        let monitored_game_path = expected_game_path.clone();
+        let process_refresh = tokio::task::spawn_blocking(move || {
             sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
             let mut pids = Vec::new();
             for (pid, proc) in sys.processes() {
@@ -1400,14 +1722,31 @@ async fn launch_single_token(
                     .name()
                     .to_string_lossy()
                     .eq_ignore_ascii_case("D2R.exe")
+                    && proc.exe().is_some_and(|actual| {
+                        crate::commands::system::executable_paths_match(
+                            actual,
+                            &monitored_game_path,
+                        )
+                    })
                 {
                     pids.push(pid.as_u32());
                 }
             }
             (pids, sys)
         })
-        .await
-        .unwrap();
+        .await;
+        let (d2r_pids, sys_ret) = match process_refresh {
+            Ok(result) => result,
+            Err(error) => {
+                return LaunchResult {
+                    account_id: account_id.to_string(),
+                    success: false,
+                    d2r_pid: None,
+                    error: Some(format!("刷新游戏进程列表失败: {error}")),
+                    mutex_killed: false,
+                };
+            }
+        };
         sys = sys_ret;
 
         for pid in &d2r_pids {
@@ -1465,13 +1804,12 @@ async fn launch_single_token(
         let killed = mutex_killed.clone();
         tokio::spawn(async move {
             for _ in 0..60 {
-                match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
-                    Ok(Some(hid)) => {
-                        let _ = crate::commands::system::close_handle(d2r_pid, &hid);
-                        killed.store(true, std::sync::atomic::Ordering::SeqCst);
-                        break;
-                    }
-                    _ => {}
+                if let Ok(Some(hid)) =
+                    crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                {
+                    let _ = crate::commands::system::close_handle(d2r_pid, &hid);
+                    killed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
@@ -1544,6 +1882,72 @@ async fn launch_single_token(
 
 // ── 工具函数 ──
 
+/// Parse a Windows command-line fragment into arguments without losing quoted spaces.
+/// Implements the backslash-before-quote rules used by the Microsoft C runtime.
+fn parse_windows_command_line(input: &str) -> Result<Vec<String>, String> {
+    let chars: Vec<char> = input.chars().collect();
+    let mut args = Vec::new();
+    let mut index = 0;
+
+    while index < chars.len() {
+        while index < chars.len() && chars[index].is_whitespace() {
+            index += 1;
+        }
+        if index == chars.len() {
+            break;
+        }
+
+        let mut argument = String::new();
+        let mut in_quotes = false;
+        let mut started = false;
+        while index < chars.len() {
+            let current = chars[index];
+            if current.is_whitespace() && !in_quotes {
+                break;
+            }
+            if current == '\\' {
+                let slash_start = index;
+                while index < chars.len() && chars[index] == '\\' {
+                    index += 1;
+                }
+                let slash_count = index - slash_start;
+                if index < chars.len() && chars[index] == '"' {
+                    argument.extend(std::iter::repeat_n('\\', slash_count / 2));
+                    if slash_count % 2 == 0 {
+                        in_quotes = !in_quotes;
+                    } else {
+                        argument.push('"');
+                    }
+                    started = true;
+                    index += 1;
+                } else {
+                    argument.extend(std::iter::repeat_n('\\', slash_count));
+                    started = true;
+                }
+                continue;
+            }
+            if current == '"' {
+                in_quotes = !in_quotes;
+                started = true;
+                index += 1;
+                continue;
+            }
+            argument.push(current);
+            started = true;
+            index += 1;
+        }
+
+        if in_quotes {
+            return Err("Mod 启动参数包含未闭合的双引号".to_string());
+        }
+        if started {
+            args.push(argument);
+        }
+    }
+
+    Ok(args)
+}
+
 /// 解码 .reg 注册表文件内容为 String。
 /// Windows regedit 导出默认 UTF-16LE（BOM 0xFF 0xFE），也兼容 UTF-8（含或不含 BOM）。
 /// 返回 None 表示文件编码无法识别或解码失败——调用方应拒绝导入（Fail-Safe）。
@@ -1551,7 +1955,7 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
     if raw.len() >= 2 && raw[0] == 0xFF && raw[1] == 0xFE {
         // UTF-16LE with BOM
         let u16_bytes = &raw[2..];
-        if u16_bytes.len() % 2 != 0 {
+        if !u16_bytes.len().is_multiple_of(2) {
             return None;
         }
         let u16_words: Vec<u16> = u16_bytes
@@ -1565,5 +1969,287 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
     } else {
         // Assume UTF-8 without BOM (or plain ASCII)
         String::from_utf8(raw.to_vec()).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        acquire_account_leases, parse_windows_command_line, persist_window_position,
+        preflight_accounts, replace_bnet_roaming_snapshot, validate_legacy_reg_sections,
+    };
+    use crate::commands::account::{AccountManager, AccountMeta};
+    use crate::commands::global_config::GlobalConfig;
+    use crate::launch_context::ContextPurpose;
+    use crate::state::{AccountLifecycleLease, AppState};
+
+    #[test]
+    fn launch_batch_rejects_uuid_case_aliases() {
+        let state = std::sync::Arc::new(AppState::new());
+        let account_ids = vec![
+            "ABCDEF01-2345-6789-ABCD-EF0123456789".to_string(),
+            "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
+        ];
+
+        assert!(acquire_account_leases(&state, &account_ids).is_err());
+        assert!(state.account_operations.lock().is_empty());
+    }
+
+    #[test]
+    fn window_position_retries_after_account_lease_is_released() {
+        let root = temp_dir("window_position_retry");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let state = std::sync::Arc::new(AppState::new());
+        let blocking_lease = AccountLifecycleLease::try_acquire(&state, "acount1").unwrap();
+
+        assert!(!persist_window_position(
+            &state,
+            &config.accounts_dir,
+            "acount1",
+            (120, 240),
+        ));
+        drop(blocking_lease);
+        assert!(persist_window_position(
+            &state,
+            &config.accounts_dir,
+            "acount1",
+            (120, 240),
+        ));
+
+        let meta = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+        assert_eq!((meta.window_x, meta.window_y), (Some(120), Some(240)));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn windows_mod_arguments_preserve_quoted_spaces() {
+        assert_eq!(
+            parse_windows_command_line(r#"-mod "My Mod" -txt"#).unwrap(),
+            vec!["-mod", "My Mod", "-txt"]
+        );
+    }
+
+    #[test]
+    fn windows_mod_arguments_preserve_escaped_quotes_and_backslashes() {
+        assert_eq!(
+            parse_windows_command_line(r#"--label "say \"hello\"" C:\Mods\D2RMM"#).unwrap(),
+            vec!["--label", "say \"hello\"", r"C:\Mods\D2RMM"]
+        );
+    }
+
+    #[test]
+    fn windows_mod_arguments_reject_unclosed_quotes() {
+        assert!(parse_windows_command_line(r#"-mod "unfinished"#).is_err());
+    }
+
+    #[test]
+    fn legacy_reg_accepts_only_the_unified_auth_section() {
+        let content = concat!(
+            "Windows Registry Editor Version 5.00\n\n",
+            "[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Battle.net\\UnifiedAuth]\n",
+            "\"US\"=hex:01,02\n",
+            "[hkey_current_user\\software\\blizzard entertainment\\battle.NET\\unifiedauth]\n",
+            "\"EU\"=hex:03,04\n"
+        );
+        assert!(validate_legacy_reg_sections(content).is_ok());
+    }
+
+    #[test]
+    fn legacy_reg_rejects_any_additional_or_nested_section() {
+        let additional = concat!(
+            "[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Battle.net\\UnifiedAuth]\n",
+            "[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]\n"
+        );
+        let nested =
+            "[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Battle.net\\UnifiedAuth\\Child]\n";
+        assert!(validate_legacy_reg_sections(additional).is_err());
+        assert!(validate_legacy_reg_sections(nested).is_err());
+        assert!(validate_legacy_reg_sections("Windows Registry Editor Version 5.00").is_err());
+    }
+
+    #[test]
+    fn replacing_bnet_snapshot_removes_stale_target_files() {
+        let root = temp_dir("replace_bnet");
+        let source = root.join("source");
+        let target = root.join("target");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(source.join("new.json"), b"new").unwrap();
+        std::fs::write(target.join("stale.json"), b"stale").unwrap();
+
+        replace_bnet_roaming_snapshot(&source, &target).unwrap();
+
+        assert!(target.join("new.json").is_file());
+        assert!(!target.join("stale.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn replacing_bnet_snapshot_repairs_a_non_directory_target() {
+        let root = temp_dir("replace_bnet_repairs_target");
+        let source = root.join("source");
+        let target = root.join("target");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::write(source.join("new.json"), b"new").unwrap();
+        std::fs::write(&target, b"not a directory").unwrap();
+
+        replace_bnet_roaming_snapshot(&source, &target).unwrap();
+
+        assert!(target.is_dir());
+        assert_eq!(std::fs::read(target.join("new.json")).unwrap(), b"new");
+        assert!(!root.join("target.tmp").exists());
+        assert!(!root.join("target.bak").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn replacing_bnet_snapshot_recovers_an_interrupted_host_swap() {
+        let root = temp_dir("replace_bnet_recovers_host");
+        let source = root.join("source");
+        let target = root.join("target");
+        let staged = root.join("target.tmp");
+        let backup = root.join("target.bak");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::write(source.join("new.json"), b"new").unwrap();
+        std::fs::write(staged.join("partial.json"), b"partial").unwrap();
+        std::fs::write(backup.join("old.json"), b"old").unwrap();
+
+        replace_bnet_roaming_snapshot(&source, &target).unwrap();
+
+        assert_eq!(std::fs::read(target.join("new.json")).unwrap(), b"new");
+        assert!(!target.join("old.json").exists());
+        assert!(!staged.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "d2rhub_launch_preflight_{name}_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn configure_global_install(root: &std::path::Path, with_bnet: bool) -> GlobalConfig {
+        let game = root.join("game");
+        let saves = root.join("saves");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&saves).unwrap();
+        std::fs::write(game.join("D2R.exe"), b"test").unwrap();
+
+        let global_battle_net_path = if with_bnet {
+            let bnet = root.join("Battle.net.exe");
+            std::fs::write(&bnet, b"test").unwrap();
+            bnet.to_string_lossy().to_string()
+        } else {
+            String::new()
+        };
+        GlobalConfig {
+            accounts_dir: root.join("accounts").to_string_lossy().to_string(),
+            global_battle_net_path,
+            global_game_path: game.to_string_lossy().to_string(),
+            global_saved_games_path: saves.to_string_lossy().to_string(),
+            ..GlobalConfig::default()
+        }
+    }
+
+    fn save_account(config: &GlobalConfig, id: &str, auth_mode: &str, token: Option<&str>) {
+        let mut meta = AccountMeta::new(id);
+        meta.region = Some("NA".to_string());
+        meta.auth_mode = Some(auth_mode.to_string());
+        meta.token = token.map(str::to_string);
+        meta.initialized = true;
+        meta.last_reset_at = Some(chrono::Utc::now().to_rfc3339());
+        let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, id).unwrap();
+        std::fs::create_dir_all(account_dir).unwrap();
+        AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
+    }
+
+    #[test]
+    fn batch_preflight_rejects_a_later_account_before_launch_side_effects() {
+        let root = temp_dir("token_batch");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        save_account(&config, "acount2", "token", None);
+
+        let result = preflight_accounts(
+            &config,
+            &["acount1".to_string(), "acount2".to_string()],
+            ContextPurpose::LaunchGame,
+        );
+        assert!(result.is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_preflight_rejects_missing_customized_settings() {
+        let root = temp_dir("missing_custom_settings");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let mut meta = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+        meta.has_customized_settings = true;
+        AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
+
+        let error = preflight_accounts(
+            &config,
+            &["acount1".to_string()],
+            ContextPurpose::LaunchGame,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Settings.json 不存在"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn batch_preflight_rejects_invalid_token_mod_arguments() {
+        let root = temp_dir("invalid_mod_args");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let mut meta = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+        meta.mod_args = r#"-mod "unterminated"#.to_string();
+        AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
+
+        let error = preflight_accounts(
+            &config,
+            &["acount1".to_string()],
+            ContextPurpose::LaunchGame,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Mod 启动参数无效"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bnet_preflight_rejects_an_empty_auth_snapshot() {
+        let root = temp_dir("bnet_snapshot");
+        let config = configure_global_install(&root, true);
+        save_account(&config, "acount3", "bnet", None);
+        let account_dir =
+            AccountManager::account_dir_checked(&config.accounts_dir, "acount3").unwrap();
+        let bnet_dir = account_dir.join("Battle.net");
+        std::fs::create_dir_all(&bnet_dir).unwrap();
+        std::fs::write(bnet_dir.join("Battle.net.config"), b"{}").unwrap();
+        std::fs::write(account_dir.join("unified_auth.json"), b"[]").unwrap();
+        std::fs::write(
+            account_dir.join("unified_auth.reg"),
+            "[HKEY_CURRENT_USER\\Software\\Blizzard Entertainment\\Battle.net\\UnifiedAuth]\n\"US\"=hex:01",
+        )
+        .unwrap();
+
+        assert!(preflight_accounts(
+            &config,
+            &["acount3".to_string()],
+            ContextPurpose::LaunchGame,
+        )
+        .is_err());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

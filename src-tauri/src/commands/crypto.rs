@@ -1,7 +1,7 @@
 use std::ptr;
 use windows::core::PCWSTR;
 use windows::Win32::Security::Cryptography::{
-    CryptProtectData, CryptUnprotectData, CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN,
+    CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
 
 // 预设的 16 字节熵值（盐） - 来自暴雪客户端的硬编码
@@ -16,7 +16,7 @@ pub fn hex_encode(bytes: &[u8]) -> String {
 
 /// 将十六进制字符串解码为字节数组
 pub fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
-    if hex.len() % 2 != 0 {
+    if !hex.len().is_multiple_of(2) {
         return Err("hex string has odd length".to_string());
     }
     (0..hex.len())
@@ -49,12 +49,12 @@ pub fn protect_token(token: &str) -> Result<Vec<u8>, String> {
     unsafe {
         let success = CryptProtectData(
             &data_blob,
-            PCWSTR::null(),       // szDataDescr
-            Some(&entropy_blob),  // pOptionalEntropy
-            None,                 // pvReserved
-            None,                 // pPromptStruct
+            PCWSTR::null(),            // szDataDescr
+            Some(&entropy_blob),       // pOptionalEntropy
+            None,                      // pvReserved
+            None,                      // pPromptStruct
             CRYPTPROTECT_UI_FORBIDDEN, // dwFlags
-            &mut data_out,        // pDataOut
+            &mut data_out,             // pDataOut
         );
 
         if success.is_err() {
@@ -70,57 +70,6 @@ pub fn protect_token(token: &str) -> Result<Vec<u8>, String> {
         let result = slice.to_vec();
 
         // 释放由 CryptProtectData 分配的内存
-        windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
-            data_out.pbData as *mut _,
-        ));
-
-        Ok(result)
-    }
-}
-
-/// 使用 Windows DPAPI 解密由 protect_token 加密的数据，
-/// 返回原始 Token 字符串。
-#[allow(dead_code)]
-pub fn unprotect_token(protected: &[u8]) -> Result<String, String> {
-    let data_blob = CRYPT_INTEGER_BLOB {
-        cbData: protected.len() as u32,
-        pbData: protected.as_ptr() as *mut u8,
-    };
-
-    let mut entropy_bytes = TOKEN_ENTROPY.to_vec();
-    let entropy_blob = CRYPT_INTEGER_BLOB {
-        cbData: entropy_bytes.len() as u32,
-        pbData: entropy_bytes.as_mut_ptr(),
-    };
-
-    let mut data_out = CRYPT_INTEGER_BLOB {
-        cbData: 0,
-        pbData: ptr::null_mut(),
-    };
-
-    unsafe {
-        let success = CryptUnprotectData(
-            &data_blob,
-            None,                // ppszDataDescr
-            Some(&entropy_blob),
-            None,
-            None,
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut data_out,
-        );
-
-        if success.is_err() {
-            return Err(format!("CryptUnprotectData failed: {:?}", success.err()));
-        }
-
-        if data_out.pbData.is_null() || data_out.cbData == 0 {
-            return Err("CryptUnprotectData returned empty data".to_string());
-        }
-
-        let slice = std::slice::from_raw_parts(data_out.pbData, data_out.cbData as usize);
-        let result = String::from_utf8(slice.to_vec())
-            .map_err(|e| format!("Token 解密后不是有效的 UTF-8: {}", e))?;
-
         windows::Win32::Foundation::LocalFree(windows::Win32::Foundation::HLOCAL(
             data_out.pbData as *mut _,
         ));

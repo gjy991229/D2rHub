@@ -9,7 +9,10 @@ import type { GlobalConfig } from "../store/types";
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 1, battle_net_path: "", game_path: "", saved_games_path: "",
+  version: 3, cn_battle_net_path: "",
+  cn_game_path: "", cn_saved_games_path: "",
+  global_battle_net_path: "",
+  global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
   accounts_dir: "", first_run_complete: false,
   browser_path: "", browser_type: "", enable_overlay: true,
@@ -25,14 +28,14 @@ const defaultConfig: GlobalConfig = {
 };
 
 export function SetupWizard({ onComplete, initialConfig }: Props) {
-  const { save, detectBattleNetPath, detectSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const { save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const [config, setConfig] = useState<GlobalConfig>(initialConfig || defaultConfig);
   const [detected, setDetected] = useState<Record<string, string | null>>({});
   const [saving, setSaving] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [showError, setShowError] = useState(false);
   const [isCurrentStepValid, setIsCurrentStepValid] = useState(false);
-  const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<boolean | null>(null);
+  const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
 
   const handleSelectBrowser = async (btype: "chrome" | "edge") => {
     try {
@@ -58,19 +61,19 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   useEffect(() => {
     (async () => {
-      const bnet = await detectBattleNetPath();
-      const savedGames = await detectSavedGamesPath();
+      const cnSavedGames = await detectSavedGamesPath();
+      const globalSavedGames = await detectGlobalSavedGamesPath();
       const agent = await detectProgramDataAgentPath();
       const roaming = await detectAppDataRoamingBnetPath();
       const browser = await detectBrowserPath();
       setDetected({
-        bnet, savedGames, agent, roaming,
+        cnSavedGames, globalSavedGames, agent, roaming,
         browser: browser ? browser[0] : null,
       });
       setConfig(p => ({
         ...p,
-        battle_net_path: p.battle_net_path || bnet || "",
-        saved_games_path: p.saved_games_path || savedGames || "",
+        cn_saved_games_path: p.cn_saved_games_path || cnSavedGames || "",
+        global_saved_games_path: p.global_saved_games_path || globalSavedGames || "",
         program_data_agent_path: p.program_data_agent_path || agent || "C:\\ProgramData\\Battle.net\\Agent",
         app_data_roaming_bnet_path: p.app_data_roaming_bnet_path || roaming || "",
         browser_path: p.browser_path || (browser ? browser[0] : ""),
@@ -80,17 +83,24 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   }, []);
 
   const allStepsFilled = () => {
-    if (!config.battle_net_path) return false;
-    if (!config.game_path) return false;
-    if (!config.saved_games_path) return false;
-    return true;
+    const cnPaths = [config.cn_game_path.trim(), config.cn_saved_games_path.trim()];
+    const globalPaths = [config.global_game_path.trim(), config.global_saved_games_path.trim()];
+    const cnComplete = cnPaths.every(Boolean);
+    const globalComplete = globalPaths.every(Boolean);
+    const cnPartial = Boolean(config.cn_battle_net_path.trim() || cnPaths.some(Boolean)) && !cnComplete;
+    const globalPartial = Boolean(config.global_battle_net_path.trim() || globalPaths.some(Boolean)) && !globalComplete;
+    return (cnComplete || globalComplete) && !cnPartial && !globalPartial;
   };
 
   const getMissingSteps = () => {
     const missing: string[] = [];
-    if (!config.battle_net_path) missing.push(stepLabels[0]);
-    if (!config.game_path) missing.push(stepLabels[1]);
-    if (!config.saved_games_path) missing.push(stepLabels[2]);
+    const cnPaths = [config.cn_game_path.trim(), config.cn_saved_games_path.trim()];
+    const globalPaths = [config.global_game_path.trim(), config.global_saved_games_path.trim()];
+    const cnComplete = cnPaths.every(Boolean);
+    const globalComplete = globalPaths.every(Boolean);
+    if (!cnComplete && !globalComplete) missing.push("至少完整配置一组国服或国际服的游戏与存档路径");
+    if ((config.cn_battle_net_path.trim() || cnPaths.some(Boolean)) && !cnComplete) missing.push("国服游戏与存档路径需成组配置，Battle.net 可供 Token 模式留空");
+    if ((config.global_battle_net_path.trim() || globalPaths.some(Boolean)) && !globalComplete) missing.push("国际服游戏与存档路径需成组配置，Battle.net 可供 Token 模式留空");
     return missing;
   };
 
@@ -111,24 +121,34 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     }
   };
 
-  const stepLabels = ["战网客户端路径", "游戏安装目录", "存档目录", "浏览器"];
-
   const steps = [
-    { key: "battle_net_path" as const, title: "战网客户端", desc: "选择 Battle.net.exe 的路径",
+    { key: "cn_battle_net_path" as const, title: "国服战网客户端", desc: "国服战网认证使用；仅使用 Token 时可留空",
       icon: <HardDrive size={20} />,
-      placeholder: "浏览选择 Battle.net.exe", isFile: true,
-      value: config.battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,battle_net_path:v})), detected: detected.bnet },
-    { key: "game_path" as const, title: "游戏安装目录", desc: "选择 D2R 的安装位置",
+      placeholder: "浏览选择国服 Battle.net.exe", isFile: true, required: false,
+      value: config.cn_battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,cn_battle_net_path:v})), detected: null },
+    { key: "cn_game_path" as const, title: "国服游戏安装目录", desc: "仅供国服账号启动使用（可跳过此版本）",
       icon: <FolderOpen size={20} />,
-      placeholder: "浏览选择游戏安装目录", isFile: false,
-      value: config.game_path, setValue: (v:string)=>setConfig(c=>({...c,game_path:v})), detected: null },
-    { key: "saved_games_path" as const, title: "存档目录", desc: "通常位于 Saved Games 文件夹",
+      placeholder: "浏览选择国服游戏安装目录", isFile: false, required: false,
+      value: config.cn_game_path, setValue: (v:string)=>setConfig(c=>({...c,cn_game_path:v})), detected: null },
+    { key: "cn_saved_games_path" as const, title: "国服存档目录", desc: "通常为 Diablo II Resurrected (CN)",
       icon: <Save size={20} />,
-      placeholder: "浏览选择 Saved Games 目录", isFile: false,
-      value: config.saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,saved_games_path:v})), detected: detected.savedGames },
+      placeholder: "浏览选择国服存档目录", isFile: false, required: false,
+      value: config.cn_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,cn_saved_games_path:v})), detected: detected.cnSavedGames },
+    { key: "global_battle_net_path" as const, title: "国际服战网客户端", desc: "国际服战网认证使用；仅使用 Token 时可留空",
+      icon: <HardDrive size={20} />,
+      placeholder: "浏览选择国际服 Battle.net.exe", isFile: true, required: false,
+      value: config.global_battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,global_battle_net_path:v})), detected: null },
+    { key: "global_game_path" as const, title: "国际服游戏安装目录", desc: "亚服、美服、欧服账号共用（可跳过此版本）",
+      icon: <FolderOpen size={20} />,
+      placeholder: "浏览选择国际服游戏安装目录", isFile: false, required: false,
+      value: config.global_game_path, setValue: (v:string)=>setConfig(c=>({...c,global_game_path:v})), detected: null },
+    { key: "global_saved_games_path" as const, title: "国际服存档目录", desc: "通常为不带 (CN) 后缀的 Diablo II Resurrected",
+      icon: <Save size={20} />,
+      placeholder: "浏览选择国际服存档目录", isFile: false, required: false,
+      value: config.global_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,global_saved_games_path:v})), detected: detected.globalSavedGames },
     { key: "browser_path" as const, title: "浏览器", desc: "用于多账号浏览器隔离（可选，仅支持 Chrome/Edge）",
       icon: <Globe size={20} />,
-      placeholder: "浏览选择浏览器路径（可选）", isFile: true,
+      placeholder: "浏览选择浏览器路径（可选）", isFile: true, required: false,
       value: config.browser_path,
       setValue: (v:string)=>{
         setConfig(c=>{
@@ -145,23 +165,24 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   useEffect(() => {
     let active = true;
-    if (!config.saved_games_path) {
-      setSettingsJsonAvailable(null);
-      return () => {
-        active = false;
-      };
-    }
-    invoke<boolean>("check_saved_games_settings", { path: config.saved_games_path })
-      .then((exists) => {
-        if (active) setSettingsJsonAvailable(exists);
-      })
-      .catch(() => {
-        if (active) setSettingsJsonAvailable(false);
-      });
+    const check = async (edition: "CN" | "Global", path: string) => {
+      if (!path) {
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: null }));
+        return;
+      }
+      try {
+        const exists = await invoke<boolean>("check_saved_games_settings", { path });
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: exists }));
+      } catch {
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: false }));
+      }
+    };
+    void check("CN", config.cn_saved_games_path);
+    void check("Global", config.global_saved_games_path);
     return () => {
       active = false;
     };
-  }, [config.saved_games_path]);
+  }, [config.cn_saved_games_path, config.global_saved_games_path]);
 
   useEffect(() => {
     let active = true;
@@ -169,8 +190,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       const step = steps[currentStep];
       if (!step) return;
 
-      // browser_path is optional. If empty, it's valid.
-      if (step.key === "browser_path" && !step.value) {
+      if (!step.required && !step.value) {
         if (active) setIsCurrentStepValid(true);
         return;
       }
@@ -180,7 +200,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         return;
       }
 
-      if (step.key === "saved_games_path") {
+      if (step.key === "cn_saved_games_path" || step.key === "global_saved_games_path") {
         if (active) setIsCurrentStepValid(true);
         return;
       }
@@ -200,7 +220,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     return () => {
       active = false;
     };
-  }, [currentStep, config.battle_net_path, config.game_path, config.saved_games_path, config.browser_path]);
+  }, [currentStep, config.cn_battle_net_path, config.cn_game_path, config.cn_saved_games_path, config.global_battle_net_path, config.global_game_path, config.global_saved_games_path, config.browser_path]);
 
   const current = steps[currentStep];
 
@@ -230,7 +250,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
                     : { background: "var(--surface-hover)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }
                 }>{s.value ? <Check size={13} /> : i+1}</button>
               {i<steps.length-1 && (
-                <div className="w-7 h-px" style={{ background: s.value ? "rgba(52,199,89,0.20)" : "var(--border-default)" }}/>
+                <div className="w-5 h-px" style={{ background: s.value ? "rgba(52,199,89,0.20)" : "var(--border-default)" }}/>
               )}
             </React.Fragment>
           ))}
@@ -307,12 +327,17 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
           )}
 
           {current.detected && current.key !== "browser_path" && (
-            <p className="text-sm text-success mt-3 flex items-center gap-1.5">
-              <Check size={11}/> 已自动检测到
-            </p>
+            <button
+              type="button"
+              onClick={() => current.setValue(current.detected || "")}
+              className="text-sm text-success mt-3 flex items-center gap-1.5 hover:underline"
+            >
+              <Check size={11}/> 使用自动检测路径
+            </button>
           )}
 
-          {current.key === "saved_games_path" && settingsJsonAvailable === false && (
+          {(current.key === "cn_saved_games_path" || current.key === "global_saved_games_path")
+            && settingsJsonAvailable[current.key === "cn_saved_games_path" ? "CN" : "Global"] === false && (
             <div className="flex items-start gap-2 px-3 py-2.5 rounded-card mt-3"
               style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}>
               <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />
@@ -320,6 +345,13 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
                 当前目录中未找到 Settings.json。账号创建、登录和多开不受影响，但画质配置相关功能暂不可用。请先启动一次游戏生成该文件，或稍后在设置中修正存档目录。
               </p>
             </div>
+          )}
+
+          {(current.key === "cn_battle_net_path" || current.key === "cn_game_path" || current.key === "cn_saved_games_path"
+            || current.key === "global_battle_net_path" || current.key === "global_game_path" || current.key === "global_saved_games_path") && (
+            <p className="text-xs text-text-muted mt-3">
+              该版本可留空跳过；启用时必须配置游戏安装目录和存档目录，Battle.net 仅在战网认证时需要。
+            </p>
           )}
 
           {current.key === "browser_path" && (

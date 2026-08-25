@@ -1,17 +1,39 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::commands::account::{AccountManager, AccountMeta};
+use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
 use crate::error::AppError;
 use crate::state::SharedState;
+
+const CURRENT_CONFIG_VERSION: u32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LegacyRegionPathMigration {
+    NotNeeded,
+    Migrated,
+    Ambiguous,
+}
 
 /// 全局配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     pub version: u32,
-    pub battle_net_path: String,
-    pub game_path: String,
-    pub saved_games_path: String,
+    #[serde(default)]
+    pub cn_battle_net_path: String,
+    /// 国服游戏安装目录。
+    #[serde(default)]
+    pub cn_game_path: String,
+    /// 国服存档目录（通常以 Diablo II Resurrected (CN) 结尾）。
+    #[serde(default)]
+    pub cn_saved_games_path: String,
+    #[serde(default)]
+    pub global_battle_net_path: String,
+    /// 国际服游戏安装目录（亚服、美服、欧服共用）。
+    #[serde(default)]
+    pub global_game_path: String,
+    /// 国际服存档目录（亚服、美服、欧服共用）。
+    #[serde(default)]
+    pub global_saved_games_path: String,
     pub program_data_agent_path: String,
     pub app_data_roaming_bnet_path: String,
     pub accounts_dir: String,
@@ -91,21 +113,33 @@ pub struct GlobalConfig {
     pub agent_threshold: u32,
 }
 
-fn default_font_scale() -> String { "default".to_string() }
-fn default_app_language() -> String { "zh-CN".to_string() }
-fn default_opacity() -> u8 { 95 }
+fn default_font_scale() -> String {
+    "default".to_string()
+}
+fn default_app_language() -> String {
+    "zh-CN".to_string()
+}
+fn default_opacity() -> u8 {
+    95
+}
 
-fn default_ocr_poll_interval() -> u64 { 500 }
+fn default_ocr_poll_interval() -> u64 {
+    500
+}
 
-fn default_agent_mode() -> u8 { 1 }
-fn default_agent_delay_secs() -> f64 { 1.0 }
-fn default_agent_threshold() -> u32 { 5 }
+fn default_agent_mode() -> u8 {
+    1
+}
+fn default_agent_delay_secs() -> f64 {
+    1.0
+}
+fn default_agent_threshold() -> u32 {
+    5
+}
 
 fn default_theme() -> String {
     "light".to_string()
 }
-
-
 
 fn default_enable_overlay() -> bool {
     true
@@ -122,11 +156,21 @@ fn default_enable_auto_update() -> bool {
 fn default_first_launch() -> bool {
     true
 }
-fn default_enable_bongo_cat() -> bool { true }
-fn default_bongo_cat_chatterbox() -> bool { true }
-fn default_bongo_cat_scale() -> f32 { 1.0 }
-fn default_bongo_cat_skin() -> String { "original".to_string() }
-fn default_bongo_cat_unlocked_skins() -> Vec<String> { vec!["original".to_string()] }
+fn default_enable_bongo_cat() -> bool {
+    true
+}
+fn default_bongo_cat_chatterbox() -> bool {
+    true
+}
+fn default_bongo_cat_scale() -> f32 {
+    1.0
+}
+fn default_bongo_cat_skin() -> String {
+    "original".to_string()
+}
+fn default_bongo_cat_unlocked_skins() -> Vec<String> {
+    vec!["original".to_string()]
+}
 
 fn app_accounts_dir(app_data_dir: &str) -> PathBuf {
     Path::new(app_data_dir).join("accounts")
@@ -143,49 +187,152 @@ fn saved_games_settings_exists(path: &Path) -> bool {
     path.join("Settings.json").is_file()
 }
 
-fn validate_config_paths(config: &GlobalConfig) -> Result<(), AppError> {
-    let battle_net_path = Path::new(&config.battle_net_path);
-    if !battle_net_path.is_file() || !file_name_eq(battle_net_path, "Battle.net.exe") {
-        return Err(AppError::InvalidBnetPath(config.battle_net_path.clone()));
+fn validate_installation_paths(config: &GlobalConfig) -> Result<(), AppError> {
+    crate::launch_context::validate_distinct_installation_profiles(config)?;
+
+    for battle_net_path in [&config.cn_battle_net_path, &config.global_battle_net_path] {
+        if battle_net_path.trim().is_empty() {
+            continue;
+        }
+        let path = Path::new(battle_net_path);
+        if !path.is_file() || !file_name_eq(path, "Battle.net.exe") {
+            return Err(AppError::InvalidBnetPath(battle_net_path.clone()));
+        }
     }
 
-    let game_path = Path::new(&config.game_path);
-    if !game_path.is_dir() {
-        return Err(AppError::InvalidGamePath(config.game_path.clone()));
-    }
-
-    if !config.browser_path.trim().is_empty() {
-        let browser_path = Path::new(&config.browser_path);
-        if !browser_path.is_file() {
-            return Err(AppError::ConfigWriteError(format!(
-                "浏览器路径无效: {}",
-                config.browser_path
+    for game_path in [&config.cn_game_path, &config.global_game_path] {
+        if game_path.trim().is_empty() {
+            continue;
+        }
+        let game_directory = Path::new(game_path);
+        if !game_directory.is_dir() || !game_directory.join("D2R.exe").is_file() {
+            return Err(AppError::InvalidGamePath(format!(
+                "{}（目录中必须存在 D2R.exe）",
+                game_path
             )));
         }
+    }
 
-        match config.browser_type.as_str() {
-            "chrome" if !file_name_eq(browser_path, "chrome.exe") => {
-                return Err(AppError::ConfigWriteError(format!(
-                    "浏览器类型为 chrome，但路径不是 chrome.exe: {}",
-                    config.browser_path
-                )));
-            }
-            "edge" if !file_name_eq(browser_path, "msedge.exe") => {
-                return Err(AppError::ConfigWriteError(format!(
-                    "浏览器类型为 edge，但路径不是 msedge.exe: {}",
-                    config.browser_path
-                )));
-            }
-            _ => {}
+    let validate_edition = |edition: &str,
+                            battle_net_path: &str,
+                            game_path: &str,
+                            saved_games_path: &str|
+     -> Result<bool, AppError> {
+        let has_any = [battle_net_path, game_path, saved_games_path]
+            .iter()
+            .any(|path| !path.trim().is_empty());
+        let has_game_and_saves =
+            !game_path.trim().is_empty() && !saved_games_path.trim().is_empty();
+        if has_any && !has_game_and_saves {
+            return Err(AppError::ConfigWriteError(format!(
+                "{}游戏安装目录和存档目录必须同时配置；Battle.net 仅在战网认证时必需",
+                edition
+            )));
         }
+        Ok(has_game_and_saves)
+    };
+
+    let cn_configured = validate_edition(
+        "国服",
+        &config.cn_battle_net_path,
+        &config.cn_game_path,
+        &config.cn_saved_games_path,
+    )?;
+    let global_configured = validate_edition(
+        "国际服",
+        &config.global_battle_net_path,
+        &config.global_game_path,
+        &config.global_saved_games_path,
+    )?;
+
+    if !cn_configured && !global_configured {
+        return Err(AppError::ConfigWriteError(
+            "请至少完整配置一组国服或国际服的游戏安装目录和存档目录".to_string(),
+        ));
     }
 
     Ok(())
 }
 
+fn validate_browser_path(config: &GlobalConfig) -> Result<(), AppError> {
+    if config.browser_path.trim().is_empty() {
+        return Ok(());
+    }
+
+    let browser_path = Path::new(&config.browser_path);
+    if !browser_path.is_file() {
+        return Err(AppError::ConfigWriteError(format!(
+            "浏览器路径无效: {}",
+            config.browser_path
+        )));
+    }
+
+    match config.browser_type.as_str() {
+        "chrome" if !file_name_eq(browser_path, "chrome.exe") => {
+            return Err(AppError::ConfigWriteError(format!(
+                "浏览器类型为 chrome，但路径不是 chrome.exe: {}",
+                config.browser_path
+            )));
+        }
+        "edge" if !file_name_eq(browser_path, "msedge.exe") => {
+            return Err(AppError::ConfigWriteError(format!(
+                "浏览器类型为 edge，但路径不是 msedge.exe: {}",
+                config.browser_path
+            )));
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+/// Game installation validation is intentionally limited to setup completion
+/// and edition-path edits. Other app paths have their own independent checks.
+fn should_validate_installation_paths(
+    previous: Option<&GlobalConfig>,
+    next: &GlobalConfig,
+) -> bool {
+    if !next.first_run_complete {
+        return false;
+    }
+
+    let Some(previous) = previous else {
+        return true;
+    };
+    if !previous.first_run_complete {
+        return true;
+    }
+
+    previous.cn_battle_net_path != next.cn_battle_net_path
+        || previous.cn_game_path != next.cn_game_path
+        || previous.cn_saved_games_path != next.cn_saved_games_path
+        || previous.global_battle_net_path != next.global_battle_net_path
+        || previous.global_game_path != next.global_game_path
+        || previous.global_saved_games_path != next.global_saved_games_path
+}
+
+fn should_validate_browser_path(previous: Option<&GlobalConfig>, next: &GlobalConfig) -> bool {
+    if !next.first_run_complete {
+        return false;
+    }
+
+    let Some(previous) = previous else {
+        return true;
+    };
+    if !previous.first_run_complete {
+        return true;
+    }
+
+    previous.browser_path != next.browser_path || previous.browser_type != next.browser_type
+}
+
 #[cfg(test)]
 mod validation_tests {
-    use super::{saved_games_settings_exists, validate_config_paths, GlobalConfig};
+    use super::{
+        saved_games_settings_exists, should_validate_browser_path,
+        should_validate_installation_paths, validate_installation_paths, GlobalConfig,
+        CURRENT_CONFIG_VERSION,
+    };
     use crate::commands::account::{AccountManager, AccountMeta};
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -209,14 +356,101 @@ mod validation_tests {
         let game_dir = root.join("game");
         std::fs::write(&battle_net, b"").unwrap();
         std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::write(game_dir.join("D2R.exe"), b"").unwrap();
 
-        let mut config = GlobalConfig::default();
-        config.battle_net_path = battle_net.to_string_lossy().to_string();
-        config.game_path = game_dir.to_string_lossy().to_string();
-        config.saved_games_path = root.join("missing").to_string_lossy().to_string();
+        let config = GlobalConfig {
+            cn_battle_net_path: battle_net.to_string_lossy().to_string(),
+            cn_game_path: game_dir.to_string_lossy().to_string(),
+            cn_saved_games_path: root.join("missing").to_string_lossy().to_string(),
+            ..GlobalConfig::default()
+        };
 
-        assert!(validate_config_paths(&config).is_ok());
+        assert!(validate_installation_paths(&config).is_ok());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn token_only_game_and_save_paths_are_a_valid_configuration() {
+        let root = temp_dir("token_only_config");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+        std::fs::write(game_dir.join("D2R.exe"), b"").unwrap();
+
+        let config = GlobalConfig {
+            global_game_path: game_dir.to_string_lossy().to_string(),
+            global_saved_games_path: root.join("saves").to_string_lossy().to_string(),
+            ..GlobalConfig::default()
+        };
+
+        assert!(validate_installation_paths(&config).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn game_and_save_paths_must_still_be_configured_together() {
+        let root = temp_dir("partial_token_config");
+        let game_dir = root.join("game");
+        std::fs::create_dir_all(&game_dir).unwrap();
+
+        let config = GlobalConfig {
+            cn_game_path: game_dir.to_string_lossy().to_string(),
+            ..GlobalConfig::default()
+        };
+
+        assert!(validate_installation_paths(&config).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn appearance_only_changes_do_not_revalidate_installation_paths() {
+        let previous = GlobalConfig {
+            first_run_complete: true,
+            cn_game_path: r"Z:\missing\D2R-CN".to_string(),
+            cn_saved_games_path: r"Z:\missing\Saved Games\D2R-CN".to_string(),
+            ..GlobalConfig::default()
+        };
+        let next = GlobalConfig {
+            theme: "onyx".to_string(),
+            overlay_opacity: 82,
+            ..previous.clone()
+        };
+
+        assert!(!should_validate_installation_paths(Some(&previous), &next));
+    }
+
+    #[test]
+    fn installation_path_changes_still_require_validation() {
+        let previous = GlobalConfig {
+            first_run_complete: true,
+            global_game_path: r"C:\Games\D2R".to_string(),
+            global_saved_games_path: r"C:\Saved Games\D2R".to_string(),
+            ..GlobalConfig::default()
+        };
+        let next = GlobalConfig {
+            global_game_path: r"D:\Games\D2R".to_string(),
+            ..previous.clone()
+        };
+
+        assert!(should_validate_installation_paths(Some(&previous), &next));
+        assert!(should_validate_installation_paths(None, &next));
+    }
+
+    #[test]
+    fn browser_changes_do_not_revalidate_offline_game_installations() {
+        let previous = GlobalConfig {
+            first_run_complete: true,
+            cn_game_path: r"Z:\offline\D2R-CN".to_string(),
+            cn_saved_games_path: r"Z:\offline\Saved Games\D2R-CN".to_string(),
+            browser_path: r"C:\Browser\old.exe".to_string(),
+            ..GlobalConfig::default()
+        };
+        let next = GlobalConfig {
+            browser_path: r"C:\Browser\new.exe".to_string(),
+            ..previous.clone()
+        };
+
+        assert!(!should_validate_installation_paths(Some(&previous), &next));
+        assert!(should_validate_browser_path(Some(&previous), &next));
     }
 
     #[test]
@@ -232,8 +466,10 @@ mod validation_tests {
 
     #[test]
     fn enabled_ocr_requires_a_selected_account() {
-        let mut config = GlobalConfig::default();
-        config.ocr_enabled = true;
+        let config = GlobalConfig {
+            ocr_enabled: true,
+            ..GlobalConfig::default()
+        };
 
         assert!(config.resolve_ocr_target_account().is_err());
     }
@@ -249,12 +485,15 @@ mod validation_tests {
     fn enabled_ocr_requires_an_initialized_account() {
         let accounts_dir = temp_dir("ocr_uninitialized_account");
         let account = AccountMeta::new("acount1");
+        std::fs::create_dir_all(accounts_dir.join(&account.id)).unwrap();
         AccountManager::save_meta(accounts_dir.to_str().unwrap(), &account).unwrap();
 
-        let mut config = GlobalConfig::default();
-        config.accounts_dir = accounts_dir.to_string_lossy().to_string();
-        config.ocr_enabled = true;
-        config.ocr_target_account = account.id;
+        let config = GlobalConfig {
+            accounts_dir: accounts_dir.to_string_lossy().to_string(),
+            ocr_enabled: true,
+            ocr_target_account: account.id,
+            ..GlobalConfig::default()
+        };
 
         assert!(config.resolve_ocr_target_account().is_err());
         let _ = std::fs::remove_dir_all(accounts_dir);
@@ -265,12 +504,15 @@ mod validation_tests {
         let accounts_dir = temp_dir("ocr_initialized_account");
         let mut account = AccountMeta::new("acount1");
         account.initialized = true;
+        std::fs::create_dir_all(accounts_dir.join(&account.id)).unwrap();
         AccountManager::save_meta(accounts_dir.to_str().unwrap(), &account).unwrap();
 
-        let mut config = GlobalConfig::default();
-        config.accounts_dir = accounts_dir.to_string_lossy().to_string();
-        config.ocr_enabled = true;
-        config.ocr_target_account = account.id.clone();
+        let config = GlobalConfig {
+            accounts_dir: accounts_dir.to_string_lossy().to_string(),
+            ocr_enabled: true,
+            ocr_target_account: account.id.clone(),
+            ..GlobalConfig::default()
+        };
 
         let resolved = config.resolve_ocr_target_account().unwrap().unwrap();
         assert_eq!(resolved.id, account.id);
@@ -279,11 +521,168 @@ mod validation_tests {
 
     #[test]
     fn invalid_legacy_ocr_configuration_is_disabled() {
-        let mut config = GlobalConfig::default();
-        config.ocr_enabled = true;
+        let mut config = GlobalConfig {
+            ocr_enabled: true,
+            ..GlobalConfig::default()
+        };
 
         assert!(config.normalize_ocr_configuration());
         assert!(!config.ocr_enabled);
+    }
+
+    #[test]
+    fn legacy_paths_are_migrated_to_the_detected_edition() {
+        let root = temp_dir("legacy_region_path_migration");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("cn_game_path");
+        object.remove("cn_saved_games_path");
+        object.remove("cn_battle_net_path");
+        object.remove("global_game_path");
+        object.remove("global_saved_games_path");
+        object.remove("global_battle_net_path");
+        object.insert("version".to_string(), serde_json::json!(1));
+        object.insert("game_path".to_string(), serde_json::json!(r"D:\Games\D2R"));
+        object.insert(
+            "battle_net_path".to_string(),
+            serde_json::json!(r"D:\Battle.net\Battle.net.exe"),
+        );
+        object.insert(
+            "saved_games_path".to_string(),
+            serde_json::json!(r"C:\Users\Tester\Saved Games\Diablo II Resurrected"),
+        );
+        std::fs::write(
+            root.join("global_config.json"),
+            serde_json::to_string_pretty(&legacy).unwrap(),
+        )
+        .unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+        assert!(config.cn_game_path.is_empty());
+        assert!(config.cn_battle_net_path.is_empty());
+        assert_eq!(
+            config.global_battle_net_path,
+            r"D:\Battle.net\Battle.net.exe"
+        );
+        assert_eq!(config.global_game_path, r"D:\Games\D2R");
+        assert_eq!(
+            config.global_saved_games_path,
+            r"C:\Users\Tester\Saved Games\Diablo II Resurrected"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ambiguous_custom_legacy_paths_are_preserved_for_user_confirmation() {
+        let root = temp_dir("ambiguous_legacy_region_path");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig {
+            first_run_complete: true,
+            ..GlobalConfig::default()
+        })
+        .unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        for key in [
+            "cn_game_path",
+            "cn_saved_games_path",
+            "cn_battle_net_path",
+            "global_game_path",
+            "global_saved_games_path",
+            "global_battle_net_path",
+        ] {
+            object.remove(key);
+        }
+        object.insert("version".to_string(), serde_json::json!(1));
+        object.insert("game_path".to_string(), serde_json::json!(r"D:\Games\D2R"));
+        object.insert(
+            "battle_net_path".to_string(),
+            serde_json::json!(r"D:\Battle.net\Battle.net.exe"),
+        );
+        object.insert(
+            "saved_games_path".to_string(),
+            serde_json::json!(r"D:\Saves\D2R"),
+        );
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert!(!config.first_run_complete);
+        assert!(config.cn_game_path.is_empty());
+        assert!(config.global_game_path.is_empty());
+        let preserved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(preserved["version"], 1);
+        assert_eq!(preserved["saved_games_path"], r"D:\Saves\D2R");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn load_recovers_account_transaction_before_normalizing_ocr_target() {
+        let root = temp_dir("ocr_after_account_recovery");
+        let accounts = root.join("accounts");
+        let backup = accounts.join("acount1.bak");
+        let staged = accounts.join("acount1.tmp");
+        std::fs::create_dir_all(&backup).unwrap();
+        std::fs::create_dir_all(&staged).unwrap();
+        let mut account = AccountMeta::new("acount1");
+        account.initialized = true;
+        std::fs::write(
+            backup.join("account.json"),
+            serde_json::to_vec_pretty(&account).unwrap(),
+        )
+        .unwrap();
+        let config = GlobalConfig {
+            accounts_dir: accounts.to_string_lossy().to_string(),
+            first_run_complete: true,
+            ocr_enabled: true,
+            ocr_target_account: account.id,
+            ..GlobalConfig::default()
+        };
+        config.save(root.to_str().unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert!(loaded.ocr_enabled);
+        assert!(accounts.join("acount1").is_dir());
+        assert!(!backup.exists());
+        assert!(!staged.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ambiguous_legacy_battle_net_path_is_not_copied_to_two_editions() {
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("cn_battle_net_path");
+        object.remove("global_battle_net_path");
+        object.insert(
+            "battle_net_path".to_string(),
+            serde_json::json!(r"C:\Battle.net\Battle.net.exe"),
+        );
+        object.insert(
+            "cn_game_path".to_string(),
+            serde_json::json!(r"C:\Games\D2R-CN"),
+        );
+        object.insert(
+            "cn_saved_games_path".to_string(),
+            serde_json::json!(r"C:\Saves\D2R-CN"),
+        );
+        object.insert(
+            "global_game_path".to_string(),
+            serde_json::json!(r"D:\Games\D2R-Global"),
+        );
+        object.insert(
+            "global_saved_games_path".to_string(),
+            serde_json::json!(r"D:\Saves\D2R-Global"),
+        );
+
+        assert!(GlobalConfig::migrate_legacy_battle_net_paths(&mut legacy));
+        let config: GlobalConfig = serde_json::from_value(legacy).unwrap();
+
+        assert!(config.cn_battle_net_path.is_empty());
+        assert!(config.global_battle_net_path.is_empty());
     }
 }
 
@@ -299,10 +698,13 @@ pub struct WindowGeometry {
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            version: 1,
-            battle_net_path: String::new(),
-            game_path: String::new(),
-            saved_games_path: String::new(),
+            version: CURRENT_CONFIG_VERSION,
+            cn_battle_net_path: String::new(),
+            cn_game_path: String::new(),
+            cn_saved_games_path: String::new(),
+            global_battle_net_path: String::new(),
+            global_game_path: String::new(),
+            global_saved_games_path: String::new(),
             program_data_agent_path: String::new(),
             app_data_roaming_bnet_path: String::new(),
             accounts_dir: String::new(),
@@ -352,9 +754,8 @@ impl GlobalConfig {
             ));
         }
 
-        let account = AccountManager::load_meta(&self.accounts_dir, account_id).map_err(|_| {
-            AppError::ConfigWriteError(format!("OCR 目标账号不存在: {account_id}"))
-        })?;
+        let account = AccountManager::load_meta(&self.accounts_dir, account_id)
+            .map_err(|_| AppError::ConfigWriteError(format!("OCR 目标账号不存在: {account_id}")))?;
         if !account.initialized {
             return Err(AppError::ConfigWriteError(format!(
                 "OCR 目标账号尚未初始化: {account_id}"
@@ -388,16 +789,31 @@ impl GlobalConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|e| AppError::ConfigReadError(e.to_string()))?;
-        let mut config: GlobalConfig = serde_json::from_str(&content)?;
-        let mut migrated = false;
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| AppError::ConfigReadError(e.to_string()))?;
+        let mut value: serde_json::Value = serde_json::from_str(&content)?;
+        let region_path_migration = Self::migrate_legacy_region_paths(&mut value);
+        let preserve_ambiguous_legacy_paths =
+            region_path_migration == LegacyRegionPathMigration::Ambiguous;
+        let mut migrated = region_path_migration == LegacyRegionPathMigration::Migrated;
+        if !preserve_ambiguous_legacy_paths {
+            migrated |= Self::migrate_legacy_battle_net_paths(&mut value);
+        }
+        let mut config: GlobalConfig = serde_json::from_value(value)?;
+
+        if config.version != CURRENT_CONFIG_VERSION {
+            config.version = CURRENT_CONFIG_VERSION;
+            migrated = true;
+        }
 
         let accounts_dir = app_accounts_dir(app_data_dir).to_string_lossy().to_string();
         if config.accounts_dir != accounts_dir {
             config.accounts_dir = accounts_dir;
             migrated = true;
         }
+
+        // OCR 目标依赖账号目录。必须先回滚中断的账号目录交换，再判断目标是否有效。
+        recover_account_transactions(&config.accounts_dir);
 
         // 迁移：从未配置过快捷键的旧用户，自动写入默认值
         if config.shortcut_bindings_json.is_empty() {
@@ -413,34 +829,157 @@ impl GlobalConfig {
             migrated = true;
         }
 
-        if migrated {
-            let _ = config.save(app_data_dir);
+        if preserve_ambiguous_legacy_paths {
+            config.first_run_complete = false;
+            log::warn!("旧版游戏与存档路径无法无歧义判断国服或国际服，保留原始配置并要求重新确认");
+        } else if migrated {
+            config.save(app_data_dir)?;
         }
         Ok(config)
+    }
+
+    fn migrate_legacy_region_paths(value: &mut serde_json::Value) -> LegacyRegionPathMigration {
+        let Some(object) = value.as_object_mut() else {
+            return LegacyRegionPathMigration::NotNeeded;
+        };
+        if object.contains_key("cn_game_path")
+            || object.contains_key("global_game_path")
+            || (!object.contains_key("game_path") && !object.contains_key("saved_games_path"))
+        {
+            return LegacyRegionPathMigration::NotNeeded;
+        }
+
+        let game_path = object
+            .get("game_path")
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let saved_games_path = object
+            .get("saved_games_path")
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let Some(edition) = Self::infer_legacy_saved_games_edition(&saved_games_path) else {
+            return LegacyRegionPathMigration::Ambiguous;
+        };
+        object.remove("game_path");
+        object.remove("saved_games_path");
+        let is_cn = edition == crate::launch_context::ClientEdition::Cn;
+        let (game_key, saves_key) = if is_cn {
+            ("cn_game_path", "cn_saved_games_path")
+        } else {
+            ("global_game_path", "global_saved_games_path")
+        };
+        object.insert(game_key.to_string(), serde_json::Value::String(game_path));
+        object.insert(
+            saves_key.to_string(),
+            serde_json::Value::String(saved_games_path),
+        );
+        object
+            .entry(
+                if is_cn {
+                    "global_game_path"
+                } else {
+                    "cn_game_path"
+                }
+                .to_string(),
+            )
+            .or_insert_with(|| serde_json::Value::String(String::new()));
+        object
+            .entry(
+                if is_cn {
+                    "global_saved_games_path"
+                } else {
+                    "cn_saved_games_path"
+                }
+                .to_string(),
+            )
+            .or_insert_with(|| serde_json::Value::String(String::new()));
+        LegacyRegionPathMigration::Migrated
+    }
+
+    fn infer_legacy_saved_games_edition(
+        saved_games_path: &str,
+    ) -> Option<crate::launch_context::ClientEdition> {
+        let directory_name = saved_games_path
+            .trim_end_matches(['\\', '/'])
+            .rsplit(['\\', '/'])
+            .next()?;
+        if directory_name.eq_ignore_ascii_case("Diablo II Resurrected (CN)") {
+            Some(crate::launch_context::ClientEdition::Cn)
+        } else if directory_name.eq_ignore_ascii_case("Diablo II Resurrected") {
+            Some(crate::launch_context::ClientEdition::Global)
+        } else {
+            None
+        }
+    }
+
+    fn migrate_legacy_battle_net_paths(value: &mut serde_json::Value) -> bool {
+        let Some(object) = value.as_object_mut() else {
+            return false;
+        };
+        if object.contains_key("cn_battle_net_path")
+            || object.contains_key("global_battle_net_path")
+            || !object.contains_key("battle_net_path")
+        {
+            return false;
+        }
+
+        let battle_net_path = object
+            .remove("battle_net_path")
+            .and_then(|value| value.as_str().map(str::to_string))
+            .unwrap_or_default();
+        let cn_configured = ["cn_game_path", "cn_saved_games_path"].iter().any(|key| {
+            object
+                .get(*key)
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|path| !path.trim().is_empty())
+        });
+        let global_configured = ["global_game_path", "global_saved_games_path"]
+            .iter()
+            .any(|key| {
+                object
+                    .get(*key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|path| !path.trim().is_empty())
+            });
+
+        object.insert(
+            "cn_battle_net_path".to_string(),
+            serde_json::Value::String(if cn_configured && !global_configured {
+                battle_net_path.clone()
+            } else {
+                String::new()
+            }),
+        );
+        object.insert(
+            "global_battle_net_path".to_string(),
+            serde_json::Value::String(if global_configured && !cn_configured {
+                battle_net_path
+            } else {
+                String::new()
+            }),
+        );
+        true
     }
 
     /// 保存配置到磁盘
     pub fn save(&self, app_data_dir: &str) -> Result<(), AppError> {
         let dir = Path::new(app_data_dir);
         if !dir.exists() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+            std::fs::create_dir_all(dir).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
         }
         let path = Self::config_path(app_data_dir);
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content)
-            .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        std::fs::write(&path, content).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
         Ok(())
     }
 
     /// 规范化所有快捷键绑定：去除 Win/Meta/Cmd 修饰键，统一首字母大写格式
     /// 返回 true 表示发生了修改，调用方应持久化
     fn strip_win_modifiers(json: &mut String) -> bool {
-        let bindings: std::collections::HashMap<String, String> =
-            match serde_json::from_str(json) {
-                Ok(b) => b,
-                Err(_) => return false,
-            };
+        let bindings: std::collections::HashMap<String, String> = match serde_json::from_str(json) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
         let mut changed = false;
         let cleaned: std::collections::HashMap<String, String> = bindings
             .into_iter()
@@ -452,7 +991,11 @@ impl GlobalConfig {
                     .filter(|p| !matches!(*p, "win" | "meta" | "cmd" | "command"))
                     .collect();
                 if stripped_parts.is_empty() {
-                    log::warn!("快捷键位置 {} 的原绑定 \"{}\" 仅包含 Win 修饰键，已自动清除", pos, combo);
+                    log::warn!(
+                        "快捷键位置 {} 的原绑定 \"{}\" 仅包含 Win 修饰键，已自动清除",
+                        pos,
+                        combo
+                    );
                     changed = true;
                     return None;
                 }
@@ -465,9 +1008,19 @@ impl GlobalConfig {
                     .join("+");
                 if normalized != combo {
                     if had_win {
-                        log::warn!("快捷键位置 {} 的原绑定 \"{}\" 包含 Win/Meta/Cmd，已自动迁移为 \"{}\"", pos, combo, normalized);
+                        log::warn!(
+                            "快捷键位置 {} 的原绑定 \"{}\" 包含 Win/Meta/Cmd，已自动迁移为 \"{}\"",
+                            pos,
+                            combo,
+                            normalized
+                        );
                     } else {
-                        log::warn!("快捷键位置 {} 的原绑定 \"{}\" 格式不规范，已自动规范化为 \"{}\"", pos, combo, normalized);
+                        log::warn!(
+                            "快捷键位置 {} 的原绑定 \"{}\" 格式不规范，已自动规范化为 \"{}\"",
+                            pos,
+                            combo,
+                            normalized
+                        );
                     }
                     changed = true;
                     Some((pos, normalized))
@@ -535,7 +1088,10 @@ impl GlobalConfig {
     }
 
     /// 保存悬浮窗几何
-    pub fn save_overlay_geometry_fn(app_data_dir: &str, geo: &WindowGeometry) -> Result<(), AppError> {
+    pub fn save_overlay_geometry_fn(
+        app_data_dir: &str,
+        geo: &WindowGeometry,
+    ) -> Result<(), AppError> {
         let dir = Path::new(app_data_dir);
         if !dir.exists() {
             std::fs::create_dir_all(dir).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
@@ -560,8 +1116,9 @@ impl GlobalConfig {
     pub fn ensure_dirs(&self) -> Result<(), AppError> {
         for dir in [&self.accounts_dir] {
             if !dir.is_empty() {
-                std::fs::create_dir_all(dir)
-                    .map_err(|e| AppError::ConfigWriteError(format!("无法创建目录 {}: {}", dir, e)))?;
+                std::fs::create_dir_all(dir).map_err(|e| {
+                    AppError::ConfigWriteError(format!("无法创建目录 {}: {}", dir, e))
+                })?;
             }
         }
         Ok(())
@@ -606,13 +1163,17 @@ pub fn save_global_config(
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<(), AppError> {
+    let previous = state.config.read().clone();
     let mut cfg = config.clone();
     cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
         .to_string_lossy()
         .to_string();
 
-    if cfg.first_run_complete {
-        validate_config_paths(&cfg)?;
+    if should_validate_installation_paths(previous.as_ref(), &cfg) {
+        validate_installation_paths(&cfg)?;
+    }
+    if should_validate_browser_path(previous.as_ref(), &cfg) {
+        validate_browser_path(&cfg)?;
     }
     cfg.resolve_ocr_target_account()?;
 
@@ -647,51 +1208,28 @@ pub fn load_window_geometry(
     Ok(GlobalConfig::load_geometry(&state.app_data_dir))
 }
 
-/// 自动探测战网客户端路径
-#[tauri::command]
-pub fn detect_battle_net_path() -> Option<String> {
-    let candidates = [
-        r"C:\Program Files (x86)\Battle.net\Battle.net.exe",
-        r"C:\Program Files\Battle.net\Battle.net.exe",
-        r"D:\Program Files (x86)\Battle.net\Battle.net.exe",
-    ];
-    for path in &candidates {
-        if Path::new(path).exists() {
-            return Some(path.to_string());
-        }
-    }
-    None
+fn detect_saved_games_path_for_edition(cn: bool) -> Option<String> {
+    let user = dirs::home_dir()?;
+    let saved_games = user.join("Saved Games");
+    let entries = std::fs::read_dir(&saved_games).ok()?;
+    entries.flatten().find_map(|entry| {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let is_d2r = name.starts_with("Diablo II Resurrected");
+        let is_cn = name.to_ascii_lowercase().contains("(cn)");
+        (is_d2r && is_cn == cn).then(|| saved_games.join(name).to_string_lossy().to_string())
+    })
 }
 
-/// 自动探测游戏存档路径（优先选择 (CN) 版本）
+/// 自动探测国服游戏存档路径。
 #[tauri::command]
 pub fn detect_saved_games_path() -> Option<String> {
-    if let Some(user) = dirs::home_dir() {
-        let saved_games = user.join("Saved Games");
-        if saved_games.exists() {
-            if let Ok(entries) = std::fs::read_dir(&saved_games) {
-                let matches: Vec<String> = entries
-                    .flatten()
-                    .filter_map(|e| {
-                        let name = e.file_name().to_string_lossy().to_string();
-                        if name.starts_with("Diablo II Resurrected") {
-                            Some(name)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                // 优先选择 (CN) 版本
-                if let Some(cn) = matches.iter().find(|n| n.contains("(CN)")) {
-                    return Some(saved_games.join(cn).to_string_lossy().to_string());
-                }
-                if let Some(first) = matches.first() {
-                    return Some(saved_games.join(first).to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-    None
+    detect_saved_games_path_for_edition(true)
+}
+
+/// 自动探测国际服游戏存档路径。
+#[tauri::command]
+pub fn detect_global_saved_games_path() -> Option<String> {
+    detect_saved_games_path_for_edition(false)
 }
 
 /// 检测 ProgramData 下的 Agent 路径
@@ -743,7 +1281,11 @@ pub fn detect_browser_path() -> Option<(String, String)> {
     }
     // 也尝试通过 LocalAppData 找
     if let Some(local) = dirs::data_local_dir() {
-        let edge = local.join("Microsoft").join("Edge").join("Application").join("msedge.exe");
+        let edge = local
+            .join("Microsoft")
+            .join("Edge")
+            .join("Application")
+            .join("msedge.exe");
         if edge.exists() {
             return Some((edge.to_string_lossy().to_string(), "edge".to_string()));
         }
@@ -760,7 +1302,11 @@ pub fn detect_browser_path() -> Option<(String, String)> {
         }
     }
     if let Some(local) = dirs::data_local_dir() {
-        let chrome = local.join("Google").join("Chrome").join("Application").join("chrome.exe");
+        let chrome = local
+            .join("Google")
+            .join("Chrome")
+            .join("Application")
+            .join("chrome.exe");
         if chrome.exists() {
             return Some((chrome.to_string_lossy().to_string(), "chrome".to_string()));
         }
@@ -819,7 +1365,11 @@ pub fn detect_browser_path_by_type(browser_type: String) -> Option<String> {
             }
         }
         if let Some(local) = dirs::data_local_dir() {
-            let edge = local.join("Microsoft").join("Edge").join("Application").join("msedge.exe");
+            let edge = local
+                .join("Microsoft")
+                .join("Edge")
+                .join("Application")
+                .join("msedge.exe");
             if edge.exists() {
                 return Some(edge.to_string_lossy().to_string());
             }
@@ -835,7 +1385,11 @@ pub fn detect_browser_path_by_type(browser_type: String) -> Option<String> {
             }
         }
         if let Some(local) = dirs::data_local_dir() {
-            let chrome = local.join("Google").join("Chrome").join("Application").join("chrome.exe");
+            let chrome = local
+                .join("Google")
+                .join("Chrome")
+                .join("Application")
+                .join("chrome.exe");
             if chrome.exists() {
                 return Some(chrome.to_string_lossy().to_string());
             }

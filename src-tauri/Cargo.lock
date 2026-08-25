@@ -958,6 +958,7 @@ dependencies = [
  "tauri-plugin-shell",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
  "windows 0.58.0",
  "windows-capture",
  "winreg 0.52.0",

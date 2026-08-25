@@ -19,11 +19,10 @@ pub fn silent_cmd(program: &str) -> Command {
     cmd
 }
 
-
-
 /// 清理/过滤用户昵称中的 Windows 不合法文件夹字符
 pub fn sanitize_folder_name(name: &str) -> String {
-    let mut sanitized: String = name.chars()
+    let mut sanitized: String = name
+        .chars()
         .map(|c| match c {
             '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             other => other,
@@ -37,18 +36,47 @@ pub fn sanitize_folder_name(name: &str) -> String {
     }
 }
 
-/// 原生强制关闭指定名称的进程列表
-pub fn kill_processes_by_name(names: &[&str]) {
+/// 强制关闭指定名称的进程，并确认它们已退出。
+/// 调用方可据此避免在旧 Battle.net/Agent 仍写入共享状态时切换账号。
+pub fn kill_processes_by_name(names: &[&str]) -> Result<(), crate::error::AppError> {
     use sysinfo::ProcessesToUpdate;
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-    sys.refresh_processes(ProcessesToUpdate::All);
-    for proc in sys.processes().values() {
-        let name = proc.name().to_string_lossy();
-        for target in names {
-            if name.eq_ignore_ascii_case(target) {
-                let _ = proc.kill();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
+    loop {
+        let remaining = {
+            let mut sys = shared_system()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            sys.refresh_processes(ProcessesToUpdate::All);
+
+            let mut remaining = Vec::new();
+            for process in sys.processes().values() {
+                let process_name = process.name().to_string_lossy();
+                if names
+                    .iter()
+                    .any(|target| process_name.eq_ignore_ascii_case(target))
+                {
+                    remaining.push(format!("{}({})", process_name, process.pid()));
+                    if !process.kill() {
+                        let _ = silent_cmd("taskkill")
+                            .args(["/F", "/PID", &process.pid().to_string()])
+                            .output();
+                    }
+                }
             }
+            remaining
+        };
+
+        if remaining.is_empty() {
+            return Ok(());
         }
+        if std::time::Instant::now() >= deadline {
+            return Err(crate::error::AppError::Unknown(format!(
+                "无法在超时前终止共享进程: {}",
+                remaining.join(", ")
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
