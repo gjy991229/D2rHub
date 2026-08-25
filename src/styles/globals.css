@@ -60,6 +60,42 @@ html, body, #root {
   content: none;
 }
 
+.overlay-dock-handle {
+  position: absolute;
+  z-index: 3;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0.38;
+  pointer-events: none;
+  transition: opacity var(--duration-fast) var(--ease-out-expo);
+}
+
+[data-dock-phase="hidden"] .overlay-dock-handle {
+  opacity: 0.82;
+}
+
+[data-dock-edge="left"] .overlay-dock-handle,
+[data-dock-edge="right"] .overlay-dock-handle {
+  top: 50%;
+  width: 3px;
+  height: min(34px, 60%);
+  transform: translateY(-50%);
+}
+
+[data-dock-edge="left"] .overlay-dock-handle { right: 2px; }
+[data-dock-edge="right"] .overlay-dock-handle { left: 2px; }
+
+[data-dock-edge="top"] .overlay-dock-handle,
+[data-dock-edge="bottom"] .overlay-dock-handle {
+  left: 50%;
+  width: min(42px, 60%);
+  height: 3px;
+  transform: translateX(-50%);
+}
+
+[data-dock-edge="top"] .overlay-dock-handle { bottom: 2px; }
+[data-dock-edge="bottom"] .overlay-dock-handle { top: 2px; }
+
 .border-subtle { border: 1px solid var(--border-default); }
 
 /* ── Tauri drag region ── */
@@ -1273,7 +1309,8 @@ html, body, #root {
 
 @media (prefers-reduced-motion: reduce) {
   .overlay-window,
-  .overlay-window * {
+  .overlay-window *,
+  .overlay-dock-handle {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;

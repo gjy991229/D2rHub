@@ -2,7 +2,10 @@ import {
   calculateMiniOverlaySize,
   initialMiniOverlayLayout,
   MINI_OVERLAY_MIN_HEIGHT,
+  MINI_OVERLAY_SINGLE_MIN_HEIGHT,
+  MINI_OVERLAY_STACKED_MIN_HEIGHT,
   MINI_OVERLAY_STACKED_HEIGHT,
+  miniOverlayMinHeightForLayout,
   normalizeMiniOverlaySize,
   resolveMiniOverlayLayoutAfterResize,
 } from "./overlaySizing";
@@ -31,6 +34,16 @@ export function runTests() {
     "the two-row threshold is exactly twice the new minimum height",
   );
   assertEqual(
+    miniOverlayMinHeightForLayout("single"),
+    MINI_OVERLAY_SINGLE_MIN_HEIGHT,
+    "single-row mode owns the half-height minimum",
+  );
+  assertEqual(
+    miniOverlayMinHeightForLayout("stacked"),
+    MINI_OVERLAY_STACKED_MIN_HEIGHT,
+    "two-row mode keeps the full two-row minimum",
+  );
+  assertEqual(
     normalizeMiniOverlaySize({ width: 120, height: 4 }),
     { width: 200, height: 18 },
     "mini size respects the new half-height minimum",
@@ -54,6 +67,11 @@ export function runTests() {
     resolveMiniOverlayLayoutAfterResize("stacked", 37, 36),
     "single",
     "dragging down to the old minimum switches to one row",
+  );
+  assertEqual(
+    resolveMiniOverlayLayoutAfterResize("stacked", 38, 36.8),
+    "single",
+    "DPI rounding still allows a two-row window to enter one row",
   );
   assertEqual(
     resolveMiniOverlayLayoutAfterResize("single", 36, 36),
