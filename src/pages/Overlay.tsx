@@ -8,10 +8,10 @@ import { invoke } from "@tauri-apps/api/core";
 import {
   currentMonitor,
   getCurrentWindow,
+  PhysicalPosition,
   LogicalPosition,
   LogicalSize,
 } from "@tauri-apps/api/window";
-import { useWindowGeometrySave } from "../hooks/useWindowGeometrySave";
 import { surfaceOpacityVars } from "../styles/surfaceOpacity";
 import { isEnglishLanguage } from "../i18n";
 import { translateTerrorZoneAreaName } from "../data/terrorZoneAreaNames";
@@ -20,11 +20,26 @@ import {
   initialMiniOverlayLayout,
   MINI_OVERLAY_MIN_HEIGHT,
   MINI_OVERLAY_MIN_WIDTH,
+  miniOverlayMinHeightForLayout,
   normalizeMiniOverlaySize,
   resolveMiniOverlayLayoutAfterResize,
   type MiniOverlayLayout,
   type OverlaySize,
 } from "../utils/overlaySizing";
+import {
+  calculateOverlayDockAnimationDuration,
+  calculateOverlayDockPlacement,
+  easeOverlayDockProgress,
+  findOverlayDockEdge,
+  OVERLAY_DOCK_REVEAL_SIZE,
+  OVERLAY_DOCK_SNAP_DISTANCE,
+  pointDistance,
+  type OverlayDockEdge,
+  type OverlayDockPlacement,
+  type PhysicalPoint,
+  type PhysicalRect,
+  type PhysicalSize,
+} from "../utils/overlayDocking";
 
 interface OcrTextItem {
   text: string;
@@ -70,6 +85,16 @@ const EXPANDED_OVERLAY_MIN_WIDTH = 200;
 const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
 const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 340 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
+const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
+const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
+
+type OverlayDockPhase = "shown" | "hidden" | "moving";
+
+interface OverlayDockState {
+  placement: OverlayDockPlacement;
+  workArea: PhysicalRect;
+  phase: OverlayDockPhase;
+}
 
 function readStoredOverlayMode(): OverlayDisplayMode {
   try {
@@ -154,6 +179,7 @@ async function resolveDefaultMiniOverlaySize(): Promise<OverlaySize> {
 async function applyMiniOverlaySize(
   win: ReturnType<typeof getCurrentWindow>,
   miniSize: OverlaySize,
+  miniLayout: MiniOverlayLayout,
 ) {
   const logicalSize = new LogicalSize(miniSize.width, miniSize.height);
 
@@ -162,7 +188,10 @@ async function applyMiniOverlaySize(
   await win.setMaxSize(null);
   await win.setSize(logicalSize);
   await win.setMinSize(
-    new LogicalSize(MINI_OVERLAY_MIN_WIDTH, MINI_OVERLAY_MIN_HEIGHT),
+    new LogicalSize(
+      MINI_OVERLAY_MIN_WIDTH,
+      miniOverlayMinHeightForLayout(miniLayout),
+    ),
   );
 }
 
@@ -301,6 +330,7 @@ export function Overlay() {
       readStoredMiniOverlayLayout() ?? "single",
     ),
   );
+  const miniLayoutRef = useRef(miniLayout);
   const miniHeightRef = useRef<number | null>(miniSizeRef.current?.height ?? null);
   const expandedSizeRef = useRef<OverlaySize>(
     readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
@@ -322,6 +352,14 @@ export function Overlay() {
   } | null>(null);
   const suppressOverlayDoubleClickUntilRef = useRef(0);
   const [accountStripScrollable, setAccountStripScrollable] = useState(false);
+  const dockStateRef = useRef<OverlayDockState | null>(null);
+  const dockMoveTimerRef = useRef<number | null>(null);
+  const dockHideTimerRef = useRef<number | null>(null);
+  const dockAnimationTokenRef = useRef(0);
+  const programmaticDockMoveRef = useRef(false);
+  const pointerInsideDockRef = useRef(false);
+  const [dockEdge, setDockEdge] = useState<OverlayDockEdge | null>(null);
+  const [dockPhase, setDockPhase] = useState<OverlayDockPhase | null>(null);
 
   const isPollerActive = !!(config?.enable_overlay || config?.ocr_enabled);
 
@@ -343,28 +381,307 @@ export function Overlay() {
     };
   }
 
+  function clearDockMoveTimer() {
+    if (dockMoveTimerRef.current !== null) {
+      window.clearTimeout(dockMoveTimerRef.current);
+      dockMoveTimerRef.current = null;
+    }
+  }
+
+  function clearDockHideTimer() {
+    if (dockHideTimerRef.current !== null) {
+      window.clearTimeout(dockHideTimerRef.current);
+      dockHideTimerRef.current = null;
+    }
+  }
+
+  function updateDockState(state: OverlayDockState | null) {
+    dockStateRef.current = state;
+    setDockEdge(state?.placement.edge ?? null);
+    setDockPhase(state?.phase ?? null);
+  }
+
+  function cancelDockAnimation() {
+    dockAnimationTokenRef.current += 1;
+    programmaticDockMoveRef.current = false;
+  }
+
+  function clearDocking() {
+    clearDockMoveTimer();
+    clearDockHideTimer();
+    cancelDockAnimation();
+    updateDockState(null);
+  }
+
+  async function persistOverlayGeometry(positionOverride?: PhysicalPoint) {
+    try {
+      const win = getCurrentWindow();
+      const [position, size, scale] = await Promise.all([
+        positionOverride ? Promise.resolve(positionOverride) : win.outerPosition(),
+        win.outerSize(),
+        win.scaleFactor(),
+      ]);
+      await invoke("save_overlay_geometry", {
+        geometry: {
+          x: Math.round(position.x / scale),
+          y: Math.round(position.y / scale),
+          width: Math.round(size.width / scale),
+          height: Math.round(size.height / scale),
+        },
+      });
+    } catch (err) {
+      console.warn("[Overlay] persist geometry failed:", err);
+    }
+  }
+
+  async function animateOverlayPosition(target: PhysicalPoint, finalPhase: OverlayDockPhase) {
+    const state = dockStateRef.current;
+    if (!state) return;
+
+    const win = getCurrentWindow();
+    const start = await win.outerPosition();
+    if (pointDistance(start, target) < 1) {
+      const settled = { ...state, phase: finalPhase };
+      updateDockState(settled);
+      return;
+    }
+
+    const token = dockAnimationTokenRef.current + 1;
+    dockAnimationTokenRef.current = token;
+    programmaticDockMoveRef.current = true;
+    updateDockState({ ...state, phase: "moving" });
+
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (reduceMotion) {
+      try {
+        await win.setPosition(new PhysicalPosition(target.x, target.y));
+      } catch (err) {
+        console.warn("[Overlay] reduced-motion dock move failed:", err);
+        programmaticDockMoveRef.current = false;
+        return;
+      }
+    } else {
+      const motion = finalPhase === "hidden" ? "hide" : "reveal";
+      const duration = calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
+      let animationFailed = false;
+
+      await new Promise<void>((resolve) => {
+        let startedAt: number | null = null;
+        let pendingPosition: PhysicalPoint | null = null;
+        let moveInFlight = false;
+        let animationFinished = false;
+        let resolved = false;
+        let lastRequestedPosition: PhysicalPoint | null = null;
+
+        const finish = () => {
+          if (resolved) return;
+          resolved = true;
+          resolve();
+        };
+
+        const flushLatestPosition = () => {
+          if (resolved || moveInFlight || !pendingPosition) return;
+          const nextPosition = pendingPosition;
+          pendingPosition = null;
+          moveInFlight = true;
+
+          void win.setPosition(new PhysicalPosition(nextPosition.x, nextPosition.y)).then(() => {
+            moveInFlight = false;
+            if (dockAnimationTokenRef.current !== token) {
+              pendingPosition = null;
+              finish();
+              return;
+            }
+            flushLatestPosition();
+            if (animationFinished && !moveInFlight && !pendingPosition) finish();
+          }).catch((err) => {
+            animationFailed = true;
+            moveInFlight = false;
+            pendingPosition = null;
+            console.warn("[Overlay] dock animation move failed:", err);
+            finish();
+          });
+        };
+
+        const queueLatestPosition = (position: PhysicalPoint) => {
+          if (
+            lastRequestedPosition
+            && lastRequestedPosition.x === position.x
+            && lastRequestedPosition.y === position.y
+          ) {
+            return;
+          }
+          lastRequestedPosition = position;
+          pendingPosition = position;
+          flushLatestPosition();
+        };
+
+        const step = (now: number) => {
+          if (resolved) return;
+          if (dockAnimationTokenRef.current !== token) {
+            pendingPosition = null;
+            if (!moveInFlight) finish();
+            return;
+          }
+          if (startedAt === null) startedAt = now;
+          const progress = Math.min(1, (now - startedAt) / duration);
+          const eased = easeOverlayDockProgress(progress, motion);
+          queueLatestPosition({
+            x: Math.round(start.x + (target.x - start.x) * eased),
+            y: Math.round(start.y + (target.y - start.y) * eased),
+          });
+
+          if (progress >= 1) {
+            animationFinished = true;
+            queueLatestPosition({ x: target.x, y: target.y });
+            if (!moveInFlight && !pendingPosition) finish();
+          } else {
+            window.requestAnimationFrame(step);
+          }
+        };
+
+        window.requestAnimationFrame(step);
+      });
+
+      if (animationFailed) {
+        programmaticDockMoveRef.current = false;
+        return;
+      }
+    }
+
+    if (dockAnimationTokenRef.current !== token) return;
+    const latest = dockStateRef.current;
+    if (latest) updateDockState({ ...latest, phase: finalPhase });
+    window.setTimeout(() => {
+      if (dockAnimationTokenRef.current === token) {
+        programmaticDockMoveRef.current = false;
+      }
+    }, 32);
+  }
+
+  function scheduleDockHide(delay = OVERLAY_DOCK_HIDE_DELAY_MS) {
+    clearDockHideTimer();
+    dockHideTimerRef.current = window.setTimeout(() => {
+      dockHideTimerRef.current = null;
+      const state = dockStateRef.current;
+      if (!state || pointerInsideDockRef.current) return;
+      void animateOverlayPosition(state.placement.hidden, "hidden");
+    }, delay);
+  }
+
+  async function revealDockedOverlay() {
+    clearDockHideTimer();
+    const state = dockStateRef.current;
+    if (!state || state.phase === "shown") return;
+    await animateOverlayPosition(state.placement.visible, "shown");
+  }
+
+  async function evaluateOverlayDocking() {
+    if (programmaticDockMoveRef.current || modeTransitionRef.current) return;
+    try {
+      const win = getCurrentWindow();
+      const [position, size, monitor, scale] = await Promise.all([
+        win.outerPosition(),
+        win.outerSize(),
+        currentMonitor(),
+        win.scaleFactor(),
+      ]);
+      if (!monitor) {
+        await persistOverlayGeometry({ x: position.x, y: position.y });
+        return;
+      }
+      const workArea: PhysicalRect = {
+        x: monitor.workArea.position.x,
+        y: monitor.workArea.position.y,
+        width: monitor.workArea.size.width,
+        height: monitor.workArea.size.height,
+      };
+      const physicalSize: PhysicalSize = { width: size.width, height: size.height };
+      const edge = findOverlayDockEdge(
+        { x: position.x, y: position.y },
+        physicalSize,
+        workArea,
+        OVERLAY_DOCK_SNAP_DISTANCE * scale,
+      );
+      if (!edge) {
+        updateDockState(null);
+        await persistOverlayGeometry({ x: position.x, y: position.y });
+        return;
+      }
+
+      const placement = calculateOverlayDockPlacement(
+        edge,
+        { x: position.x, y: position.y },
+        physicalSize,
+        workArea,
+        OVERLAY_DOCK_REVEAL_SIZE * scale,
+      );
+      updateDockState({ placement, workArea, phase: "moving" });
+      await persistOverlayGeometry(placement.visible);
+      await animateOverlayPosition(placement.visible, "shown");
+      scheduleDockHide();
+    } catch (err) {
+      console.warn("[Overlay] evaluate edge docking failed:", err);
+    }
+  }
+
+  async function refreshDockPlacementAfterResize() {
+    const state = dockStateRef.current;
+    if (!state) return;
+    try {
+      const win = getCurrentWindow();
+      const [size, scale] = await Promise.all([win.outerSize(), win.scaleFactor()]);
+      const placement = calculateOverlayDockPlacement(
+        state.placement.edge,
+        state.placement.visible,
+        { width: size.width, height: size.height },
+        state.workArea,
+        OVERLAY_DOCK_REVEAL_SIZE * scale,
+      );
+      const next = { ...state, placement, phase: "shown" as const };
+      updateDockState(next);
+      await persistOverlayGeometry(placement.visible);
+      await animateOverlayPosition(placement.visible, "shown");
+    } catch (err) {
+      console.warn("[Overlay] refresh dock placement failed:", err);
+    }
+  }
+
   function restoreMiniLayoutForHeight(height: number) {
     const nextLayout = initialMiniOverlayLayout(
       height,
       readStoredMiniOverlayLayout() ?? "single",
     );
     miniHeightRef.current = height;
+    miniLayoutRef.current = nextLayout;
     setMiniLayout(nextLayout);
     storeMiniOverlayLayout(nextLayout);
+    return nextLayout;
   }
 
   function updateMiniLayoutForResize(height: number) {
     const previousHeight = miniHeightRef.current ?? height;
     miniHeightRef.current = height;
-    setMiniLayout((currentLayout) => {
-      const nextLayout = resolveMiniOverlayLayoutAfterResize(
-        currentLayout,
-        previousHeight,
-        height,
-      );
-      if (nextLayout !== currentLayout) storeMiniOverlayLayout(nextLayout);
-      return nextLayout;
-    });
+    const currentLayout = miniLayoutRef.current;
+    const nextLayout = resolveMiniOverlayLayoutAfterResize(
+      currentLayout,
+      previousHeight,
+      height,
+    );
+    if (nextLayout !== currentLayout) {
+      miniLayoutRef.current = nextLayout;
+      setMiniLayout(nextLayout);
+      storeMiniOverlayLayout(nextLayout);
+      void getCurrentWindow().setMinSize(
+        new LogicalSize(
+          MINI_OVERLAY_MIN_WIDTH,
+          miniOverlayMinHeightForLayout(nextLayout),
+        ),
+      ).catch((err) => {
+        console.warn("[Overlay] update mini minimum height failed:", err);
+      });
+    }
+    return nextLayout;
   }
 
   async function setWindowHeightOnce(targetHeight: number) {
@@ -457,6 +774,9 @@ export function Overlay() {
     setOverlayPanelHeight(null);
 
     try {
+      if (dockStateRef.current) {
+        await revealDockedOverlay();
+      }
       const { win, width, height } = await getOverlayWindowSize();
 
       if (displayModeRef.current === "expanded") {
@@ -475,11 +795,9 @@ export function Overlay() {
           readStoredMiniOverlaySize() ??
           await resolveDefaultMiniOverlaySize();
         miniSizeRef.current = miniSize;
-        if (miniHeightRef.current === null) {
-          restoreMiniLayoutForHeight(miniSize.height);
-        }
+        const restoredLayout = restoreMiniLayoutForHeight(miniSize.height);
         storeMiniOverlaySize(miniSize);
-        await applyMiniOverlaySize(win, miniSize);
+        await applyMiniOverlaySize(win, miniSize, restoredLayout);
       } else {
         const miniSize = normalizeMiniOverlaySize({ width, height });
         miniSizeRef.current = miniSize;
@@ -494,6 +812,9 @@ export function Overlay() {
         } catch {}
 
         await applyExpandedOverlaySize(win, expandedSize);
+      }
+      if (dockStateRef.current) {
+        await refreshDockPlacementAfterResize();
       }
     } catch (err) {
       console.warn("[Overlay] toggle information overlay mode failed:", err);
@@ -584,6 +905,7 @@ export function Overlay() {
     }
     event.preventDefault();
     event.stopPropagation();
+    clearDocking();
     void getCurrentWindow().startDragging().catch((err) => {
       console.warn("[Overlay] start window dragging failed:", err);
     });
@@ -891,16 +1213,19 @@ export function Overlay() {
         if (cancelled) return;
 
         miniSizeRef.current = miniSize;
-        restoreMiniLayoutForHeight(miniSize.height);
+        const restoredMiniLayout = restoreMiniLayoutForHeight(miniSize.height);
         expandedSizeRef.current = expandedSize;
         storeMiniOverlaySize(miniSize);
         storeExpandedOverlaySize(expandedSize);
 
         if (displayModeRef.current === "mini") {
-          await applyMiniOverlaySize(win, miniSize);
+          await applyMiniOverlaySize(win, miniSize, restoredMiniLayout);
         } else {
           await applyExpandedOverlaySize(win, expandedSize);
         }
+        window.setTimeout(() => {
+          if (!cancelled) void evaluateOverlayDocking();
+        }, OVERLAY_DOCK_SETTLE_DELAY_MS);
       } catch (err) {
         console.warn("[Overlay] restore information overlay geometry failed:", err);
       }
@@ -920,10 +1245,16 @@ export function Overlay() {
     (async () => {
       try {
         const win = getCurrentWindow();
-        const stopListening = await win.onResized(() => {
+        const stopListening = await win.onResized((event) => {
           const resizedMode = displayModeRef.current;
           if (resizedMode === "mini") {
-            updateMiniLayoutForResize(Math.max(MINI_OVERLAY_MIN_HEIGHT, window.innerHeight));
+            void win.scaleFactor().then((scale) => {
+              const logicalHeight = Math.max(
+                MINI_OVERLAY_MIN_HEIGHT,
+                event.payload.height / scale,
+              );
+              updateMiniLayoutForResize(logicalHeight);
+            });
           }
           if (overlaySizeSaveTimerRef.current !== null) {
             window.clearTimeout(overlaySizeSaveTimerRef.current);
@@ -941,6 +1272,11 @@ export function Overlay() {
                 const expandedSize = normalizeExpandedOverlaySize({ width, height });
                 expandedSizeRef.current = expandedSize;
                 storeExpandedOverlaySize(expandedSize);
+              }
+              if (dockStateRef.current) {
+                await refreshDockPlacementAfterResize();
+              } else {
+                await persistOverlayGeometry();
               }
             } catch (err) {
               console.warn(`[Overlay] persist ${resizedMode} size failed:`, err);
@@ -963,7 +1299,38 @@ export function Overlay() {
     };
   }, []);
 
-  useWindowGeometrySave("save_overlay_geometry", 1, 1);
+  // Native dragging leaves the webview pointer stream, so movement is observed
+  // at the window level and settled after the final OS move event.
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenMove: (() => void) | undefined;
+
+    (async () => {
+      try {
+        const win = getCurrentWindow();
+        const stopListening = await win.onMoved(() => {
+          if (cancelled || programmaticDockMoveRef.current || modeTransitionRef.current) return;
+          clearDockMoveTimer();
+          dockMoveTimerRef.current = window.setTimeout(() => {
+            dockMoveTimerRef.current = null;
+            if (!cancelled) void evaluateOverlayDocking();
+          }, OVERLAY_DOCK_SETTLE_DELAY_MS);
+        });
+        if (cancelled) stopListening();
+        else unlistenMove = stopListening;
+      } catch (err) {
+        console.warn("[Overlay] listen for edge docking failed:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlistenMove?.();
+      clearDockMoveTimer();
+      clearDockHideTimer();
+      cancelDockAnimation();
+    };
+  }, []);
 
   // Config is updated in real-time via the Tauri event listener in globalConfig.ts
 
@@ -1176,14 +1543,26 @@ export function Overlay() {
           ? (useEnglish ? "Waiting for next forecast" : "等待下一条预报")
           : (useEnglish ? "Syncing" : "同步中");
 
+  function handleDockPointerEnter() {
+    pointerInsideDockRef.current = true;
+    if (dockStateRef.current) void revealDockedOverlay();
+  }
+
+  function handleDockPointerLeave() {
+    pointerInsideDockRef.current = false;
+    if (dockStateRef.current) scheduleDockHide();
+  }
+
   return (
     <div
-      className="h-screen w-screen overflow-hidden select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-3px]"
+      className="relative h-screen w-screen overflow-hidden select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-3px]"
       style={{
         ...surfaceOpacityVars(config?.overlay_opacity, theme),
       }}
       data-overlay-mode={displayMode}
       data-mini-layout={displayMode === "mini" ? miniLayout : undefined}
+      data-dock-edge={dockEdge ?? undefined}
+      data-dock-phase={dockPhase ?? undefined}
       role="region"
       tabIndex={0}
       aria-label={overlayModeToggleTitle}
@@ -1195,8 +1574,11 @@ export function Overlay() {
       onPointerMoveCapture={handleOverlayWindowPointerMoveCapture}
       onPointerUpCapture={finishOverlayWindowPointerGesture}
       onPointerCancelCapture={finishOverlayWindowPointerGesture}
+      onPointerEnter={handleDockPointerEnter}
+      onPointerLeave={handleDockPointerLeave}
       title={overlayModeToggleTitle}
     >
+      {dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
       <div
         ref={overlayPanelRef}
         className={`overlay-window flex h-full w-full overflow-hidden ${
