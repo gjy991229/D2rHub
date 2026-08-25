@@ -1,6 +1,6 @@
 [package]
 name = "d2rhub"
-version = "0.7.7"
+version = "0.8.0"
 description = "Diablo II Resurrected Multi-Account Manager"
 authors = ["D2RHub"]
 edition = "2021"
