@@ -6,6 +6,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 
 use crate::state::SharedState;
+use crate::stats_page::{render_stats_template, stats_template_candidates};
 
 /// 单条符文掉落记录
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -584,35 +585,23 @@ pub fn open_stats_page(
         .path()
         .resource_dir()
         .map_err(|e| format!("获取资源目录失败: {}", e))?;
-    let mut template_path = resource_dir.join("docs").join("stats.html");
-
-    // NSIS 安装包回退：资源可能被包裹在 _up_ 子目录中
-    if !template_path.exists() {
-        let nsis_path = resource_dir.join("_up_").join("docs").join("stats.html");
-        if nsis_path.exists() {
-            template_path = nsis_path;
-        }
-    }
-
-    // 开发模式回退：从项目根目录 docs/ 查找
-    if !template_path.exists() {
-        let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap_or(std::path::Path::new("."))
-            .join("docs")
-            .join("stats.html");
-        if dev_path.exists() {
-            template_path = dev_path;
-        }
-    }
-
-    if !template_path.exists() {
-        return Err(format!(
-            "stats.html 模板不存在: {} (资源目录: {})",
-            template_path.display(),
-            resource_dir.display()
-        ));
-    }
+    let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("docs")
+        .join("stats.html");
+    // 调试运行时工作区模板是事实来源，避免 target/debug/_up_ 中的旧打包副本遮蔽最新页面。
+    // 发布版本仍然优先使用安装包资源，项目目录只作为最后回退。
+    let template_path = stats_template_candidates(&resource_dir, &dev_path, cfg!(debug_assertions))
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            format!(
+                "stats.html 模板不存在 (资源目录: {}, 开发路径: {})",
+                resource_dir.display(),
+                dev_path.display()
+            )
+        })?;
 
     let template = std::fs::read_to_string(&template_path).map_err(|e| {
         format!(
@@ -625,9 +614,14 @@ pub fn open_stats_page(
     // 3. 启动统计 API 服务并注入端口号
     let api_port = start_stats_api(state.app_data_dir.clone())?;
     let stats_json = escape_json_for_html_script(&stats_json);
-    let html = template
-        .replace("{{STATS_DATA}}", &stats_json)
-        .replace("{{STATS_API_PORT}}", &api_port.to_string());
+    let stats_theme = state
+        .config
+        .read()
+        .as_ref()
+        .map(|config| config.theme.as_str())
+        .unwrap_or("light")
+        .to_string();
+    let html = render_stats_template(&template, &stats_json, api_port, &stats_theme);
 
     // 4. 写入 stateData/stats.html（使相对路径 img/ 可用）
     let state_data_dir = Path::new(&state.app_data_dir).join("stateData");
