@@ -3,314 +3,515 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>D2RHub 使用指南</title>
+<meta name="color-scheme" content="dark light">
+<title>D2RHub v0.8 使用手册</title>
 <style>
   :root {
-    --bg-main: #0a0a0b;
-    --bg-surface: #121214;
-    --bg-panel: #18181b;
-    --border: rgba(255, 255, 255, 0.08);
-    --border-hover: rgba(255, 255, 255, 0.15);
-    --text-primary: #ededef;
-    --text-secondary: #a1a1aa;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
-    --radius-sm: 6px;
-    --radius-md: 8px;
-    --radius-lg: 12px;
+    --bg: #090a0c;
+    --surface: #101216;
+    --surface-raised: #171a20;
+    --surface-soft: #1d2129;
+    --border: rgba(255,255,255,.09);
+    --border-strong: rgba(255,255,255,.16);
+    --text: #f4f3ef;
+    --muted: #aaaeb8;
+    --faint: #757b88;
+    --accent: #d5a85a;
+    --accent-soft: rgba(213,168,90,.12);
+    --blue: #77a8ff;
+    --green: #65c494;
+    --red: #ef7f7f;
+    --shadow: 0 22px 70px rgba(0,0,0,.28);
   }
+
   [data-theme="light"] {
-    --bg-main: #f4f4f5;
-    --bg-surface: #ffffff;
-    --bg-panel: #fafafa;
-    --border: rgba(0, 0, 0, 0.1);
-    --border-hover: rgba(0, 0, 0, 0.2);
-    --text-primary: #18181b;
-    --text-secondary: #52525b;
-    --accent: #2563eb;
-    --accent-hover: #3b82f6;
+    --bg: #f2f0eb;
+    --surface: #fbfaf7;
+    --surface-raised: #fff;
+    --surface-soft: #efede7;
+    --border: rgba(28,31,36,.10);
+    --border-strong: rgba(28,31,36,.18);
+    --text: #202226;
+    --muted: #5d626c;
+    --faint: #80858e;
+    --accent: #94661c;
+    --accent-soft: rgba(148,102,28,.10);
+    --blue: #356fc8;
+    --green: #247a50;
+    --red: #b33f3f;
+    --shadow: 0 20px 55px rgba(53,45,33,.10);
   }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; scroll-padding-top: 28px; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg-main);
-    color: var(--text-primary);
-    line-height: 1.6;
-    display: flex;
-    height: 100vh;
-    overflow: hidden;
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 80% -10%, var(--accent-soft), transparent 30rem),
+      var(--bg);
+    color: var(--text);
+    font: 15px/1.75 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
   }
-
-  /* Sidebar */
-  .sidebar {
-    width: 240px;
-    background: var(--bg-surface);
-    border-right: 1px solid var(--border);
-    display: flex;
-    flex-direction: column;
-    padding: 1rem 0;
-    flex-shrink: 0;
-  }
-  .sidebar-header {
-    padding: 0 1.5rem 1rem;
-    font-size: 1.25rem;
-    font-weight: 600;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 1rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .nav-menu {
-    flex: 1;
-    overflow-y: auto;
-    padding: 0 0.75rem;
-  }
-  .nav-item {
-    display: block;
-    padding: 0.5rem 0.75rem;
-    color: var(--text-secondary);
-    text-decoration: none;
-    border-radius: var(--radius-md);
-    margin-bottom: 0.25rem;
-    transition: all 0.2s;
-    font-size: 0.9rem;
-  }
-  .nav-item:hover {
-    background: var(--bg-panel);
-    color: var(--text-primary);
-  }
-  .nav-item.active {
-    background: var(--bg-panel);
-    color: var(--accent);
-    font-weight: 500;
-  }
-
-  /* Theme Toggle */
-  .theme-toggle {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text-primary);
-    padding: 0.25rem 0.5rem;
-    border-radius: var(--radius-sm);
-    cursor: pointer;
-    font-size: 0.8rem;
-  }
-
-  /* Main Content */
-  .main-content {
-    flex: 1;
-    overflow-y: auto;
-    padding: 2rem 3rem;
-    scroll-behavior: smooth;
-  }
-  .section {
-    margin-bottom: 3rem;
-    padding: 2rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-  }
-  .section h2 {
-    font-size: 1.5rem;
-    margin-bottom: 1rem;
-    color: var(--text-primary);
-    border-bottom: 1px solid var(--border);
-    padding-bottom: 0.5rem;
-  }
-  .section h3 {
-    font-size: 1.1rem;
-    margin-top: 1.5rem;
-    margin-bottom: 0.5rem;
-    color: var(--text-primary);
-  }
-  .section p {
-    color: var(--text-secondary);
-    margin-bottom: 1rem;
-    font-size: 0.95rem;
-  }
-  .section ul {
-    list-style-type: disc;
-    margin-left: 1.5rem;
-    margin-bottom: 1rem;
-    color: var(--text-secondary);
-    font-size: 0.95rem;
-  }
-  .section li {
-    margin-bottom: 0.25rem;
-  }
+  button, input { font: inherit; }
+  button { color: inherit; }
+  a { color: var(--blue); text-decoration: none; }
+  a:hover { text-decoration: underline; }
   code {
-    background: var(--bg-panel);
-    padding: 0.2rem 0.4rem;
-    border-radius: var(--radius-sm);
-    font-family: monospace;
-    font-size: 0.85em;
+    padding: .12rem .36rem;
     border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface-soft);
+    color: var(--text);
+    font: .88em Consolas, "SFMono-Regular", monospace;
+  }
+  kbd {
+    display: inline-block;
+    min-width: 1.7em;
+    padding: .05rem .38rem;
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    background: var(--surface-raised);
+    text-align: center;
+    font: .82em Consolas, monospace;
   }
 
-  @media (max-width: 768px) {
-    body { flex-direction: column; }
-    .sidebar { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); padding-bottom: 0; }
-    .nav-menu { display: flex; overflow-x: auto; padding: 0.5rem; }
-    .nav-item { white-space: nowrap; margin-bottom: 0; margin-right: 0.5rem; }
-    .main-content { padding: 1rem; }
-    .section { padding: 1.5rem; margin-bottom: 1.5rem; }
+  .shell { display: grid; grid-template-columns: 276px minmax(0, 1fr); min-height: 100vh; }
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    padding: 26px 20px 20px;
+    border-right: 1px solid var(--border);
+    background: color-mix(in srgb, var(--surface) 94%, transparent);
+    backdrop-filter: blur(18px);
+    overflow-y: auto;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; margin: 0 8px 24px; }
+  .brand-mark {
+    display: grid;
+    width: 38px;
+    height: 38px;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    border-radius: 10px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 800;
+  }
+  .brand strong { display: block; font-size: 17px; letter-spacing: .02em; }
+  .brand span { display: block; color: var(--faint); font-size: 11px; letter-spacing: .08em; }
+  .nav-title { margin: 17px 10px 7px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+  .nav-link {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin: 2px 0;
+    padding: 7px 10px;
+    border-radius: 7px;
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .nav-link::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--border-strong); }
+  .nav-link:hover { background: var(--surface-soft); color: var(--text); text-decoration: none; }
+  .nav-link.active { background: var(--accent-soft); color: var(--accent); font-weight: 650; }
+  .nav-link.active::before { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .theme-button {
+    width: 100%;
+    margin-top: 20px;
+    padding: 8px 11px;
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    background: transparent;
+    cursor: pointer;
+    color: var(--muted);
+  }
+  .theme-button:hover { border-color: var(--border-strong); color: var(--text); }
+
+  main { width: min(100%, 1080px); padding: 54px 54px 100px; }
+  .hero { padding: 12px 0 48px; border-bottom: 1px solid var(--border); }
+  .eyebrow { margin: 0 0 9px; color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .13em; text-transform: uppercase; }
+  h1 { margin: 0; max-width: 760px; font-size: clamp(35px, 5vw, 64px); line-height: 1.02; letter-spacing: -.045em; }
+  .lede { max-width: 720px; margin: 22px 0 0; color: var(--muted); font-size: 17px; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .badge { padding: 4px 9px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 11px; }
+  .badge.accent { border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-soft); color: var(--accent); }
+
+  section { padding: 46px 0 8px; }
+  h2 { margin: 0 0 9px; font-size: 28px; letter-spacing: -.025em; }
+  h3 { margin: 28px 0 8px; font-size: 17px; }
+  p { margin: 8px 0 14px; color: var(--muted); }
+  ul, ol { margin: 10px 0 18px; padding-left: 1.45rem; color: var(--muted); }
+  li { margin: 5px 0; padding-left: .2rem; }
+  strong { color: var(--text); }
+
+  .callout {
+    margin: 20px 0;
+    padding: 15px 17px;
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--border));
+    border-left: 3px solid var(--accent);
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--muted);
+  }
+  .callout strong { color: var(--accent); }
+  .callout.danger { border-color: color-mix(in srgb, var(--red) 32%, var(--border)); border-left-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+  .callout.danger strong { color: var(--red); }
+
+  .steps { display: grid; gap: 11px; margin: 19px 0; counter-reset: steps; }
+  .step {
+    position: relative;
+    min-height: 67px;
+    padding: 14px 16px 14px 57px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+  .step::before {
+    counter-increment: steps;
+    content: counter(steps, decimal-leading-zero);
+    position: absolute;
+    left: 16px;
+    top: 15px;
+    color: var(--accent);
+    font: 700 12px/1 Consolas, monospace;
+  }
+  .step strong { display: block; margin-bottom: 2px; }
+  .step p { margin: 0; font-size: 13px; }
+
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+  .card { padding: 17px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+  .card h3 { margin: 0 0 7px; }
+  .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+  .card .label { color: var(--accent); font: 700 10px/1 Consolas, monospace; letter-spacing: .12em; }
+
+  .table-wrap { margin: 18px 0; border: 1px solid var(--border); border-radius: 10px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--surface); font-size: 13px; }
+  th, td { padding: 11px 13px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+  th { color: var(--faint); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+  td { color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+
+  .metric-list { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 9px; margin: 18px 0; }
+  .metric { padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
+  .metric strong { display: block; font-size: 13px; }
+  .metric span { color: var(--faint); font-size: 12px; }
+  .footer { margin-top: 62px; padding-top: 24px; border-top: 1px solid var(--border); color: var(--faint); font-size: 12px; }
+
+  @media (max-width: 820px) {
+    .shell { display: block; }
+    .sidebar { position: sticky; z-index: 10; width: 100%; height: auto; padding: 10px 14px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .brand { display: none; }
+    .nav-title, .theme-button { display: none; }
+    nav { display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+    .nav-link { flex: 0 0 auto; white-space: nowrap; }
+    .nav-link::before { display: none; }
+    main { padding: 38px 22px 70px; }
+    .hero { padding-bottom: 36px; }
+    .grid, .metric-list { grid-template-columns: 1fr; }
+    section { padding-top: 36px; }
+  }
+
+  @media print {
+    .sidebar { display: none; }
+    .shell { display: block; }
+    main { width: 100%; padding: 0; }
+    body { background: #fff; color: #111; }
+    section { break-inside: avoid; }
   }
 </style>
 </head>
 <body>
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">D2</div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.8</span></div>
+    </div>
+    <nav id="nav">
+      <div class="nav-title">开始</div>
+      <a class="nav-link active" href="#overview">版本与功能</a>
+      <a class="nav-link" href="#quick-start">快速开始</a>
+      <a class="nav-link" href="#connections">路径配置</a>
+      <div class="nav-title">日常使用</div>
+      <a class="nav-link" href="#accounts">账号与认证</a>
+      <a class="nav-link" href="#launch">启动与多开</a>
+      <a class="nav-link" href="#settings">设置中心</a>
+      <a class="nav-link" href="#overlay">性能悬浮窗</a>
+      <a class="nav-link" href="#ocr">OCR 自动化</a>
+      <a class="nav-link" href="#stats">统计分析</a>
+      <a class="nav-link" href="#pet">Bongo Cat</a>
+      <div class="nav-title">维护</div>
+      <a class="nav-link" href="#data">数据与隐私</a>
+      <a class="nav-link" href="#troubleshooting">疑难解答</a>
+    </nav>
+    <button class="theme-button" id="themeToggle" type="button">切换明暗主题</button>
+  </aside>
 
-<aside class="sidebar">
-  <div class="sidebar-header">
-    D2RHub
-    <button class="theme-toggle" id="themeToggle">主题</button>
-  </div>
-  <nav class="nav-menu" id="navMenu">
-    <a href="#quick-start" class="nav-item active">快速入门</a>
-    <a href="#paths-config" class="nav-item">路径与配置</a>
-    <a href="#account-token" class="nav-item">账号与令牌</a>
-    <a href="#launch-controls" class="nav-item">启动控制</a>
-    <a href="#ocr-stats" class="nav-item">OCR与统计</a>
-    <a href="#overlay-pet" class="nav-item">悬浮窗与宠物</a>
-    <a href="#troubleshooting" class="nav-item">维护与疑难解答</a>
-    <a href="#data-locations" class="nav-item">数据存储位置</a>
-    <a href="#feedback" class="nav-item">反馈与支持</a>
-  </nav>
-</aside>
+  <main>
+    <header class="hero" id="overview">
+      <p class="eyebrow">CURRENT MANUAL · 2026-08</p>
+      <h1>D2RHub v0.8<br>使用手册</h1>
+      <p class="lede">面向当前 0.8.x 版本的完整操作说明，覆盖国服/国际服双版本、多账号认证、悬浮窗、OCR 与新版掉落统计。</p>
+      <div class="meta-row">
+        <span class="badge accent">适用版本 v0.8.x</span>
+        <span class="badge">Windows 10 / 11</span>
+        <span class="badge">Full / Lite</span>
+        <span class="badge">本地数据</span>
+      </div>
+    </header>
 
-<main class="main-content" id="mainContent">
-  <section id="quick-start" class="section">
-    <h2>快速入门</h2>
-    <p>欢迎使用 D2RHub。这是一款专为暗黑破坏神 2 重制版设计的现代化多账号管理与启动工具。</p>
-    <ul>
-      <li>在“账号”页面添加您的战网账号。</li>
-      <li>在“设置”页面配置游戏路径与战网客户端路径。</li>
-      <li>点击账号卡片上的“启动”按钮，自动完成账号切换与游戏启动。</li>
-    </ul>
-  </section>
+    <section>
+      <h2>选择 Full 还是 Lite</h2>
+      <p>两个版本共享账号管理、双版本隔离、多开、画质设置、悬浮窗和桌宠。差异集中在 OCR 识别与掉落统计。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>能力</th><th>Full</th><th>Lite</th></tr></thead>
+          <tbody>
+            <tr><td>账号管理、网页 Token / 战网认证、多开</td><td>支持</td><td>支持</td></tr>
+            <tr><td>国服与国际服安装档案、账号独立画质</td><td>支持</td><td>支持</td></tr>
+            <tr><td>性能悬浮窗、快捷键、Bongo Cat</td><td>支持</td><td>支持</td></tr>
+            <tr><td>场景/符文 OCR、掉落截图与统计页</td><td>支持</td><td>不包含</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
 
-  <section id="paths-config" class="section">
-    <h2>路径与配置</h2>
-    <p>为了使 D2RHub 正常工作，需要正确配置游戏与战网的路径。</p>
-    <h3>游戏路径</h3>
-    <p>指向 <code>D2R.exe</code> 所在的文件夹。D2RHub 会通过该路径直接启动游戏，绕过繁琐的战网客户端启动流程（如果已缓存 Token）。</p>
-    <h3>战网客户端路径</h3>
-    <p>指向 <code>Battle.net.exe</code> 所在的文件夹。这用于在令牌过期时自动拉起客户端进行登录更新。</p>
-  </section>
+    <section id="quick-start">
+      <p class="eyebrow">01 · FIRST RUN</p>
+      <h2>快速开始</h2>
+      <div class="steps">
+        <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 Full 或 Lite 的 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
+        <div class="step"><strong>至少配置一套游戏版本</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。使用战网认证时，再填写该版本的 Battle.net.exe。</p></div>
+        <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
+        <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，或使用“启动全部 / 多选启动”。启动进度和错误会显示在卡片及运行日志中。</p></div>
+        <div class="step"><strong>按需开启辅助功能</strong><p>在“设置中心”开启悬浮窗、桌宠；Full 版还可在“自动化”选择已初始化账号并启用 OCR。</p></div>
+      </div>
+      <div class="callout"><strong>路径检测边界：</strong>当前向导可自动探测国服/国际服存档目录、Agent、Roaming 配置和 Edge/Chrome；游戏安装目录及 Battle.net.exe 仍应由你确认或手动选择。</div>
+    </section>
 
-  <section id="account-token" class="section">
-    <h2>账号与令牌机制</h2>
-    <p>D2RHub 支持战网的离线 Token 机制，实现无感切换账号。</p>
-    <ul>
-      <li><strong>添加账号：</strong>输入一个显示名称，便于您识别。</li>
-      <li><strong>Token模式：</strong>基于设备本地的离线令牌启动游戏，理论上只要不更换设备就不会过期，无需战网客户端参与。</li>
-      <li><strong>Battle.net模式：</strong>通过战网客户端登录机制启动，Token有效期通常在30天左右。过期后需要再次通过战网客户端授权。</li>
-    </ul>
-  </section>
+    <section id="connections">
+      <p class="eyebrow">02 · CONNECTIONS</p>
+      <h2>路径与双版本配置</h2>
+      <p>“设置中心 → 连接”把本机环境分为两套互不混用的安装档案。</p>
+      <div class="grid">
+        <div class="card"><span class="label">CN PROFILE</span><h3>国服</h3><p>供国服账号使用。存档目录通常带有 <code>Diablo II Resurrected (CN)</code> 标识。</p></div>
+        <div class="card"><span class="label">GLOBAL PROFILE</span><h3>国际服</h3><p>亚服、 美服和欧服共用同一套国际服游戏、战网和存档路径。</p></div>
+      </div>
+      <h3>每套档案需要什么</h3>
+      <ul>
+        <li><strong>游戏安装目录：</strong>包含 <code>D2R.exe</code>，任何认证方式都需要。</li>
+        <li><strong>存档目录：</strong>包含或将包含 <code>Settings.json</code>，任何认证方式都需要。</li>
+        <li><strong>Battle.net.exe：</strong>仅战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
+      </ul>
+      <p>如果存档目录暂时没有 <code>Settings.json</code>，账号创建、登录和多开仍可用，但画质编辑、账号独立游戏配置和系统配置快照不可用。先用对应版本正常进入一次游戏，通常会生成该文件。</p>
+      <h3>辅助路径</h3>
+      <p>Agent 目录和 <code>%APPDATA%\Battle.net</code> 用于战网运行环境切换；Edge / Chrome 用于网页 Token 的独立浏览器档案。浏览器不是游戏启动的必需项，但使用内置 Token 获取流程时应配置。</p>
+    </section>
 
-  <section id="launch-controls" class="section">
-    <h2>启动控制</h2>
-    <p>D2RHub 提供了细粒度的启动参数控制：</p>
-    <ul>
-      <li><strong>等待进程退出：</strong>如果当前已有其他账号运行，您可以选择等待它们退出后再启动，或直接强行结束它们。</li>
-      <li><strong>启动参数：</strong>支持自定义命令行参数，如 <code>-txt</code> 或 <code>-direct</code>，可以在全局设置或单个账号设置中配置。</li>
-      <li><strong>多开支持：</strong>D2RHub 已内置多开处理机制，无需借助其他第三方工具或额外软件即可实现多账号同时运行。</li>
-    </ul>
-  </section>
+    <section id="accounts">
+      <p class="eyebrow">03 · ACCOUNTS</p>
+      <h2>账号与认证</h2>
+      <p>添加账号向导顺序为：<strong>昵称 → 区服/语言/配音 → 认证模式 → 获取 Token → 粘贴 Token</strong>。选择战网认证后，流程会改为客户端登录、采集本地认证快照并清理临时状态。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
+          <tbody>
+            <tr><td>所需路径</td><td>游戏 + 存档；获取时需 Edge/Chrome</td><td>游戏 + 存档 + 对应版本 Battle.net.exe</td></tr>
+            <tr><td>启动路径</td><td>使用本机 DPAPI 加密保存的 Token 直启</td><td>恢复账号的 Battle.net / UnifiedAuth 本地快照后启动</td></tr>
+            <tr><td>特点</td><td>启动快，不依赖战网客户端常驻</td><td>适合无法使用网页 Token 的账号，流程更长</td></tr>
+            <tr><td>失效处理</td><td>服务端判定失效时，在账号操作中更新 Token</td><td>界面按 30 天提示有效状态；过期或登录失败时重新初始化</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><strong>凭据安全：</strong>Token 经 Windows DPAPI 绑定当前 Windows 用户后落盘。它仍属于敏感凭据，不要复制到 Issue、聊天记录或截图中，也不要分享账号目录。</div>
+      <h3>账号卡片可以做什么</h3>
+      <ul>
+        <li>启动账号、只启动 Battle.net（战网认证账号）、更新 Token 或重新初始化。</li>
+        <li>修改昵称、区服/认证信息、Mod 启动参数与常用参数列表。</li>
+        <li>设置游戏窗口 X/Y 位置，切换系统配置或账号独立配置。</li>
+        <li>展开快速设置修改分辨率和帧率；拖动卡片可改变账号顺序，快捷键位置会随顺序对应。</li>
+      </ul>
+    </section>
 
-  <section id="ocr-stats" class="section">
-    <h2>OCR 与掉落统计</h2>
-    <p>D2RHub 内置了强大的屏幕 OCR 引擎，用于自动识别游戏内的掉落和场景信息。</p>
-    <ul>
-      <li>在“设置”中启用 OCR 功能，并选择要监控的目标账号窗口。</li>
-      <li>OCR 将会在后台静默运行，识别到的符文和物品会自动记录。</li>
-      <li>点击主界面的“统计”按钮，可以查看详细的掉落历史和效率分析。</li>
-    </ul>
-  </section>
+    <section id="launch">
+      <p class="eyebrow">04 · LAUNCH</p>
+      <h2>启动、多选与进程控制</h2>
+      <ul>
+        <li><strong>单账号：</strong>点击账号卡片的启动按钮。</li>
+        <li><strong>启动全部：</strong>按当前账号顺序依次处理全部可启动账号。</li>
+        <li><strong>多选启动：</strong>进入多选模式，勾选目标账号后启动；适合只开固定组合。</li>
+        <li><strong>取消：</strong>启动队列运行时可以取消；程序会尽量收束本轮产生的战网/认证临时状态。</li>
+        <li><strong>窗口聚焦：</strong>使用已绑定快捷键，或在展开悬浮窗双击账号名称。</li>
+      </ul>
+      <div class="callout danger"><strong>“一键关闭”是强制操作：</strong>它会结束当前系统内所有 <code>D2R.exe</code> 进程，可能造成未保存的游戏进度丢失。确认所有游戏都可以退出后再执行。</div>
+      <p>多开通过 Windows 进程与句柄管理完成，不修改游戏文件、不写入游戏内存，也不注入 DLL；但第三方工具仍可能受到游戏条款、反作弊策略、系统权限或安全软件影响，请自行评估风险。</p>
+    </section>
 
-  <section id="overlay-pet" class="section">
-    <h2>悬浮窗与宠物 (Bongo Cat)</h2>
-    <p>增添游戏乐趣的小部件：</p>
-    <ul>
-      <li><strong>屏幕悬浮窗：</strong>可以在游戏上方显示当前的 OCR 状态、掉落总览等实时信息。</li>
-      <li><strong>Bongo Cat：</strong>一个可爱的敲击键盘小猫动画，它会根据您的鼠标和键盘操作实时反馈。在“设置”中可以调整其缩放比例和位置。</li>
-    </ul>
-  </section>
+    <section id="settings">
+      <p class="eyebrow">05 · SETTINGS CENTER</p>
+      <h2>设置中心速查</h2>
+      <div class="metric-list">
+        <div class="metric"><strong>连接</strong><span>国服/国际服游戏、战网、存档、Agent、Roaming 与浏览器路径</span></div>
+        <div class="metric"><strong>账号</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
+        <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；隔离浏览器和每日更新</span></div>
+        <div class="metric"><strong>快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
+        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体和悬浮窗开关</span></div>
+        <div class="metric"><strong>自动化（Full）</strong><span>OCR 目标账号、轮询频率、调试输出、重启与统计页</span></div>
+        <div class="metric"><strong>伴随</strong><span>Bongo Cat 开关、对话框、缩放和已解锁皮肤</span></div>
+        <div class="metric"><strong>维护</strong><span>打开日志目录、重新运行首次配置向导</span></div>
+      </div>
+      <h3>账号独立游戏设置</h3>
+      <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。修改会自动保存。选择“系统配置”时跟随当前存档目录的 <code>Settings.json</code>；选择独立配置后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置到当前账号”。</p>
+    </section>
 
-  <section id="troubleshooting" class="section">
-    <h2>维护与疑难解答</h2>
-    <ul>
-      <li><strong>自动更新：</strong>应用内不会直接替换可执行文件。检测到新版本后会打开 Release 安装包下载链接，请下载完整 MSI/NSIS 安装包后手动安装。</li>
-      <li><strong>战网无法启动：</strong>检查“设置 - 路径”中的 Battle.net.exe 路径是否存在，并确认 D2RHub 以管理员权限运行。</li>
-      <li><strong>账号初始化超时：</strong>确认战网已完成登录。若登录窗口未置顶，可手动切回 Battle.net 后继续等待。</li>
-      <li><strong>OCR 未识别：</strong>确认目标账号窗口标题与设置一致。需要排查时可临时开启 OCR 调试输出，排查完成后建议关闭。</li>
-      <li><strong>统计页无数据：</strong>统计数据来自本地数据库，只有启用 OCR 并识别到场景切换后才会产生记录。</li>
-      <li><strong>重置状态：</strong>退出 D2RHub 后备份并删除本地数据目录，再重新启动即可重新配置。</li>
-    </ul>
-  </section>
+    <section id="overlay">
+      <p class="eyebrow">06 · PERFORMANCE OVERLAY</p>
+      <h2>性能悬浮窗</h2>
+      <p>悬浮窗常驻桌面上方，可显示运行账号状态；Full 版开启 OCR 后还会显示当前场景计时、历史均值、符文掉落和邪恶区域信息。</p>
+      <h3>展开与迷你</h3>
+      <ul>
+        <li>展开模式双击空白区域，或迷你模式双击悬浮窗，可切换模式。</li>
+        <li>窗口获得焦点时按 <kbd>Enter</kbd> 或 <kbd>Space</kbd> 也可切换。</li>
+        <li>展开和迷你模式分别记住尺寸；展开模式双击账号可聚焦对应游戏。</li>
+        <li>迷你双层布局最低为 <strong>36 逻辑像素</strong>；继续向下缩放会切成单行，最低为 <strong>18 逻辑像素</strong>。拉高到阈值会恢复双层；高 DPI / 2K 屏会按系统缩放正确换算。</li>
+      </ul>
+      <h3>贴边吸附与自动隐藏</h3>
+      <ol>
+        <li>把展开或迷你悬浮窗拖到屏幕任一边缘并松开。</li>
+        <li>窗口会吸附到最近边缘并平滑推入屏幕外，只保留一条约 8px 的触发边。</li>
+        <li>把鼠标移到触发边，窗口会平滑抽出；鼠标离开后再次推入隐藏。</li>
+        <li>窗口抽出时向屏幕内部拖走，即可取消吸附。</li>
+      </ol>
+      <p>吸附位置按当前显示器的可用工作区计算，也适用于副屏和任务栏占用区域。系统启用“减少动态效果”时，抽出/隐藏会改为即时完成。</p>
+    </section>
 
-  <section id="data-locations" class="section">
-    <h2>数据存储与隐私</h2>
-    <p>D2RHub 的运行数据保存在本机，不会主动上传到远程服务器。常见数据包括：</p>
-    <ul>
-      <li><strong>全局配置：</strong>战网路径、游戏路径、存档路径、界面偏好和快捷键设置。</li>
-      <li><strong>账号数据：</strong>账号昵称、启动参数、窗口位置、DPAPI 加密后的 Token 数据和 Battle.net 认证快照。</li>
-      <li><strong>注册表备份：</strong>用于账号切换的 Battle.net UnifiedAuth 快照，仅保存在本机账号目录。</li>
-      <li><strong>OCR 数据：</strong>启用调试输出时，会在本机保存裁剪截图和识别日志用于排错。</li>
-      <li><strong>日志与统计：</strong>本地日志、刷图记录和统计数据库。</li>
-      <li><strong>本地统计 API：</strong>统计页面只读取本机数据，不对公网开放。</li>
-    </ul>
-    <p>如需迁移或备份，请复制 D2RHub 的应用数据目录。若要清理隐私数据，请先退出程序，再删除账号目录、日志、OCR 调试截图和统计数据库。</p>
-  </section>
+    <section id="ocr">
+      <p class="eyebrow">07 · OCR · FULL ONLY</p>
+      <h2>OCR 场景与符文识别</h2>
+      <p>Full 版在“设置中心 → 自动化”提供 OCR。开始前必须先选择一个<strong>已初始化</strong>账号作为固定目标窗口，否则开关不可用。</p>
+      <ul>
+        <li><strong>通道 A：</strong>识别场景名称与城镇状态，用于自动开始、切换和结束场景计时。</li>
+        <li><strong>通道 B：</strong>识别 1–33 号符文；同一场景内的每次识别以独立掉落条目保存。</li>
+        <li><strong>高级符文：</strong>#24 及以上会额外保存完整游戏窗口截图，并在统计页提供画廊。</li>
+        <li><strong>轮询频率：</strong>200–2000ms；间隔越短响应越快，也越消耗 CPU，默认 500ms。</li>
+      </ul>
+      <div class="callout"><strong>调试输出会占用磁盘：</strong>开启后会把处理图和 <code>ocr_debug.txt</code> 写到程序同级 <code>config\test</code>。仅在排查识别失败时开启，问题解决后关闭并按需清理。</div>
+      <p>场景记录在离开当前战斗场景、切换到另一场景或回城时写入数据库。尚未结束的当前场景不会提前计入历史统计。</p>
+    </section>
 
-  <section id="feedback" class="section">
-    <h2>反馈与支持</h2>
-    <p>如果您在使用过程中遇到 Bug 或有新功能建议，请访问我们的开源仓库提交 Issue。</p>
-    <p>感谢您的支持！</p>
-  </section>
-</main>
+    <section id="stats">
+      <p class="eyebrow">08 · LOCAL ANALYTICS</p>
+      <h2>新版统计页与统计口径</h2>
+      <p>从主界面顶部的统计按钮，或“设置中心 → 自动化 → 打开掉落统计图表”进入。页面读取本地数据库，并通过仅监听本机回环地址的临时 API 完成刷新、重命名和删除。</p>
+      <h3>统一筛选</h3>
+      <p>时间范围、角色、场景、掉落状态和具体符文会同时作用于顶部指标、趋势、对比、热力图、符文视图、截图与明细。明细另有搜索、排序和每页 50 条分页。</p>
+      <div class="grid">
+        <div class="card"><h3>效率与趋势</h3><p>总场次、总追踪时间、平均/中位/P90/最佳用时、按日趋势、场景效率和角色对比。</p></div>
+        <div class="card"><h3>掉落与时段</h3><p>掉落总数、每百场掉落、高级符文、命中率、平均间隔、星期×小时热力图。</p></div>
+        <div class="card"><h3>33 号符文图谱</h3><p>符文层级、1–33 号密度矩阵和排行榜；点击单个符文可直接加入筛选。</p></div>
+        <div class="card"><h3>管理与导出</h3><p>高级符文截图画廊、单条/整场删除、场景批量改名，以及筛选后的 CSV / JSON 导出。</p></div>
+      </div>
+      <h3>关键指标怎么计算</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指标</th><th>口径</th></tr></thead>
+          <tbody>
+            <tr><td>一场 / 场次</td><td>数据库中的一条已完成 <code>scene_record</code>；不是一次游戏启动，也不是一次掉落。</td></tr>
+            <tr><td>平均 / 中位 / P90 / 最佳</td><td>筛选后各场 <code>timer_seconds</code> 的算术平均、50 分位、90 分位和最小值。</td></tr>
+            <tr><td>掉落数</td><td>筛选后所有记录的 <code>drops</code> 数组元素总和；同场多个符文分别计数。</td></tr>
+            <tr><td>每百场掉落</td><td><code>掉落数 ÷ 场次 × 100</code>，方便不同场景样本量对比。</td></tr>
+            <tr><td>有掉落场 / 命中率</td><td>至少一条掉落的场数 ÷ 场次；高级符文命中率则只看 #24–#33。</td></tr>
+            <tr><td>高级符文间隔</td><td>按时间排序后，相邻“含高级符文的场”之间跨过的场次数平均值；样本不足时不显示。</td></tr>
+            <tr><td>截图数</td><td>存在 <code>screenshot_path</code> 的掉落条目数量，不等同于高级符文总数。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>config\stateData</code> 或导出 JSON。</div>
+    </section>
+
+    <section id="pet">
+      <p class="eyebrow">09 · COMPANION</p>
+      <h2>Bongo Cat</h2>
+      <p>在“设置中心 → 伴随”开启桌宠。猫咪会响应键盘和鼠标输入，可显示随机对话及轻量系统状态提示。</p>
+      <ul>
+        <li>拖动猫咪本体可以改变屏幕位置；右键打开皮肤、计数重置和隐藏菜单。</li>
+        <li>设置中心可调整 0.5×–5.0× 缩放、气泡对话框和已解锁皮肤。</li>
+        <li>“法师猫咪”属于随机彩蛋解锁项；未解锁时不会出现在可选皮肤中。</li>
+      </ul>
+    </section>
+
+    <section id="data">
+      <p class="eyebrow">10 · DATA & PRIVACY</p>
+      <h2>数据位置、备份与更新</h2>
+      <p>D2RHub 当前使用<strong>程序可执行文件同级目录</strong>保存运行数据，而不是 Windows AppData：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>位置</th><th>内容</th></tr></thead>
+          <tbody>
+            <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、OCR 与桌宠设置</td></tr>
+            <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
+            <tr><td><code>config\stateData\data.db</code></td><td>OCR 场景与符文掉落数据库</td></tr>
+            <tr><td><code>config\stateData\img\</code></td><td>#24 及以上符文截图</td></tr>
+            <tr><td><code>config\test\</code></td><td>启用 OCR 调试输出后产生的处理图与日志</td></tr>
+            <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>config</code> 目录；排障需要时也可一并备份 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
+      <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
+      <p>D2RHub 不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；OCR 调试图片与统计数据留在本机。</p>
+    </section>
+
+    <section id="troubleshooting">
+      <p class="eyebrow">11 · TROUBLESHOOTING</p>
+      <h2>疑难解答</h2>
+      <h3>账号无法创建或对应区服不可选</h3>
+      <p>检查该版本的游戏目录和存档目录是否成组配置。战网认证还需对应版本 Battle.net.exe；亚/美/欧服统一检查国际服档案。</p>
+      <h3>战网初始化超时或快照失效</h3>
+      <p>确认 Battle.net 已实际登录完成、路径对应正确版本，并避免同时执行另一个战网认证操作。账号卡片显示过期或启动失败时，执行重新初始化。</p>
+      <h3>网页 Token 获取页打不开</h3>
+      <p>在“连接”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
+      <h3>画质设置无法读取</h3>
+      <p>确认存档路径正确且包含 <code>Settings.json</code>。先用对应国服/国际服客户端正常进入游戏一次，再回到设置中心加载。</p>
+      <h3>悬浮窗吸附后找不到</h3>
+      <p>沿最近使用的屏幕边缘缓慢移动鼠标，触发边会让窗口抽出。仍无法找到时，在“显示”中关闭再开启悬浮窗，或重启应用。</p>
+      <h3>迷你窗无法变成单行</h3>
+      <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
+      <h3>OCR 无数据或识别不稳定</h3>
+      <p>确认目标账号已初始化、游戏窗口存在且昵称可匹配。先用默认 500ms；需要排查时临时开启调试输出并点击“应用配置并重启 OCR”。一条统计记录只在当前场景结束后写入。</p>
+      <h3>进一步排查</h3>
+      <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
+    </section>
+
+    <footer class="footer">
+      D2RHub v0.8.x · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+    </footer>
+  </main>
+</div>
 
 <script>
-  // Theme Toggle
-  const themeToggle = document.getElementById('themeToggle');
-  const htmlEl = document.documentElement;
+  const root = document.documentElement;
+  const savedTheme = localStorage.getItem("d2rhub-guide-theme");
+  if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
 
-  // Load saved theme
-  const savedTheme = localStorage.getItem('d2rhub-theme') || 'dark';
-  htmlEl.setAttribute('data-theme', savedTheme);
-
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = htmlEl.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    htmlEl.setAttribute('data-theme', newTheme);
-    localStorage.setItem('d2rhub-theme', newTheme);
+  document.getElementById("themeToggle").addEventListener("click", () => {
+    const next = root.dataset.theme === "dark" ? "light" : "dark";
+    root.dataset.theme = next;
+    localStorage.setItem("d2rhub-guide-theme", next);
   });
 
-  // Intersection Observer for Active Nav
-  const sections = document.querySelectorAll('.section');
-  const navItems = document.querySelectorAll('.nav-item');
-
-  const observerOptions = {
-    root: document.getElementById('mainContent'),
-    rootMargin: '0px',
-    threshold: 0.5
-  };
-
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(entry => {
-      if (entry.isIntersecting) {
-        const id = entry.target.getAttribute('id');
-        navItems.forEach(item => {
-          if (item.getAttribute('href') === `#${id}`) {
-            item.classList.add('active');
-          } else {
-            item.classList.remove('active');
-          }
-        });
-      }
-    });
-  }, observerOptions);
-
+  const links = [...document.querySelectorAll(".nav-link")];
+  const sections = links
+    .map(link => document.querySelector(link.getAttribute("href")))
+    .filter(Boolean);
+  const observer = new IntersectionObserver(entries => {
+    const visible = entries.filter(entry => entry.isIntersecting);
+    if (!visible.length) return;
+    const current = visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0].target.id;
+    links.forEach(link => link.classList.toggle("active", link.getAttribute("href") === `#${current}`));
+  }, { rootMargin: "-12% 0px -70% 0px", threshold: [0, .2, .6] });
   sections.forEach(section => observer.observe(section));
 </script>
 </body>
