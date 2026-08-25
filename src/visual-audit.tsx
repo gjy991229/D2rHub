@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig } from "./store/types";
 import "./styles/globals.css";
+import "./styles/visualAudit.css";
 
 type Surface =
   | "main"
@@ -18,10 +19,25 @@ type SettingsMap = Record<string, unknown>;
 const params = new URLSearchParams(window.location.search);
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
+const auditFrame = params.get("frame");
+const settingsState = params.get("settingsState");
 const currentWindowLabel =
   surface === "overlay" ? "overlay" : surface === "bongo" ? "bongo-cat" : "main";
 
 document.documentElement.setAttribute("data-theme", requestedTheme);
+if (auditFrame) {
+  document.documentElement.setAttribute("data-visual-audit-frame", auditFrame);
+}
+if (surface === "overlay" && auditFrame?.startsWith("mini-")) {
+  const miniLayout = auditFrame === "mini-single" ? "single" : "stacked";
+  const miniHeight = miniLayout === "single" ? 18 : 36;
+  localStorage.setItem("d2rhub-information-overlay-mode", "mini");
+  localStorage.setItem(
+    "d2rhub-information-overlay-mini-size",
+    JSON.stringify({ width: 200, height: miniHeight }),
+  );
+  localStorage.setItem("d2rhub-information-overlay-mini-layout", miniLayout);
+}
 
 mockWindows(currentWindowLabel, "main", "overlay", "bongo-cat", "ocr-debug");
 mockConvertFileSrc("windows");
@@ -87,7 +103,6 @@ const accounts: AccountMeta[] = [
     window_y: 32,
     auth_mode: "token",
     region: "KR",
-    token: "mock-token",
     language: "zhCN",
     voicelanguage: "enUS",
     has_customized_settings: true,
@@ -102,13 +117,12 @@ const accounts: AccountMeta[] = [
     last_reset_at: "2026-06-28T12:00:00Z",
     initialized: true,
     order: 2,
-    is_running: false,
-    running_pid: null,
+    is_running: true,
+    running_pid: 28421,
     window_x: 980,
     window_y: 34,
     auth_mode: "token",
     region: "NA",
-    token: "mock-token",
     language: "enUS",
     voicelanguage: "enUS",
     has_customized_settings: false,
@@ -123,13 +137,12 @@ const accounts: AccountMeta[] = [
     last_reset_at: null,
     initialized: true,
     order: 3,
-    is_running: false,
-    running_pid: null,
+    is_running: true,
+    running_pid: 28422,
     window_x: null,
     window_y: null,
     auth_mode: "browser",
     region: "EU",
-    token: null,
     language: "zhTW",
     voicelanguage: "enUS",
     has_customized_settings: true,
@@ -150,7 +163,6 @@ const accounts: AccountMeta[] = [
     window_y: null,
     auth_mode: null,
     region: null,
-    token: null,
     language: null,
     voicelanguage: null,
     has_customized_settings: false,
@@ -158,10 +170,13 @@ const accounts: AccountMeta[] = [
 ];
 
 const baseConfig: GlobalConfig = {
-  version: 1,
-  battle_net_path: "C:\\Program Files (x86)\\Battle.net\\Battle.net.exe",
-  game_path: "D:\\Games\\Diablo II Resurrected\\D2R.exe",
-  saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected",
+  version: 3,
+  cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
+  cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
+  cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
+  global_battle_net_path: "D:\\Battle.net Global\\Battle.net.exe",
+  global_game_path: "D:\\Games\\Diablo II Resurrected",
+  global_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected",
   program_data_agent_path: "C:\\ProgramData\\Battle.net\\Agent",
   app_data_roaming_bnet_path: "C:\\Users\\Player\\AppData\\Roaming\\Battle.net",
   accounts_dir: "D:\\D2RHub\\accounts",
@@ -211,12 +226,18 @@ const accountSettings: SettingsMap = {
   "Quick Cast Skills": 1,
 };
 
+let foregroundWindowTitle = "D2R - Ladder Sorc";
+
 function installIpcMock() {
   mockIPC((cmd, payload) => {
     if (cmd.startsWith("plugin:window|")) {
       if (cmd.endsWith("|outer_size") || cmd.endsWith("|inner_size")) {
         return currentWindowLabel === "overlay"
-          ? { width: 240, height: 320 }
+          ? auditFrame === "mini-single"
+            ? { width: 200, height: 18 }
+            : auditFrame === "mini-stacked"
+              ? { width: 200, height: 36 }
+              : { width: 240, height: 320 }
           : currentWindowLabel === "bongo-cat"
             ? { width: 240, height: 400 }
             : { width: 1120, height: 720 };
@@ -232,6 +253,10 @@ function installIpcMock() {
           name: "Visual Audit",
           size: { width: 1920, height: 1080 },
           position: { x: 0, y: 0 },
+          workArea: {
+            size: { width: 1920, height: 1040 },
+            position: { x: 0, y: 0 },
+          },
           scaleFactor: 1,
         };
       }
@@ -254,13 +279,23 @@ function installIpcMock() {
       case "save_global_config":
         return null;
       case "list_accounts":
-      case "refresh_account_running_state":
         return accounts;
+      case "refresh_account_running_state":
+        return accounts.filter((account) => account.is_running).map((account) => account.id);
       case "get_d2r_window_titles":
         return ["D2R - Ladder Sorc", "D2R - Trav Barb"];
       case "get_foreground_window_title":
-        return "D2R - Ladder Sorc";
+        return foregroundWindowTitle;
+      case "bring_window_by_title_to_front":
+        foregroundWindowTitle = String(
+          (payload as Record<string, unknown> | undefined)?.windowTitle || foregroundWindowTitle,
+        );
+        return true;
       case "get_account_settings":
+        if (settingsState === "missing") {
+          throw new Error("系统 Settings.json 不存在");
+        }
+        return accountSettings;
       case "snapshot_system_settings_to_account":
         return accountSettings;
       case "get_scene_stats":
@@ -303,10 +338,10 @@ function installIpcMock() {
         ];
       case "load_overlay_geometry":
         return { x: 60, y: 60, width: 240, height: 320 };
-      case "detect_battle_net_path":
-        return baseConfig.battle_net_path;
       case "detect_saved_games_path":
-        return baseConfig.saved_games_path;
+        return baseConfig.cn_saved_games_path;
+      case "detect_global_saved_games_path":
+        return baseConfig.global_saved_games_path;
       case "detect_program_data_agent_path":
         return baseConfig.program_data_agent_path;
       case "detect_app_data_roaming_bnet_path":
@@ -316,7 +351,6 @@ function installIpcMock() {
       case "detect_browser_path_by_type":
         return baseConfig.browser_path;
       case "check_path_exists":
-      case "check_bnet_logged_in":
         return true;
       case "check_saved_games_settings":
         return false;

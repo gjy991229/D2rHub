@@ -1,13 +1,14 @@
 use crate::ocr::capturer::Capturer;
 use crate::ocr::engine;
-use crate::ocr::preprocess;
 use crate::ocr::fuzzy;
+use crate::ocr::preprocess;
 use crate::ocr::{OcrConfig, OcrTextItem};
 use crate::rune_data;
 use std::path::Path;
 
 /// 通道A 裁剪比例区域 (x_ratio, y_ratio, w_ratio, h_ratio)
 const SCENE_TEXT_REGION: (f32, f32, f32, f32) = (0.28, 0.21, 0.44, 0.08);
+type RuneMatch = (String, f64, (u32, u32, u32, u32));
 
 struct OcrBuffers {
     frame: Vec<u8>,
@@ -40,14 +41,15 @@ impl OcrMonitor {
         if config.debug_output {
             let test_dir = std::path::Path::new(&app_data_dir).join("test");
             if let Err(e) = std::fs::create_dir_all(&test_dir) {
-                eprintln!("[OCR Debug] 创建调试输出目录失败: {} ({})", test_dir.display(), e);
+                eprintln!(
+                    "[OCR Debug] 创建调试输出目录失败: {} ({})",
+                    test_dir.display(),
+                    e
+                );
             }
         }
 
-        let capturer = Capturer::new(
-            config.target_pid.unwrap_or(0),
-            &config.window_title,
-        )?;
+        let capturer = Capturer::new(config.target_pid.unwrap_or(0), &config.window_title)?;
         let buf_size = capturer.buffer_size();
 
         let buffers = OcrBuffers {
@@ -111,22 +113,28 @@ impl OcrMonitor {
         let roi_a_w = (fw as f32 * SCENE_TEXT_REGION.2) as u32;
         let roi_a_h = (fh as f32 * SCENE_TEXT_REGION.3) as u32;
 
-        self.buffers.roi_a_raw.resize((roi_a_w * roi_a_h * 4) as usize, 0);
+        self.buffers
+            .roi_a_raw
+            .resize((roi_a_w * roi_a_h * 4) as usize, 0);
         for y in 0..roi_a_h {
             for x in 0..roi_a_w {
                 let src_idx = ((y + roi_y) * fw + (x + roi_x)) as usize * 4;
                 let dst_idx = (y * roi_a_w + x) as usize * 4;
                 if src_idx + 3 < self.buffers.frame.len() {
                     self.buffers.roi_a_raw[dst_idx] = self.buffers.frame[src_idx];
-                    self.buffers.roi_a_raw[dst_idx+1] = self.buffers.frame[src_idx+1];
-                    self.buffers.roi_a_raw[dst_idx+2] = self.buffers.frame[src_idx+2];
-                    self.buffers.roi_a_raw[dst_idx+3] = self.buffers.frame[src_idx+3];
+                    self.buffers.roi_a_raw[dst_idx + 1] = self.buffers.frame[src_idx + 1];
+                    self.buffers.roi_a_raw[dst_idx + 2] = self.buffers.frame[src_idx + 2];
+                    self.buffers.roi_a_raw[dst_idx + 3] = self.buffers.frame[src_idx + 3];
                 }
             }
         }
 
         // Channel A Color Gating (HSV): Count red pixels (threshold=1000)
-        let (s_r, s_g, s_b) = (self.config.scene_text_color_rgb[0], self.config.scene_text_color_rgb[1], self.config.scene_text_color_rgb[2]);
+        let (s_r, s_g, s_b) = (
+            self.config.scene_text_color_rgb[0],
+            self.config.scene_text_color_rgb[1],
+            self.config.scene_text_color_rgb[2],
+        );
         let (s_h, s_s, s_v) = preprocess::rgb_to_hsv_cv(s_r, s_g, s_b);
         let sc_rh = self.config.scene_text_color_range[0] as i32;
         let sc_rs = self.config.scene_text_color_range[1] as i32;
@@ -149,7 +157,12 @@ impl OcrMonitor {
                 px_h >= sc_h_min && px_h <= sc_h_max
             };
 
-            if h_match && px_s >= sc_s_min && px_s <= sc_s_max && px_v >= sc_v_min && px_v <= sc_v_max {
+            if h_match
+                && px_s >= sc_s_min
+                && px_s <= sc_s_max
+                && px_v >= sc_v_min
+                && px_v <= sc_v_max
+            {
                 scene_matching_pixels += 1;
             }
         }
@@ -157,15 +170,23 @@ impl OcrMonitor {
         if scene_matching_pixels > 1000 {
             // debug: 仅通过颜色门控的帧才存盘
             if self.config.debug_output {
-                let _ = image::save_buffer(debug_out_dir.join(format!("{}_ch_a_roi_raw.png", hash)), &self.buffers.roi_a_raw, roi_a_w, roi_a_h, image::ColorType::Rgba8);
+                let _ = image::save_buffer(
+                    debug_out_dir.join(format!("{}_ch_a_roi_raw.png", hash)),
+                    &self.buffers.roi_a_raw,
+                    roi_a_w,
+                    roi_a_h,
+                    image::ColorType::Rgba8,
+                );
             }
-            if let Ok(results) = engine::recognize_rgba(&self.buffers.roi_a_raw, roi_a_w, roi_a_h, None) {
+            if let Ok(results) = engine::recognize_rgba(&self.buffers.roi_a_raw, roi_a_w, roi_a_h) {
                 // 收集所有行的匹配结果，取最高置信度
                 let mut best_match: Option<(String, f64)> = None;
                 for block in &results {
                     let text = &block.text;
-                    if let Some((name, score)) = fuzzy::scene_match(text, self.config.text_matcher_threshold) {
-                        if best_match.as_ref().map_or(true, |(_, s)| score > *s) {
+                    if let Some((name, score)) =
+                        fuzzy::scene_match(text, self.config.text_matcher_threshold)
+                    {
+                        if best_match.as_ref().is_none_or(|(_, s)| score > *s) {
                             best_match = Some((name, score));
                         }
                         // score=1.0 精确匹配可提前终止
@@ -178,8 +199,13 @@ impl OcrMonitor {
                 if let Some((matched, best_score)) = best_match {
                     if self.config.debug_output {
                         use std::io::Write;
-                        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(debug_out_dir.join("ocr_debug.txt")) {
-                            let _ = writeln!(f, "[Channel A] ✅ {} (score={:.3})", matched, best_score);
+                        if let Ok(mut f) = std::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(debug_out_dir.join("ocr_debug.txt"))
+                        {
+                            let _ =
+                                writeln!(f, "[Channel A] ✅ {} (score={:.3})", matched, best_score);
                         }
                     }
                     if matched != self.last_ch_a_text {
@@ -188,7 +214,8 @@ impl OcrMonitor {
                         // Clear Channel B deduplication state immediately on scene switch!
                         self.active_drop = None;
 
-                        let is_town = crate::ocr::game_data::MAIN_CITY_NAME_SET.contains(matched.as_str());
+                        let is_town =
+                            crate::ocr::game_data::MAIN_CITY_NAME_SET.contains(matched.as_str());
                         super::push_result(
                             &super::CH_A_RESULTS,
                             OcrTextItem {
@@ -205,9 +232,18 @@ impl OcrMonitor {
                 } else if self.config.debug_output {
                     // 模糊匹配全部失败，输出 OCR 原始文本用于调试
                     use std::io::Write;
-                    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(debug_out_dir.join("ocr_debug.txt")) {
-                        let raw_texts: Vec<&str> = results.iter().map(|b| b.text.as_str()).collect();
-                        let _ = writeln!(f, "[Channel A] ❌ 无匹配 (matching_pixels={}) OCR输出: {:?}", scene_matching_pixels, raw_texts);
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(debug_out_dir.join("ocr_debug.txt"))
+                    {
+                        let raw_texts: Vec<&str> =
+                            results.iter().map(|b| b.text.as_str()).collect();
+                        let _ = writeln!(
+                            f,
+                            "[Channel A] ❌ 无匹配 (matching_pixels={}) OCR输出: {:?}",
+                            scene_matching_pixels, raw_texts
+                        );
                     }
                 }
             }
@@ -217,17 +253,19 @@ impl OcrMonitor {
         let ch_b_start = std::time::Instant::now();
         // 1. 全屏提取背景底色 (深蓝色)
         preprocess::extract_mask_by_hsv(
-            &self.buffers.frame, fw, fh,
+            &self.buffers.frame,
+            fw,
+            fh,
             self.config.rune_background_color_rgb,
             self.config.rune_background_color_range,
-            &mut self.buffers.mask_b
+            &mut self.buffers.mask_b,
         );
 
         preprocess::morphology_close(&mut self.buffers.mask_b, fw, fh);
 
         let rois_bg = preprocess::find_rect_contours(&self.buffers.mask_b, fw, fh, u32::MAX);
 
-        let mut frame_best: Option<(String, f64, (u32, u32, u32, u32))> = None;
+        let mut frame_best: Option<RuneMatch> = None;
         let mut unmatched_texts: Vec<String> = Vec::new();
 
         // ── 蓝底 HSV 门控预计算（用于 ROI 内蓝色掩膜）──
@@ -276,14 +314,14 @@ impl OcrMonitor {
                     let dst_idx = (y * rw + x) as usize * 4;
                     if src_idx + 3 < self.buffers.frame.len() {
                         let r = self.buffers.frame[src_idx];
-                        let g = self.buffers.frame[src_idx+1];
-                        let b = self.buffers.frame[src_idx+2];
-                        let a = self.buffers.frame[src_idx+3];
+                        let g = self.buffers.frame[src_idx + 1];
+                        let b = self.buffers.frame[src_idx + 2];
+                        let a = self.buffers.frame[src_idx + 3];
 
                         self.buffers.roi_b_raw[dst_idx] = r;
-                        self.buffers.roi_b_raw[dst_idx+1] = g;
-                        self.buffers.roi_b_raw[dst_idx+2] = b;
-                        self.buffers.roi_b_raw[dst_idx+3] = a;
+                        self.buffers.roi_b_raw[dst_idx + 1] = g;
+                        self.buffers.roi_b_raw[dst_idx + 2] = b;
+                        self.buffers.roi_b_raw[dst_idx + 3] = a;
 
                         // 统一计算像素的 HSV (用于橙色字门控 + 蓝底二值化)
                         let (px_h, px_s, px_v) = preprocess::rgb_to_hsv_cv(r, g, b);
@@ -297,7 +335,12 @@ impl OcrMonitor {
                             px_h >= txt_h_min && px_h <= txt_h_max
                         };
 
-                        if txt_h_match && px_s >= txt_s_min && px_s <= txt_s_max && px_v >= txt_v_min && px_v <= txt_v_max {
+                        if txt_h_match
+                            && px_s >= txt_s_min
+                            && px_s <= txt_s_max
+                            && px_v >= txt_v_min
+                            && px_v <= txt_v_max
+                        {
                             orange_pixels += 1;
                         }
 
@@ -309,36 +352,51 @@ impl OcrMonitor {
                         } else {
                             px_h >= bg_h_min && px_h <= bg_h_max
                         };
-                        if h_match && px_s >= bg_s_min && px_s <= bg_s_max && px_v >= bg_v_min && px_v <= bg_v_max {
+                        if h_match
+                            && px_s >= bg_s_min
+                            && px_s <= bg_s_max
+                            && px_v >= bg_v_min
+                            && px_v <= bg_v_max
+                        {
                             // 蓝底 → 白色 (255)
                             self.buffers.roi_b_raw[dst_idx] = 255;
-                            self.buffers.roi_b_raw[dst_idx+1] = 255;
-                            self.buffers.roi_b_raw[dst_idx+2] = 255;
+                            self.buffers.roi_b_raw[dst_idx + 1] = 255;
+                            self.buffers.roi_b_raw[dst_idx + 2] = 255;
                         } else {
                             // 非蓝底（文字等）→ 黑色 (0)
                             self.buffers.roi_b_raw[dst_idx] = 0;
-                            self.buffers.roi_b_raw[dst_idx+1] = 0;
-                            self.buffers.roi_b_raw[dst_idx+2] = 0;
+                            self.buffers.roi_b_raw[dst_idx + 1] = 0;
+                            self.buffers.roi_b_raw[dst_idx + 2] = 0;
                         }
                     }
                 }
             }
 
             if self.config.debug_output {
-                if let Err(e) = image::save_buffer(debug_out_dir.join(format!("{}_ch_b_roi_raw_{}_{}_{}orange.png", hash, rx, ry, orange_pixels)), &self.buffers.roi_b_raw, rw, rh, image::ColorType::Rgba8) {
+                if let Err(e) = image::save_buffer(
+                    debug_out_dir.join(format!(
+                        "{}_ch_b_roi_raw_{}_{}_{}orange.png",
+                        hash, rx, ry, orange_pixels
+                    )),
+                    &self.buffers.roi_b_raw,
+                    rw,
+                    rh,
+                    image::ColorType::Rgba8,
+                ) {
                     eprintln!("[OCR Debug] Save ch_b_roi_raw failed: {}", e);
                 }
             }
 
             // 橙色像素点数大于等于 20 才送 OCR
             if orange_pixels >= 20 {
-                if let Ok(results) = engine::recognize_rgba(&self.buffers.roi_b_raw, rw, rh, None) {
+                if let Ok(results) = engine::recognize_rgba(&self.buffers.roi_b_raw, rw, rh) {
                     for block in results {
                         let text = block.text;
-                        let matched = fuzzy::rune_match(&text, self.config.rune_matcher_threshold, None);
+                        let matched =
+                            fuzzy::rune_match(&text, self.config.rune_matcher_threshold, None);
 
                         if let Some((name, score)) = matched {
-                            if frame_best.as_ref().map_or(true, |(_, s, _)| score > *s) {
+                            if frame_best.as_ref().is_none_or(|(_, s, _)| score > *s) {
                                 frame_best = Some((name, score, (rx, ry, rw, rh)));
                             }
                             if score >= 1.0 {
@@ -357,7 +415,11 @@ impl OcrMonitor {
             has_matched = true;
             if self.config.debug_output {
                 use std::io::Write;
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(debug_out_dir.join("ocr_debug.txt")) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(debug_out_dir.join("ocr_debug.txt"))
+                {
                     let _ = writeln!(f, "[Channel B] ✅ {} (score={:.3})", matched, best_score);
                 }
             }
@@ -406,7 +468,11 @@ impl OcrMonitor {
                 if let Some(rn) = rune_number {
                     if rune_data::is_high_rune(rn) {
                         screenshot_path = save_high_rune_screenshot(
-                            &self.buffers.frame, fw, fh, rn, &self.app_data_dir
+                            &self.buffers.frame,
+                            fw,
+                            fh,
+                            rn,
+                            &self.app_data_dir,
                         );
                     }
                 }
@@ -427,7 +493,11 @@ impl OcrMonitor {
         } else if self.config.debug_output && !unmatched_texts.is_empty() {
             // 全帧所有 ROI 模糊匹配全部失败，输出 OCR 原始文本
             use std::io::Write;
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(debug_out_dir.join("ocr_debug.txt")) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(debug_out_dir.join("ocr_debug.txt"))
+            {
                 let _ = writeln!(f, "[Channel B] ❌ 无匹配 OCR输出: {:?}", unmatched_texts);
             }
         }
@@ -448,7 +518,11 @@ impl OcrMonitor {
             let ch_a_ms = ch_b_start.duration_since(ch_a_start);
             let ch_b_true_ms = ch_b_start.elapsed();
             let total_ms = poll_start.elapsed();
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(debug_out_dir.join("ocr_debug.txt")) {
+            if let Ok(mut f) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(debug_out_dir.join("ocr_debug.txt"))
+            {
                 let _ = writeln!(f, "[Perf] Capture: {:?}  |  Pre-process: {:?}  |  Channel A: {:?}  |  Channel B: {:?}  |  Total: {:?}", cap_ms, pre_process_ms, ch_a_ms, ch_b_true_ms, total_ms);
             }
         }
@@ -469,7 +543,10 @@ fn save_high_rune_screenshot(
     let time_str = now.format("%H%M%S").to_string();
     let rune_name = rune_data::get_rune_name(rune_number)?;
 
-    let filename = format!("{}_{}_{}_({}).png", date_str, time_str, rune_number, rune_name);
+    let filename = format!(
+        "{}_{}_{}_({}).png",
+        date_str, time_str, rune_number, rune_name
+    );
 
     let img_dir = Path::new(app_data_dir).join("stateData").join("img");
     if let Err(e) = std::fs::create_dir_all(&img_dir) {
@@ -479,13 +556,7 @@ fn save_high_rune_screenshot(
 
     let filepath = img_dir.join(&filename);
 
-    match image::save_buffer(
-        &filepath,
-        frame,
-        width,
-        height,
-        image::ColorType::Rgba8,
-    ) {
+    match image::save_buffer(&filepath, frame, width, height, image::ColorType::Rgba8) {
         Ok(()) => {
             let rel_path = format!("img/{}", filename);
             eprintln!("[OCR] ✅ 高级符文截图已保存: {}", rel_path);
@@ -500,8 +571,8 @@ fn save_high_rune_screenshot(
 
 /// Frame fingerprint: sample ~1024 evenly distributed pixels for fast hash
 fn frame_fingerprint(frame: &[u8], width: u32, height: u32) -> u64 {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
     let mut hasher = DefaultHasher::new();
     let total = (width as usize) * (height as usize);
     let step = (total / 1024).max(1);

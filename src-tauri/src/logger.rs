@@ -1,9 +1,9 @@
+use chrono::Local;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
-use chrono::Local;
 
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -16,18 +16,15 @@ pub fn init_logger() -> Result<(), String> {
         .unwrap_or_else(|| std::path::PathBuf::from("./logs"));
 
     // 创建日志文件夹
-    fs::create_dir_all(&logs_dir)
-        .map_err(|e| format!("创建日志文件夹失败: {}", e))?;
+    fs::create_dir_all(&logs_dir).map_err(|e| format!("创建日志文件夹失败: {}", e))?;
 
     // 获取日志文件夹内所有 .log 文件
     let mut log_files = Vec::new();
     if let Ok(entries) = fs::read_dir(&logs_dir) {
-        for entry in entries {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() && path.extension().map_or(false, |ext| ext == "log") {
-                    log_files.push(path);
-                }
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "log") {
+                log_files.push(path);
             }
         }
     }
@@ -42,8 +39,8 @@ pub fn init_logger() -> Result<(), String> {
     // 如果日志数量大于等于 16 个，删除最早的，直到只剩 15 个，以便为新文件腾出空间
     if log_files.len() >= 16 {
         let delete_count = log_files.len() - 15;
-        for i in 0..delete_count {
-            let _ = fs::remove_file(&log_files[i]);
+        for path in log_files.iter().take(delete_count) {
+            let _ = fs::remove_file(path);
         }
     }
 
@@ -52,8 +49,7 @@ pub fn init_logger() -> Result<(), String> {
     let filename = now.format("%Y-%m-%d_%H-%M-%S.log").to_string();
     let log_file_path = logs_dir.join(&filename);
 
-    let file = File::create(&log_file_path)
-        .map_err(|e| format!("创建日志文件失败: {}", e))?;
+    let file = File::create(&log_file_path).map_err(|e| format!("创建日志文件失败: {}", e))?;
 
     let _ = LOG_FILE.set(Mutex::new(file));
     let _ = LOGS_DIR.set(logs_dir);

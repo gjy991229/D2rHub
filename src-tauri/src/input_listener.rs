@@ -1,12 +1,12 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
-use crate::state::SharedState;
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::commands::system;
+use crate::state::SharedState;
 
-use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicPtr, Ordering};
 use std::sync::OnceLock;
 
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
@@ -41,17 +41,26 @@ impl HookGuard {
 impl Drop for HookGuard {
     fn drop(&mut self) {
         if !self.hook.is_null() {
-            unsafe { UnhookWindowsHookEx(self.hook); }
+            unsafe {
+                UnhookWindowsHookEx(self.hook);
+            }
         }
         self.slot.store(std::ptr::null_mut(), Ordering::SeqCst);
     }
 }
 
 // Low-level Windows Hook types and constants
+// These aliases mirror Win32 SDK names; preserving them makes FFI review less error-prone.
+#[allow(clippy::upper_case_acronyms)]
 type LRESULT = isize;
+#[allow(clippy::upper_case_acronyms)]
 type WPARAM = usize;
+#[allow(clippy::upper_case_acronyms)]
 type LPARAM = isize;
-type HOOKPROC = Option<unsafe extern "system" fn(code: std::os::raw::c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT>;
+#[allow(clippy::upper_case_acronyms)]
+type HOOKPROC = Option<
+    unsafe extern "system" fn(code: std::os::raw::c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT,
+>;
 
 const WH_KEYBOARD_LL: std::os::raw::c_int = 13;
 const WH_MOUSE_LL: std::os::raw::c_int = 14;
@@ -63,6 +72,7 @@ const WM_RBUTTONDOWN: usize = 0x0204;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
 struct POINT {
     x: i32,
     y: i32,
@@ -70,6 +80,7 @@ struct POINT {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
 struct MSG {
     hwnd: *mut std::ffi::c_void,
     message: u32,
@@ -82,6 +93,7 @@ struct MSG {
 
 /// KBDLLHOOKSTRUCT — 键盘低级钩子数据结构
 #[repr(C)]
+#[allow(clippy::upper_case_acronyms)]
 struct KBDLLHOOKSTRUCT {
     vk_code: u32,
     scan_code: u32,
@@ -174,9 +186,15 @@ fn vk_to_key_string(vk: u32) -> String {
 /// 根据当前修饰键和主键构造快捷键字符串，如 "Ctrl+1"、"Alt+F"、"F5"
 fn build_shortcut_string(ctrl: bool, alt: bool, shift: bool, key: &str) -> String {
     let mut parts: Vec<&str> = Vec::new();
-    if ctrl { parts.push("Ctrl"); }
-    if alt { parts.push("Alt"); }
-    if shift { parts.push("Shift"); }
+    if ctrl {
+        parts.push("Ctrl");
+    }
+    if alt {
+        parts.push("Alt");
+    }
+    if shift {
+        parts.push("Shift");
+    }
     parts.push(key);
     parts.join("+")
 }
@@ -248,9 +266,14 @@ fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usiz
             let active = state.active_games.read();
             if let Some(&pid) = active.get(&account.id) {
                 if let Some(hwnd) = system::find_game_hwnd(pid) {
-                    crate::logger::log_msg("INFO", "Shortcut", &format!(
-                        "快捷键触发(pid): 位置{} → 账号「{}」, pid={}", position, title, pid
-                    ));
+                    crate::logger::log_msg(
+                        "INFO",
+                        "Shortcut",
+                        &format!(
+                            "快捷键触发(pid): 位置{} → 账号「{}」, pid={}",
+                            position, title, pid
+                        ),
+                    );
                     system::bring_window_to_foreground_raw(hwnd);
                     return;
                 }
@@ -259,50 +282,58 @@ fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usiz
 
         // 2) 降级：按窗口标题精确匹配
         if let Some(hwnd) = system::find_game_hwnd_by_title(title) {
-            crate::logger::log_msg("INFO", "Shortcut", &format!(
-                "快捷键触发(title): 位置{} → 账号「{}」", position, title
-            ));
+            crate::logger::log_msg(
+                "INFO",
+                "Shortcut",
+                &format!("快捷键触发(title): 位置{} → 账号「{}」", position, title),
+            );
             system::bring_window_to_foreground_raw(hwnd);
         }
     }
 }
 
-unsafe extern "system" fn keyboard_hook_proc(code: std::os::raw::c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        if wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN {
-            // ── 快捷键检测 ──
-            let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-            // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
-            if (kbd.flags & 0x80) == 0 {
-                if try_handle_shortcut(kbd) {
-                    // 快捷键已处理，吞掉该按键，不传递给其他应用
-                    return 1;
-                }
-            }
+unsafe extern "system" fn keyboard_hook_proc(
+    code: std::os::raw::c_int,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
+        // ── 快捷键检测 ──
+        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
+        if (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
+            // 快捷键已处理，吞掉该按键，不传递给其他应用
+            return 1;
+        }
 
-            if BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
-                && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
-            {
-                if let Some(tx) = INPUT_EVENT_TX.get() {
-                    let _ = tx.send("Keyboard");
-                }
+        if BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
+            && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
+        {
+            if let Some(tx) = INPUT_EVENT_TX.get() {
+                let _ = tx.send("Keyboard");
             }
         }
     }
     CallNextHookEx(KEYBOARD_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
 }
 
-unsafe extern "system" fn mouse_hook_proc(code: std::os::raw::c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 {
-        if wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN {
-            if BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
-                && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
-            {
-                if let Some(tx) = INPUT_EVENT_TX.get() {
-                    let event_type = if wparam == WM_LBUTTONDOWN { "MouseLeft" } else { "MouseRight" };
-                    let _ = tx.send(event_type);
-                }
-            }
+unsafe extern "system" fn mouse_hook_proc(
+    code: std::os::raw::c_int,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if code >= 0
+        && (wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN)
+        && BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
+        && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
+    {
+        if let Some(tx) = INPUT_EVENT_TX.get() {
+            let event_type = if wparam == WM_LBUTTONDOWN {
+                "MouseLeft"
+            } else {
+                "MouseRight"
+            };
+            let _ = tx.send(event_type);
         }
     }
     CallNextHookEx(MOUSE_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
@@ -341,20 +372,22 @@ pub fn start_input_listener(app_handle: AppHandle) {
             );
             KEYBOARD_HOOK.store(k_hook, Ordering::SeqCst);
 
-            let m_hook = SetWindowsHookExW(
-                WH_MOUSE_LL,
-                Some(mouse_hook_proc),
-                std::ptr::null_mut(),
-                0,
-            );
+            let m_hook =
+                SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), std::ptr::null_mut(), 0);
             MOUSE_HOOK.store(m_hook, Ordering::SeqCst);
 
-            if KEYBOARD_HOOK.load(Ordering::SeqCst).is_null() || MOUSE_HOOK.load(Ordering::SeqCst).is_null() {
+            if KEYBOARD_HOOK.load(Ordering::SeqCst).is_null()
+                || MOUSE_HOOK.load(Ordering::SeqCst).is_null()
+            {
                 crate::logger::log_msg("ERROR", "System", "Failed to install global input hooks.");
                 return;
             }
 
-            crate::logger::log_msg("INFO", "System", "Global input hooks installed successfully.");
+            crate::logger::log_msg(
+                "INFO",
+                "System",
+                "Global input hooks installed successfully.",
+            );
 
             // Standard Win32 Message Loop to keep the hooks alive
             // HookGuard 确保即使线程 panic，钩子也会被释放
@@ -367,7 +400,8 @@ pub fn start_input_listener(app_handle: AppHandle) {
                 std::ptr::null_mut(),
                 0,
                 0,
-            ) > 0 {
+            ) > 0
+            {
                 TranslateMessage(&msg as *const MSG as *const std::ffi::c_void);
                 DispatchMessageW(&msg as *const MSG as *const std::ffi::c_void);
             }

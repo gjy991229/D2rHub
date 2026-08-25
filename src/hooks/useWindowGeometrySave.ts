@@ -44,20 +44,33 @@ export function useWindowGeometrySave(commandName: string, minWidth: number = 10
   }, [commandName, minWidth, minHeight]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlistenResize: (() => void) | undefined;
     let unlistenMove: (() => void) | undefined;
 
     (async () => {
       try {
         const win = getCurrentWindow();
-        unlistenResize = await win.onResized(() => scheduleGeometrySave());
-        unlistenMove = await win.onMoved(() => scheduleGeometrySave());
+        const stopResize = await win.onResized(() => scheduleGeometrySave());
+        if (cancelled) {
+          stopResize();
+          return;
+        }
+        unlistenResize = stopResize;
+
+        const stopMove = await win.onMoved(() => scheduleGeometrySave());
+        if (cancelled) {
+          stopMove();
+        } else {
+          unlistenMove = stopMove;
+        }
       } catch (err) {
         console.error("Failed to listen for geometry changes:", err);
       }
     })();
 
     return () => {
+      cancelled = true;
       unlistenResize?.();
       unlistenMove?.();
       if (saveTimeout.current !== null) {

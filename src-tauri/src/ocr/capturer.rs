@@ -1,12 +1,26 @@
-use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 use parking_lot::RwLock;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use windows_capture::{
-    capture::{GraphicsCaptureApiHandler, Context},
+    capture::{Context, GraphicsCaptureApiHandler},
     frame::Frame,
     graphics_capture_api::InternalCaptureControl,
-    settings::{ColorFormat, CursorCaptureSettings, DrawBorderSettings, Settings, SecondaryWindowSettings, MinimumUpdateIntervalSettings, DirtyRegionSettings},
+    settings::{
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
+    },
     window::Window,
 };
+
+const WGC_MIN_UPDATE_INTERVAL_MS: u64 = 150;
+const FRAME_CAPACITY_RECLAIM_MIN_BYTES: usize = 4 * 1024 * 1024;
+
+fn should_shrink_frame_capacity(capacity: usize, required_len: usize) -> bool {
+    capacity.saturating_sub(required_len) >= FRAME_CAPACITY_RECLAIM_MIN_BYTES
+        && required_len <= capacity / 2
+}
 
 #[derive(Clone)]
 pub struct FrameBufferData {
@@ -55,7 +69,7 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
         frame: &mut Frame,
         capture_control: InternalCaptureControl,
     ) -> Result<(), Self::Error> {
-        if self.stop_flag.load(Ordering::Relaxed) {
+        if self.stop_flag.load(Ordering::Acquire) {
             capture_control.stop();
             return Ok(());
         }
@@ -65,11 +79,16 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
 
         if let Ok(mut buf) = frame.buffer() {
             if let Ok(slice) = buf.as_nopadding_buffer() {
-                let mut shared = self.buffer.write();
+                let Some(mut shared) = self.buffer.try_write() else {
+                    return Ok(());
+                };
                 shared.width = w;
                 shared.height = h;
                 if shared.data.len() != slice.len() {
                     shared.data.resize(slice.len(), 0);
+                    if should_shrink_frame_capacity(shared.data.capacity(), slice.len()) {
+                        shared.data.shrink_to_fit();
+                    }
                 }
                 shared.data.copy_from_slice(slice);
             }
@@ -77,19 +96,22 @@ impl GraphicsCaptureApiHandler for CaptureHandler {
         Ok(())
     }
 
-    fn on_closed(
-        &mut self,
-    ) -> Result<(), Self::Error> {
+    fn on_closed(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 }
 
 impl Capturer {
     pub fn new(pid: u32, fallback_title: &str) -> Result<Self, String> {
-        let live_title = find_title_by_pid(pid).or_else(|| {
-            if fallback_title.is_empty() { None }
-            else { Some(fallback_title.to_string()) }
-        }).ok_or_else(|| "无法定位游戏窗口：PID 和 fallback 标题均不可用".to_string())?;
+        let live_title = find_title_by_pid(pid)
+            .or_else(|| {
+                if fallback_title.is_empty() {
+                    None
+                } else {
+                    Some(fallback_title.to_string())
+                }
+            })
+            .ok_or_else(|| "无法定位游戏窗口：PID 和 fallback 标题均不可用".to_string())?;
 
         let buffer = Arc::new(RwLock::new(FrameBufferData {
             data: Vec::new(),
@@ -112,31 +134,44 @@ impl Capturer {
 
         // 尝试启动 WGC
         if let Err(e) = capturer.start_wgc_thread(&buffer, &stop_flag) {
-            crate::logger::log_msg("WARN", "OCR", &format!("WGC 启动失败: {}，自动降级为 xcap 同步截图模式", e));
+            stop_flag.store(true, Ordering::Release);
+            crate::logger::log_msg(
+                "WARN",
+                "OCR",
+                &format!("WGC 启动失败: {}，自动降级为 xcap 同步截图模式", e),
+            );
             // 降级到 xcap
             let xcap_window = Self::find_xcap_window(&live_title).ok();
 
             if let Some(ref win) = xcap_window {
-                capturer.width = win.width().unwrap_or(0) as u32;
-                capturer.height = win.height().unwrap_or(0) as u32;
+                capturer.width = win.width().unwrap_or(0);
+                capturer.height = win.height().unwrap_or(0);
             }
 
-            capturer.backend = CaptureBackend::Xcap {
-                xcap_window,
-            };
+            capturer.backend = CaptureBackend::Xcap { xcap_window };
         }
 
         Ok(capturer)
     }
 
-    fn start_wgc_thread(&self, buffer: &Arc<RwLock<FrameBufferData>>, stop_flag: &Arc<AtomicBool>) -> Result<(), String> {
+    fn start_wgc_thread(
+        &self,
+        buffer: &Arc<RwLock<FrameBufferData>>,
+        stop_flag: &Arc<AtomicBool>,
+    ) -> Result<(), String> {
         // PID 查找优先；失败时（如 D2RHub 重启后 PID 丢失）回退到标题精确匹配
         let hwnd = crate::commands::system::find_game_hwnd(self.pid)
             .or_else(|| {
-                self.cached_title.as_ref()
+                self.cached_title
+                    .as_ref()
                     .and_then(|t| crate::commands::system::find_game_hwnd_by_title(t))
             })
-            .ok_or_else(|| format!("未找到游戏窗口句柄 (PID={}, title={:?})", self.pid, self.cached_title))?;
+            .ok_or_else(|| {
+                format!(
+                    "未找到游戏窗口句柄 (PID={}, title={:?})",
+                    self.pid, self.cached_title
+                )
+            })?;
 
         let window = Window::from_raw_hwnd(hwnd as *mut std::ffi::c_void);
 
@@ -147,23 +182,34 @@ impl Capturer {
             CursorCaptureSettings::WithoutCursor,
             DrawBorderSettings::WithoutBorder,
             SecondaryWindowSettings::Default,
-            MinimumUpdateIntervalSettings::Default,
+            MinimumUpdateIntervalSettings::Custom(std::time::Duration::from_millis(
+                WGC_MIN_UPDATE_INTERVAL_MS,
+            )),
             DirtyRegionSettings::Default,
             ColorFormat::Rgba8,
             flags,
         );
 
         let buffer_for_verify = buffer.clone();
+        let stop_flag_for_thread = stop_flag.clone();
         std::thread::spawn(move || {
             if let Err(e) = CaptureHandler::start(settings) {
-                crate::logger::log_msg("ERROR", "OCR", &format!("CaptureHandler::start 发生错误: {}", e));
+                crate::logger::log_msg(
+                    "ERROR",
+                    "OCR",
+                    &format!("CaptureHandler::start 发生错误: {}", e),
+                );
             }
+            stop_flag_for_thread.store(true, Ordering::Release);
         });
 
         // 启动验证：等待首帧到达，超时则判定 WGC 不可用
         let verify_timeout = std::time::Duration::from_secs(2);
         let verify_start = std::time::Instant::now();
         loop {
+            if stop_flag.load(Ordering::Acquire) {
+                return Err("WGC 捕获线程在首帧到达前已退出".to_string());
+            }
             {
                 let shared = buffer_for_verify.read();
                 if shared.width > 0 && shared.height > 0 && !shared.data.is_empty() {
@@ -171,6 +217,7 @@ impl Capturer {
                 }
             }
             if verify_start.elapsed() >= verify_timeout {
+                stop_flag.store(true, Ordering::Release);
                 return Err("WGC 启动后未能在 2s 内收到首帧，窗口可能不支持 WGC 捕获".to_string());
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
@@ -188,7 +235,9 @@ impl Capturer {
 
     pub fn capture_into(&mut self, buffer: &mut [u8]) -> Result<(), String> {
         match &mut self.backend {
-            CaptureBackend::Wgc { buffer: shared_buf, .. } => {
+            CaptureBackend::Wgc {
+                buffer: shared_buf, ..
+            } => {
                 let shared = shared_buf.read();
 
                 if shared.width == 0 || shared.height == 0 || shared.data.is_empty() {
@@ -206,10 +255,18 @@ impl Capturer {
                 let expected = w * h * 4;
 
                 if shared.data.len() < expected {
-                    return Err(format!("截图数据不完整, 需要 {} 字节, 实际 {}", expected, shared.data.len()));
+                    return Err(format!(
+                        "截图数据不完整, 需要 {} 字节, 实际 {}",
+                        expected,
+                        shared.data.len()
+                    ));
                 }
                 if buffer.len() < expected {
-                    return Err(format!("缓冲区太小, 需要 {} 字节, 实际 {}", expected, buffer.len()));
+                    return Err(format!(
+                        "缓冲区太小, 需要 {} 字节, 实际 {}",
+                        expected,
+                        buffer.len()
+                    ));
                 }
 
                 buffer[..expected].copy_from_slice(&shared.data[..expected]);
@@ -221,7 +278,9 @@ impl Capturer {
                     None => {
                         let title = self.cached_title.as_ref().ok_or("无窗口标题用于 xcap")?;
                         let win = Self::find_xcap_window(title)?;
-                        let img = win.capture_image().map_err(|e| format!("xcap 窗口截图失败: {}", e))?;
+                        let img = win
+                            .capture_image()
+                            .map_err(|e| format!("xcap 窗口截图失败: {}", e))?;
                         *xcap_window = Some(win);
                         img
                     }
@@ -239,10 +298,18 @@ impl Capturer {
                 let expected = w * h * 4;
 
                 if raw.len() < expected {
-                    return Err(format!("截图数据不完整, 需要 {} 字节, 实际 {}", expected, raw.len()));
+                    return Err(format!(
+                        "截图数据不完整, 需要 {} 字节, 实际 {}",
+                        expected,
+                        raw.len()
+                    ));
                 }
                 if buffer.len() < expected {
-                    return Err(format!("缓冲区太小, 需要 {} 字节, 实际 {}", expected, buffer.len()));
+                    return Err(format!(
+                        "缓冲区太小, 需要 {} 字节, 实际 {}",
+                        expected,
+                        buffer.len()
+                    ));
                 }
 
                 buffer[..expected].copy_from_slice(&raw[..expected]);
@@ -256,18 +323,22 @@ impl Capturer {
     }
 
     pub fn reset_cache(&mut self) {
-        let live_title = find_title_by_pid(self.pid).unwrap_or_else(|| {
-            self.cached_title.clone().unwrap_or_default()
-        });
+        let live_title = find_title_by_pid(self.pid)
+            .unwrap_or_else(|| self.cached_title.clone().unwrap_or_default());
         self.cached_title = Some(live_title.clone());
 
         let mut new_wgc_params = None;
 
         match &mut self.backend {
-            CaptureBackend::Wgc { buffer: shared_buf, stop_flag } => {
-                stop_flag.store(true, Ordering::Relaxed);
+            CaptureBackend::Wgc { stop_flag, .. } => {
+                stop_flag.store(true, Ordering::Release);
+                let new_buffer = Arc::new(RwLock::new(FrameBufferData {
+                    data: Vec::new(),
+                    width: 0,
+                    height: 0,
+                }));
                 let new_stop_flag = Arc::new(AtomicBool::new(false));
-                new_wgc_params = Some((shared_buf.clone(), new_stop_flag));
+                new_wgc_params = Some((new_buffer, new_stop_flag));
             }
             CaptureBackend::Xcap { xcap_window } => {
                 *xcap_window = None;
@@ -276,7 +347,12 @@ impl Capturer {
 
         if let Some((shared_buf, new_stop_flag)) = new_wgc_params {
             if let Err(e) = self.start_wgc_thread(&shared_buf, &new_stop_flag) {
-                crate::logger::log_msg("WARN", "OCR", &format!("reset_cache 重启 WGC 失败: {}，降级为 xcap", e));
+                new_stop_flag.store(true, Ordering::Release);
+                crate::logger::log_msg(
+                    "WARN",
+                    "OCR",
+                    &format!("reset_cache 重启 WGC 失败: {}，降级为 xcap", e),
+                );
                 let xcap_window = Self::find_xcap_window(&live_title).ok();
                 self.backend = CaptureBackend::Xcap { xcap_window };
             } else {
@@ -307,7 +383,9 @@ fn find_title_by_pid(pid: u32) -> Option<String> {
         None
     }
     #[cfg(not(target_os = "windows"))]
-    { None }
+    {
+        None
+    }
 }
 
 impl Drop for Capturer {
@@ -315,5 +393,39 @@ impl Drop for Capturer {
         if let CaptureBackend::Wgc { stop_flag, .. } = &self.backend {
             stop_flag.store(true, Ordering::SeqCst);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_shrink_frame_capacity;
+
+    #[test]
+    fn shrinks_after_a_large_resolution_drop() {
+        let rgba_4k = 3840 * 2160 * 4;
+        let rgba_1080p = 1920 * 1080 * 4;
+
+        assert!(should_shrink_frame_capacity(rgba_4k, rgba_1080p));
+    }
+
+    #[test]
+    fn keeps_capacity_for_small_or_minor_changes() {
+        assert!(!should_shrink_frame_capacity(3 * 1024 * 1024, 1024));
+        assert!(!should_shrink_frame_capacity(
+            10 * 1024 * 1024,
+            8 * 1024 * 1024,
+        ));
+    }
+
+    #[test]
+    fn keeps_capacity_when_the_frame_did_not_shrink() {
+        assert!(!should_shrink_frame_capacity(
+            8 * 1024 * 1024,
+            8 * 1024 * 1024
+        ));
+        assert!(!should_shrink_frame_capacity(
+            8 * 1024 * 1024,
+            12 * 1024 * 1024
+        ));
     }
 }

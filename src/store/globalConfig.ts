@@ -11,8 +11,8 @@ interface GlobalConfigState {
 
   load: () => Promise<void>;
   save: (config: GlobalConfig) => Promise<void>;
-  detectBattleNetPath: () => Promise<string | null>;
   detectSavedGamesPath: () => Promise<string | null>;
+  detectGlobalSavedGamesPath: () => Promise<string | null>;
   detectProgramDataAgentPath: () => Promise<string | null>;
   detectAppDataRoamingBnetPath: () => Promise<string | null>;
   detectBrowserPath: () => Promise<[string, string] | null>;
@@ -46,17 +46,18 @@ export const useGlobalConfig = create<GlobalConfigState>((set) => ({
     }
   },
 
-  detectBattleNetPath: async () => {
+
+  detectSavedGamesPath: async () => {
     try {
-      return await invoke<string | null>("detect_battle_net_path");
+      return await invoke<string | null>("detect_saved_games_path");
     } catch {
       return null;
     }
   },
 
-  detectSavedGamesPath: async () => {
+  detectGlobalSavedGamesPath: async () => {
     try {
-      return await invoke<string | null>("detect_saved_games_path");
+      return await invoke<string | null>("detect_global_saved_games_path");
     } catch {
       return null;
     }

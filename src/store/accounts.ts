@@ -13,10 +13,8 @@ interface AccountsState {
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<void>;
   updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<void>;
-  repairRegistry: (id: string) => Promise<void>;
-  repairAllRegistries: () => Promise<void>;
+  initializeBnetAccount: (id: string) => Promise<void>;
   reinitializeAccount: (id: string) => Promise<void>;
-  collectSnapshot: (id: string) => Promise<void>;
   updateAccount: (account: AccountMeta) => void;
   reorderAccounts: (orderedIds: string[]) => Promise<void>;
   markSettingsCustomized: (id: string) => Promise<void>;
@@ -86,23 +84,14 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     }
   },
 
-  repairRegistry: async (id: string) => {
+  initializeBnetAccount: async (id: string) => {
+    set({ error: null });
     try {
-      await invoke("repair_account_registry", { accountId: id });
-      showToast("success", "注册表修复成功");
+      await invoke("initialize_bnet_account", { accountId: id });
+      await get().loadAccounts();
     } catch (e) {
       set({ error: String(e) });
-      showToast("error", `修复注册表失败: ${e}`);
-    }
-  },
-
-  repairAllRegistries: async () => {
-    try {
-      await invoke("repair_all_registries");
-      showToast("success", "所有账号注册表已修复成功");
-    } catch (e) {
-      set({ error: String(e) });
-      showToast("error", `修复全部注册表失败: ${e}`);
+      throw e;
     }
   },
 
@@ -115,17 +104,6 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `重置账号失败: ${e}`);
-      throw e;
-    }
-  },
-
-  collectSnapshot: async (id: string) => {
-    try {
-      await invoke("collect_account_snapshot", { accountId: id });
-      await get().loadAccounts();
-    } catch (e) {
-      set({ error: String(e) });
-      showToast("error", `采集快照失败: ${e}`);
       throw e;
     }
   },

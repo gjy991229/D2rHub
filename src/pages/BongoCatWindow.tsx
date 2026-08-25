@@ -36,9 +36,16 @@ export function BongoCatWindow() {
       document.documentElement.dataset.fontScale = "default";
     }
     // Start config listener for live updates from main window
-    let unlisten: () => void;
-    initConfigListener().then(fn => { unlisten = fn; });
-    return () => { if (unlisten!) unlisten(); };
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    initConfigListener().then(fn => {
+      if (cancelled) fn();
+      else unlisten = fn;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [load]);
 
   // Sync font scale from config changes
@@ -95,17 +102,6 @@ export function BongoCatWindow() {
       }
     })();
   }, [config?.bongo_cat_scale]);
-
-
-
-  useEffect(() => {
-    // Listen for storage changes from main window to sync skin/scale/chatterbox
-    const handleStorage = () => {
-    };
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
   // Animation frames: 'up' (idle), 'left' (left hit), 'right' (right hit)
   const [frame, setFrame] = useState<"up" | "left" | "right">("up");
   const frameTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

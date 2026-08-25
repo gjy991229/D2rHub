@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::process::Command;
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::Manager;
 
-use crate::commands::utils::{silent_cmd, shared_system};
+use crate::commands::utils::{shared_system, silent_cmd};
 use crate::error::AppError;
+use crate::launch_context::{paths_have_same_identity, ContextPurpose, LaunchContext};
 
 /// 启动进度事件（通过 Tauri event 推送到前端）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,34 +26,7 @@ impl LaunchProgress {
     }
 }
 
-/// 初始化进度事件
-#[allow(dead_code)]
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InitProgress {
-    pub account_id: String,
-    pub step: String,
-    pub status: String,
-    pub message: String,
-}
-
 // ── 进程管理 ──
-
-/// 检测当前是否有 Battle.net 或 Agent 进程在运行
-#[tauri::command]
-pub fn is_bnet_running() -> bool {
-    let names = ["Battle.net.exe", "Agent.exe", "Battle.net"];
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-    sys.refresh_processes(ProcessesToUpdate::All);
-    for proc in sys.processes().values() {
-        let name = proc.name().to_string_lossy();
-        for target in &names {
-            if name == *target {
-                return true;
-            }
-        }
-    }
-    false
-}
 
 /// 检测当前有哪些 D2R 进程在运行（返回 PID 列表）
 #[tauri::command]
@@ -69,28 +42,6 @@ pub fn get_d2r_pids() -> Vec<u32> {
     pids
 }
 
-/// 杀死所有 Battle.net 和 Agent 进程
-#[tauri::command]
-pub fn kill_bnet_processes() -> Result<(), AppError> {
-    let names = ["Battle.net.exe", "Agent.exe", "Battle.net"];
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-    sys.refresh_processes(ProcessesToUpdate::All);
-    for proc in sys.processes().values() {
-        let name = proc.name().to_string_lossy();
-        for target in &names {
-            if name == *target {
-                if !proc.kill() {
-                    // 尝试通过 taskkill 强制杀死
-                    let _ = silent_cmd("taskkill")
-                        .args(["/F", "/PID", &proc.pid().to_string()])
-                        .output();
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
 /// 杀死所有暗黑2进程 (D2R.exe，不分大小写)
 #[tauri::command]
 pub fn kill_all_d2r_processes() -> Result<(), AppError> {
@@ -100,13 +51,11 @@ pub fn kill_all_d2r_processes() -> Result<(), AppError> {
     // First round of kill using sysinfo
     for proc in sys.processes().values() {
         let name = proc.name().to_string_lossy();
-        if name.eq_ignore_ascii_case("D2R.exe") {
-            if !proc.kill() {
-                // If kill fails, try taskkill
-                let _ = silent_cmd("taskkill")
-                    .args(["/F", "/PID", &proc.pid().to_string()])
-                    .output();
-            }
+        if name.eq_ignore_ascii_case("D2R.exe") && !proc.kill() {
+            // If kill fails, try taskkill
+            let _ = silent_cmd("taskkill")
+                .args(["/F", "/PID", &proc.pid().to_string()])
+                .output();
         }
     }
 
@@ -133,7 +82,9 @@ pub fn kill_all_d2r_processes() -> Result<(), AppError> {
         for proc in sys.processes().values() {
             let name = proc.name().to_string_lossy();
             if name.eq_ignore_ascii_case("D2R.exe") {
-                return Err(AppError::FileError("部分暗黑2进程未能成功关闭，请尝试以管理员身份运行本工具。".to_string()));
+                return Err(AppError::FileError(
+                    "部分暗黑2进程未能成功关闭，请尝试以管理员身份运行本工具。".to_string(),
+                ));
             }
         }
     }
@@ -148,13 +99,8 @@ pub fn graceful_kill_bnet(_timeout_secs: u64) -> bool {
     // 缓冲 1.5 秒，让 Battle.net.exe 有足够时间将 token 写入注册表
     std::thread::sleep(std::time::Duration::from_millis(1500));
 
-    // 强杀战网和 Agent
-    crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]);
-
-    // 稍微等待进程释放资源
-    std::thread::sleep(std::time::Duration::from_millis(500));
-
-    true // 强杀必定成功
+    // 只有确认进程退出才报告成功；调用方可据此决定是否安全回写账号状态。
+    crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]).is_ok()
 }
 
 /// 记录进程快照（用于后续对比判断新进程）
@@ -198,6 +144,8 @@ pub async fn wait_for_new_process(
 
 use std::ffi::c_void;
 
+// Keep the native Windows spelling so the declarations can be compared with the SDK.
+#[allow(clippy::upper_case_acronyms)]
 type NTSTATUS = i32;
 const STATUS_SUCCESS: NTSTATUS = 0;
 const STATUS_INFO_LENGTH_MISMATCH: NTSTATUS = 0xC0000004u32 as i32;
@@ -253,11 +201,7 @@ extern "system" {
         ReturnLength: *mut u32,
     ) -> NTSTATUS;
 
-    fn OpenProcess(
-        dwDesiredAccess: u32,
-        bInheritHandle: i32,
-        dwProcessId: u32,
-    ) -> *mut c_void;
+    fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> *mut c_void;
 
     fn DuplicateHandle(
         hSourceProcessHandle: *mut c_void,
@@ -288,10 +232,13 @@ unsafe fn get_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>,
         if status == STATUS_SUCCESS {
             break;
         } else if status == STATUS_INFO_LENGTH_MISMATCH || status == 0xC0000004u32 as i32 {
-            size = size * 2;
+            size *= 2;
             buffer = vec![0u8; size];
         } else {
-            return Err(AppError::FileError(format!("NtQuerySystemInformation 失败: {:#x}", status)));
+            return Err(AppError::FileError(format!(
+                "NtQuerySystemInformation 失败: {:#x}",
+                status
+            )));
         }
     }
 
@@ -299,7 +246,8 @@ unsafe fn get_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>,
     let num_handles = (*info).NumberOfHandles;
 
     // 安全检查，计算缓冲区最大容纳的项数，避免越界
-    let max_possible = (size - std::mem::size_of::<usize>() * 2) / std::mem::size_of::<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
+    let max_possible = (size - std::mem::size_of::<usize>() * 2)
+        / std::mem::size_of::<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>();
     let actual_num = num_handles.min(max_possible);
 
     let mut handles = Vec::with_capacity(actual_num);
@@ -439,9 +387,9 @@ pub fn find_mutex_handle(
 /// 关闭指定进程的指定句柄
 #[tauri::command]
 pub fn close_handle(pid: u32, hid: &str) -> Result<(), AppError> {
-    let source_handle_val = hid.parse::<usize>().map_err(|e| {
-        AppError::FileError(format!("解析句柄值失败: {}", e))
-    })?;
+    let source_handle_val = hid
+        .parse::<usize>()
+        .map_err(|e| AppError::FileError(format!("解析句柄值失败: {}", e)))?;
 
     unsafe {
         let target_process_handle = OpenProcess(0x0040, 0, pid); // PROCESS_DUP_HANDLE
@@ -529,7 +477,8 @@ pub fn check_game_connected(pid: u32) -> bool {
             let num_entries = (*table).dwNumEntries as usize;
 
             // 安全边界检查，防止句柄表解析越界
-            let max_possible = (size as usize - std::mem::size_of::<u32>()) / std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
+            let max_possible = (size as usize - std::mem::size_of::<u32>())
+                / std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
             let actual_num = num_entries.min(max_possible);
 
             let table_ptr = (*table).table.as_ptr();
@@ -542,7 +491,8 @@ pub fn check_game_connected(pid: u32) -> bool {
                         if port == 1119 {
                             let remote_ip = row.dwRemoteAddr;
                             // 排除回环地址 (127.0.0.1 字节序对应关系)
-                            if remote_ip != 0 && remote_ip != 0x0100007f && remote_ip != 0x7f000001 {
+                            if remote_ip != 0 && remote_ip != 0x0100007f && remote_ip != 0x7f000001
+                            {
                                 return true;
                             }
                         }
@@ -554,91 +504,36 @@ pub fn check_game_connected(pid: u32) -> bool {
     false
 }
 
-/// 检测战网是否已完成登录
-/// 可靠标准：Battle.net.exe 进程数量 >= 7（登录前 5 个，登录后 7 个）
-#[tauri::command]
-pub fn check_bnet_logged_in() -> bool {
-    // 直接使用共享实例并内联计数，避免调用 count_bnet_processes() 造成死锁
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-    sys.refresh_processes(ProcessesToUpdate::All);
-    count_bnet_in(&sys) >= 7
+pub(crate) fn executable_paths_match(actual: &std::path::Path, expected: &std::path::Path) -> bool {
+    paths_have_same_identity(actual, expected)
 }
 
-/// 内部辅助：统计当前 System 快照中的 Battle.net.exe 进程数
-fn count_bnet_in(sys: &System) -> usize {
+fn count_bnet_in_for_path(sys: &System, battle_net_path: &str) -> usize {
+    let expected = std::path::Path::new(battle_net_path);
     sys.processes()
         .values()
-        .filter(|p| p.name().to_string_lossy() == "Battle.net.exe")
+        .filter(|process| {
+            process
+                .name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case("Battle.net.exe")
+                && process
+                    .exe()
+                    .is_some_and(|actual| executable_paths_match(actual, expected))
+        })
         .count()
 }
 
-/// 统计 Battle.net.exe 进程数量
-pub fn count_bnet_processes() -> usize {
+pub fn count_bnet_processes_for_path(battle_net_path: &str) -> usize {
     let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
     sys.refresh_processes(ProcessesToUpdate::All);
-    count_bnet_in(&sys)
-}
-
-// ── 进程启动 ──
-fn start_battle_net_path(path: &str) -> Result<u32, AppError> {
-    let target = std::path::Path::new(path);
-    let is_battle_net = target
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("Battle.net.exe"))
-        .unwrap_or(false);
-    if !is_battle_net {
-        return Err(AppError::FileError(
-            "战网路径异常，预期 Battle.net.exe".to_string(),
-        ));
-    }
-
-    let mut cmd = Command::new(path);
-    let child = cmd
-        .spawn()
-        .map_err(|e| AppError::FileError(format!("启动进程失败: {} ({})", path, e)))?;
-    Ok(child.id())
-}
-
-#[tauri::command]
-pub fn start_process(_path: &str, _args: Option<Vec<String>>) -> Result<u32, AppError> {
-    Err(AppError::FileError(
-        "通用进程启动已禁用，请使用专用后端命令".to_string(),
-    ))
-}
-
-#[tauri::command]
-pub fn launch_configured_battle_net(
-    state: tauri::State<'_, crate::state::SharedState>,
-) -> Result<u32, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
-        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    start_battle_net_path(&cfg.battle_net_path)
+    count_bnet_in_for_path(&sys, battle_net_path)
 }
 
 // ── Windows API 按键模拟与窗口控制（纯 Rust，零外部进程）──
 
 const VK_SPACE: usize = 0x20;
 const VK_RETURN: usize = 0x0D;
-
-/// 将指定进程的可见窗口提升到前台焦点
-#[allow(dead_code)]
-pub fn bring_window_to_foreground(pid: u32) {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        ENUM_PID.store(pid, Ordering::Relaxed);
-        ENUM_HWND.store(0, Ordering::Relaxed);
-        EnumWindows(enum_window_callback, 0);
-        let hwnd = ENUM_HWND.load(Ordering::Relaxed);
-        if hwnd != 0 {
-            bring_window_to_foreground_raw(hwnd);
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    let _ = pid;
-}
 
 /// 纯 Rust 将窗口前台激活并置顶
 /// 使用 AttachThreadInput 绕过 Windows 前台窗口权限限制
@@ -655,8 +550,13 @@ pub fn bring_window_to_foreground_raw(hwnd: isize) {
         fn GetCurrentThreadId() -> u32;
         fn AttachThreadInput(idAttach: u32, idAttachTo: u32, fAttach: i32) -> i32;
         fn SetWindowPos(
-            hWnd: isize, hWndInsertAfter: isize,
-            X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32,
+            hWnd: isize,
+            hWndInsertAfter: isize,
+            X: i32,
+            Y: i32,
+            cx: i32,
+            cy: i32,
+            uFlags: u32,
         ) -> i32;
     }
     const SW_SHOW: i32 = 5;
@@ -693,7 +593,15 @@ pub fn bring_window_to_foreground_raw(hwnd: isize) {
 
         // 置顶 Z 序
         BringWindowToTop(hwnd);
-        SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+        SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
 
         // 激活前台
         SetForegroundWindow(hwnd);
@@ -722,7 +630,10 @@ pub fn bring_window_by_title_to_front_logic(window_title: &str) -> bool {
         }
 
         extern "system" {
-            fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+            fn EnumWindows(
+                lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+                lparam: isize,
+            ) -> i32;
             fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
             fn IsWindowVisible(hWnd: isize) -> i32;
         }
@@ -817,7 +728,10 @@ pub fn get_d2r_window_titles() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {
         extern "system" {
-            fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+            fn EnumWindows(
+                lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+                lparam: isize,
+            ) -> i32;
             fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
             fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
             fn IsWindowVisible(hWnd: isize) -> i32;
@@ -868,9 +782,65 @@ pub fn get_d2r_window_titles() -> Vec<String> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AccountGameIdentity {
+    account_id: String,
+    window_title: String,
+    game_executable: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RunningGameWindow {
+    pid: u32,
+    window_title: String,
+    game_executable: std::path::PathBuf,
+}
+
+fn recover_running_assignments(
+    accounts: &[AccountGameIdentity],
+    windows: &[RunningGameWindow],
+    already_claimed: &std::collections::HashSet<u32>,
+) -> Vec<(String, u32)> {
+    let mut claimed = already_claimed.clone();
+    let mut assignments = Vec::new();
+
+    for account in accounts {
+        let identity_count = accounts
+            .iter()
+            .filter(|candidate| {
+                candidate
+                    .window_title
+                    .eq_ignore_ascii_case(&account.window_title)
+                    && executable_paths_match(&candidate.game_executable, &account.game_executable)
+            })
+            .count();
+        if identity_count != 1 {
+            continue;
+        }
+
+        let candidates: std::collections::HashSet<u32> = windows
+            .iter()
+            .filter(|window| {
+                !claimed.contains(&window.pid)
+                    && window
+                        .window_title
+                        .eq_ignore_ascii_case(&account.window_title)
+                    && executable_paths_match(&window.game_executable, &account.game_executable)
+            })
+            .map(|window| window.pid)
+            .collect();
+        if candidates.len() == 1 {
+            let pid = *candidates.iter().next().expect("single candidate");
+            claimed.insert(pid);
+            assignments.push((account.account_id.clone(), pid));
+        }
+    }
+    assignments
+}
+
 /// 扫描已运行的 D2R 窗口，匹配账号列表中的昵称，更新 active_games 状态
 /// 解决"账号已在游戏但工具不识别为活动账号"的问题
-/// 通过 D2R.exe 进程名（而非窗口标题）定位窗口，兼容 rename_game_window 后的窗口
+/// 恢复匹配同时要求完整 exe 路径和精确窗口标题，且一个 PID 最多归属一个账号。
 #[tauri::command]
 pub fn refresh_account_running_state(
     state: tauri::State<'_, crate::state::SharedState>,
@@ -878,18 +848,42 @@ pub fn refresh_account_running_state(
     #[cfg(target_os = "windows")]
     {
         extern "system" {
-            fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+            fn EnumWindows(
+                lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+                lparam: isize,
+            ) -> i32;
             fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
             fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
             fn IsWindowVisible(hWnd: isize) -> i32;
         }
 
-        // 1. 收集所有 D2R.exe 进程 PID
-        let d2r_pids_vec = get_d2r_pids();
-        if d2r_pids_vec.is_empty() {
+        // 1. 只收集能够读取完整可执行文件路径的 D2R 进程。
+        let d2r_processes: std::collections::HashMap<u32, std::path::PathBuf> = {
+            let mut system = shared_system()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            system.refresh_processes(ProcessesToUpdate::All);
+            system
+                .processes()
+                .iter()
+                .filter_map(|(pid, process)| {
+                    if process
+                        .name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case("D2R.exe")
+                    {
+                        process.exe().map(|path| (pid.as_u32(), path.to_path_buf()))
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+        if d2r_processes.is_empty() {
+            state.active_games.write().clear();
             return Ok(Vec::new());
         }
-        let d2r_pids: std::collections::HashSet<u32> = d2r_pids_vec.into_iter().collect();
+        let d2r_pids: std::collections::HashSet<u32> = d2r_processes.keys().copied().collect();
 
         // 2. 枚举可见窗口，仅保留属于 D2R 进程的窗口 (标题, PID)
         struct WinInfo {
@@ -903,7 +897,9 @@ pub fn refresh_account_running_state(
 
         unsafe extern "system" fn callback(hwnd: isize, lparam: isize) -> i32 {
             let ctx = &mut *(lparam as *mut Ctx);
-            if IsWindowVisible(hwnd) == 0 { return 1; }
+            if IsWindowVisible(hwnd) == 0 {
+                return 1;
+            }
             let mut pid: u32 = 0;
             GetWindowThreadProcessId(hwnd, &mut pid);
             if pid == 0 || !(*ctx.d2r_pids).contains(&pid) {
@@ -922,40 +918,89 @@ pub fn refresh_account_running_state(
             wins: Vec::new(),
             d2r_pids: &d2r_pids as *const std::collections::HashSet<u32>,
         };
-        unsafe { EnumWindows(callback, &mut ctx as *mut Ctx as isize); }
-
-        if ctx.wins.is_empty() {
-            return Ok(Vec::new());
+        unsafe {
+            EnumWindows(callback, &mut ctx as *mut Ctx as isize);
         }
 
-        // 3. 读取配置获取 accounts_dir
+        // 3. 为每个账号解析完整的 Edition-specific D2R.exe 身份。
         let config = state.config.read();
         let cfg = config
             .as_ref()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
-        let accounts_dir = cfg.accounts_dir.clone();
+        use crate::commands::account::AccountManager;
+        let mut account_identities = Vec::new();
+        for account_id in AccountManager::list_ids(&cfg.accounts_dir) {
+            let Ok(meta) = AccountManager::load_meta(&cfg.accounts_dir, &account_id) else {
+                continue;
+            };
+            let Ok(context) = LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
+            else {
+                continue;
+            };
+            let window_title = if meta.display_name.is_empty() {
+                account_id.clone()
+            } else {
+                meta.display_name
+            };
+            account_identities.push(AccountGameIdentity {
+                account_id,
+                window_title,
+                game_executable: context.installation.game_executable,
+            });
+        }
         drop(config);
 
-        // 4. 加载账号列表，匹配窗口标题
-        use crate::commands::account::AccountManager;
-        let ids = AccountManager::list_ids(&accounts_dir);
-        let mut matched_ids: Vec<String> = Vec::new();
+        let running_windows: Vec<RunningGameWindow> = ctx
+            .wins
+            .into_iter()
+            .filter_map(|window| {
+                d2r_processes
+                    .get(&window.pid)
+                    .cloned()
+                    .map(|game_executable| RunningGameWindow {
+                        pid: window.pid,
+                        window_title: window.title,
+                        game_executable,
+                    })
+            })
+            .collect();
 
-        for id in &ids {
-            if let Ok(meta) = AccountManager::load_meta(&accounts_dir, id) {
-                let display_name = if meta.display_name.is_empty() { id.clone() } else { meta.display_name.clone() };
-                for win in &ctx.wins {
-                    if win.title.to_lowercase().contains(&display_name.to_lowercase()) {
-                        let mut active = state.active_games.write();
-                        active.insert(id.clone(), win.pid);
-                        matched_ids.push(id.clone());
-                        break;
-                    }
+        // 4. 保留仍匹配精确窗口标题和 Edition 可执行文件的映射，并去除 PID 重复认领。
+        let mut active = state.active_games.write();
+        let previous = std::mem::take(&mut *active);
+        let mut claimed = std::collections::HashSet::new();
+        for identity in &account_identities {
+            if let Some(pid) = previous.get(&identity.account_id) {
+                let identity_still_running = running_windows.iter().any(|window| {
+                    window.pid == *pid
+                        && window
+                            .window_title
+                            .eq_ignore_ascii_case(&identity.window_title)
+                        && executable_paths_match(
+                            &window.game_executable,
+                            &identity.game_executable,
+                        )
+                });
+                if identity_still_running && claimed.insert(*pid) {
+                    active.insert(identity.account_id.clone(), *pid);
                 }
             }
         }
 
-        Ok(matched_ids)
+        // 5. 仅对未认领 PID 做无歧义恢复；子串、重复昵称和错误 Edition 均 fail closed。
+        for (account_id, pid) in
+            recover_running_assignments(&account_identities, &running_windows, &claimed)
+        {
+            if claimed.insert(pid) {
+                active.insert(account_id, pid);
+            }
+        }
+
+        Ok(account_identities
+            .iter()
+            .filter(|identity| active.contains_key(&identity.account_id))
+            .map(|identity| identity.account_id.clone())
+            .collect())
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -967,7 +1012,10 @@ pub fn refresh_account_running_state(
 #[cfg(target_os = "windows")]
 pub fn collect_chrome_windows() -> std::collections::HashSet<isize> {
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn GetClassNameW(hWnd: isize, lpClassName: *mut u16, nMaxCount: i32) -> i32;
         fn IsWindowVisible(hWnd: isize) -> i32;
     }
@@ -1010,7 +1058,8 @@ pub fn collect_chrome_windows() -> std::collections::HashSet<isize> {
 #[cfg(target_os = "windows")]
 pub fn bring_browser_login_to_foreground(before_hwnds: std::collections::HashSet<isize>) {
     std::thread::spawn(move || {
-        for _ in 0..12 { // 最多等待 3 秒 (12 * 250ms)
+        for _ in 0..12 {
+            // 最多等待 3 秒 (12 * 250ms)
             std::thread::sleep(std::time::Duration::from_millis(250));
             let current = collect_chrome_windows();
             for hwnd in current {
@@ -1032,7 +1081,8 @@ pub fn bring_bnet_to_foreground() {
     #[cfg(target_os = "windows")]
     {
         std::thread::spawn(|| {
-            for _ in 0..20 { // 最多等待 5 秒 (20 * 250ms)
+            for _ in 0..20 {
+                // 最多等待 5 秒 (20 * 250ms)
                 std::thread::sleep(std::time::Duration::from_millis(250));
                 if let Some(hwnd) = find_bnet_window() {
                     bring_window_to_foreground_raw(hwnd);
@@ -1055,7 +1105,10 @@ pub fn bring_self_to_foreground(app: tauri::AppHandle) {
 #[cfg(target_os = "windows")]
 fn find_bnet_window() -> Option<isize> {
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
         fn IsWindowVisible(hWnd: isize) -> i32;
     }
@@ -1063,7 +1116,9 @@ fn find_bnet_window() -> Option<isize> {
     use sysinfo::ProcessesToUpdate;
     let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
     sys.refresh_processes(ProcessesToUpdate::All);
-    let bnet_pids: std::collections::HashSet<u32> = sys.processes().values()
+    let bnet_pids: std::collections::HashSet<u32> = sys
+        .processes()
+        .values()
         .filter(|p| p.name().to_string_lossy() == "Battle.net.exe")
         .map(|p| p.pid().as_u32())
         .collect();
@@ -1088,9 +1143,7 @@ fn find_bnet_window() -> Option<isize> {
             let mut pid = 0u32;
             GetWindowThreadProcessId(hwnd, &mut pid);
             if pid != 0 {
-                let is_bnet = BNET_PIDS_TL.with(|tl| {
-                    tl.borrow().contains(&pid)
-                });
+                let is_bnet = BNET_PIDS_TL.with(|tl| tl.borrow().contains(&pid));
                 if is_bnet {
                     MATCHED_HWND.store(hwnd, std::sync::atomic::Ordering::Relaxed);
                     return 0; // stop enum
@@ -1197,9 +1250,7 @@ pub fn is_admin() -> bool {
     #[cfg(target_os = "windows")]
     {
         // 尝试读取一个需要管理员权限的注册表路径
-        let output = silent_cmd("net")
-            .args(["session"])
-            .output();
+        let output = silent_cmd("net").args(["session"]).output();
         output.map(|o| o.status.success()).unwrap_or(false)
     }
     #[cfg(not(target_os = "windows"))]
@@ -1223,18 +1274,24 @@ pub fn open_logs_dir() -> Result<(), crate::error::AppError> {
             std::process::Command::new("explorer")
                 .arg(&dir)
                 .spawn()
-                .map_err(|e| crate::error::AppError::FileError(format!("打开日志目录失败: {}", e)))?;
+                .map_err(|e| {
+                    crate::error::AppError::FileError(format!("打开日志目录失败: {}", e))
+                })?;
         }
         #[cfg(not(target_os = "windows"))]
         {
             std::process::Command::new("open")
                 .arg(&dir)
                 .spawn()
-                .map_err(|e| crate::error::AppError::FileError(format!("打开日志目录失败: {}", e)))?;
+                .map_err(|e| {
+                    crate::error::AppError::FileError(format!("打开日志目录失败: {}", e))
+                })?;
         }
         Ok(())
     } else {
-        Err(crate::error::AppError::FileError("日志目录尚未初始化".to_string()))
+        Err(crate::error::AppError::FileError(
+            "日志目录尚未初始化".to_string(),
+        ))
     }
 }
 
@@ -1242,13 +1299,18 @@ pub fn open_logs_dir() -> Result<(), crate::error::AppError> {
 #[tauri::command]
 pub fn open_user_guide(app: tauri::AppHandle) -> Result<(), crate::error::AppError> {
     // 优先从资源目录查找（生产模式）
-    let resource_dir = app.path().resource_dir()
+    let resource_dir = app
+        .path()
+        .resource_dir()
         .map_err(|e| crate::error::AppError::FileError(format!("获取资源目录失败: {}", e)))?;
     let mut guide_path = resource_dir.join("docs").join("user-guide.html");
 
     // NSIS 安装包回退：资源可能被包裹在 _up_ 子目录中
     if !guide_path.exists() {
-        let nsis_path = resource_dir.join("_up_").join("docs").join("user-guide.html");
+        let nsis_path = resource_dir
+            .join("_up_")
+            .join("docs")
+            .join("user-guide.html");
         if nsis_path.exists() {
             guide_path = nsis_path;
         }
@@ -1267,9 +1329,10 @@ pub fn open_user_guide(app: tauri::AppHandle) -> Result<(), crate::error::AppErr
     }
 
     if !guide_path.exists() {
-        return Err(crate::error::AppError::FileError(
-            format!("帮助文档不存在: {}", guide_path.display())
-        ));
+        return Err(crate::error::AppError::FileError(format!(
+            "帮助文档不存在: {}",
+            guide_path.display()
+        )));
     }
 
     #[cfg(target_os = "windows")]
@@ -1290,7 +1353,10 @@ pub fn get_app_version() -> String {
 
 #[tauri::command]
 pub async fn install_update(_app: tauri::AppHandle, _url: String) -> Result<(), String> {
-    Err("应用内直接替换可执行文件的更新方式已禁用。请从 GitHub Releases 下载完整安装包后手动安装。".to_string())
+    Err(
+        "应用内直接替换可执行文件的更新方式已禁用。请从 GitHub Releases 下载完整安装包后手动安装。"
+            .to_string(),
+    )
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1320,7 +1386,12 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
                 .output();
             match ps_res {
                 Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).to_string(),
-                Ok(out) => return Err(format!("获取失败 (PowerShell): {}", String::from_utf8_lossy(&out.stderr))),
+                Ok(out) => {
+                    return Err(format!(
+                        "获取失败 (PowerShell): {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    ))
+                }
                 Err(e) => return Err(format!("获取失败 (curl & PowerShell): {}", e)),
             }
         }
@@ -1330,7 +1401,8 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
     let json: serde_json::Value = serde_json::from_str(&stdout)
         .map_err(|e| format!("解析 JSON 失败: {}, 响应内容: {}", e, stdout))?;
 
-    let tag_name = json.get("tag_name")
+    let tag_name = json
+        .get("tag_name")
         .and_then(|v| v.as_str())
         .ok_or_else(|| "未找到 tag_name 字段".to_string())?;
 
@@ -1363,9 +1435,9 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
         }
     }
 
-    let download_url = nsis_url
-        .or(msi_url)
-        .ok_or_else(|| "未在 Release 中找到安装包资产，预期 NSIS .exe 或 .msi 安装器".to_string())?;
+    let download_url = nsis_url.or(msi_url).ok_or_else(|| {
+        "未在 Release 中找到安装包资产，预期 NSIS .exe 或 .msi 安装器".to_string()
+    })?;
 
     Ok(CloudVersionInfo {
         version: tag_name.trim_start_matches('v').to_string(),
@@ -1390,7 +1462,10 @@ pub fn check_path_exists(path: String, is_file: bool) -> bool {
 #[cfg(target_os = "windows")]
 pub fn rename_game_window(pid: u32, new_title: &str) {
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
         fn IsWindowVisible(hWnd: isize) -> i32;
         fn SetWindowTextW(hWnd: isize, lpString: *const u16) -> i32;
@@ -1423,8 +1498,13 @@ pub fn rename_game_window(pid: u32, new_title: &str) {
     }
 
     let title_wide: Vec<u16> = format!("{}\0", new_title).encode_utf16().collect();
-    let mut ctx = Ctx { target_pid: pid, title_wide };
-    unsafe { EnumWindows(callback, &mut ctx as *mut Ctx as isize); }
+    let mut ctx = Ctx {
+        target_pid: pid,
+        title_wide,
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut Ctx as isize);
+    }
 }
 
 /// 根据 PID 查找游戏窗口并移动位置（用于多开窗口排列）
@@ -1432,15 +1512,22 @@ pub fn rename_game_window(pid: u32, new_title: &str) {
 pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
     extern "system" {
         fn SetWindowPos(
-            hWnd: isize, hWndInsertAfter: isize,
-            X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32,
+            hWnd: isize,
+            hWndInsertAfter: isize,
+            X: i32,
+            Y: i32,
+            cx: i32,
+            cy: i32,
+            uFlags: u32,
         ) -> i32;
     }
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOZORDER: u32 = 0x0004;
 
     if let Some(hwnd) = find_game_hwnd(pid) {
-        unsafe { SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER); }
+        unsafe {
+            SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
     }
 }
 
@@ -1448,12 +1535,20 @@ pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
 #[cfg(target_os = "windows")]
 pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn IsWindowVisible(hWnd: isize) -> i32;
         fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
         fn SetWindowPos(
-            hWnd: isize, hWndInsertAfter: isize,
-            X: i32, Y: i32, cx: i32, cy: i32, uFlags: u32,
+            hWnd: isize,
+            hWndInsertAfter: isize,
+            X: i32,
+            Y: i32,
+            cx: i32,
+            cy: i32,
+            uFlags: u32,
         ) -> i32;
     }
     const SWP_NOSIZE: u32 = 0x0001;
@@ -1481,11 +1576,18 @@ pub fn set_game_window_position_by_title(title: &str, x: i32, y: i32) -> bool {
         1
     }
 
-    let mut ctx = FindCtx { title: title.to_string(), found_hwnd: None };
-    unsafe { EnumWindows(callback, &mut ctx as *mut FindCtx as isize); }
+    let mut ctx = FindCtx {
+        title: title.to_string(),
+        found_hwnd: None,
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut FindCtx as isize);
+    }
 
     if let Some(hwnd) = ctx.found_hwnd {
-        unsafe { SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER); }
+        unsafe {
+            SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
         true
     } else {
         false
@@ -1503,9 +1605,14 @@ pub fn set_game_window_position(_pid: u32, _x: i32, _y: i32) {}
 /// 根据 PID 查找 D2R 游戏窗口句柄（公用基础设施）
 #[cfg(target_os = "windows")]
 pub fn find_game_hwnd(pid: u32) -> Option<isize> {
-    if pid == 0 { return None; }
+    if pid == 0 {
+        return None;
+    }
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
         fn IsWindowVisible(hWnd: isize) -> i32;
     }
@@ -1517,7 +1624,9 @@ pub fn find_game_hwnd(pid: u32) -> Option<isize> {
 
     unsafe extern "system" fn callback(hwnd: isize, lparam: isize) -> i32 {
         let ctx = &mut *(lparam as *mut Ctx);
-        if IsWindowVisible(hwnd) == 0 { return 1; }
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
 
         let mut p = 0u32;
         GetWindowThreadProcessId(hwnd, &mut p);
@@ -1528,16 +1637,28 @@ pub fn find_game_hwnd(pid: u32) -> Option<isize> {
         1
     }
 
-    let mut ctx = Ctx { target_pid: pid, found_hwnd: 0 };
-    unsafe { EnumWindows(callback, &mut ctx as *mut Ctx as isize); }
-    if ctx.found_hwnd != 0 { Some(ctx.found_hwnd) } else { None }
+    let mut ctx = Ctx {
+        target_pid: pid,
+        found_hwnd: 0,
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut Ctx as isize);
+    }
+    if ctx.found_hwnd != 0 {
+        Some(ctx.found_hwnd)
+    } else {
+        None
+    }
 }
 
 /// 无 PID 时按窗口标题精确匹配查找（用于 D2RHub 重启后 PID 丢失的场景）
 #[cfg(target_os = "windows")]
 pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
     extern "system" {
-        fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32, lparam: isize) -> i32;
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
         fn IsWindowVisible(hWnd: isize) -> i32;
         fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
     }
@@ -1550,7 +1671,9 @@ pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
 
     unsafe extern "system" fn callback(hwnd: isize, lparam: isize) -> i32 {
         let ctx = &mut *(lparam as *mut Ctx);
-        if IsWindowVisible(hwnd) == 0 { return 1; }
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
         let mut buf = [0u16; 256];
         let len = GetWindowTextW(hwnd, buf.as_mut_ptr(), 256);
         if len > 0 {
@@ -1566,8 +1689,14 @@ pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
         1
     }
 
-    let mut ctx = Ctx { target_title: title.to_string(), found_hwnd: 0, found_diablo_hwnd: 0 };
-    unsafe { EnumWindows(callback, &mut ctx as *mut Ctx as isize); }
+    let mut ctx = Ctx {
+        target_title: title.to_string(),
+        found_hwnd: 0,
+        found_diablo_hwnd: 0,
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut Ctx as isize);
+    }
 
     if ctx.found_hwnd != 0 {
         Some(ctx.found_hwnd)
@@ -1579,10 +1708,14 @@ pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn find_game_hwnd(_pid: u32) -> Option<isize> { None }
+pub fn find_game_hwnd(_pid: u32) -> Option<isize> {
+    None
+}
 
 #[cfg(not(target_os = "windows"))]
-pub fn find_game_hwnd_by_title(_title: &str) -> Option<isize> { None }
+pub fn find_game_hwnd_by_title(_title: &str) -> Option<isize> {
+    None
+}
 
 /// 获取窗口位置 (left, top, right, bottom)
 #[cfg(target_os = "windows")]
@@ -1590,10 +1723,22 @@ pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
     extern "system" {
         fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
     }
+    // Keep the native Windows spelling so the declaration matches Win32 documentation.
+    #[allow(clippy::upper_case_acronyms)]
     #[repr(C)]
-    struct RECT { left: i32, top: i32, right: i32, bottom: i32 }
+    struct RECT {
+        left: i32,
+        top: i32,
+        right: i32,
+        bottom: i32,
+    }
 
-    let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
     unsafe {
         if GetWindowRect(hwnd, &mut rect) != 0 {
             Some((rect.left, rect.top))
@@ -1604,4 +1749,88 @@ pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn get_window_rect(_hwnd: isize) -> Option<(i32, i32)> { None }
+pub fn get_window_rect(_hwnd: isize) -> Option<(i32, i32)> {
+    None
+}
+
+#[cfg(test)]
+mod region_process_tests {
+    use super::{
+        executable_paths_match, recover_running_assignments, AccountGameIdentity, RunningGameWindow,
+    };
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn battle_net_processes_are_matched_to_the_selected_installation() {
+        assert!(executable_paths_match(
+            Path::new(r"C:\Battle.net-CN\Battle.net.exe"),
+            Path::new(r"c:\battle.net-cn\BATTLE.NET.EXE"),
+        ));
+        assert!(!executable_paths_match(
+            Path::new(r"C:\Battle.net-CN\Battle.net.exe"),
+            Path::new(r"D:\Battle.net-Global\Battle.net.exe"),
+        ));
+    }
+
+    fn account(id: &str, title: &str, executable: &str) -> AccountGameIdentity {
+        AccountGameIdentity {
+            account_id: id.to_string(),
+            window_title: title.to_string(),
+            game_executable: PathBuf::from(executable),
+        }
+    }
+
+    fn window(pid: u32, title: &str, executable: &str) -> RunningGameWindow {
+        RunningGameWindow {
+            pid,
+            window_title: title.to_string(),
+            game_executable: PathBuf::from(executable),
+        }
+    }
+
+    #[test]
+    fn running_recovery_requires_exact_title_and_executable_path() {
+        let accounts = [account("acount1", "Main", r"C:\CN\D2R.exe")];
+        let windows = [
+            window(10, "Main extra", r"C:\CN\D2R.exe"),
+            window(11, "Main", r"D:\Global\D2R.exe"),
+        ];
+
+        assert!(recover_running_assignments(&accounts, &windows, &HashSet::new()).is_empty());
+
+        let exact = [window(12, "main", r"c:\cn\D2R.EXE")];
+        assert_eq!(
+            recover_running_assignments(&accounts, &exact, &HashSet::new()),
+            vec![("acount1".to_string(), 12)]
+        );
+    }
+
+    #[test]
+    fn duplicate_account_identity_is_not_recovered_ambiguously() {
+        let accounts = [
+            account("acount1", "Same", r"C:\CN\D2R.exe"),
+            account("acount2", "Same", r"C:\CN\D2R.exe"),
+        ];
+        let windows = [window(10, "Same", r"C:\CN\D2R.exe")];
+
+        assert!(recover_running_assignments(&accounts, &windows, &HashSet::new()).is_empty());
+    }
+
+    #[test]
+    fn same_title_in_different_editions_is_resolved_by_path() {
+        let accounts = [
+            account("acount1", "Same", r"C:\CN\D2R.exe"),
+            account("acount2", "Same", r"D:\Global\D2R.exe"),
+        ];
+        let windows = [
+            window(10, "Same", r"C:\CN\D2R.exe"),
+            window(20, "Same", r"D:\Global\D2R.exe"),
+        ];
+
+        assert_eq!(
+            recover_running_assignments(&accounts, &windows, &HashSet::new()),
+            vec![("acount1".to_string(), 10), ("acount2".to_string(), 20)]
+        );
+    }
+}

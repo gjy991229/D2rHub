@@ -2,9 +2,12 @@
 
 export interface GlobalConfig {
   version: number;
-  battle_net_path: string;
-  game_path: string;
-  saved_games_path: string;
+  cn_battle_net_path: string;
+  cn_game_path: string;
+  cn_saved_games_path: string;
+  global_battle_net_path: string;
+  global_game_path: string;
+  global_saved_games_path: string;
   program_data_agent_path: string;
   app_data_roaming_bnet_path: string;
   accounts_dir: string;
@@ -87,7 +90,6 @@ export interface AccountMeta {
   window_y?: number | null;
   auth_mode?: string | null;
   region?: string | null;
-  token?: string | null;
   language?: string | null;
   voicelanguage?: string | null;
   has_customized_settings?: boolean;
@@ -106,11 +108,4 @@ export interface LaunchResult {
   d2r_pid: number | null;
   error: string | null;
   mutex_killed: boolean;
-}
-
-export interface InitProgress {
-  account_id: string;
-  step: string;
-  status: string;
-  message: string;
 }

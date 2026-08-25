@@ -1,0 +1,16 @@
+/* Browser-only visual QA frames. This stylesheet is imported by visual-audit.tsx only. */
+html[data-visual-audit-frame="mini-overlay"],
+html[data-visual-audit-frame="mini-overlay"] body,
+html[data-visual-audit-frame="mini-overlay"] #root {
+  min-height: 72px;
+  background: #c83b52;
+}
+
+html[data-visual-audit-frame="mini-overlay"] body {
+  padding: 16px;
+}
+
+html[data-visual-audit-frame="mini-overlay"] [data-overlay-mode] {
+  width: 18vw;
+  height: 8vh;
+}

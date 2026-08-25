@@ -184,17 +184,21 @@ export function AccountGridItem({
   useEffect(() => { setModDraft(account.mod_args || ""); }, [account.mod_args]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     const setupListener = async () => {
-      unlisten = await listen<{ accountId: string }>("account-settings-updated", (event) => {
+      const stopListening = await listen<{ accountId: string }>("account-settings-updated", (event) => {
         if (event.payload.accountId === account.id) {
           loadDrawerSettings(true);
         }
       });
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
     };
-    setupListener();
+    void setupListener();
     return () => {
-      if (unlisten) unlisten();
+      cancelled = true;
+      unlisten?.();
     };
   }, [account.id]);
 

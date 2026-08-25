@@ -34,6 +34,7 @@ import {
 } from "../../pages/SettingsEditor";
 import type { GlobalConfig } from "../../store/types";
 import { validateOcrTarget } from "../../utils/ocrTarget";
+import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
 
 // Helper for quadratic opacity mapping
 // Map slider value s (0..100) to stored percentage p (10..100)
@@ -55,6 +56,123 @@ interface Props {
   initialAccountId?: string | null;
 }
 
+type InstallationPathField =
+  | "cn_battle_net_path"
+  | "cn_game_path"
+  | "cn_saved_games_path"
+  | "global_battle_net_path"
+  | "global_game_path"
+  | "global_saved_games_path";
+
+interface InstallationProfileFieldsProps {
+  edition: "CN" | "Global";
+  config: GlobalConfig;
+  settingsAvailable: boolean | null;
+  detectedSavedGames: string | null;
+  updateConfig: (updater: (config: GlobalConfig) => void) => void;
+  pickFile: (field: keyof GlobalConfig, title: string, extensions?: string[]) => Promise<void>;
+  pickFolder: (field: keyof GlobalConfig, title: string) => Promise<void>;
+  applyDetectedPath: (field: keyof GlobalConfig, value: string | null) => void;
+}
+
+function InstallationProfileFields({
+  edition,
+  config,
+  settingsAvailable,
+  detectedSavedGames,
+  updateConfig,
+  pickFile,
+  pickFolder,
+  applyDetectedPath,
+}: InstallationProfileFieldsProps) {
+  const isCn = edition === "CN";
+  const label = isCn ? "国服" : "国际服";
+  const fields: Record<"battleNet" | "game" | "savedGames", InstallationPathField> = isCn
+    ? {
+        battleNet: "cn_battle_net_path",
+        game: "cn_game_path",
+        savedGames: "cn_saved_games_path",
+      }
+    : {
+        battleNet: "global_battle_net_path",
+        game: "global_game_path",
+        savedGames: "global_saved_games_path",
+      };
+  const hasConfiguration = Object.values(fields).some((field) => config[field]);
+
+  const clearProfile = () => {
+    updateConfig((next) => {
+      next[fields.battleNet] = "";
+      next[fields.game] = "";
+      next[fields.savedGames] = "";
+    });
+  };
+
+  return (
+    <div className="space-y-2 border-t border-border-default/50 pt-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold text-text-secondary">{label}</p>
+          <p className="text-2xs text-text-muted mt-0.5">
+            {isCn
+              ? "游戏与存档成组配置即可使用 Token；战网认证还需客户端路径。"
+              : "亚/美/欧服共用；Token 需游戏与存档，战网认证还需客户端。"}
+          </p>
+        </div>
+        {hasConfiguration && <Button size="sm" onClick={clearProfile}>清除此版本</Button>}
+      </div>
+
+      <label className="text-xs text-text-muted block">{label}战网客户端 (Battle.net.exe)</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={config[fields.battleNet]}
+          readOnly
+          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+        />
+        <Button size="sm" onClick={() => pickFile(fields.battleNet, `${label} Battle.net.exe`, ["exe"])}>浏览</Button>
+      </div>
+
+      <label className="text-xs text-text-muted block">游戏安装目录</label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={config[fields.game]}
+          readOnly
+          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+        />
+        <Button size="sm" onClick={() => pickFolder(fields.game, `${label}游戏安装目录`)}>浏览</Button>
+      </div>
+
+      <label className="text-xs text-text-muted block">
+        存档目录 · Diablo II Resurrected{isCn ? " (CN)" : ""}
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={config[fields.savedGames]}
+          readOnly
+          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+        />
+        <Button size="sm" onClick={() => pickFolder(fields.savedGames, `${label}存档目录`)}>浏览</Button>
+        <Button size="sm" onClick={() => applyDetectedPath(fields.savedGames, detectedSavedGames)}>自动探测</Button>
+      </div>
+
+      {settingsAvailable === false && (
+        <div
+          className="flex items-start gap-2 px-3 py-2.5 rounded-lg"
+          style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}
+        >
+          <ShieldAlert size={14} className="text-warning shrink-0 mt-0.5" />
+          <p className="text-xs text-text-secondary leading-relaxed">
+            {label}存档目录中未检测到 Settings.json，账号独立画质快照与覆盖暂不可用。
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type TabType =
   | "paths"
   | "accounts"
@@ -66,15 +184,15 @@ type TabType =
   | "advanced";
 
 export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initialAccountId }: Props) {
-  const { config, save, detectBattleNetPath, detectSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
-  const { accounts, loadAccounts, renameAccount, updateAccountMods, repairAllRegistries } = useAccounts();
+  const { config, save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
   const { theme, setTheme } = useTheme();
   const initializedOcrAccounts = accounts.filter((account) => account.initialized);
   const ocrTarget = validateOcrTarget(config?.ocr_target_account ?? "", accounts);
 
   // Tab and search state
   const [activeTab, setActiveTab] = useState<TabType>("accounts");
-  const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<boolean | null>(null);
+  const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -82,28 +200,30 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   useEffect(() => {
     let active = true;
-    if (!open || !config?.saved_games_path) {
-      setSettingsJsonAvailable(null);
-      return () => {
-        active = false;
-      };
-    }
-    invoke<boolean>("check_saved_games_settings", { path: config.saved_games_path })
-      .then((exists) => {
-        if (active) setSettingsJsonAvailable(exists);
-      })
-      .catch(() => {
-        if (active) setSettingsJsonAvailable(false);
-      });
+    const check = async (edition: "CN" | "Global", path: string | undefined) => {
+      if (!open || !path) {
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: null }));
+        return;
+      }
+      try {
+        const exists = await invoke<boolean>("check_saved_games_settings", { path });
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: exists }));
+      } catch {
+        if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: false }));
+      }
+    };
+    void check("CN", config?.cn_saved_games_path);
+    void check("Global", config?.global_saved_games_path);
     return () => {
       active = false;
     };
-  }, [open, config?.saved_games_path]);
+  }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
   // Game settings edit states (per account)
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [gameSettings, setGameSettings] = useState<SettingsMap>({});
   const [gameSettingsLoading, setGameSettingsLoading] = useState(false);
+  const [gameSettingsLoadError, setGameSettingsLoadError] = useState<string | null>(null);
   const [gameSettingsChanged, setGameSettingsChanged] = useState(false);
   const [gameSettingsSaving, setGameSettingsSaving] = useState(false);
   const [_fontScaleKey, setFontScaleKey] = useState(0);
@@ -150,14 +270,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
       // Detect paths
       (async () => {
-        const bnet = await detectBattleNetPath();
-        const savedGames = await detectSavedGamesPath();
+        const cnSavedGames = await detectSavedGamesPath();
+        const globalSavedGames = await detectGlobalSavedGamesPath();
         const agent = await detectProgramDataAgentPath();
         const roaming = await detectAppDataRoamingBnetPath();
         const browser = await detectBrowserPath();
         setDetectedPaths({
-          bnet,
-          savedGames,
+          cnSavedGames,
+          globalSavedGames,
           agent,
           roaming,
           browser: browser ? browser[0] : null,
@@ -181,29 +301,37 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   }, [selectedAccountId, accounts]);
 
   useEffect(() => {
+    let cancelled = false;
     let unlisten: (() => void) | undefined;
     const setupListener = async () => {
-      unlisten = await listen<{ accountId: string }>("account-settings-updated", (event) => {
+      const stopListening = await listen<{ accountId: string }>("account-settings-updated", (event) => {
         if (event.payload.accountId === selectedAccountId && !gameSettingsSaving) {
           loadGameSettings(selectedAccountId);
         }
       });
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
     };
     if (selectedAccountId) {
       setupListener();
     }
     return () => {
-      if (unlisten) unlisten();
+      cancelled = true;
+      unlisten?.();
     };
   }, [selectedAccountId, gameSettingsSaving]);
 
   const loadGameSettings = async (accId: string) => {
     setGameSettingsLoading(true);
+    setGameSettingsLoadError(null);
     try {
       const data = await invoke<SettingsMap>("get_account_settings", { accountId: accId });
       setGameSettings(data);
       setGameSettingsChanged(false);
     } catch (e) {
+      setGameSettings({});
+      setGameSettingsChanged(false);
+      setGameSettingsLoadError(String(e));
       showToast("error", `加载账号游戏配置失败: ${e}`);
     } finally {
       setGameSettingsLoading(false);
@@ -212,24 +340,24 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   // Close / Rollback
   const handleClose = () => {
+    if (config && installationPathEditsAreInvalid(originalConfig, config)) {
+      setActiveTab("paths");
+      showToast("error", "请至少完整保留一组国服或国际服的游戏与存档路径；Battle.net 仅在战网认证时必需");
+      return;
+    }
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
 
     const closeAfterSave = async () => {
-      try {
-        if (config && globalHasChanges) {
-          await handleSaveGlobal(true);
-        }
-        if (accountHasChanges) {
-          await handleSaveAccount(true);
-        }
-      } catch (e) {
-        showToast("error", `保存失败: ${e}`);
-      } finally {
-        onClose();
+      if (config && globalHasChanges && !(await handleSaveGlobal(true))) {
+        return;
       }
+      if (accountHasChanges && !(await handleSaveAccount(true))) {
+        return;
+      }
+      onClose();
     };
 
     void closeAfterSave();
@@ -237,23 +365,29 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   // Global Config Save
   const handleSaveGlobal = async (quiet = false) => {
-    if (!config) return;
+    if (!config) return true;
+    if (installationPathEditsAreInvalid(originalConfig, config)) {
+      if (!quiet) showToast("error", "游戏目录与存档目录必须按国服/国际服成组配置；Battle.net 可供 Token 模式留空");
+      return false;
+    }
     try {
       await save(config);
       setOriginalConfig(JSON.parse(JSON.stringify(config)));
       if (!quiet) showToast("success", "全局设置已成功保存");
+      return true;
     } catch (e) {
       showToast("error", `保存全局设置失败: ${e}`);
+      return false;
     }
   };
 
   // Selected Account Config Save (includes basic metadata and game settings file)
   const handleSaveAccount = async (quiet = false) => {
-    if (!selectedAccountId) return;
+    if (!selectedAccountId) return true;
     setGameSettingsSaving(true);
     try {
       const acc = accounts.find(a => a.id === selectedAccountId);
-      if (!acc) return;
+      if (!acc) return false;
 
       // 1. Rename if modified
       if (accountNicknameDraft.trim() && accountNicknameDraft.trim() !== (acc.display_name || acc.id)) {
@@ -290,8 +424,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       await loadAccounts();
       const savedName = accountNicknameDraft.trim() || acc.display_name || acc.id;
       if (!quiet) showToast("success", `账号 "${savedName}" 的设置已保存`);
+      return true;
     } catch (e) {
       showToast("error", `保存账号设置失败: ${e}`);
+      return false;
     } finally {
       setGameSettingsSaving(false);
     }
@@ -304,6 +440,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
         accountId: selectedAccountId,
       });
       setGameSettings(settings);
+      setGameSettingsLoadError(null);
       setGameSettingsChanged(false);
       await loadAccounts();
       await emit("account-settings-updated", { accountId: selectedAccountId });
@@ -315,7 +452,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   const handleToggleAccountSettingsMode = async (accountId: string, customized: boolean) => {
     try {
-      await invoke("set_settings_customized", { accountId, customized });
+      if (customized) {
+        await invoke("snapshot_system_settings_to_account", { accountId });
+      } else {
+        await invoke("set_settings_customized", { accountId, customized: false });
+      }
       await loadAccounts();
       if (accountId === selectedAccountId) {
         await loadGameSettings(accountId);
@@ -336,6 +477,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   };
 
   const updateGameSetting = (key: string, value: unknown) => {
+    if (gameSettingsLoadError) return;
     setGameSettings(prev => ({ ...prev, [key]: value }));
     setGameSettingsChanged(true);
   };
@@ -459,7 +601,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   });
 
   useEffect(() => {
-    if (!open || !hasUnsavedChanges) return;
+    if (!open || !hasUnsavedChanges || (config && installationPathEditsAreInvalid(originalConfig, config))) return;
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
@@ -552,56 +694,26 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
               <div className="settings-content-grid">
                 <div className="spatial-panel p-3 space-y-2">
                   <h3 className="text-xs font-bold text-text-primary">核心程序路径</h3>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">战网客户端路径 (Battle.net.exe)</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.battle_net_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFile("battle_net_path", "Battle.net.exe", ["exe"])}>浏览</Button>
-                      <Button size="sm" onClick={() => applyDetectedPath("battle_net_path", detectedPaths.bnet)}>自动探测</Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">游戏安装目录 (Diablo II Resurrected)</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.game_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFolder("game_path", "游戏安装目录")}>浏览</Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">游戏存档目录 (Saved Games)</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.saved_games_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFolder("saved_games_path", "存档目录")}>浏览</Button>
-                      <Button size="sm" onClick={() => applyDetectedPath("saved_games_path", detectedPaths.savedGames)}>自动探测</Button>
-                    </div>
-                    {settingsJsonAvailable === false && (
-                      <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg"
-                        style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}>
-                        <ShieldAlert size={14} className="text-warning shrink-0 mt-0.5" />
-                        <p className="text-xs text-text-secondary leading-relaxed">
-                          未检测到 Settings.json。账号创建、登录和多开不受影响，但系统画质读取、账号独立画质配置与覆盖暂不可用。
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                  <InstallationProfileFields
+                    edition="CN"
+                    config={config}
+                    settingsAvailable={settingsJsonAvailable.CN}
+                    detectedSavedGames={detectedPaths.cnSavedGames}
+                    updateConfig={updateConfig}
+                    pickFile={pickFile}
+                    pickFolder={pickFolder}
+                    applyDetectedPath={applyDetectedPath}
+                  />
+                  <InstallationProfileFields
+                    edition="Global"
+                    config={config}
+                    settingsAvailable={settingsJsonAvailable.Global}
+                    detectedSavedGames={detectedPaths.globalSavedGames}
+                    updateConfig={updateConfig}
+                    pickFile={pickFile}
+                    pickFolder={pickFolder}
+                    applyDetectedPath={applyDetectedPath}
+                  />
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">
@@ -685,7 +797,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             onClick={async () => {
                               if (a.id === selectedAccountId) return;
                               if (accountHasChanges) {
-                                await handleSaveAccount(true);
+                                if (!(await handleSaveAccount(true))) return;
                               }
                               setSelectedAccountId(a.id);
                             }}
@@ -829,7 +941,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           </div>
                         )}
 
-                        {gameSettingsTab !== "launch" && !gameSettingsLoading && (
+                        {gameSettingsTab !== "launch" && !gameSettingsLoading && gameSettingsLoadError && (
+                          <div className="rounded-lg border border-warning/40 bg-warning/5 p-4">
+                            <p className="text-sm font-semibold text-text-primary">画质配置暂不可用</p>
+                            <p className="mt-1 text-xs leading-relaxed text-text-secondary">
+                              {gameSettingsLoadError}。请先启动对应客户端生成系统 Settings.json，再点击“快照系统配置”或重新检查。
+                            </p>
+                            <button
+                              type="button"
+                              className="control-btn mt-3 h-8 px-3"
+                              onClick={() => void loadGameSettings(selectedAccountId)}
+                            >
+                              重新检查
+                            </button>
+                          </div>
+                        )}
+
+                        {gameSettingsTab !== "launch" && !gameSettingsLoading && !gameSettingsLoadError && (
                           <div className="space-y-4">
                             {gameSettingsTab === "game_display" && (
                               <DisplaySection settings={gameSettings} update={updateGameSetting} />
@@ -991,7 +1119,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <h3 className="text-xs font-bold text-text-primary">主程序窗口主题</h3>
                   <div className="grid grid-cols-2 gap-2.5">
                     {([
-                      { id: "onyx", label: "深色主题 (Onyx)", desc: "暗黑色调与黄金文字" },
+                      { id: "onyx", label: "深色主题 (Onyx)", desc: "纯黑分层与高对比文字" },
                       { id: "light", label: "浅色主题 (Light)", desc: "极简素雅明亮界面" }
                     ] as const).map(t => {
                       const active = theme === t.id;
@@ -1014,11 +1142,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">性能悬浮窗主题</h3>
+                  <h3 className="text-xs font-bold text-text-primary">信息悬浮窗主题</h3>
                   <div className="grid grid-cols-2 gap-2.5">
                     {([
-                      { id: "onyx", label: "深色悬浮窗", desc: "暗黑半透质感" },
-                      { id: "light", label: "浅色悬浮窗", desc: "明亮半透玻璃" }
+                      { id: "onyx", label: "深色悬浮窗", desc: "纯黑分层，清晰克制" },
+                      { id: "light", label: "浅色悬浮窗", desc: "明亮清晰界面" }
                     ] as const).map(t => {
                       const active = (config.theme_overlay || "light") === t.id;
                       return (
@@ -1084,7 +1212,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   {/* Overlay opacity */}
                   <div className="space-y-1 border-t border-border-default/50 pt-3">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-semibold text-text-secondary">性能悬浮窗背景不透明度</span>
+                      <span className="font-semibold text-text-secondary">信息悬浮窗背景不透明度</span>
                       <div className="flex items-center gap-1.5">
                         <input
                           type="number"
@@ -1156,11 +1284,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">全局性能悬浮窗配置</h3>
+                  <h3 className="text-xs font-bold text-text-primary">全局信息悬浮窗配置</h3>
                   <div className="flex items-center justify-between py-1">
                     <div>
-                      <span className="text-sm font-semibold text-text-secondary">启用桌面上方的性能悬浮窗</span>
-                      <p className="text-2xs text-text-muted">在游戏过程中于最上层绘制帧率与硬件资源图表</p>
+                      <span className="text-sm font-semibold text-text-secondary">启用桌面上方的信息悬浮窗</span>
+                      <p className="text-2xs text-text-muted">常驻显示运行账号、OCR 场景计时、符文掉落与邪恶区域预报</p>
                     </div>
                     <Toggle
                       checked={!!config.enable_overlay}
@@ -1474,29 +1602,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
             {activeTab === "advanced" && config && (
               <div className="settings-content-grid">
                 <div className="spatial-panel p-3 space-y-2 settings-span-full">
-                  <h3 className="text-xs font-bold text-text-primary">系统与注册表修复</h3>
+                  <h3 className="text-xs font-bold text-text-primary">高级维护</h3>
+
 
                   <div className="flex items-center justify-between py-1">
-                    <div>
-                      <span className="text-sm font-semibold text-text-secondary">一键修复全部账号注册表</span>
-                      <p className="text-2xs text-text-muted">读取配置数据为所有隔离账号重新注入注册表</p>
-                    </div>
-                    <Button
-                      size="sm"
-                      onClick={async () => {
-                        try {
-                          await repairAllRegistries();
-                        } catch (e) {
-                          console.error(e);
-                        }
-                      }}
-                    >
-                      <RotateCw size={11} className="mr-1" />
-                      修复全部
-                    </Button>
-                  </div>
-
-                  <div className="flex items-center justify-between py-1 border-t border-border-default/50 pt-3">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">打开系统运行日志</span>
                       <p className="text-2xs text-text-muted">查看当前多开工具的底层系统日志以供排查故障</p>

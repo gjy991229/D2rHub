@@ -1,12 +1,14 @@
-use strsim::jaro_winkler;
 use crate::ocr::game_data;
 use std::path::Path;
+use strsim::jaro_winkler;
 
 /// 写入 rune_match debug 日志到 ocr_debug.txt
 fn debug_rune_log(dir: &Path, msg: &str) {
     use std::io::Write;
     if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true).append(true).open(dir.join("ocr_debug.txt"))
+        .create(true)
+        .append(true)
+        .open(dir.join("ocr_debug.txt"))
     {
         if let Err(e) = writeln!(f, "{}", msg) {
             eprintln!("[debug_rune_log] 写入失败: {}", e);
@@ -25,7 +27,7 @@ pub fn scene_clean_text(text: &str) -> String {
     let replace_second = &*game_data::SCENE_REPLACE_SECOND;
 
     // Convert char to string to check in hashset
-    if let Some(first_char) = chars.get(0) {
+    if let Some(first_char) = chars.first() {
         let first_str = first_char.to_string();
         if replace_first.contains(first_str.as_str()) {
             chars[0] = '进';
@@ -40,11 +42,14 @@ pub fn scene_clean_text(text: &str) -> String {
     }
 
     clean_text = chars.into_iter().collect();
-    clean_text.strip_prefix("进入").unwrap_or(&clean_text).to_string()
+    clean_text
+        .strip_prefix("进入")
+        .unwrap_or(&clean_text)
+        .to_string()
 }
 
 pub fn scene_match(raw_text: &str, threshold: u8) -> Option<(String, f64)> {
-    let raw_text = raw_text.trim().replace('\r', "").replace('\n', "").replace('\t', "");
+    let raw_text = raw_text.trim().replace(['\r', '\n', '\t'], "");
     let cleaned = scene_clean_text(&raw_text);
     if cleaned.is_empty() {
         return None;
@@ -99,10 +104,17 @@ pub fn fix_rune_name(text: &str) -> String {
     game_data::fix_rune_name(text).to_string()
 }
 
-pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -> Option<(String, f64)> {
-    let raw_text = raw_text.trim().replace('\r', "").replace('\n', "").replace('\t', "");
+pub fn rune_match(
+    raw_text: &str,
+    threshold: u8,
+    debug_out_dir: Option<&Path>,
+) -> Option<(String, f64)> {
+    let raw_text = raw_text.trim().replace(['\r', '\n', '\t'], "");
     if let Some(dir) = debug_out_dir {
-        debug_rune_log(dir, &format!("[RuneMatch] 原始文本(已去特殊字符): {:?}", raw_text));
+        debug_rune_log(
+            dir,
+            &format!("[RuneMatch] 原始文本(已去特殊字符): {:?}", raw_text),
+        );
     }
     // 0. 过滤无用词
     for &w in game_data::RUNE_UNUSEFUL_WORD.iter() {
@@ -117,7 +129,11 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
     let cleaned_cn = rune_clean_text(&raw_text);
     let cleaned_en = {
         let s = game_data::keep_only_ascii_letters(&raw_text);
-        if s.len() >= 2 { s.to_lowercase() } else { String::new() }
+        if s.len() >= 2 {
+            s.to_lowercase()
+        } else {
+            String::new()
+        }
     };
     // 繁中和简中共用同一清洗逻辑
     let cleaned_tc = if cleaned_cn.is_empty() {
@@ -135,7 +151,13 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
     let mut best_name: Option<String> = None;
 
     if let Some(dir) = debug_out_dir {
-        debug_rune_log(dir, &format!("[RuneMatch] 预清理后 — cn: {:?} | en: {:?} | tc: {:?}", cleaned_cn, cleaned_en, cleaned_tc));
+        debug_rune_log(
+            dir,
+            &format!(
+                "[RuneMatch] 预清理后 — cn: {:?} | en: {:?} | tc: {:?}",
+                cleaned_cn, cleaned_en, cleaned_tc
+            ),
+        );
     }
 
     // ── 1. 简体中文 ──
@@ -145,7 +167,14 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
             best_score = 1.0;
             best_name = Some(fix_rune_name(&cleaned_cn));
             if let Some(dir) = debug_out_dir {
-                debug_rune_log(dir, &format!("[RuneMatch] 层级1(简中) 精确匹配: {} -> {} (score=1.0)", cleaned_cn, best_name.as_ref().unwrap()));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] 层级1(简中) 精确匹配: {} -> {} (score=1.0)",
+                        cleaned_cn,
+                        best_name.as_ref().unwrap()
+                    ),
+                );
             }
         } else {
             for &rune in runes.iter() {
@@ -157,7 +186,13 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
             }
             if let Some(dir) = debug_out_dir {
                 if let Some(ref name) = best_name {
-                    debug_rune_log(dir, &format!("[RuneMatch] 层级1(简中) 模糊最佳: {} (score={:.3})", name, best_score));
+                    debug_rune_log(
+                        dir,
+                        &format!(
+                            "[RuneMatch] 层级1(简中) 模糊最佳: {} (score={:.3})",
+                            name, best_score
+                        ),
+                    );
                 }
             }
         }
@@ -173,7 +208,14 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
                 best_name = en_map.get(cleaned_en.as_str()).map(|&s| s.to_string());
             }
             if let Some(dir) = debug_out_dir {
-                debug_rune_log(dir, &format!("[RuneMatch] 层级2(英文) 精确匹配: {} -> {:?} (score=1.0)", cleaned_en, en_map.get(cleaned_en.as_str()).map(|&s| s)));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] 层级2(英文) 精确匹配: {} -> {:?} (score=1.0)",
+                        cleaned_en,
+                        en_map.get(cleaned_en.as_str()).copied()
+                    ),
+                );
             }
         } else {
             for &en_key in en_set.iter() {
@@ -185,7 +227,13 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
             }
             if let Some(dir) = debug_out_dir {
                 if let Some(ref name) = best_name {
-                    debug_rune_log(dir, &format!("[RuneMatch] 层级2(英文) 模糊最佳: {} (score={:.3})", name, best_score));
+                    debug_rune_log(
+                        dir,
+                        &format!(
+                            "[RuneMatch] 层级2(英文) 模糊最佳: {} (score={:.3})",
+                            name, best_score
+                        ),
+                    );
                 } else {
                     debug_rune_log(dir, "[RuneMatch] 层级2(英文) 无有效匹配");
                 }
@@ -203,7 +251,14 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
                 best_name = tc_map.get(cleaned_tc.as_str()).map(|&s| s.to_string());
             }
             if let Some(dir) = debug_out_dir {
-                debug_rune_log(dir, &format!("[RuneMatch] 层级3(繁体) 精确匹配: {} -> {:?} (score=1.0)", cleaned_tc, tc_map.get(cleaned_tc.as_str()).map(|&s| s)));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] 层级3(繁体) 精确匹配: {} -> {:?} (score=1.0)",
+                        cleaned_tc,
+                        tc_map.get(cleaned_tc.as_str()).copied()
+                    ),
+                );
             }
         } else {
             for &tc_key in tc_set.iter() {
@@ -215,7 +270,13 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
             }
             if let Some(dir) = debug_out_dir {
                 if let Some(ref name) = best_name {
-                    debug_rune_log(dir, &format!("[RuneMatch] 层级3(繁体) 模糊最佳: {} (score={:.3})", name, best_score));
+                    debug_rune_log(
+                        dir,
+                        &format!(
+                            "[RuneMatch] 层级3(繁体) 模糊最佳: {} (score={:.3})",
+                            name, best_score
+                        ),
+                    );
                 } else {
                     debug_rune_log(dir, "[RuneMatch] 层级3(繁体) 无有效匹配");
                 }
@@ -237,7 +298,13 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
                         best_name = Some(name.to_string());
                     }
                     if let Some(dir) = debug_out_dir {
-                        debug_rune_log(dir, &format!("[RuneMatch] 层级4(数字) 命中: {} -> {} (score=0.85)", n, name));
+                        debug_rune_log(
+                            dir,
+                            &format!(
+                                "[RuneMatch] 层级4(数字) 命中: {} -> {} (score=0.85)",
+                                n, name
+                            ),
+                        );
                     }
                     break;
                 }
@@ -250,13 +317,31 @@ pub fn rune_match(raw_text: &str, threshold: u8, debug_out_dir: Option<&Path>) -
         let threshold_f64_display = (threshold as f64) / 100.0;
         match &best_name {
             Some(name) if best_score >= threshold_f64 => {
-                debug_rune_log(dir, &format!("[RuneMatch] ✅ 最终: {} (best_score={:.3}, threshold={})", name, best_score, threshold_f64_display));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] ✅ 最终: {} (best_score={:.3}, threshold={})",
+                        name, best_score, threshold_f64_display
+                    ),
+                );
             }
             Some(name) => {
-                debug_rune_log(dir, &format!("[RuneMatch] ❌ 未达阈值: {} (best_score={:.3}, threshold={})", name, best_score, threshold_f64_display));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] ❌ 未达阈值: {} (best_score={:.3}, threshold={})",
+                        name, best_score, threshold_f64_display
+                    ),
+                );
             }
             None => {
-                debug_rune_log(dir, &format!("[RuneMatch] ❌ 无任何匹配 (threshold={})", threshold_f64_display));
+                debug_rune_log(
+                    dir,
+                    &format!(
+                        "[RuneMatch] ❌ 无任何匹配 (threshold={})",
+                        threshold_f64_display
+                    ),
+                );
             }
         }
     }

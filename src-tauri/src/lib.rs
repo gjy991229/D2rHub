@@ -1,6 +1,8 @@
+mod battle_net_config;
 mod commands;
 mod error;
 mod input_listener;
+mod launch_context;
 pub mod logger;
 #[cfg(feature = "ocr")]
 mod ocr;
@@ -314,8 +316,8 @@ pub fn run() {
             commands::global_config::save_overlay_geometry,
             commands::global_config::load_overlay_geometry,
             commands::global_config::save_theme,
-            commands::global_config::detect_battle_net_path,
             commands::global_config::detect_saved_games_path,
+            commands::global_config::detect_global_saved_games_path,
             commands::global_config::check_saved_games_settings,
             commands::global_config::detect_program_data_agent_path,
             commands::global_config::detect_app_data_roaming_bnet_path,
@@ -332,15 +334,11 @@ pub fn run() {
             commands::account::mark_settings_customized,
             commands::account::set_settings_customized,
             commands::account::set_account_window_position,
-            commands::account::repair_account_registry,
-            commands::account::repair_all_registries,
-            commands::account::clear_auth_registry,
-            commands::account::collect_account_snapshot,
+            commands::account::initialize_bnet_account,
             commands::account::reinitialize_account,
             commands::account::reorder_accounts,
             commands::account::get_account_dir_path,
             commands::account::open_account_dir,
-            commands::account::close_browser_for_profile_cmd,
             commands::account::move_game_window,
             // ── 启动引擎 ──
             commands::launch::launch_accounts,
@@ -358,20 +356,15 @@ pub fn run() {
             commands::browser::kill_browser_processes,
             // ── 系统工具 ──
             commands::system::is_admin,
-            commands::system::is_bnet_running,
             commands::system::get_d2r_pids,
             commands::system::kill_all_d2r_processes,
-            commands::system::kill_bnet_processes,
             commands::system::bring_bnet_to_foreground,
             commands::system::bring_self_to_foreground,
             commands::system::bring_window_by_title_to_front,
             commands::system::get_foreground_window_title,
             commands::system::get_d2r_window_titles,
             commands::system::refresh_account_running_state,
-            commands::system::check_bnet_logged_in,
             commands::system::check_game_connected,
-            commands::system::start_process,
-            commands::system::launch_configured_battle_net,
             commands::system::send_keys_to_window,
             commands::system::snapshot_processes,
             commands::system::wait_for_new_process,
@@ -381,19 +374,31 @@ pub fn run() {
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
             // ── OCR 文字检测 ──
-            #[cfg(feature = "ocr")] ocr::start_ocr_monitor,
-            #[cfg(feature = "ocr")] ocr::restart_ocr_monitor,
-            #[cfg(feature = "ocr")] ocr::stop_ocr_monitor,
-            #[cfg(feature = "ocr")] ocr::get_ocr_ch_a_results,
-            #[cfg(feature = "ocr")] ocr::get_ocr_ch_b_results,
+            #[cfg(feature = "ocr")]
+            ocr::start_ocr_monitor,
+            #[cfg(feature = "ocr")]
+            ocr::restart_ocr_monitor,
+            #[cfg(feature = "ocr")]
+            ocr::stop_ocr_monitor,
+            #[cfg(feature = "ocr")]
+            ocr::get_ocr_ch_a_results,
+            #[cfg(feature = "ocr")]
+            ocr::get_ocr_ch_b_results,
             // ── 数据统计 ──
-            #[cfg(feature = "ocr")] stats::save_scene_record,
-            #[cfg(feature = "ocr")] stats::get_stats_data,
-            #[cfg(feature = "ocr")] stats::get_stats_json,
-            #[cfg(feature = "ocr")] stats::get_scene_avg_time,
-            #[cfg(feature = "ocr")] stats::get_scene_stats,
-            #[cfg(feature = "ocr")] stats::delete_scene_record,
-            #[cfg(feature = "ocr")] stats::open_stats_page,
+            #[cfg(feature = "ocr")]
+            stats::save_scene_record,
+            #[cfg(feature = "ocr")]
+            stats::get_stats_data,
+            #[cfg(feature = "ocr")]
+            stats::get_stats_json,
+            #[cfg(feature = "ocr")]
+            stats::get_scene_avg_time,
+            #[cfg(feature = "ocr")]
+            stats::get_scene_stats,
+            #[cfg(feature = "ocr")]
+            stats::delete_scene_record,
+            #[cfg(feature = "ocr")]
+            stats::open_stats_page,
             commands::system::get_app_version,
             commands::system::install_update,
             commands::system::check_cloud_version,
