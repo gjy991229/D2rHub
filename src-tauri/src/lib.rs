@@ -11,6 +11,8 @@ mod rune_data;
 mod state;
 #[cfg(feature = "ocr")]
 mod stats;
+#[cfg(any(feature = "ocr", test))]
+mod stats_page;
 mod tray;
 
 use crate::commands::global_config::GlobalConfig;
