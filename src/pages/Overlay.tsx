@@ -5,12 +5,26 @@ import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { useStats, isHighRune } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
+import {
+  currentMonitor,
+  getCurrentWindow,
+  LogicalPosition,
+  LogicalSize,
+} from "@tauri-apps/api/window";
 import { useWindowGeometrySave } from "../hooks/useWindowGeometrySave";
-import { usePreventDragRegionDoubleClick } from "../hooks/useAppEffects";
 import { surfaceOpacityVars } from "../styles/surfaceOpacity";
 import { isEnglishLanguage } from "../i18n";
 import { translateTerrorZoneAreaName } from "../data/terrorZoneAreaNames";
+import {
+  calculateMiniOverlaySize,
+  initialMiniOverlayLayout,
+  MINI_OVERLAY_MIN_HEIGHT,
+  MINI_OVERLAY_MIN_WIDTH,
+  normalizeMiniOverlaySize,
+  resolveMiniOverlayLayoutAfterResize,
+  type MiniOverlayLayout,
+  type OverlaySize,
+} from "../utils/overlaySizing";
 
 interface OcrTextItem {
   text: string;
@@ -46,6 +60,124 @@ interface TerrorZoneSnapshot {
 
 type TerrorZoneStatus = "loading" | "ready" | "empty" | "error";
 const TERROR_ZONE_COLLAPSED_MIN_HEIGHT = 150;
+type OverlayDisplayMode = "mini" | "expanded";
+
+const OVERLAY_MODE_STORAGE_KEY = "d2rhub-information-overlay-mode";
+const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
+const OVERLAY_MINI_LAYOUT_STORAGE_KEY = "d2rhub-information-overlay-mini-layout";
+const OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-information-overlay-expanded-size";
+const EXPANDED_OVERLAY_MIN_WIDTH = 200;
+const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
+const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 340 };
+const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
+
+function readStoredOverlayMode(): OverlayDisplayMode {
+  try {
+    return localStorage.getItem(OVERLAY_MODE_STORAGE_KEY) === "mini" ? "mini" : "expanded";
+  } catch {
+    return "expanded";
+  }
+}
+
+function normalizeExpandedOverlaySize(size: OverlaySize): OverlaySize {
+  return {
+    width: Math.max(EXPANDED_OVERLAY_MIN_WIDTH, Math.round(size.width)),
+    height: Math.max(EXPANDED_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
+  };
+}
+
+function readStoredMiniOverlayLayout(): MiniOverlayLayout | null {
+  try {
+    const value = localStorage.getItem(OVERLAY_MINI_LAYOUT_STORAGE_KEY);
+    return value === "single" || value === "stacked" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredOverlaySize(
+  storageKey: string,
+  normalize: (size: OverlaySize) => OverlaySize,
+): OverlaySize | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(storageKey) || "null");
+    if (!parsed || !Number.isFinite(parsed.width) || !Number.isFinite(parsed.height)) return null;
+    return normalize(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function readStoredMiniOverlaySize(): OverlaySize | null {
+  return readStoredOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, normalizeMiniOverlaySize);
+}
+
+function readStoredExpandedOverlaySize(): OverlaySize | null {
+  return readStoredOverlaySize(OVERLAY_EXPANDED_SIZE_STORAGE_KEY, normalizeExpandedOverlaySize);
+}
+
+function storeOverlaySize(storageKey: string, size: OverlaySize) {
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(size));
+  } catch {}
+}
+
+function storeMiniOverlaySize(size: OverlaySize) {
+  storeOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, size);
+}
+
+function storeMiniOverlayLayout(layout: MiniOverlayLayout) {
+  try {
+    localStorage.setItem(OVERLAY_MINI_LAYOUT_STORAGE_KEY, layout);
+  } catch {}
+}
+
+function storeExpandedOverlaySize(size: OverlaySize) {
+  storeOverlaySize(OVERLAY_EXPANDED_SIZE_STORAGE_KEY, size);
+}
+
+async function resolveDefaultMiniOverlaySize(): Promise<OverlaySize> {
+  const monitor = await currentMonitor();
+  if (monitor?.workArea?.size && monitor.scaleFactor > 0) {
+    return calculateMiniOverlaySize({
+      width: monitor.workArea.size.width / monitor.scaleFactor,
+      height: monitor.workArea.size.height / monitor.scaleFactor,
+    });
+  }
+
+  return calculateMiniOverlaySize({
+    width: window.screen.availWidth || window.innerWidth,
+    height: window.screen.availHeight || window.innerHeight,
+  });
+}
+
+async function applyMiniOverlaySize(
+  win: ReturnType<typeof getCurrentWindow>,
+  miniSize: OverlaySize,
+) {
+  const logicalSize = new LogicalSize(miniSize.width, miniSize.height);
+
+  await win.setResizable(true);
+  await win.setMinSize(null);
+  await win.setMaxSize(null);
+  await win.setSize(logicalSize);
+  await win.setMinSize(
+    new LogicalSize(MINI_OVERLAY_MIN_WIDTH, MINI_OVERLAY_MIN_HEIGHT),
+  );
+}
+
+async function applyExpandedOverlaySize(
+  win: ReturnType<typeof getCurrentWindow>,
+  expandedSize: OverlaySize,
+) {
+  await win.setResizable(true);
+  await win.setMinSize(null);
+  await win.setMaxSize(null);
+  await win.setSize(new LogicalSize(expandedSize.width, expandedSize.height));
+  await win.setMinSize(
+    new LogicalSize(EXPANDED_OVERLAY_MIN_WIDTH, EXPANDED_OVERLAY_MIN_HEIGHT),
+  );
+}
 const TERROR_ZONE_DRAWER_ANIMATION_MS = 180;
 const IMMUNITY_EN_LABELS: Record<string, string> = {
   f: "F",
@@ -102,29 +234,27 @@ function TerrorZoneInfo({
   const lootTierLabel = useEnglish ? "Loot tier" : "财富等级";
 
   return (
-    <div className="min-w-0" data-tauri-drag-region>
-      <div className="flex items-center justify-between gap-2" data-tauri-drag-region>
-        <span className="text-2xs font-semibold text-text-muted" data-tauri-drag-region>
+    <div className="min-w-0">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-2xs font-semibold text-text-muted">
           {label}
         </span>
-        <span className="text-2xs font-mono font-semibold text-text-muted tabular-nums" data-tauri-drag-region>
+        <span className="text-2xs font-mono font-semibold text-text-muted tabular-nums">
           {zone.display_time}
         </span>
       </div>
 
       <div
         className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
-        data-tauri-drag-region
       >
         <span
-          className="max-w-full shrink-0 truncate text-sm font-semibold leading-tight text-text-primary"
+          className="max-w-full shrink-0 truncate text-sm font-semibold leading-tight text-[var(--tz-accent)]"
           title={locationDetail}
-          data-tauri-drag-region
         >
           {locationName}
         </span>
 
-        <div className="flex shrink-0 items-center gap-1" data-tauri-drag-region>
+        <div className="flex shrink-0 items-center gap-1">
           {zone.immunities.map((immunity) => (
             <span
               key={immunity.code}
@@ -133,10 +263,8 @@ function TerrorZoneInfo({
                 backgroundColor: immunity.color,
                 color: getImmunityTextColor(immunity.code),
                 border: "1px solid rgba(0,0,0,0.14)",
-                boxShadow: "inset 0 1px 0 rgba(255,255,255,0.18)",
               }}
               title={getImmunityTitle(immunity, useEnglish)}
-              data-tauri-drag-region
             >
               {getImmunityLabel(immunity, useEnglish)}
             </span>
@@ -146,12 +274,11 @@ function TerrorZoneInfo({
 
       <div
         className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-2xs font-semibold text-text-secondary"
-        data-tauri-drag-region
       >
-        <span className="whitespace-nowrap" data-tauri-drag-region>
+        <span className="whitespace-nowrap">
           {expTierLabel}:<span className="ml-0.5 text-text-primary">{zone.tier_exp}</span>
         </span>
-        <span className="whitespace-nowrap" data-tauri-drag-region>
+        <span className="whitespace-nowrap">
           {lootTierLabel}:<span className="ml-0.5 text-text-primary">{zone.tier_loot}</span>
         </span>
       </div>
@@ -164,6 +291,37 @@ export function Overlay() {
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
   const stats = useStats();
+  const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(readStoredOverlayMode);
+  const [isOverlayWindowVisible, setIsOverlayWindowVisible] = useState(false);
+  const displayModeRef = useRef(displayMode);
+  const miniSizeRef = useRef<OverlaySize | null>(readStoredMiniOverlaySize());
+  const [miniLayout, setMiniLayout] = useState<MiniOverlayLayout>(() =>
+    initialMiniOverlayLayout(
+      miniSizeRef.current?.height ?? Number.POSITIVE_INFINITY,
+      readStoredMiniOverlayLayout() ?? "single",
+    ),
+  );
+  const miniHeightRef = useRef<number | null>(miniSizeRef.current?.height ?? null);
+  const expandedSizeRef = useRef<OverlaySize>(
+    readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
+  );
+  const overlaySizeSaveTimerRef = useRef<number | null>(null);
+  const modeTransitionRef = useRef(false);
+  const accountScrollRef = useRef<HTMLDivElement | null>(null);
+  const accountButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const accountDragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startScrollLeft: number;
+    dragged: boolean;
+  } | null>(null);
+  const overlayWindowDragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const suppressOverlayDoubleClickUntilRef = useRef(0);
+  const [accountStripScrollable, setAccountStripScrollable] = useState(false);
 
   const isPollerActive = !!(config?.enable_overlay || config?.ocr_enabled);
 
@@ -183,6 +341,30 @@ export function Overlay() {
       width: Math.round(size.width / scale),
       height: Math.round(size.height / scale),
     };
+  }
+
+  function restoreMiniLayoutForHeight(height: number) {
+    const nextLayout = initialMiniOverlayLayout(
+      height,
+      readStoredMiniOverlayLayout() ?? "single",
+    );
+    miniHeightRef.current = height;
+    setMiniLayout(nextLayout);
+    storeMiniOverlayLayout(nextLayout);
+  }
+
+  function updateMiniLayoutForResize(height: number) {
+    const previousHeight = miniHeightRef.current ?? height;
+    miniHeightRef.current = height;
+    setMiniLayout((currentLayout) => {
+      const nextLayout = resolveMiniOverlayLayoutAfterResize(
+        currentLayout,
+        previousHeight,
+        height,
+      );
+      if (nextLayout !== currentLayout) storeMiniOverlayLayout(nextLayout);
+      return nextLayout;
+    });
   }
 
   async function setWindowHeightOnce(targetHeight: number) {
@@ -268,6 +450,214 @@ export function Overlay() {
     }
   }
 
+  async function toggleOverlayDisplayMode() {
+    if (modeTransitionRef.current) return;
+    modeTransitionRef.current = true;
+    clearTerrorZonePanelTimer();
+    setOverlayPanelHeight(null);
+
+    try {
+      const { win, width, height } = await getOverlayWindowSize();
+
+      if (displayModeRef.current === "expanded") {
+        const expandedSize = normalizeExpandedOverlaySize({ width, height });
+        expandedSizeRef.current = expandedSize;
+        storeExpandedOverlaySize(expandedSize);
+
+        displayModeRef.current = "mini";
+        setDisplayMode("mini");
+        try {
+          localStorage.setItem(OVERLAY_MODE_STORAGE_KEY, "mini");
+        } catch {}
+
+        const miniSize =
+          miniSizeRef.current ??
+          readStoredMiniOverlaySize() ??
+          await resolveDefaultMiniOverlaySize();
+        miniSizeRef.current = miniSize;
+        if (miniHeightRef.current === null) {
+          restoreMiniLayoutForHeight(miniSize.height);
+        }
+        storeMiniOverlaySize(miniSize);
+        await applyMiniOverlaySize(win, miniSize);
+      } else {
+        const miniSize = normalizeMiniOverlaySize({ width, height });
+        miniSizeRef.current = miniSize;
+        miniHeightRef.current = miniSize.height;
+        storeMiniOverlaySize(miniSize);
+
+        const expandedSize = expandedSizeRef.current;
+        displayModeRef.current = "expanded";
+        setDisplayMode("expanded");
+        try {
+          localStorage.setItem(OVERLAY_MODE_STORAGE_KEY, "expanded");
+        } catch {}
+
+        await applyExpandedOverlaySize(win, expandedSize);
+      }
+    } catch (err) {
+      console.warn("[Overlay] toggle information overlay mode failed:", err);
+    } finally {
+      modeTransitionRef.current = false;
+    }
+  }
+
+  function handleOverlayDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (performance.now() < suppressOverlayDoubleClickUntilRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (
+      target.closest(
+        'button, input, select, textarea, a, [data-overlay-interactive="true"]',
+      )
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleOverlayDisplayMode();
+  }
+
+  function handleMiniOverlayDoubleClickCapture(event: React.MouseEvent<HTMLDivElement>) {
+    if (displayModeRef.current !== "mini") return;
+    if (performance.now() < suppressOverlayDoubleClickUntilRef.current) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+
+    // In mini mode the visible surface is almost entirely made of account pills
+    // and the next-terror-zone label. Capture the gesture before those children
+    // can interpret it as an account-focus action.
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleOverlayDisplayMode();
+  }
+
+  function handleOverlayKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.target !== event.currentTarget) return;
+    if (event.key !== "Enter" && event.key !== " ") return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    void toggleOverlayDisplayMode();
+  }
+
+  function handleOverlayWindowPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0 || event.detail > 1) return;
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (
+      target.closest(
+        'button, input, select, textarea, a, [data-overlay-interactive="true"], .overlay-account-scroll.is-scrollable',
+      )
+    ) {
+      return;
+    }
+
+    overlayWindowDragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function handleOverlayWindowPointerMoveCapture(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = overlayWindowDragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const distance = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+    if (distance < OVERLAY_WINDOW_DRAG_THRESHOLD_PX) return;
+
+    overlayWindowDragStateRef.current = null;
+    suppressOverlayDoubleClickUntilRef.current = performance.now() + 350;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    void getCurrentWindow().startDragging().catch((err) => {
+      console.warn("[Overlay] start window dragging failed:", err);
+    });
+  }
+
+  function finishOverlayWindowPointerGesture(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = overlayWindowDragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    overlayWindowDragStateRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  async function focusAccountWindow(displayName: string) {
+    try {
+      const ok = await invoke<boolean>("bring_window_by_title_to_front", {
+        windowTitle: displayName,
+      });
+      if (!ok) {
+        console.warn("[Overlay] bring_window_by_title_to_front returned false for", displayName);
+      } else {
+        // Optimistically reflect the requested focus so its pill becomes visible immediately.
+        setForegroundTitle(displayName);
+      }
+    } catch (err) {
+      console.error("[Overlay] bring_window_by_title_to_front failed:", err);
+    }
+  }
+
+  function handleAccountPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const container = event.currentTarget;
+    if (container.scrollWidth <= container.clientWidth) return;
+
+    accountDragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startScrollLeft: container.scrollLeft,
+      dragged: false,
+    };
+  }
+
+  function handleAccountPointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = accountDragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const deltaX = event.clientX - drag.startX;
+    if (!drag.dragged && Math.abs(deltaX) < 4) return;
+    if (!drag.dragged) {
+      drag.dragged = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    event.currentTarget.dataset.dragging = "true";
+    event.currentTarget.scrollLeft = drag.startScrollLeft - deltaX;
+    event.preventDefault();
+  }
+
+  function finishAccountPointerDrag(event: React.PointerEvent<HTMLDivElement>) {
+    const drag = accountDragStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    if (drag.dragged) {
+      suppressOverlayDoubleClickUntilRef.current = performance.now() + 350;
+      event.preventDefault();
+    }
+    delete event.currentTarget.dataset.dragging;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    accountDragStateRef.current = null;
+  }
+
   // Apply font scale on startup from localStorage, then sync from config
   useEffect(() => {
     try {
@@ -291,6 +681,25 @@ export function Overlay() {
     }
   }, [config?.font_scale]);
 
+  useEffect(() => {
+    const container = accountScrollRef.current;
+    if (!container) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (container.scrollWidth <= container.clientWidth) return;
+      const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY)
+        ? event.deltaX
+        : event.deltaY;
+      if (delta === 0) return;
+
+      event.preventDefault();
+      container.scrollLeft += delta;
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    return () => container.removeEventListener("wheel", handleWheel);
+  }, []);
+
   const [foregroundTitle, setForegroundTitle] = useState("");
   const [terrorZones, setTerrorZones] = useState<TerrorZoneSnapshot>({ current: null, next: null });
   const [terrorZoneStatus, setTerrorZoneStatus] = useState<TerrorZoneStatus>("loading");
@@ -307,9 +716,16 @@ export function Overlay() {
   useEffect(() => {
     load();
     // Start config listener for live updates from main window
-    let unlisten: () => void;
-    initConfigListener().then(fn => { unlisten = fn; });
-    return () => { if (unlisten!) unlisten(); };
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    initConfigListener().then((stopListening) => {
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
   }, [load]);
 
   // Sync theme from global config (config as source of truth)
@@ -317,6 +733,48 @@ export function Overlay() {
     if (!config?.theme_overlay) return;
     syncThemeFromConfig(config.theme_overlay);
   }, [config?.theme_overlay]);
+
+  // Page visibility follows native hide/show in WebView2. Re-check the native
+  // window on visibility and focus transitions so presentation-only ticking
+  // never runs while this always-on-top window is hidden.
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenFocus: (() => void) | undefined;
+    const win = getCurrentWindow();
+
+    const syncWindowVisibility = async () => {
+      if (document.visibilityState !== "visible") {
+        if (!cancelled) setIsOverlayWindowVisible(false);
+        return;
+      }
+
+      try {
+        const visible = await win.isVisible();
+        if (!cancelled) setIsOverlayWindowVisible(visible);
+      } catch {
+        if (!cancelled) setIsOverlayWindowVisible(document.visibilityState === "visible");
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      void syncWindowVisibility();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    void syncWindowVisibility();
+    win.onFocusChanged(handleVisibilityChange)
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else unlistenFocus = unlisten;
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      unlistenFocus?.();
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -391,35 +849,141 @@ export function Overlay() {
     }
   }, [config?.ocr_target_account, accounts, stats.setCharacterName, isPollerActive]);
 
-  // Restore overlay window geometry on startup
+  // Restore position and each mode's independent preferred size. The geometry
+  // file is only a migration fallback for whichever mode was active last.
   useEffect(() => {
+    let cancelled = false;
+
     (async () => {
       try {
         const saved = await invoke<any>("load_overlay_geometry");
+        if (cancelled) return;
+
         const win = getCurrentWindow();
-        if (saved && saved.x > -32000 && saved.y > -32000 && saved.width > 50 && saved.height > 50) {
+        if (saved && saved.x > -32000 && saved.y > -32000) {
           await win.setPosition(new LogicalPosition(saved.x, saved.y));
-          await win.setSize(new LogicalSize(saved.width, saved.height));
         } else {
           await win.setPosition(new LogicalPosition(60, 60));
-          await win.setSize(new LogicalSize(240, 280));
         }
-      } catch {}
+
+        const savedExpandedSize =
+          displayModeRef.current === "expanded"
+          && saved
+          && saved.width >= EXPANDED_OVERLAY_MIN_WIDTH
+          && saved.height >= EXPANDED_OVERLAY_MIN_HEIGHT
+            ? normalizeExpandedOverlaySize({ width: saved.width, height: saved.height })
+            : null;
+        const savedMiniSize =
+          displayModeRef.current === "mini"
+          && saved
+          && saved.width > 0
+          && saved.height > 0
+            ? normalizeMiniOverlaySize({ width: saved.width, height: saved.height })
+            : null;
+        const miniSize =
+          readStoredMiniOverlaySize() ??
+          savedMiniSize ??
+          await resolveDefaultMiniOverlaySize();
+        const expandedSize =
+          readStoredExpandedOverlaySize() ??
+          savedExpandedSize ??
+          DEFAULT_EXPANDED_OVERLAY_SIZE;
+        if (cancelled) return;
+
+        miniSizeRef.current = miniSize;
+        restoreMiniLayoutForHeight(miniSize.height);
+        expandedSizeRef.current = expandedSize;
+        storeMiniOverlaySize(miniSize);
+        storeExpandedOverlaySize(expandedSize);
+
+        if (displayModeRef.current === "mini") {
+          await applyMiniOverlaySize(win, miniSize);
+        } else {
+          await applyExpandedOverlaySize(win, expandedSize);
+        }
+      } catch (err) {
+        console.warn("[Overlay] restore information overlay geometry failed:", err);
+      }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  useWindowGeometrySave("save_overlay_geometry", 50, 50);
-  usePreventDragRegionDoubleClick();
+  // Persist the user-visible size for the active mode. Each mode owns its own
+  // record, so resizing mini never overwrites the preferred expanded layout.
+  useEffect(() => {
+    let cancelled = false;
+    let unlistenResize: (() => void) | undefined;
+
+    (async () => {
+      try {
+        const win = getCurrentWindow();
+        const stopListening = await win.onResized(() => {
+          const resizedMode = displayModeRef.current;
+          if (resizedMode === "mini") {
+            updateMiniLayoutForResize(Math.max(MINI_OVERLAY_MIN_HEIGHT, window.innerHeight));
+          }
+          if (overlaySizeSaveTimerRef.current !== null) {
+            window.clearTimeout(overlaySizeSaveTimerRef.current);
+          }
+          overlaySizeSaveTimerRef.current = window.setTimeout(async () => {
+            overlaySizeSaveTimerRef.current = null;
+            if (modeTransitionRef.current || displayModeRef.current !== resizedMode) return;
+            try {
+              const { width, height } = await getOverlayWindowSize();
+              if (resizedMode === "mini") {
+                const miniSize = normalizeMiniOverlaySize({ width, height });
+                miniSizeRef.current = miniSize;
+                storeMiniOverlaySize(miniSize);
+              } else {
+                const expandedSize = normalizeExpandedOverlaySize({ width, height });
+                expandedSizeRef.current = expandedSize;
+                storeExpandedOverlaySize(expandedSize);
+              }
+            } catch (err) {
+              console.warn(`[Overlay] persist ${resizedMode} size failed:`, err);
+            }
+          }, 250);
+        });
+        if (cancelled) stopListening();
+        else unlistenResize = stopListening;
+      } catch (err) {
+        console.warn("[Overlay] listen for preferred size changes failed:", err);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlistenResize?.();
+      if (overlaySizeSaveTimerRef.current !== null) {
+        window.clearTimeout(overlaySizeSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useWindowGeometrySave("save_overlay_geometry", 1, 1);
 
   // Config is updated in real-time via the Tauri event listener in globalConfig.ts
 
   // Load accounts
   useEffect(() => {
-    if (!isPollerActive) return;
-    loadAccounts();
-    const interval = setInterval(loadAccounts, 5000);
-    return () => clearInterval(interval);
-  }, [loadAccounts, isPollerActive]);
+    if (!isPollerActive || !isOverlayWindowVisible) return;
+    let cancelled = false;
+    let timer: number | undefined;
+
+    const poll = async () => {
+      await loadAccounts();
+      if (!cancelled) timer = window.setTimeout(poll, 5000);
+    };
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [loadAccounts, isOverlayWindowVisible, isPollerActive]);
 
   // 启动时检查已运行的 D2R 窗口，立即更新悬浮窗状态（仅执行一次）
   useEffect(() => {
@@ -459,23 +1023,32 @@ export function Overlay() {
 
   // 前台窗口标题轮询
   useEffect(() => {
-    if (!isPollerActive) return;
+    if (!isPollerActive || !isOverlayWindowVisible) return;
+    let cancelled = false;
+    let timer: number | undefined;
+
     const poll = async () => {
       try {
         const title = await invoke<string>("get_foreground_window_title");
-        setForegroundTitle(title);
+        if (!cancelled) setForegroundTitle(title);
       } catch {}
+      if (!cancelled) timer = window.setTimeout(poll, 1000);
     };
-    poll();
-    const interval = setInterval(poll, 1000);
-    return () => clearInterval(interval);
-  }, [isPollerActive]);
+
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [isOverlayWindowVisible, isPollerActive]);
 
   // ── OCR 数据轮询（场景 + 掉落）──
   useEffect(() => {
     if (!isPollerActive || import.meta.env.VITE_ENABLE_OCR === "false" || !config?.ocr_enabled) return;
 
-    const pollInterval = config.ocr_poll_interval_ms ?? 500;
+    const pollInterval = Math.max(100, config.ocr_poll_interval_ms ?? 500);
+    let cancelled = false;
+    let timer: number | undefined;
 
     const poll = async () => {
       try {
@@ -502,24 +1075,64 @@ export function Overlay() {
       } catch {
         // OCR 未启动时静默忽略
       }
+      if (!cancelled) timer = window.setTimeout(poll, pollInterval);
     };
 
-    poll();
-    const interval = setInterval(poll, pollInterval);
-    return () => clearInterval(interval);
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
   }, [config?.ocr_enabled, config?.ocr_poll_interval_ms, isPollerActive]);
 
   // ── 计时器 tick (100ms → 0.1s 精度) ──
   useEffect(() => {
-    if (!isPollerActive) return;
-    const interval = setInterval(() => {
-      stats.tick();
-    }, 100);
+    if (!isPollerActive || displayMode !== "expanded" || !isOverlayWindowVisible) return;
+    const tick = () => useStats.getState().tick();
+    tick();
+    const interval = setInterval(tick, 100);
     return () => clearInterval(interval);
-  }, [isPollerActive]);
+  }, [displayMode, isOverlayWindowVisible, isPollerActive]);
 
   // ── 派生数据 ──
   const activeAccounts = accounts.filter((a) => a.is_running);
+  const activeAccountIdsKey = activeAccounts.map((account) => account.id).join("|");
+  const foregroundTitleLower = foregroundTitle.toLowerCase();
+  const focusedAccountId = activeAccounts.find((account) => {
+    const displayName = account.display_name || account.id;
+    return displayName.length > 0 && foregroundTitleLower.includes(displayName.toLowerCase());
+  })?.id;
+
+  useEffect(() => {
+    const container = accountScrollRef.current;
+    if (!container) return;
+
+    const syncScrollableState = () => {
+      setAccountStripScrollable(container.scrollWidth > container.clientWidth + 1);
+    };
+    syncScrollableState();
+
+    const observer = new ResizeObserver(syncScrollableState);
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [activeAccountIdsKey, displayMode]);
+
+  useEffect(() => {
+    if (!focusedAccountId) return;
+    const frame = window.requestAnimationFrame(() => {
+      const container = accountScrollRef.current;
+      const pill = accountButtonRefs.current.get(focusedAccountId);
+      if (!container || !pill) return;
+
+      const centeredLeft = pill.offsetLeft - (container.clientWidth - pill.offsetWidth) / 2;
+      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+      const left = Math.max(0, Math.min(maxScrollLeft, centeredLeft));
+      const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      container.scrollTo({ left, behavior: reduceMotion ? "auto" : "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeAccountIdsKey, displayMode, focusedAccountId]);
+
   const avgTime = stats.dbAvgTime;
   const elapsedDisplay = stats.isTiming
     ? (stats.elapsedMs / 1000).toFixed(1)
@@ -530,6 +1143,18 @@ export function Overlay() {
   const useEnglish = isEnglishLanguage(config?.app_language);
   const currentTerrorZoneLabel = useEnglish ? "Current" : "当前";
   const nextTerrorZoneLabel = useEnglish ? "Next" : "下一个";
+  const miniNextTerrorZoneLabel = useEnglish ? "Next TZ" : "下一个 TZ";
+  const miniNextTerrorZoneName = nextTerrorZone
+    ? translateTerrorZoneAreaName(nextTerrorZone.location_name, useEnglish)
+    : terrorZoneStatus === "error"
+      ? (useEnglish ? "Unavailable" : "暂不可用")
+      : terrorZoneStatus === "empty"
+        ? (useEnglish ? "Awaiting forecast" : "等待预报")
+        : (useEnglish ? "Syncing" : "同步中");
+  const overlayModeToggleTitle = displayMode === "mini"
+    ? (useEnglish ? "Double-click the background or press Enter to expand" : "双击空白处或按 Enter 展开信息悬浮窗")
+    : (useEnglish ? "Double-click the background or press Enter for mini mode" : "双击空白处或按 Enter 收缩为迷你模式");
+
   const noActiveAccountLabel = useEnglish ? "No active accounts" : "无活动账号";
   const averageTimeLabel = useEnglish ? "Average" : "平均";
   const totalRunsLabel = useEnglish ? "Total" : "总计";
@@ -553,35 +1178,60 @@ export function Overlay() {
 
   return (
     <div
-      className="h-screen w-screen overflow-hidden select-none"
+      className="h-screen w-screen overflow-hidden select-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-[-3px]"
       style={{
         ...surfaceOpacityVars(config?.overlay_opacity, theme),
       }}
-      data-tauri-drag-region
+      data-overlay-mode={displayMode}
+      data-mini-layout={displayMode === "mini" ? miniLayout : undefined}
+      role="region"
+      tabIndex={0}
+      aria-label={overlayModeToggleTitle}
+      aria-keyshortcuts="Enter Space"
+      onDoubleClickCapture={handleMiniOverlayDoubleClickCapture}
+      onDoubleClick={handleOverlayDoubleClick}
+      onKeyDown={handleOverlayKeyDown}
+      onPointerDownCapture={handleOverlayWindowPointerDownCapture}
+      onPointerMoveCapture={handleOverlayWindowPointerMoveCapture}
+      onPointerUpCapture={finishOverlayWindowPointerGesture}
+      onPointerCancelCapture={finishOverlayWindowPointerGesture}
+      title={overlayModeToggleTitle}
     >
       <div
         ref={overlayPanelRef}
-        className="overlay-window flex w-full flex-col overflow-hidden rounded-xl p-2.5 transition-[height] duration-[180ms] ease-out"
+        className={`overlay-window flex h-full w-full overflow-hidden ${
+          displayMode === "mini"
+            ? "overlay-window-mini"
+            : "flex-col rounded-xl p-2.5 transition-[height] duration-[180ms] ease-out"
+        }`}
         style={{
-          height: overlayPanelHeight === null ? "100%" : overlayPanelHeight,
+          height: displayMode === "expanded" && overlayPanelHeight !== null ? overlayPanelHeight : "100%",
           border: "1px solid var(--border-default)",
-          boxShadow: "0 4px 24px rgba(0,0,0,0.1)",
+          boxShadow: "none",
         }}
-        data-tauri-drag-region
       >
       {/* ═══════════════════════════════════════════
           1. 账号胶囊（现有）
           ═══════════════════════════════════════════ */}
-      <div className="flex flex-wrap gap-1.5">
+      <div
+        ref={accountScrollRef}
+        className={`overlay-account-scroll flex min-h-0 w-full flex-nowrap items-center overflow-x-auto ${
+          displayMode === "mini"
+            ? "min-w-0 flex-1 gap-1"
+            : "flex-none gap-1.5"
+        } ${accountStripScrollable ? "is-scrollable" : ""}`}
+        data-overlay-account-scroll="true"
+        onPointerDown={handleAccountPointerDown}
+        onPointerMove={handleAccountPointerMove}
+        onPointerUp={finishAccountPointerDrag}
+        onPointerCancel={finishAccountPointerDrag}
+      >
         {activeAccounts.length > 0 ? (
           activeAccounts.map((a) => {
             const isMonitored =
               config?.ocr_enabled && config?.ocr_target_account === a.id;
             const displayName = a.display_name || a.id;
-            const isFocused =
-              foregroundTitle.length > 0 &&
-              displayName.length > 0 &&
-              foregroundTitle.toLowerCase().includes(displayName.toLowerCase());
+            const isFocused = a.id === focusedAccountId;
 
             const bg = isFocused
               ? "rgba(52,211,153,0.12)"
@@ -603,29 +1253,38 @@ export function Overlay() {
               : isMonitored
                 ? "var(--accent)"
                 : "var(--success)";
-            const dotShadow = isFocused
-              ? "0 0 6px rgba(52,211,153,0.6)"
-              : isMonitored
-                ? "0 0 4px rgba(200,168,78,0.5)"
-                : "0 0 4px rgba(52,211,153,0.4)";
+            const dotShadow = "none";
 
-            let tooltip = "";
-            if (useEnglish) {
+            let tooltip = displayMode === "mini"
+              ? (useEnglish ? "Double-click to expand the information overlay" : "双击展开信息悬浮窗")
+              : "";
+            if (displayMode !== "mini" && useEnglish) {
               if (isFocused && isMonitored) tooltip = "Monitoring window · Focused · Double-click to switch";
               else if (isFocused) tooltip = "Focused · Double-click to switch";
               else if (isMonitored) tooltip = "Monitoring window · Double-click to focus";
               else tooltip = "Double-click to focus window";
-            } else if (isFocused && isMonitored) tooltip = "正在监测窗口 · 当前聚焦 · 双击切换";
-            else if (isFocused) tooltip = "当前聚焦 · 双击切换";
-            else if (isMonitored) tooltip = "正在监测窗口 · 双击聚焦";
-            else tooltip = "双击聚焦窗口";
+            } else if (displayMode !== "mini") {
+              if (isFocused && isMonitored) tooltip = "正在监测窗口 · 当前聚焦 · 双击切换";
+              else if (isFocused) tooltip = "当前聚焦 · 双击切换";
+              else if (isMonitored) tooltip = "正在监测窗口 · 双击聚焦";
+              else tooltip = "双击聚焦窗口";
+            }
 
             return (
-              <div
+              <button
+                type="button"
                 key={a.id}
-                className="flex items-center gap-1 px-2 py-[3px] rounded-full text-2xs font-medium
-                  cursor-pointer hover:brightness-110 active:scale-95 transition-all duration-150 select-none"
+                ref={(node) => {
+                  if (node) accountButtonRefs.current.set(a.id, node);
+                  else accountButtonRefs.current.delete(a.id);
+                }}
+                className={`overlay-account-pill flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full px-2 text-2xs font-medium
+                  cursor-pointer hover:brightness-110 active:scale-95 transition-all duration-150 select-none
+                  focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1`}
                 title={tooltip}
+                aria-label={useEnglish ? `${displayName}, focus window` : `${displayName}，聚焦窗口`}
+                aria-keyshortcuts="Enter Space"
+                data-overlay-interactive="true"
                 style={
                   {
                     background: bg,
@@ -634,18 +1293,16 @@ export function Overlay() {
                     WebkitAppRegion: "no-drag",
                   } as React.CSSProperties
                 }
-                onDoubleClick={async (e) => {
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" && e.key !== " ") return;
                   e.stopPropagation();
-                  try {
-                    const ok = await invoke<boolean>("bring_window_by_title_to_front", {
-                      windowTitle: displayName,
-                    });
-                    if (!ok) {
-                      console.warn("[Overlay] bring_window_by_title_to_front returned false for", displayName);
-                    }
-                  } catch (err) {
-                    console.error("[Overlay] bring_window_by_title_to_front failed:", err);
-                  }
+                  e.preventDefault();
+                  void focusAccountWindow(displayName);
+                }}
+                onDoubleClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  void focusAccountWindow(displayName);
                 }}
               >
                 {isMonitored && (
@@ -660,41 +1317,52 @@ export function Overlay() {
                   style={{ background: dotBg, boxShadow: dotShadow }}
                 />
                 {displayName}
-              </div>
+              </button>
             );
           })
         ) : (
-          <div className="text-xs text-text-muted italic">{noActiveAccountLabel}</div>
+          <div className="whitespace-nowrap text-xs italic text-text-muted">{noActiveAccountLabel}</div>
         )}
       </div>
 
-      {/* ═══════════════════════════════════════════
-          2. 数据统计 — 计时器核心视觉
-          ═══════════════════════════════════════════ */}
-      <div className="flex flex-col gap-2 mt-2.5 flex-1 min-h-0" data-tauri-drag-region>
+
+      {displayMode === "mini" ? (
+          <div
+            className="overlay-mini-terror-zone flex min-h-0 items-center gap-1.5"
+            title={`${miniNextTerrorZoneLabel}: ${miniNextTerrorZoneName}`}
+          >
+            <span className="overlay-mini-terror-zone-text shrink-0 text-2xs font-semibold text-text-muted">
+              {miniNextTerrorZoneLabel}
+            </span>
+            <span
+              className="overlay-mini-terror-zone-text min-w-0 truncate text-xs font-semibold text-[var(--tz-accent)]"
+            >
+              {miniNextTerrorZoneName}
+            </span>
+          </div>
+      ) : (
+        <>
+      <div className="flex flex-col gap-2 mt-2.5 flex-1 min-h-0">
 
         {import.meta.env.VITE_ENABLE_OCR !== "false" && (
           <>
         {/* 场景名称 — 右上角小字 */}
-        <div className="flex justify-end px-1" data-tauri-drag-region>
+        <div className="flex justify-end px-1">
           <span
             className="text-sm font-medium text-text-secondary truncate max-w-[180px] text-right"
-            data-tauri-drag-region
           >
             {translateOverlaySceneName(stats.currentScene, useEnglish)}
           </span>
         </div>
 
         {/* 计时器 — 大字居中，无背景容器 */}
-        <div className="flex flex-col items-center py-1.5" data-tauri-drag-region>
+        <div className="flex flex-col items-center py-1.5">
           <span
             className="text-xl font-mono font-bold tabular-nums leading-none select-none"
             style={{
               color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
-              textShadow: stats.isTiming ? "0 0 20px rgba(76,175,80,0.3)" : "none",
-              transition: "color 0.3s, text-shadow 0.3s",
+              transition: "color 180ms ease-out",
             }}
-            data-tauri-drag-region
           >
             {elapsedDisplay}
           </span>
@@ -702,9 +1370,7 @@ export function Overlay() {
             className="text-xs font-mono mt-0.5 select-none"
             style={{
               color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
-              opacity: 0.6,
             }}
-            data-tauri-drag-region
           >
             SEC
           </span>
@@ -713,14 +1379,12 @@ export function Overlay() {
               <span
                 className="text-xs font-medium select-none"
                 style={{ color: "var(--accent)" }}
-                data-tauri-drag-region
               >
                 {averageTimeLabel} {avgTime.toFixed(1)}s
               </span>
               <span
                 className="text-2xs font-medium select-none"
                 style={{ color: "var(--text-secondary)", opacity: 0.8 }}
-                data-tauri-drag-region
               >
                 {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[stats.currentScene] || 0} {runUnitLabel}
               </span>
@@ -732,12 +1396,11 @@ export function Overlay() {
         <div
           className="w-full shrink-0"
           style={{ height: 1, background: "var(--border-default)" }}
-          data-tauri-drag-region
         />
 
         {/* 符文掉落 — 瀑布流 + 滑条 */}
-        <div className="flex flex-col gap-1 flex-1 min-h-0" data-tauri-drag-region>
-          <span className="text-2xs font-medium text-text-muted px-1" data-tauri-drag-region>
+        <div className="flex flex-col gap-1 flex-1 min-h-0">
+          <span className="text-2xs font-medium text-text-muted px-1">
             {dropsLabel}
             {stats.currentDrops.length > 0 && (
               <span className="text-accent ml-0.5">({stats.currentDrops.length})</span>
@@ -747,7 +1410,6 @@ export function Overlay() {
           <div
             className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
             style={{ flex: 1, scrollbarWidth: "thin" }}
-            data-tauri-drag-region
           >
             {stats.currentDrops.length > 0 ? (
               stats.currentDrops.map((drop, i) => ({ drop, index: i })).reverse().map(({ drop, index }) => {
@@ -763,7 +1425,6 @@ export function Overlay() {
                       border: high
                         ? "1px solid rgba(255,119,0,0.5)"
                         : "1px solid var(--border-strong)",
-                      boxShadow: high ? "0 0 10px rgba(255,119,0,0.25)" : "none",
                       WebkitAppRegion: "no-drag",
                     } as React.CSSProperties}
                   >
@@ -782,7 +1443,7 @@ export function Overlay() {
                 );
               })
             ) : (
-              <span className="text-2xs text-text-muted italic px-1" data-tauri-drag-region>
+              <span className="text-2xs text-text-muted italic px-1">
                 {emptyDropsLabel}
               </span>
             )}
@@ -794,11 +1455,9 @@ export function Overlay() {
         <div
           className="shrink-0 overflow-hidden rounded-lg px-2 py-1.5 transition-all duration-200"
           style={{
-            background:
-              "linear-gradient(180deg, rgba(var(--accent-rgb), 0.055), rgba(var(--accent-rgb), 0.025))",
+            background: "var(--surface-card)",
             border: "1px solid var(--border-default)",
           }}
-          data-tauri-drag-region
         >
           <button
             type="button"
@@ -827,15 +1486,13 @@ export function Overlay() {
             className={`grid transition-[grid-template-rows] duration-200 ease-out ${
               terrorZoneExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
             }`}
-            data-tauri-drag-region
           >
             <div
               ref={terrorZoneDetailsRef}
               className="min-h-0 overflow-hidden"
-              data-tauri-drag-region
             >
               {hasTerrorZoneData ? (
-                <div className="mt-1.5 flex flex-col gap-1.5" data-tauri-drag-region>
+                <div className="mt-1.5 flex flex-col gap-1.5">
                   {currentTerrorZone && (
                     <TerrorZoneInfo label={currentTerrorZoneLabel} zone={currentTerrorZone} useEnglish={useEnglish} />
                   )}
@@ -844,7 +1501,7 @@ export function Overlay() {
                   )}
                 </div>
               ) : (
-                <span className="mt-1 block text-2xs font-medium text-text-muted" data-tauri-drag-region>
+                <span className="mt-1 block text-2xs font-medium text-text-muted">
                   {terrorZoneSummary}
                 </span>
               )}
@@ -852,6 +1509,8 @@ export function Overlay() {
           </div>
         </div>
       </div>
+        </>
+      )}
       </div>
     </div>
   );
