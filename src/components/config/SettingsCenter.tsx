@@ -1654,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.7 首次触发版：场景仅在环境音开头标记一次，符文仅在世界实体首次 Flippy 时发送短突发
+                      v4.8 落地入口版：场景仅在环境音开头标记一次，符文仅在世界实体真实进入 Ground 时发送短突发
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1705,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.7 首次触发版
+                    生成 Audio Telemetry v4.8 落地入口版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">

@@ -392,14 +392,14 @@
       <h2>音频遥测 Mod 与实时识别</h2>
       <p>“设置中心 → 自动化”提供完整 Mod 生成和实时识别。开始前选择一个<strong>已初始化</strong>账号作为目标，捕获器只监听该账号的 D2R 进程及其子进程。</p>
       <ul>
-        <li><strong>v4.3 女伯爵实机版：</strong>选择 jcy.mpq 等已解包 Mod，生成器复制其全部内容，为 33 个符文及女伯爵路线八个 Area 加入标记；源目录不会修改。</li>
-        <li><strong>触发：</strong>符文只执行一次 <code>Flippy → Ground</code>，并按符文编号错峰发送；地点把标记混入原始持续场景环境音，并每 5 秒重复。</li>
+        <li><strong>v4.8 女伯爵实机版：</strong>选择 jcy.mpq 等已解包 Mod，生成器复制其全部内容，为 33 个符文及女伯爵路线八个 Area 加入标记；源目录不会修改。</li>
+        <li><strong>触发：</strong>符文只在世界实体真实进入 <code>Ground</code> 模式时发送短标记，<code>Flippy</code> 动画周期不携带标记；地点只在原始持续场景环境音的文件开头嵌入一次。</li>
         <li><strong>协议：</strong>18kHz BPSK 前导、17/19kHz FSK 载荷、双份发送与 CRC-6；10 位 ID 覆盖 Area 1–1023，默认增益 <code>-30dBFS</code>。</li>
         <li><strong>落库：</strong>符文先写入原始观测表；离开当前野外时，独立分段和观测归属在同一数据库事务内保存。</li>
         <li><strong>符文重复：</strong>不设置 1 秒业务冷却；解码器确认的两次播放会分别记录，包括一秒内再次播放。同一声纹的完全同步重叠仍无法从单一混合信号推断数量。</li>
-        <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、地图心跳和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
+        <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、场景和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
       </ul>
-      <div class="callout"><strong>启动方式：</strong>把生成的 <code>D2RHubAudioCountessV43</code> 放入 D2R 的 <code>mods</code> 目录，并只使用 <code>-mod D2RHubAudioCountessV43 -txt</code>。请勿同时启用旧版；游戏音效通道必须实际输出。</div>
+      <div class="callout"><strong>启动方式：</strong>把生成的 <code>D2RHubAudioCountessV48</code> 放入 D2R 的 <code>mods</code> 目录，并只使用 <code>-mod D2RHubAudioCountessV48 -txt</code>。请勿同时启用旧版；游戏音效通道必须实际输出。</div>
       <p>不同符文同时播放可以分别识别；同一符文在完全相同时间重叠时，只能视为一次事件，这是单一声纹信号的固有限制。</p>
     </section>
 
@@ -482,7 +482,7 @@
       <h3>迷你窗无法变成单行</h3>
       <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
       <h3>声纹无数据或识别不稳定</h3>
-      <p>确认使用了生成器输出的 <code>D2RHubAudioCountessV43</code>、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。先看“音频峰值”，再看地图心跳。本轮地点覆盖罗格营地、黑色荒地、遗忘之塔和高塔地牢 1–5 层。可用“开始女伯爵诊断录音”保存目标 D2R 进程 WAV 与识别事件。</p>
+      <p>确认使用了生成器输出的 <code>D2RHubAudioCountessV48</code>、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。先看“音频峰值”，再看场景事件。本轮地点覆盖罗格营地、黑色荒地、遗忘之塔和高塔地牢 1–5 层。可用“开始女伯爵诊断录音”保存目标 D2R 进程 WAV 与识别事件。</p>
       <h3>进一步排查</h3>
       <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
     </section>
