@@ -582,8 +582,9 @@ const textMap: Record<string, string> = {
   "正在准备注册表与 Settings.json...": "Preparing registry and Settings.json...",
   "配置覆盖完成": "Config copied",
   "正在直接启动 D2R.exe...": "Launching D2R.exe directly...",
-  "正在跳过动画并等待 WEB_TOKEN 角色选择阶段回写...": "Skipping intro and waiting for the character-selection WEB_TOKEN write-back...",
+  "正在跳过动画并等待 Token 启动就绪...": "Skipping intro and waiting for Token launch readiness...",
   "检测到 WEB_TOKEN 角色选择阶段回写": "Detected the character-selection WEB_TOKEN write-back",
+  "WEB_TOKEN 未回写，已通过游戏窗口与稳定网络确认启动就绪": "WEB_TOKEN was not written back; launch readiness was confirmed by the game window and stable network",
   "Token 账号初始化/重置成功！": "Token account initialized/reset successfully.",
   "正在启动独立浏览器以引导登录...": "Launching isolated browser for login...",
   "浏览器已启动，准备开始引导登录": "Browser launched. Ready to guide login.",
@@ -604,7 +605,8 @@ const textMap: Record<string, string> = {
 
 const phraseMap: Record<string, string> = {
   "启动选中": "Launch Selected",
-  "等待 WEB_TOKEN 角色选择阶段回写超时：": "Timed out waiting for the character-selection WEB_TOKEN write-back: ",
+  "等待 Token 启动就绪超时：": "Timed out waiting for Token launch readiness: ",
+  "窗口与网络连续就绪": "consecutive window/network readiness",
   "仅检测到": "only ",
   "次阶段更新": " phase update(s) were detected",
   "发现新版本 v": "New version v",

@@ -31,6 +31,7 @@ const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
 const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
 const WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT: u8 = 2;
 const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
+const TOKEN_NETWORK_READY_REQUIRED_SAMPLES: u8 = 4;
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
@@ -66,6 +67,15 @@ impl WebTokenChangeTracker {
     fn change_count(&self) -> u8 {
         self.change_count
     }
+}
+
+fn token_launch_is_ready(
+    token_reached_character_select: bool,
+    window_ready: bool,
+    network_ready_samples: u8,
+) -> bool {
+    token_reached_character_select
+        || (window_ready && network_ready_samples >= TOKEN_NETWORK_READY_REQUIRED_SAMPLES)
 }
 
 fn read_web_token_raw(registry_path: &str) -> Result<Vec<u8>, AppError> {
@@ -1906,16 +1916,15 @@ async fn launch_single_token(
     };
 
     // ── WEB_TOKEN 角色选择阶段回写检测与跳过动画 ──
-    emit(
-        "connect",
-        "running",
-        "正在跳过动画并等待 WEB_TOKEN 角色选择阶段回写...",
-    );
+    emit("connect", "running", "正在跳过动画并等待 Token 启动就绪...");
     emit("mutex", "running", "后台监控互斥句柄中...");
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
-    let mut token_ready = token_change_tracker.reached_character_select();
+    let mut token_ready =
+        token_launch_is_ready(token_change_tracker.reached_character_select(), false, 0);
+    let mut readiness_from_registry = token_ready;
+    let mut network_ready_samples = 0u8;
 
     // 保留原有窗口初始化等待，但期间继续记录 Token 阶段变化，避免快速机器上漏采样。
     for _ in 0..4 {
@@ -1928,8 +1937,9 @@ async fn launch_single_token(
             mutex_task.abort();
             return account_path_error(account_id, error);
         }
-        if token_change_tracker.reached_character_select() {
+        if token_launch_is_ready(token_change_tracker.reached_character_select(), false, 0) {
             token_ready = true;
+            readiness_from_registry = true;
             break;
         }
     }
@@ -1946,8 +1956,21 @@ async fn launch_single_token(
             mutex_task.abort();
             return account_path_error(account_id, error);
         }
-        if token_change_tracker.reached_character_select() {
+        let token_reached_character_select = token_change_tracker.reached_character_select();
+        let window_ready = crate::commands::system::find_game_hwnd(d2r_pid).is_some();
+        if window_ready && crate::commands::system::check_game_connected(d2r_pid) {
+            network_ready_samples = network_ready_samples.saturating_add(1);
+        } else {
+            network_ready_samples = 0;
+        }
+
+        if token_launch_is_ready(
+            token_reached_character_select,
+            window_ready,
+            network_ready_samples,
+        ) {
             token_ready = true;
+            readiness_from_registry = token_reached_character_select;
             break;
         }
 
@@ -1956,8 +1979,8 @@ async fn launch_single_token(
 
     if !token_ready {
         let error = format!(
-            "等待 WEB_TOKEN 角色选择阶段回写超时：仅检测到 {}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT} 次阶段更新",
-            token_change_tracker.change_count()
+            "等待 Token 启动就绪超时：WEB_TOKEN {}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT}，窗口与网络连续就绪 {network_ready_samples}/{TOKEN_NETWORK_READY_REQUIRED_SAMPLES}",
+            token_change_tracker.change_count(),
         );
         emit("connect", "error", &error);
         mutex_task.abort();
@@ -1969,7 +1992,15 @@ async fn launch_single_token(
             mutex_killed: false,
         };
     }
-    emit("connect", "ok", "检测到 WEB_TOKEN 角色选择阶段回写");
+    if readiness_from_registry {
+        emit("connect", "ok", "检测到 WEB_TOKEN 角色选择阶段回写");
+    } else {
+        emit(
+            "connect",
+            "ok",
+            "WEB_TOKEN 未回写，已通过游戏窗口与稳定网络确认启动就绪",
+        );
+    }
 
     if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
         emit("mutex", "ok", "互斥句柄已清除");
@@ -2092,8 +2123,8 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 mod tests {
     use super::{
         acquire_account_leases, parse_windows_command_line, persist_window_position,
-        preflight_accounts, replace_bnet_roaming_snapshot, validate_legacy_reg_sections,
-        WebTokenChangeTracker,
+        preflight_accounts, replace_bnet_roaming_snapshot, token_launch_is_ready,
+        validate_legacy_reg_sections, WebTokenChangeTracker,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::commands::global_config::GlobalConfig;
@@ -2126,6 +2157,25 @@ mod tests {
 
         assert_eq!(tracker.change_count(), 1);
         assert!(!tracker.reached_character_select());
+    }
+
+    #[test]
+    fn stable_game_network_allows_next_token_launch_without_registry_writeback() {
+        let tracker = WebTokenChangeTracker::new(vec![1]);
+
+        assert!(token_launch_is_ready(
+            tracker.reached_character_select(),
+            true,
+            4,
+        ));
+    }
+
+    #[test]
+    fn token_network_fallback_requires_a_window_and_consecutive_samples() {
+        assert!(!token_launch_is_ready(false, false, 4));
+        assert!(!token_launch_is_ready(false, true, 3));
+        assert!(token_launch_is_ready(false, true, 4));
+        assert!(token_launch_is_ready(true, false, 0));
     }
 
     #[test]
