@@ -170,11 +170,10 @@ const accounts: AccountMeta[] = [
 ];
 
 const baseConfig: GlobalConfig = {
-  version: 3,
+  version: 4,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
-  global_battle_net_path: "D:\\Battle.net Global\\Battle.net.exe",
   global_game_path: "D:\\Games\\Diablo II Resurrected",
   global_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected",
   program_data_agent_path: "C:\\ProgramData\\Battle.net\\Agent",

@@ -4,7 +4,6 @@ const INSTALLATION_PATH_KEYS = [
   "cn_battle_net_path",
   "cn_game_path",
   "cn_saved_games_path",
-  "global_battle_net_path",
   "global_game_path",
   "global_saved_games_path",
 ] as const satisfies readonly (keyof GlobalConfig)[];
@@ -21,9 +20,7 @@ export function hasValidEditionPathPairs(config: GlobalConfig): boolean {
   const globalPaths = [config.global_game_path, config.global_saved_games_path].map((path) => path.trim());
   const cnComplete = cnPaths.every(Boolean);
   const globalComplete = globalPaths.every(Boolean);
-  const cnPartial = Boolean(config.cn_battle_net_path.trim() || cnPaths.some(Boolean)) && !cnComplete;
-  const globalPartial = Boolean(config.global_battle_net_path.trim() || globalPaths.some(Boolean)) && !globalComplete;
-  return (cnComplete || globalComplete) && !cnPartial && !globalPartial;
+  return cnComplete || globalComplete;
 }
 
 export function installationPathEditsAreInvalid(

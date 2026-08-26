@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 3;
+const CURRENT_CONFIG_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -26,8 +26,6 @@ pub struct GlobalConfig {
     /// 国服存档目录（通常以 Diablo II Resurrected (CN) 结尾）。
     #[serde(default)]
     pub cn_saved_games_path: String,
-    #[serde(default)]
-    pub global_battle_net_path: String,
     /// 国际服游戏安装目录（亚服、美服、欧服共用）。
     #[serde(default)]
     pub global_game_path: String,
@@ -188,22 +186,34 @@ fn saved_games_settings_exists(path: &Path) -> bool {
 }
 
 fn validate_installation_paths(config: &GlobalConfig) -> Result<(), AppError> {
+    let cn_configured =
+        !config.cn_game_path.trim().is_empty() && !config.cn_saved_games_path.trim().is_empty();
+    let global_configured = !config.global_game_path.trim().is_empty()
+        && !config.global_saved_games_path.trim().is_empty();
+
+    if !cn_configured && !global_configured {
+        return Err(AppError::ConfigWriteError(
+            "请至少完整配置一组国服或国际服的游戏安装目录和存档目录".to_string(),
+        ));
+    }
+
     crate::launch_context::validate_distinct_installation_profiles(config)?;
 
-    for battle_net_path in [&config.cn_battle_net_path, &config.global_battle_net_path] {
-        if battle_net_path.trim().is_empty() {
-            continue;
-        }
-        let path = Path::new(battle_net_path);
+    if cn_configured && !config.cn_battle_net_path.trim().is_empty() {
+        let path = Path::new(&config.cn_battle_net_path);
         if !path.is_file() || !file_name_eq(path, "Battle.net.exe") {
-            return Err(AppError::InvalidBnetPath(battle_net_path.clone()));
+            return Err(AppError::InvalidBnetPath(config.cn_battle_net_path.clone()));
         }
     }
 
-    for game_path in [&config.cn_game_path, &config.global_game_path] {
-        if game_path.trim().is_empty() {
-            continue;
-        }
+    let mut configured_game_paths = Vec::with_capacity(2);
+    if cn_configured {
+        configured_game_paths.push(&config.cn_game_path);
+    }
+    if global_configured {
+        configured_game_paths.push(&config.global_game_path);
+    }
+    for game_path in configured_game_paths {
         let game_directory = Path::new(game_path);
         if !game_directory.is_dir() || !game_directory.join("D2R.exe").is_file() {
             return Err(AppError::InvalidGamePath(format!(
@@ -211,44 +221,6 @@ fn validate_installation_paths(config: &GlobalConfig) -> Result<(), AppError> {
                 game_path
             )));
         }
-    }
-
-    let validate_edition = |edition: &str,
-                            battle_net_path: &str,
-                            game_path: &str,
-                            saved_games_path: &str|
-     -> Result<bool, AppError> {
-        let has_any = [battle_net_path, game_path, saved_games_path]
-            .iter()
-            .any(|path| !path.trim().is_empty());
-        let has_game_and_saves =
-            !game_path.trim().is_empty() && !saved_games_path.trim().is_empty();
-        if has_any && !has_game_and_saves {
-            return Err(AppError::ConfigWriteError(format!(
-                "{}游戏安装目录和存档目录必须同时配置；Battle.net 仅在战网认证时必需",
-                edition
-            )));
-        }
-        Ok(has_game_and_saves)
-    };
-
-    let cn_configured = validate_edition(
-        "国服",
-        &config.cn_battle_net_path,
-        &config.cn_game_path,
-        &config.cn_saved_games_path,
-    )?;
-    let global_configured = validate_edition(
-        "国际服",
-        &config.global_battle_net_path,
-        &config.global_game_path,
-        &config.global_saved_games_path,
-    )?;
-
-    if !cn_configured && !global_configured {
-        return Err(AppError::ConfigWriteError(
-            "请至少完整配置一组国服或国际服的游戏安装目录和存档目录".to_string(),
-        ));
     }
 
     Ok(())
@@ -306,7 +278,6 @@ fn should_validate_installation_paths(
     previous.cn_battle_net_path != next.cn_battle_net_path
         || previous.cn_game_path != next.cn_game_path
         || previous.cn_saved_games_path != next.cn_saved_games_path
-        || previous.global_battle_net_path != next.global_battle_net_path
         || previous.global_game_path != next.global_game_path
         || previous.global_saved_games_path != next.global_saved_games_path
 }
@@ -387,7 +358,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn game_and_save_paths_must_still_be_configured_together() {
+    fn at_least_one_complete_edition_is_required() {
         let root = temp_dir("partial_token_config");
         let game_dir = root.join("game");
         std::fs::create_dir_all(&game_dir).unwrap();
@@ -398,6 +369,49 @@ mod validation_tests {
         };
 
         assert!(validate_installation_paths(&config).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incomplete_cn_paths_do_not_block_a_complete_global_edition() {
+        let root = temp_dir("complete_global_partial_cn");
+        let global_game = root.join("global-game");
+        std::fs::create_dir_all(&global_game).unwrap();
+        std::fs::write(global_game.join("D2R.exe"), b"").unwrap();
+
+        let config = GlobalConfig {
+            cn_battle_net_path: root
+                .join("missing-battle-net.exe")
+                .to_string_lossy()
+                .to_string(),
+            cn_game_path: root.join("missing-cn-game").to_string_lossy().to_string(),
+            global_game_path: global_game.to_string_lossy().to_string(),
+            global_saved_games_path: root.join("global-saves").to_string_lossy().to_string(),
+            ..GlobalConfig::default()
+        };
+
+        assert!(validate_installation_paths(&config).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn incomplete_global_paths_do_not_block_a_complete_cn_edition() {
+        let root = temp_dir("complete_cn_partial_global");
+        let cn_game = root.join("cn-game");
+        std::fs::create_dir_all(&cn_game).unwrap();
+        std::fs::write(cn_game.join("D2R.exe"), b"").unwrap();
+
+        let config = GlobalConfig {
+            cn_game_path: cn_game.to_string_lossy().to_string(),
+            cn_saved_games_path: root.join("cn-saves").to_string_lossy().to_string(),
+            global_game_path: root
+                .join("missing-global-game")
+                .to_string_lossy()
+                .to_string(),
+            ..GlobalConfig::default()
+        };
+
+        assert!(validate_installation_paths(&config).is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -540,7 +554,6 @@ mod validation_tests {
         object.remove("cn_battle_net_path");
         object.remove("global_game_path");
         object.remove("global_saved_games_path");
-        object.remove("global_battle_net_path");
         object.insert("version".to_string(), serde_json::json!(1));
         object.insert("game_path".to_string(), serde_json::json!(r"D:\Games\D2R"));
         object.insert(
@@ -562,15 +575,49 @@ mod validation_tests {
         assert_eq!(config.version, CURRENT_CONFIG_VERSION);
         assert!(config.cn_game_path.is_empty());
         assert!(config.cn_battle_net_path.is_empty());
-        assert_eq!(
-            config.global_battle_net_path,
-            r"D:\Battle.net\Battle.net.exe"
-        );
         assert_eq!(config.global_game_path, r"D:\Games\D2R");
         assert_eq!(
             config.global_saved_games_path,
             r"C:\Users\Tester\Saved Games\Diablo II Resurrected"
         );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_cn_paths_keep_the_single_battle_net_executable() {
+        let root = temp_dir("legacy_cn_battle_net_path");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.remove("cn_game_path");
+        object.remove("cn_saved_games_path");
+        object.remove("cn_battle_net_path");
+        object.remove("global_game_path");
+        object.remove("global_saved_games_path");
+        object.insert("version".to_string(), serde_json::json!(1));
+        object.insert(
+            "game_path".to_string(),
+            serde_json::json!(r"D:\Games\D2R-CN"),
+        );
+        object.insert(
+            "battle_net_path".to_string(),
+            serde_json::json!(r"C:\Battle.net\Battle.net.exe"),
+        );
+        object.insert(
+            "saved_games_path".to_string(),
+            serde_json::json!(r"C:\Users\Tester\Saved Games\Diablo II Resurrected (CN)"),
+        );
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(config.cn_battle_net_path, r"C:\Battle.net\Battle.net.exe");
+        assert_eq!(config.cn_game_path, r"D:\Games\D2R-CN");
+        assert!(config.global_game_path.is_empty());
+        assert!(persisted.get("battle_net_path").is_none());
+        assert!(persisted.get("global_battle_net_path").is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -590,7 +637,6 @@ mod validation_tests {
             "cn_battle_net_path",
             "global_game_path",
             "global_saved_games_path",
-            "global_battle_net_path",
         ] {
             object.remove(key);
         }
@@ -656,7 +702,6 @@ mod validation_tests {
         let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
         let object = legacy.as_object_mut().unwrap();
         object.remove("cn_battle_net_path");
-        object.remove("global_battle_net_path");
         object.insert(
             "battle_net_path".to_string(),
             serde_json::json!(r"C:\Battle.net\Battle.net.exe"),
@@ -682,7 +727,36 @@ mod validation_tests {
         let config: GlobalConfig = serde_json::from_value(legacy).unwrap();
 
         assert!(config.cn_battle_net_path.is_empty());
-        assert!(config.global_battle_net_path.is_empty());
+    }
+
+    #[test]
+    fn version_three_global_battle_net_path_is_removed_on_load() {
+        let root = temp_dir("remove_global_battle_net_path");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = legacy.as_object_mut().unwrap();
+        object.insert("version".to_string(), serde_json::json!(3));
+        object.insert(
+            "cn_battle_net_path".to_string(),
+            serde_json::json!(r"C:\Battle.net-CN\Battle.net.exe"),
+        );
+        object.insert(
+            "global_battle_net_path".to_string(),
+            serde_json::json!(r"D:\Battle.net\Battle.net.exe"),
+        );
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(
+            config.cn_battle_net_path,
+            r"C:\Battle.net-CN\Battle.net.exe"
+        );
+        assert!(persisted.get("global_battle_net_path").is_none());
+        let _ = std::fs::remove_dir_all(root);
     }
 }
 
@@ -702,7 +776,6 @@ impl Default for GlobalConfig {
             cn_battle_net_path: String::new(),
             cn_game_path: String::new(),
             cn_saved_games_path: String::new(),
-            global_battle_net_path: String::new(),
             global_game_path: String::new(),
             global_saved_games_path: String::new(),
             program_data_agent_path: String::new(),
@@ -916,11 +989,13 @@ impl GlobalConfig {
         let Some(object) = value.as_object_mut() else {
             return false;
         };
-        if object.contains_key("cn_battle_net_path")
-            || object.contains_key("global_battle_net_path")
-            || !object.contains_key("battle_net_path")
-        {
-            return false;
+        let mut changed = object.remove("global_battle_net_path").is_some();
+        if object.contains_key("cn_battle_net_path") {
+            changed |= object.remove("battle_net_path").is_some();
+            return changed;
+        }
+        if !object.contains_key("battle_net_path") {
+            return changed;
         }
 
         let battle_net_path = object
@@ -945,14 +1020,6 @@ impl GlobalConfig {
         object.insert(
             "cn_battle_net_path".to_string(),
             serde_json::Value::String(if cn_configured && !global_configured {
-                battle_net_path.clone()
-            } else {
-                String::new()
-            }),
-        );
-        object.insert(
-            "global_battle_net_path".to_string(),
-            serde_json::Value::String(if global_configured && !cn_configured {
                 battle_net_path
             } else {
                 String::new()
@@ -1165,6 +1232,7 @@ pub fn save_global_config(
 ) -> Result<(), AppError> {
     let previous = state.config.read().clone();
     let mut cfg = config.clone();
+    cfg.version = CURRENT_CONFIG_VERSION;
     cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
         .to_string_lossy()
         .to_string();

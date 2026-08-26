@@ -1,16 +1,16 @@
 import type { GlobalConfig } from "../store/types";
 import {
+  hasValidEditionPathPairs,
   installationPathEditsAreInvalid,
   installationPathsChanged,
 } from "./installationPathChanges";
 
 function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
-    version: 3,
+    version: 4,
     cn_battle_net_path: "",
     cn_game_path: "C:/D2R-CN",
     cn_saved_games_path: "C:/Saves-CN",
-    global_battle_net_path: "",
     global_game_path: "",
     global_saved_games_path: "",
     program_data_agent_path: "C:/ProgramData/Battle.net/Agent",
@@ -87,7 +87,31 @@ export function runTests() {
   );
   assert(
     installationPathEditsAreInvalid(unavailableInstall, partialPathEdit),
-    "partial installation path edits are still rejected",
+    "a partial edition is rejected when no complete edition remains",
+  );
+
+  const completeCnWithPartialGlobal = config({
+    global_game_path: "D:/D2R-Global",
+    global_saved_games_path: "",
+  });
+  assert(
+    hasValidEditionPathPairs(completeCnWithPartialGlobal),
+    "a complete CN edition keeps global settings valid when Global is partial",
+  );
+  assert(
+    !installationPathEditsAreInvalid(unavailableInstall, completeCnWithPartialGlobal),
+    "a partial Global edition does not block saving a complete CN edition",
+  );
+
+  const completeGlobalWithPartialCn = config({
+    cn_game_path: "D:/D2R-CN",
+    cn_saved_games_path: "",
+    global_game_path: "D:/D2R-Global",
+    global_saved_games_path: "D:/Saves-Global",
+  });
+  assert(
+    hasValidEditionPathPairs(completeGlobalWithPartialCn),
+    "a complete Global edition keeps global settings valid when CN is partial",
   );
 }
 

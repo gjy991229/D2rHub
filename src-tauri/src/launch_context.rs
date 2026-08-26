@@ -207,6 +207,11 @@ impl LaunchContext {
         };
         let client_edition = game_region.edition();
         let edition_name = client_edition.display_name();
+        if client_edition == ClientEdition::Global && auth_mode == AuthMode::BattleNet {
+            return Err(AppError::ConfigReadError(
+                "国际服仅支持 Token 直启；请将该账号迁移为 Token 认证".to_string(),
+            ));
+        }
         let (battle_net_path, game_path, saved_games_path) = match client_edition {
             ClientEdition::Cn => (
                 config.cn_battle_net_path.trim(),
@@ -214,7 +219,7 @@ impl LaunchContext {
                 config.cn_saved_games_path.trim(),
             ),
             ClientEdition::Global => (
-                config.global_battle_net_path.trim(),
+                "",
                 config.global_game_path.trim(),
                 config.global_saved_games_path.trim(),
             ),
@@ -396,12 +401,12 @@ pub(crate) fn paths_have_same_identity(actual: &Path, expected: &Path) -> bool {
 pub(crate) fn validate_distinct_installation_profiles(
     config: &GlobalConfig,
 ) -> Result<(), AppError> {
+    if !profile_declared(config, ClientEdition::Cn)
+        || !profile_declared(config, ClientEdition::Global)
+    {
+        return Ok(());
+    }
     let pairs = [
-        (
-            "Battle.net.exe",
-            &config.cn_battle_net_path,
-            &config.global_battle_net_path,
-        ),
         (
             "游戏安装目录",
             &config.cn_game_path,
@@ -494,15 +499,14 @@ mod tests {
     }
 
     #[test]
-    fn dual_installations_resolve_without_cross_edition_fallback() {
+    fn dual_installations_resolve_cn_battle_net_and_global_token_independently() {
         let root = temp_dir("dual");
         let (cn_bnet, cn_game, cn_saves) = install(&root, "cn");
-        let (global_bnet, global_game, global_saves) = install(&root, "global");
+        let (_, global_game, global_saves) = install(&root, "global");
         let config = GlobalConfig {
             cn_battle_net_path: cn_bnet.clone(),
             cn_game_path: cn_game.clone(),
             cn_saved_games_path: cn_saves,
-            global_battle_net_path: global_bnet.clone(),
             global_game_path: global_game.clone(),
             global_saved_games_path: global_saves,
             ..GlobalConfig::default()
@@ -518,7 +522,7 @@ mod tests {
         let eu = LaunchContext::for_draft(
             &config,
             Some("EU"),
-            Some("bnet"),
+            Some("token"),
             ContextPurpose::LaunchGame,
         )
         .unwrap();
@@ -531,7 +535,7 @@ mod tests {
         assert_eq!(cn.edition.token_registry_game_key, "OSI");
         assert_eq!(eu.installation.edition, ClientEdition::Global);
         assert_eq!(eu.installation.game_directory, PathBuf::from(global_game));
-        assert_eq!(eu.battle_net_executable().unwrap(), Path::new(&global_bnet));
+        assert!(eu.installation.battle_net_executable.is_none());
         assert_eq!(eu.region.registry_region, "EU");
         let _ = std::fs::remove_dir_all(root);
     }
@@ -591,9 +595,8 @@ mod tests {
     #[test]
     fn battle_net_only_context_rejects_token_auth() {
         let root = temp_dir("token_bnet_only");
-        let (battle_net, game, saves) = install(&root, "global");
+        let (_, game, saves) = install(&root, "global");
         let config = GlobalConfig {
-            global_battle_net_path: battle_net,
             global_game_path: game,
             global_saved_games_path: saves,
             ..GlobalConfig::default()
@@ -620,18 +623,13 @@ mod tests {
         let saves = root.join("saves");
         std::fs::create_dir_all(&saves).unwrap();
         let config = GlobalConfig {
-            global_battle_net_path: root
-                .join("offline-bnet")
-                .join("Battle.net.exe")
-                .to_string_lossy()
-                .to_string(),
             global_game_path: String::new(),
             global_saved_games_path: saves.to_string_lossy().to_string(),
             ..GlobalConfig::default()
         };
 
         let context =
-            LaunchContext::for_draft(&config, Some("NA"), Some("bnet"), ContextPurpose::Settings)
+            LaunchContext::for_draft(&config, Some("NA"), Some("token"), ContextPurpose::Settings)
                 .unwrap();
 
         assert_eq!(context.installation.saved_games_directory, saves);
@@ -639,7 +637,7 @@ mod tests {
         assert!(LaunchContext::for_draft(
             &config,
             Some("NA"),
-            Some("bnet"),
+            Some("token"),
             ContextPurpose::LaunchGame,
         )
         .is_err());
@@ -647,13 +645,39 @@ mod tests {
     }
 
     #[test]
+    fn global_battle_net_auth_is_rejected_before_touching_client_paths() {
+        let error = LaunchContext::for_draft(
+            &GlobalConfig::default(),
+            Some("EU"),
+            Some("bnet"),
+            ContextPurpose::LaunchGame,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("国际服仅支持 Token 直启"));
+    }
+
+    #[test]
     fn duplicate_installation_paths_are_rejected() {
         let config = GlobalConfig {
             cn_game_path: r"C:\Games\D2R".to_string(),
+            cn_saved_games_path: r"C:\Saves\D2R-CN".to_string(),
             global_game_path: r"c:/games/d2r/".to_string(),
+            global_saved_games_path: r"C:\Saves\D2R-Global".to_string(),
             ..GlobalConfig::default()
         };
         assert!(validate_distinct_installation_profiles(&config).is_err());
+    }
+
+    #[test]
+    fn duplicate_paths_in_an_incomplete_edition_do_not_block_the_complete_edition() {
+        let config = GlobalConfig {
+            cn_game_path: r"C:\Games\D2R".to_string(),
+            cn_saved_games_path: r"C:\Saves\D2R-CN".to_string(),
+            global_game_path: r"c:/games/d2r/".to_string(),
+            ..GlobalConfig::default()
+        };
+        assert!(validate_distinct_installation_profiles(&config).is_ok());
     }
 
     #[test]

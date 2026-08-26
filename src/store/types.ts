@@ -5,7 +5,6 @@ export interface GlobalConfig {
   cn_battle_net_path: string;
   cn_game_path: string;
   cn_saved_games_path: string;
-  global_battle_net_path: string;
   global_game_path: string;
   global_saved_games_path: string;
   program_data_agent_path: string;

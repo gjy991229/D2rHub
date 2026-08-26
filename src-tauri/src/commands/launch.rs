@@ -2306,7 +2306,7 @@ mod tests {
         std::fs::create_dir_all(&saves).unwrap();
         std::fs::write(game.join("D2R.exe"), b"test").unwrap();
 
-        let global_battle_net_path = if with_bnet {
+        let cn_battle_net_path = if with_bnet {
             let bnet = root.join("Battle.net.exe");
             std::fs::write(&bnet, b"test").unwrap();
             bnet.to_string_lossy().to_string()
@@ -2315,16 +2315,26 @@ mod tests {
         };
         GlobalConfig {
             accounts_dir: root.join("accounts").to_string_lossy().to_string(),
-            global_battle_net_path,
-            global_game_path: game.to_string_lossy().to_string(),
-            global_saved_games_path: saves.to_string_lossy().to_string(),
+            cn_battle_net_path,
+            cn_game_path: with_bnet
+                .then(|| game.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            cn_saved_games_path: with_bnet
+                .then(|| saves.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            global_game_path: (!with_bnet)
+                .then(|| game.to_string_lossy().to_string())
+                .unwrap_or_default(),
+            global_saved_games_path: (!with_bnet)
+                .then(|| saves.to_string_lossy().to_string())
+                .unwrap_or_default(),
             ..GlobalConfig::default()
         }
     }
 
     fn save_account(config: &GlobalConfig, id: &str, auth_mode: &str, token: Option<&str>) {
         let mut meta = AccountMeta::new(id);
-        meta.region = Some("NA".to_string());
+        meta.region = Some(if auth_mode == "bnet" { "CN" } else { "NA" }.to_string());
         meta.auth_mode = Some(auth_mode.to_string());
         meta.token = token.map(str::to_string);
         meta.initialized = true;
