@@ -569,6 +569,7 @@ const textMap: Record<string, string> = {
   "后台监控互斥句柄中...": "Monitoring mutex handle in the background...",
   "正在发送按键跳过动画...": "Sending key input to skip intro...",
   "游戏已连接到大厅服务器": "Game connected to lobby server",
+  "游戏网络已稳定就绪": "Game network is stable and ready",
   "连接服务器超时": "Server connection timed out",
   "等待互斥句柄确认...": "Waiting for mutex handle confirmation...",
   "互斥句柄已清除": "Mutex handle cleared",
@@ -581,6 +582,8 @@ const textMap: Record<string, string> = {
   "正在准备注册表与 Settings.json...": "Preparing registry and Settings.json...",
   "配置覆盖完成": "Config copied",
   "正在直接启动 D2R.exe...": "Launching D2R.exe directly...",
+  "正在跳过动画并等待 WEB_TOKEN 角色选择阶段回写...": "Skipping intro and waiting for the character-selection WEB_TOKEN write-back...",
+  "检测到 WEB_TOKEN 角色选择阶段回写": "Detected the character-selection WEB_TOKEN write-back",
   "Token 账号初始化/重置成功！": "Token account initialized/reset successfully.",
   "正在启动独立浏览器以引导登录...": "Launching isolated browser for login...",
   "浏览器已启动，准备开始引导登录": "Browser launched. Ready to guide login.",
@@ -601,6 +604,9 @@ const textMap: Record<string, string> = {
 
 const phraseMap: Record<string, string> = {
   "启动选中": "Launch Selected",
+  "等待 WEB_TOKEN 角色选择阶段回写超时：": "Timed out waiting for the character-selection WEB_TOKEN write-back: ",
+  "仅检测到": "only ",
+  "次阶段更新": " phase update(s) were detected",
   "发现新版本 v": "New version v",
   "下载中": "Downloading",
   "版本 v": "Version v",

@@ -28,9 +28,72 @@ pub struct LaunchResult {
 }
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
+const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
+const WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT: u8 = 2;
+const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
+
+struct WebTokenChangeTracker {
+    last_value: Vec<u8>,
+    change_count: u8,
+}
+
+impl WebTokenChangeTracker {
+    fn new(written_value: Vec<u8>) -> Self {
+        Self {
+            last_value: written_value,
+            change_count: 0,
+        }
+    }
+
+    fn observe(&mut self, current_value: &[u8]) -> bool {
+        if current_value == self.last_value {
+            return false;
+        }
+
+        self.last_value.clear();
+        self.last_value.extend_from_slice(current_value);
+        self.change_count = self.change_count.saturating_add(1);
+        true
+    }
+
+    fn reached_character_select(&self) -> bool {
+        self.change_count >= WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT
+    }
+
+    fn change_count(&self) -> u8 {
+        self.change_count
+    }
+}
+
+fn read_web_token_raw(registry_path: &str) -> Result<Vec<u8>, AppError> {
+    use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ};
+    use winreg::RegKey;
+
+    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+    let key = hkcu
+        .open_subkey_with_flags(registry_path, KEY_READ)
+        .map_err(|error| AppError::RegistryError(format!("读取 Token 注册表路径失败: {error}")))?;
+    let value = key.get_raw_value(WEB_TOKEN_VALUE_NAME).map_err(|error| {
+        AppError::RegistryError(format!("读取 {WEB_TOKEN_VALUE_NAME} 失败: {error}"))
+    })?;
+    if value.vtype != RegType::REG_BINARY || value.bytes.is_empty() {
+        return Err(AppError::RegistryError(format!(
+            "{WEB_TOKEN_VALUE_NAME} 不是有效的 REG_BINARY"
+        )));
+    }
+    Ok(value.bytes)
+}
+
+fn observe_web_token(
+    registry_path: &str,
+    tracker: &mut WebTokenChangeTracker,
+) -> Result<bool, AppError> {
+    let current_value = read_web_token_raw(registry_path)?;
+    Ok(tracker.observe(&current_value))
+}
 
 fn acquire_account_leases(
     state: &SharedState,
@@ -1409,6 +1472,7 @@ async fn launch_single(
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
     let mut connected = false;
+    let mut network_ready_samples = 0u8;
 
     // 先等 2 秒让游戏窗口初始化
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1428,9 +1492,14 @@ async fn launch_single(
         }
 
         if crate::commands::system::check_game_connected(d2r_pid) {
-            connected = true;
-            emit("connect", "ok", "游戏已连接到大厅服务器");
-            break;
+            network_ready_samples = network_ready_samples.saturating_add(1);
+            if network_ready_samples >= NETWORK_READY_REQUIRED_SAMPLES {
+                connected = true;
+                emit("connect", "ok", "游戏网络已稳定就绪");
+                break;
+            }
+        } else {
+            network_ready_samples = 0;
         }
 
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
@@ -1627,12 +1696,12 @@ async fn launch_single_token(
         }
     };
 
+    let token_registry_path = context.token_registry_path();
     let registry_result = (|| -> Result<(), AppError> {
         use winreg::enums::*;
         use winreg::RegKey;
         let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let registry_path = context.token_registry_path();
-        let (key, _) = hkcu.create_subkey(&registry_path).map_err(|error| {
+        let (key, _) = hkcu.create_subkey(&token_registry_path).map_err(|error| {
             AppError::RegistryError(format!("打开 Token 注册表路径失败: {error}"))
         })?;
         key.set_value("REGION", &context.region.registry_region)
@@ -1651,17 +1720,34 @@ async fn launch_single_token(
             .map_err(|error| AppError::RegistryError(format!("写入 LOCALE_AUDIO 失败: {error}")))?;
 
         let val = winreg::RegValue {
-            bytes: protected_bytes,
+            bytes: protected_bytes.clone(),
             vtype: RegType::REG_BINARY,
         };
-        key.set_raw_value("WEB_TOKEN", &val)
-            .map_err(|error| AppError::RegistryError(format!("写入 WEB_TOKEN 失败: {error}")))?;
+        key.set_raw_value(WEB_TOKEN_VALUE_NAME, &val)
+            .map_err(|error| {
+                AppError::RegistryError(format!("写入 {WEB_TOKEN_VALUE_NAME} 失败: {error}"))
+            })?;
         Ok(())
     })();
     if let Err(error) = registry_result {
         return account_path_error(account_id, error);
     }
     emit("copy", "ok", "配置覆盖完成");
+    let mut token_change_tracker = WebTokenChangeTracker::new(protected_bytes);
+    let record_token_change = |tracker: &mut WebTokenChangeTracker| -> Result<(), AppError> {
+        if observe_web_token(&token_registry_path, tracker)? {
+            crate::logger::log_msg(
+                "INFO",
+                "Launch",
+                &format!(
+                    "[Account {}] 检测到 {WEB_TOKEN_VALUE_NAME} 阶段更新 ({}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT})",
+                    account_id,
+                    tracker.change_count()
+                ),
+            );
+        }
+        Ok(())
+    };
 
     // 3. 记录之前存在的 D2R 进程
     let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
@@ -1711,6 +1797,9 @@ async fn launch_single_token(
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state) {
             return cancelled();
+        }
+        if let Err(error) = record_token_change(&mut token_change_tracker) {
+            return account_path_error(account_id, error);
         }
 
         let monitored_game_path = expected_game_path.clone();
@@ -1816,17 +1905,36 @@ async fn launch_single_token(
         })
     };
 
-    // ── 连接检测与跳过动画 ──
-    emit("connect", "running", "正在跳过动画并等待服务器连接...");
+    // ── WEB_TOKEN 角色选择阶段回写检测与跳过动画 ──
+    emit(
+        "connect",
+        "running",
+        "正在跳过动画并等待 WEB_TOKEN 角色选择阶段回写...",
+    );
     emit("mutex", "running", "后台监控互斥句柄中...");
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
-    let mut connected = false;
+    let mut token_ready = token_change_tracker.reached_character_select();
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    // 保留原有窗口初始化等待，但期间继续记录 Token 阶段变化，避免快速机器上漏采样。
+    for _ in 0..4 {
+        if is_cancelled(state) {
+            mutex_task.abort();
+            return cancelled();
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        if let Err(error) = record_token_change(&mut token_change_tracker) {
+            mutex_task.abort();
+            return account_path_error(account_id, error);
+        }
+        if token_change_tracker.reached_character_select() {
+            token_ready = true;
+            break;
+        }
+    }
 
-    while !connected && start.elapsed() < timeout {
+    while !token_ready && start.elapsed() < timeout {
         if is_cancelled(state) {
             mutex_task.abort();
             return cancelled();
@@ -1834,26 +1942,34 @@ async fn launch_single_token(
 
         let _ = crate::commands::system::send_keys_to_window(d2r_pid);
 
-        if crate::commands::system::check_game_connected(d2r_pid) {
-            connected = true;
-            emit("connect", "ok", "游戏已连接到大厅服务器");
+        if let Err(error) = record_token_change(&mut token_change_tracker) {
+            mutex_task.abort();
+            return account_path_error(account_id, error);
+        }
+        if token_change_tracker.reached_character_select() {
+            token_ready = true;
             break;
         }
 
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
-    if !connected {
-        emit("connect", "error", "连接服务器超时");
+    if !token_ready {
+        let error = format!(
+            "等待 WEB_TOKEN 角色选择阶段回写超时：仅检测到 {}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT} 次阶段更新",
+            token_change_tracker.change_count()
+        );
+        emit("connect", "error", &error);
         mutex_task.abort();
         return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
             d2r_pid: None,
-            error: Some("连接服务器超时".to_string()),
+            error: Some(error),
             mutex_killed: false,
         };
     }
+    emit("connect", "ok", "检测到 WEB_TOKEN 角色选择阶段回写");
 
     if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
         emit("mutex", "ok", "互斥句柄已清除");
@@ -1977,11 +2093,40 @@ mod tests {
     use super::{
         acquire_account_leases, parse_windows_command_line, persist_window_position,
         preflight_accounts, replace_bnet_roaming_snapshot, validate_legacy_reg_sections,
+        WebTokenChangeTracker,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::commands::global_config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
+
+    #[test]
+    fn token_is_ready_only_after_launch_and_character_select_updates() {
+        let mut tracker = WebTokenChangeTracker::new(vec![1, 2, 3]);
+
+        assert!(!tracker.observe(&[1, 2, 3]));
+        assert!(!tracker.reached_character_select());
+
+        assert!(tracker.observe(&[4, 5, 6]));
+        assert_eq!(tracker.change_count(), 1);
+        assert!(!tracker.reached_character_select());
+
+        assert!(tracker.observe(&[7, 8, 9]));
+        assert_eq!(tracker.change_count(), 2);
+        assert!(tracker.reached_character_select());
+    }
+
+    #[test]
+    fn repeated_token_samples_do_not_advance_launch_phase() {
+        let mut tracker = WebTokenChangeTracker::new(vec![1]);
+
+        assert!(tracker.observe(&[2]));
+        assert!(!tracker.observe(&[2]));
+        assert!(!tracker.observe(&[2]));
+
+        assert_eq!(tracker.change_count(), 1);
+        assert!(!tracker.reached_character_select());
+    }
 
     #[test]
     fn launch_batch_rejects_uuid_case_aliases() {
