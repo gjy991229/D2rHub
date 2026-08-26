@@ -1591,7 +1591,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-sm font-semibold text-text-secondary">识别阈值</span>
-                          <p className="text-2xs text-text-muted">v4 默认 0.56；CRC 会拦截随机高频声，通常无需降低</p>
+                          <p className="text-2xs text-text-muted">v6 默认 0.56；独立同步码会隔离地点与符文，通常无需调整</p>
                         </div>
                         <input
                           type="number"
@@ -1654,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.5 女伯爵实机版：纯声纹地面心跳、生命周期去重、同步符文无延迟解码；地点覆盖完整女伯爵路线
+                      v4.6 女伯爵实机版：独立地点/符文同步码、低相关 Gold 符文码、纯声纹地面心跳与生命周期去重
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1705,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.5 女伯爵版
+                    生成 Audio Telemetry v4.6 女伯爵版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
@@ -1742,7 +1742,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <span className="text-xs font-semibold text-text-secondary">声纹增益</span>
-                      <p className="text-2xs text-text-muted">与上方完整 Mod 使用同一 v4 强度</p>
+                      <p className="text-2xs text-text-muted">与上方完整 Mod 使用同一 v6 强度</p>
                     </div>
                     <input
                       type="number"
@@ -1766,7 +1766,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   {runeFlacOutput && (
                     <p className="text-2xs text-success break-all">输出目录：{runeFlacOutput}</p>
                   )}
-                  <p className="text-2xs text-warning">输出使用 v4 数据包并逐文件自检；游戏音效通道必须非静音。</p>
+                  <p className="text-2xs text-warning">输出使用 v6 数据包并逐文件自检；游戏音效通道必须非静音。</p>
                   <div className="border-t border-border-default/50 pt-3">
                     <Button
                       size="sm"
