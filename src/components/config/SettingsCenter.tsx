@@ -1572,7 +1572,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         <span className="font-mono text-text-primary">{audioStatus?.rune_events ?? 0}</span>
                       </div>
                       <div className="rounded bg-surface-hover px-2 py-1.5">
-                        <span className="block text-text-muted">地图心跳</span>
+                        <span className="block text-text-muted">场景</span>
                         <span className="font-mono text-text-primary">{audioStatus?.scene_heartbeats ?? 0}</span>
                       </div>
                     </div>
@@ -1654,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.6 女伯爵实机版：独立地点/符文同步码、低相关 Gold 符文码、纯声纹地面心跳与生命周期去重
+                      v4.7 首次触发版：场景仅在环境音开头标记一次，符文仅在世界实体首次 Flippy 时发送短突发
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1705,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.6 女伯爵版
+                    生成 Audio Telemetry v4.7 首次触发版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
