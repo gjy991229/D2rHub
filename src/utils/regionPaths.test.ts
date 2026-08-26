@@ -1,5 +1,7 @@
 import type { GlobalConfig } from "../store/types";
 import {
+  INTERNATIONAL_ACCOUNT_REGIONS,
+  accountRegionLabel,
   firstConfiguredRegion,
   hasConfiguredPathsForRegion,
   requiresTokenMigration,
@@ -47,6 +49,12 @@ function assert(condition: boolean, message: string) {
 }
 
 export function runTests() {
+  assert(
+    JSON.stringify(INTERNATIONAL_ACCOUNT_REGIONS) === JSON.stringify(["KR", "NA", "EU"]),
+    "the inline international switcher exposes only Asia, Americas, and Europe",
+  );
+  assert(accountRegionLabel("KR") === "亚服", "international region labels use the dashboard vocabulary");
+  assert(accountRegionLabel("Global") === "国际服", "legacy global accounts retain a neutral region label");
   const cnOnly = config({ cn_battle_net_path: "C:/Battle.net-CN/Battle.net.exe", cn_game_path: "C:/D2R-CN", cn_saved_games_path: "C:/Saves-CN" });
   assert(hasConfiguredPathsForRegion(cnOnly, "CN", "bnet"), "CN Battle.net accounts are enabled by a complete CN path group");
   assert(!hasConfiguredPathsForRegion(cnOnly, "NA", "bnet"), "global accounts stay disabled without a global path group");

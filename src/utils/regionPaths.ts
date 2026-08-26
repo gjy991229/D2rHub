@@ -1,9 +1,24 @@
 import type { GlobalConfig } from "../store/types";
 
 export type AccountRegion = "CN" | "KR" | "NA" | "EU";
+export type InternationalAccountRegion = Exclude<AccountRegion, "CN">;
 export type AccountAuthMode = "bnet" | "token";
 
 export const ACCOUNT_REGIONS: readonly AccountRegion[] = ["CN", "KR", "NA", "EU"];
+export const INTERNATIONAL_ACCOUNT_REGIONS: readonly InternationalAccountRegion[] = ["KR", "NA", "EU"];
+
+export const ACCOUNT_REGION_LABELS: Record<AccountRegion, string> = {
+  CN: "国服",
+  KR: "亚服",
+  NA: "美服",
+  EU: "欧服",
+};
+
+export function accountRegionLabel(region: string | null | undefined): string {
+  const normalized = region?.trim().toUpperCase();
+  if (normalized === "GLOBAL") return "国际服";
+  return ACCOUNT_REGION_LABELS[normalized as AccountRegion] ?? "国服";
+}
 
 export function isCnRegion(region: string | null | undefined): boolean {
   return region?.trim().toUpperCase() === "CN";

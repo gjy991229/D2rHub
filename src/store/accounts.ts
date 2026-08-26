@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { AccountMeta } from "./types";
+import type { InternationalAccountRegion } from "../utils/regionPaths";
 import { showToast } from "../components/ui/Toast";
 
 interface AccountsState {
@@ -13,6 +14,7 @@ interface AccountsState {
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<void>;
   updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<void>;
+  updateAccountRegion: (id: string, region: InternationalAccountRegion) => Promise<void>;
   initializeBnetAccount: (id: string) => Promise<void>;
   reinitializeAccount: (id: string) => Promise<void>;
   updateAccount: (account: AccountMeta) => void;
@@ -81,6 +83,21 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `保存 Mod 参数失败: ${e}`);
+    }
+  },
+
+  updateAccountRegion: async (id: string, region: InternationalAccountRegion) => {
+    set({ error: null });
+    try {
+      await invoke("update_account_region", { accountId: id, region });
+      set((state) => ({
+        accounts: state.accounts.map((account) =>
+          account.id === id ? { ...account, region } : account
+        ),
+      }));
+    } catch (e) {
+      set({ error: String(e) });
+      throw e;
     }
   },
 

@@ -9,7 +9,12 @@ import type { AccountMeta, GlobalConfig, LaunchProgress } from "../../store/type
 import { useAccounts } from "../../store/accounts";
 import { showToast } from "../ui/Toast";
 import { useLaunch } from "../../store/launch";
-import { requiresTokenMigration } from "../../utils/regionPaths";
+import {
+  accountRegionLabel,
+  isInternationalRegion,
+  requiresTokenMigration,
+} from "../../utils/regionPaths";
+import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
 const stepLabels: Record<string, string> = {
@@ -314,8 +319,10 @@ export function AccountGridItem({
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
   const tokenStatus = account.initialized ? getTokenStatus(account.last_reset_at) : null;
-  const regionLabel = account.region === "KR" ? "亚服" : account.region === "NA" ? "美服" : account.region === "EU" ? "欧服" : account.region === "Global" ? "国际服" : "国服";
+  const regionLabel = accountRegionLabel(account.region);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
+  const canSwitchInternationalRegion = account.auth_mode === "token"
+    && isInternationalRegion(account.region);
   const performanceLabel = `${drawer.resolution} · ${drawer.fps === 0 ? "unlimited" : `${drawer.fps}fps`}`;
   const configModeLabel = account.has_customized_settings ? "独立配置" : "系统配置";
 
@@ -460,7 +467,15 @@ export function AccountGridItem({
 
         <div className="tag-row tag-row-offset">
           <span className="hig-badge hig-badge-neutral">{lastLaunchText || (account.initialized ? "已就绪" : "待配置")}</span>
-          <span className="hig-badge hig-badge-neutral">{regionLabel}</span>
+          {canSwitchInternationalRegion && !isMultiSelectMode ? (
+            <AccountRegionSwitcher
+              accountId={account.id}
+              currentRegion={account.region}
+              isRunning={account.is_running}
+            />
+          ) : (
+            <span className="hig-badge hig-badge-neutral">{regionLabel}</span>
+          )}
           {account.auth_mode === "token" ? (
             <span className="hig-badge hig-badge-violet">网页 Token</span>
           ) : (

@@ -11,10 +11,10 @@ mod rune_data;
 mod state;
 #[cfg(feature = "ocr")]
 mod stats;
-#[cfg(target_os = "windows")]
-mod token_registry_trace;
 #[cfg(any(feature = "ocr", test))]
 mod stats_page;
+#[cfg(target_os = "windows")]
+mod token_registry_trace;
 mod tray;
 
 use crate::commands::global_config::GlobalConfig;
@@ -332,6 +332,7 @@ pub fn run() {
             commands::account::get_account,
             commands::account::create_account,
             commands::account::update_account_meta,
+            commands::account::update_account_region,
             commands::account::delete_account,
             commands::account::rename_account,
             commands::account::update_account_mods,

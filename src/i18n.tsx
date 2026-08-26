@@ -244,6 +244,11 @@ const textMap: Record<string, string> = {
   "亚服": "Asia",
   "美服": "Americas",
   "欧服": "Europe",
+  "切换服务器": "Switch Server",
+  "切换国际服服务器": "Switch Global Server",
+  "选择国际服服务器": "Choose a Global server",
+  "Token 不变": "Token unchanged",
+  "复用现有 Token，切换下次启动服务器": "Reuse the current Token and switch the next-launch server",
   "国际服": "Global",
   "长期": "Long-term",
   "过期": "Expired",
@@ -612,6 +617,15 @@ const textMap: Record<string, string> = {
 };
 
 const phraseMap: Record<string, string> = {
+  "国际服": "Global",
+  "亚服": "Asia",
+  "美服": "Americas",
+  "欧服": "Europe",
+  "，切换国际服服务器": ", switch Global server",
+  "，当前游戏不变，下次启动生效": "; current game unchanged, applies on next launch",
+  "，下次启动生效": "; applies on next launch",
+  "已切换至": "Switched to ",
+  "切换服务器失败:": "Failed to switch server: ",
   "启动选中": "Launch Selected",
   "启动 WEB_TOKEN ETW 监听失败:": "Failed to start the WEB_TOKEN ETW monitor: ",
   "等待 Token 消费与互斥句柄清除超时：": "Timed out waiting for Token consumption and mutex removal: ",

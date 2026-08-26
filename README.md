@@ -18,7 +18,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 
 ### 当前版本能力
 
-- **国服 / 国际服双版本隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
+- **国服 / 国际服双版本隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案，Token 账号可直接点击卡片的区服胶囊切换下次启动服务器。
 - **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、Mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置，可在系统配置与账号快照之间切换。
@@ -81,7 +81,7 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 
 ### Current features
 
-- **CN / Global profile isolation** with separate game, save, and Battle.net paths; KR, NA, and EU accounts share the Global installation profile.
+- **CN / Global profile isolation** with separate game, save, and Battle.net paths; KR, NA, and EU accounts share the Global installation profile, and Token accounts can switch their next-launch server from the region badge on each card.
 - **Two authentication modes**: direct Web Token launch, or Battle.net client authentication with a local runtime snapshot. Tokens are encrypted with Windows DPAPI.
 - **Multi-account launch controls**: launch one, launch all, multi-select, cancel a queue, inspect progress, reorder profiles, configure mod arguments, and assign window positions.
 - **Per-account game settings** for display, graphics, audio, gameplay, and automap, with system-settings and account-snapshot modes.
