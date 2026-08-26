@@ -378,6 +378,8 @@ pub fn run() {
             #[cfg(feature = "rune-audio")]
             rune_audio::flac::process_rune_flac_directory,
             #[cfg(feature = "rune-audio")]
+            rune_audio::audio_mod::build_rune_audio_mod,
+            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::start_rune_audio_monitor,
             #[cfg(feature = "rune-audio")]
             rune_audio::monitor::restart_rune_audio_monitor,

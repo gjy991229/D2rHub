@@ -1,4 +1,4 @@
-use super::catalog::{location_definition, LocationKind, TelemetryMarker};
+use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
 use super::protocol::StreamingDetector;
 use super::tracking::{SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot};
 use serde::{Deserialize, Serialize};
@@ -43,6 +43,14 @@ pub struct RuneAudioStatus {
     pub account_id: Option<String>,
     pub target_pid: Option<u32>,
     pub last_error: Option<String>,
+    pub captured_frames: u64,
+    pub audio_peak: f32,
+    pub decoded_packets: u64,
+    pub rune_events: u64,
+    pub scene_heartbeats: u64,
+    pub last_marker: Option<String>,
+    pub last_confidence: Option<f32>,
+    pub last_detected_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +73,14 @@ fn status() -> &'static Mutex<RuneAudioStatus> {
             account_id: None,
             target_pid: None,
             last_error: None,
+            captured_frames: 0,
+            audio_peak: 0.0,
+            decoded_packets: 0,
+            rune_events: 0,
+            scene_heartbeats: 0,
+            last_marker: None,
+            last_confidence: None,
+            last_detected_at: None,
         })
     })
 }
@@ -101,7 +117,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         },
         account_id: account.id,
         target_pid,
-        threshold: config.rune_audio_detection_threshold.clamp(0.45, 0.95),
+        threshold: config.rune_audio_detection_threshold.clamp(0.40, 0.95),
     })
 }
 
@@ -115,6 +131,31 @@ fn emit_tracking_snapshot(app: &tauri::AppHandle, snapshot: &TrackingSnapshot) {
     }
 }
 
+fn marker_status_label(marker: TelemetryMarker, catalog: &LocationCatalog) -> String {
+    match marker {
+        TelemetryMarker::Rune { rune_number } => {
+            let name = crate::rune_data::get_rune_name(rune_number).unwrap_or("未知符文");
+            format!("符文 #{rune_number:02} {name}")
+        }
+        marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => catalog
+            .resolve(marker)
+            .map(|location| location.scene_name)
+            .unwrap_or_else(|| format!("{marker:?}")),
+    }
+}
+
+fn record_decoded_packet(marker: TelemetryMarker, confidence: f32, catalog: &LocationCatalog) {
+    let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+    current.decoded_packets += 1;
+    match marker {
+        TelemetryMarker::Rune { .. } => current.rune_events += 1,
+        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => current.scene_heartbeats += 1,
+    }
+    current.last_marker = Some(marker_status_label(marker, catalog));
+    current.last_confidence = Some(confidence);
+    current.last_detected_at = Some(chrono::Local::now().to_rfc3339());
+}
+
 fn handle_rune_detection(
     app: &tauri::AppHandle,
     config: &MonitorConfig,
@@ -122,9 +163,6 @@ fn handle_rune_detection(
     rune_number: u32,
     confidence: f32,
 ) {
-    if !tracker.accepts_rune_observation() {
-        return;
-    }
     let rune_name = crate::rune_data::get_rune_name(rune_number)
         .unwrap_or("未知符文")
         .to_string();
@@ -185,11 +223,12 @@ fn handle_location_detection(
     app: &tauri::AppHandle,
     config: &MonitorConfig,
     tracker: &mut SegmentTracker,
+    catalog: &LocationCatalog,
     marker: TelemetryMarker,
     observed_at_frame: u64,
     confidence: f32,
 ) {
-    let Some(location) = location_definition(marker) else {
+    let Some(location) = catalog.resolve(marker) else {
         return;
     };
     let now = chrono::Local::now();
@@ -226,9 +265,9 @@ fn handle_location_detection(
             TelemetryMarker::Area { area_id } => Some(area_id),
             TelemetryMarker::Rune { .. } | TelemetryMarker::Frontend => None,
         },
-        scene_key: location.scene_key.to_string(),
-        scene_name: location.scene_name.to_string(),
-        scene_name_en: location.scene_name_en.to_string(),
+        scene_key: location.scene_key,
+        scene_name: location.scene_name,
+        scene_name_en: location.scene_name_en,
         location_kind: location.kind,
         is_town: location.kind == LocationKind::Town,
         is_frontend: location.kind == LocationKind::Frontend,
@@ -296,10 +335,16 @@ fn capture_loop(
     let mut bytes = VecDeque::new();
     let mut pending_mono = Vec::<f32>::with_capacity(SCAN_INTERVAL_FRAMES * 2);
     let mut detector = StreamingDetector::new(CAPTURE_SAMPLE_RATE, config.threshold)?;
-    let mut tracker = SegmentTracker::new(
+    let app_data_dir = app
+        .state::<crate::state::SharedState>()
+        .app_data_dir
+        .clone();
+    let catalog = LocationCatalog::load(&app_data_dir);
+    let mut tracker = SegmentTracker::with_catalog(
         config.account_id.clone(),
         config.character_name.clone(),
         CAPTURE_SAMPLE_RATE,
+        catalog.clone(),
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
     let mut process_system = sysinfo::System::new();
@@ -355,7 +400,16 @@ fn capture_loop(
             &mut pending_mono,
             Vec::with_capacity(SCAN_INTERVAL_FRAMES * 2),
         );
+        let peak = chunk
+            .iter()
+            .fold(0.0f32, |current, sample| current.max(sample.abs()));
+        {
+            let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+            current.captured_frames += chunk.len() as u64;
+            current.audio_peak = peak;
+        }
         for detection in detector.push(&chunk) {
+            record_decoded_packet(detection.marker, detection.confidence, &catalog);
             match detection.marker {
                 TelemetryMarker::Rune { rune_number } => handle_rune_detection(
                     &app,
@@ -370,6 +424,7 @@ fn capture_loop(
                             &app,
                             &config,
                             &mut tracker,
+                            &catalog,
                             marker,
                             detection.start_frame,
                             detection.confidence,
@@ -416,6 +471,14 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         account_id: Some(config.account_id.clone()),
         target_pid: Some(config.target_pid),
         last_error: None,
+        captured_frames: 0,
+        audio_peak: 0.0,
+        decoded_packets: 0,
+        rune_events: 0,
+        scene_heartbeats: 0,
+        last_marker: None,
+        last_confidence: None,
+        last_detected_at: None,
     });
 
     std::thread::Builder::new()
@@ -425,11 +488,23 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
             RUNNING.store(false, Ordering::SeqCst);
             WORKER_ACTIVE.store(false, Ordering::SeqCst);
             if GENERATION.load(Ordering::SeqCst) == generation {
+                let previous = status()
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone();
                 set_status(RuneAudioStatus {
                     running: false,
                     account_id: Some(config.account_id),
                     target_pid: Some(config.target_pid),
                     last_error: result.as_ref().err().cloned(),
+                    captured_frames: previous.captured_frames,
+                    audio_peak: previous.audio_peak,
+                    decoded_packets: previous.decoded_packets,
+                    rune_events: previous.rune_events,
+                    scene_heartbeats: previous.scene_heartbeats,
+                    last_marker: previous.last_marker,
+                    last_confidence: previous.last_confidence,
+                    last_detected_at: previous.last_detected_at,
                 });
             }
             if let Err(error) = result {

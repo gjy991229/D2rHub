@@ -56,6 +56,32 @@ interface Props {
   initialAccountId?: string | null;
 }
 
+interface RuneAudioStatus {
+  running: boolean;
+  account_id: string | null;
+  target_pid: number | null;
+  last_error: string | null;
+  captured_frames: number;
+  audio_peak: number;
+  decoded_packets: number;
+  rune_events: number;
+  scene_heartbeats: number;
+  last_marker: string | null;
+  last_confidence: number | null;
+  last_detected_at: string | null;
+}
+
+interface AudioModReport {
+  protocol_version: number;
+  mod_directory: string;
+  source_mod_copied: boolean;
+  sound_environment_source: string;
+  launch_arguments: string;
+  rune_assets: Array<{ preserved_source_audio: boolean }>;
+  area_assets: Array<unknown>;
+  notes: string[];
+}
+
 type InstallationPathField =
   | "cn_battle_net_path"
   | "cn_game_path"
@@ -194,9 +220,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const [activeTab, setActiveTab] = useState<TabType>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const [runeFlacDirectory, setRuneFlacDirectory] = useState("");
-  const [runeFlacGainDb, setRuneFlacGainDb] = useState(-26);
+  const [runeFlacGainDb, setRuneFlacGainDb] = useState(-30);
   const [runeFlacProcessing, setRuneFlacProcessing] = useState(false);
   const [runeFlacOutput, setRuneFlacOutput] = useState<string | null>(null);
+  const [audioModSourceDirectory, setAudioModSourceDirectory] = useState("");
+  const [audioModOutputDirectory, setAudioModOutputDirectory] = useState("");
+  const [audioModBuilding, setAudioModBuilding] = useState(false);
+  const [audioModReport, setAudioModReport] = useState<AudioModReport | null>(null);
+  const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -222,6 +253,26 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       active = false;
     };
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "automation") return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const next = await invoke<RuneAudioStatus>("get_rune_audio_status");
+        if (!cancelled) setAudioStatus(next);
+      } catch (error) {
+        console.warn("读取音频遥测状态失败", error);
+      }
+      if (!cancelled) timer = window.setTimeout(poll, 1000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [open, activeTab]);
 
   // Game settings edit states (per account)
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
@@ -582,6 +633,50 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       showToast("error", `处理符文 FLAC 失败: ${error}`);
     } finally {
       setRuneFlacProcessing(false);
+    }
+  };
+
+  const pickAudioModDirectory = async (kind: "source" | "output") => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: true,
+        title: kind === "source"
+          ? "选择作为基础的已解包 Mod（例如 jcy.mpq）"
+          : "选择输出目录（建议 D2R 安装目录下的 mods）",
+      });
+      if (typeof selected === "string") {
+        if (kind === "source") setAudioModSourceDirectory(selected);
+        else setAudioModOutputDirectory(selected);
+        setAudioModReport(null);
+      }
+    } catch (error) {
+      showToast("error", `选择目录失败: ${error}`);
+    }
+  };
+
+  const buildAudioTelemetryMod = async () => {
+    if (!audioModSourceDirectory || audioModBuilding) return;
+    setAudioModBuilding(true);
+    setAudioModReport(null);
+    try {
+      const report = await invoke<AudioModReport>("build_rune_audio_mod", {
+        request: {
+          source_directory: audioModSourceDirectory,
+          output_directory: audioModOutputDirectory || null,
+          sound_environment_file: null,
+          gain_db: runeFlacGainDb,
+        },
+      });
+      setAudioModReport(report);
+      showToast(
+        "success",
+        `音频遥测 Mod 已生成：33 个符文、${report.area_assets.length} 个地图`,
+      );
+    } catch (error) {
+      showToast("error", `生成音频遥测 Mod 失败: ${error}`);
+    } finally {
+      setAudioModBuilding(false);
     }
   };
 
@@ -1432,19 +1527,52 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     </p>
                   </div>
 
+                  <div className="space-y-2 border-t border-border-default/50 pt-3">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className={audioStatus?.running ? "text-success" : "text-text-secondary"}>
+                        {audioStatus?.running ? `正在捕获 · PID ${audioStatus.target_pid}` : "监控未运行"}
+                      </span>
+                      <span className="text-text-muted">数据包 {audioStatus?.decoded_packets ?? 0}</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-2 text-center text-2xs">
+                      <div className="rounded bg-surface-hover px-2 py-1.5">
+                        <span className="block text-text-muted">音频峰值</span>
+                        <span className="font-mono text-text-primary">
+                          {audioStatus ? audioStatus.audio_peak.toFixed(4) : "0.0000"}
+                        </span>
+                      </div>
+                      <div className="rounded bg-surface-hover px-2 py-1.5">
+                        <span className="block text-text-muted">符文</span>
+                        <span className="font-mono text-text-primary">{audioStatus?.rune_events ?? 0}</span>
+                      </div>
+                      <div className="rounded bg-surface-hover px-2 py-1.5">
+                        <span className="block text-text-muted">地图心跳</span>
+                        <span className="font-mono text-text-primary">{audioStatus?.scene_heartbeats ?? 0}</span>
+                      </div>
+                    </div>
+                    {audioStatus?.last_marker && (
+                      <p className="text-2xs text-success">
+                        最近识别：{audioStatus.last_marker} · {((audioStatus.last_confidence ?? 0) * 100).toFixed(1)}%
+                      </p>
+                    )}
+                    {audioStatus?.last_error && (
+                      <p className="text-2xs text-danger break-all">{audioStatus.last_error}</p>
+                    )}
+                  </div>
+
                   {config.rune_audio_enabled && trackingTarget.valid && (
                     <div className="space-y-3 border-t border-border-default/50 pt-3">
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-sm font-semibold text-text-secondary">识别阈值</span>
-                          <p className="text-2xs text-text-muted">默认 0.58；降低可提高召回，但会增加误报风险</p>
+                          <p className="text-2xs text-text-muted">v4 默认 0.56；CRC 会拦截随机高频声，通常无需降低</p>
                         </div>
                         <input
                           type="number"
-                          min={0.45}
+                          min={0.4}
                           max={0.95}
                           step={0.01}
-                          value={config.rune_audio_detection_threshold ?? 0.58}
+                          value={config.rune_audio_detection_threshold ?? 0.56}
                           onChange={event => updateConfig(c => {
                             c.rune_audio_detection_threshold = Number(event.target.value);
                           })}
@@ -1479,8 +1607,79 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
                 <div className="spatial-panel p-4 space-y-3">
                   <div>
-                    <span className="text-xs font-bold text-text-primary block mb-1">制作带身份证的符文/场景 FLAC</span>
-                    <p className="text-2xs text-text-muted">符文使用 r1-r33；区域使用 a1、a6、a21-a25；主界面使用 frontend.flac；支持 32kHz 及以上</p>
+                    <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
+                    <p className="text-2xs text-text-muted">
+                      以 jcy.mpq 等已解包 Mod 为基础，保留原内容；生成 33 个符文标记和 levels.txt 中全部地图心跳
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={audioModSourceDirectory}
+                      readOnly
+                      placeholder="源：选择 jcy.mpq 或 data/global/excel"
+                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+                    />
+                    <Button size="sm" onClick={() => pickAudioModDirectory("source")}>
+                      <FolderOpen size={13} />
+                      选择源
+                    </Button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={audioModOutputDirectory}
+                      readOnly
+                      placeholder="输出：建议选择 Diablo II Resurrected/mods"
+                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+                    />
+                    <Button size="sm" onClick={() => pickAudioModDirectory("output")}>
+                      <FolderOpen size={13} />
+                      选择输出
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-semibold text-text-secondary">超声标记强度</span>
+                      <p className="text-2xs text-text-muted">默认 -30dBFS；第一次实机测试可改为 -26</p>
+                    </div>
+                    <input
+                      type="number"
+                      min={-42}
+                      max={-12}
+                      step={1}
+                      value={runeFlacGainDb}
+                      onChange={event => setRuneFlacGainDb(Number(event.target.value))}
+                      className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
+                    />
+                  </div>
+                  <Button
+                    size="md"
+                    className="w-full"
+                    disabled={!audioModSourceDirectory || audioModBuilding}
+                    loading={audioModBuilding}
+                    onClick={buildAudioTelemetryMod}
+                  >
+                    生成完整 Audio Telemetry v4 Mod
+                  </Button>
+                  {audioModReport && (
+                    <div className="space-y-1 text-2xs">
+                      <p className="text-success break-all">输出：{audioModReport.mod_directory}</p>
+                      <p className="text-text-secondary">启动参数：<code>{audioModReport.launch_arguments}</code></p>
+                      <p className="text-text-muted">
+                        符文原声保留 {audioModReport.rune_assets.filter(asset => asset.preserved_source_audio).length}/33 · 地图 {audioModReport.area_assets.length}
+                      </p>
+                    </div>
+                  )}
+                  <p className="text-2xs text-warning">
+                    地图心跳只替换随机环境事件，不替换持续环境音或音乐；符文手动丢地也会计入。
+                  </p>
+                </div>
+
+                <div className="spatial-panel p-4 space-y-3">
+                  <div>
+                    <span className="text-xs font-bold text-text-primary block mb-1">高级：单独处理自定义 FLAC</span>
+                    <p className="text-2xs text-text-muted">通常无需使用；支持 r1-r33、任意 a&#123;AreaId&#125; 与 frontend.flac，低采样率会转为 48kHz</p>
                   </div>
                   <div className="flex gap-2">
                     <input
@@ -1498,7 +1697,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <span className="text-xs font-semibold text-text-secondary">声纹增益</span>
-                      <p className="text-2xs text-text-muted">建议先用 -26dBFS；越接近 0 越容易识别，也越可能被听见</p>
+                      <p className="text-2xs text-text-muted">与上方完整 Mod 使用同一 v4 强度</p>
                     </div>
                     <input
                       type="number"
@@ -1522,7 +1721,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   {runeFlacOutput && (
                     <p className="text-2xs text-success break-all">输出目录：{runeFlacOutput}</p>
                   )}
-                  <p className="text-2xs text-warning">处理器会为符文追加 0.25 秒静音循环尾段，并在清单写入循环起点；请配合 v9 Mod 使用，且保持游戏音效实际输出。</p>
+                  <p className="text-2xs text-warning">输出使用 v4 数据包并逐文件自检；游戏音效通道必须非静音。</p>
                   <div className="border-t border-border-default/50 pt-3">
                     <Button
                       size="sm"

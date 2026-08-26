@@ -1,4 +1,6 @@
-use super::catalog::{location_definition, LocationDefinition, LocationKind, TelemetryMarker};
+use super::catalog::{
+    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_AREA_ID,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -15,7 +17,11 @@ impl SceneTransitionGate {
 
     /// Returns true on the first valid marker for a different location.
     pub fn observe(&mut self, marker: TelemetryMarker, _observed_at_frame: u64) -> bool {
-        if location_definition(marker).is_none() {
+        if !matches!(
+            marker,
+            TelemetryMarker::Area { area_id } if (1..=MAX_AREA_ID).contains(&area_id)
+        ) && marker != TelemetryMarker::Frontend
+        {
             return false;
         }
         if self.confirmed == Some(marker) {
@@ -101,10 +107,26 @@ pub struct SegmentTracker {
     session_runs: HashMap<String, u32>,
     revision: u64,
     sample_rate: u32,
+    catalog: LocationCatalog,
 }
 
 impl SegmentTracker {
+    #[cfg(test)]
     pub fn new(account_id: String, character_name: String, sample_rate: u32) -> Self {
+        Self::with_catalog(
+            account_id,
+            character_name,
+            sample_rate,
+            LocationCatalog::default(),
+        )
+    }
+
+    pub fn with_catalog(
+        account_id: String,
+        character_name: String,
+        sample_rate: u32,
+        catalog: LocationCatalog,
+    ) -> Self {
         Self {
             account_id,
             character_name,
@@ -115,6 +137,7 @@ impl SegmentTracker {
             session_runs: HashMap::new(),
             revision: 0,
             sample_rate,
+            catalog,
         }
     }
 
@@ -125,7 +148,9 @@ impl SegmentTracker {
         observed_at_ms: i64,
         absolute_time: String,
     ) -> Result<TrackingOutcome, String> {
-        let location = location_definition(marker)
+        let location = self
+            .catalog
+            .resolve(marker)
             .ok_or_else(|| format!("{marker:?} 不是已登记的地点声纹"))?;
         if self.current_location == Some(marker) {
             return Ok(TrackingOutcome {
@@ -147,7 +172,7 @@ impl SegmentTracker {
                     .get_or_insert_with(|| uuid::Uuid::new_v4().to_string())
                     .clone();
                 self.active_segment = Some(Self::start_segment(
-                    location,
+                    &location,
                     journey_id,
                     self.next_segment_index,
                     observed_at_frame,
@@ -175,19 +200,10 @@ impl SegmentTracker {
         self.snapshot()
     }
 
-    /// Unknown locations stay observable during startup, but a confirmed town
-    /// or frontend is never a loot-producing context.
-    pub fn accepts_rune_observation(&self) -> bool {
-        !matches!(
-            self.current_location
-                .and_then(location_definition)
-                .map(|location| location.kind),
-            Some(LocationKind::Town | LocationKind::Frontend)
-        )
-    }
-
     pub fn snapshot(&self) -> TrackingSnapshot {
-        let location = self.current_location.and_then(location_definition);
+        let location = self
+            .current_location
+            .and_then(|marker| self.catalog.resolve(marker));
         TrackingSnapshot {
             revision: self.revision,
             account_id: self.account_id.clone(),
@@ -196,14 +212,20 @@ impl SegmentTracker {
                 TelemetryMarker::Rune { .. } | TelemetryMarker::Frontend => None,
             }),
             current_scene: location
+                .as_ref()
                 .map(|item| item.scene_name.to_string())
                 .unwrap_or_else(|| "等待识别...".to_string()),
             current_scene_en: location
+                .as_ref()
                 .map(|item| item.scene_name_en.to_string())
                 .unwrap_or_else(|| "Waiting for location...".to_string()),
-            location_kind: location.map(|item| item.kind),
-            is_town: location.is_some_and(|item| item.kind == LocationKind::Town),
-            is_frontend: location.is_some_and(|item| item.kind == LocationKind::Frontend),
+            location_kind: location.as_ref().map(|item| item.kind),
+            is_town: location
+                .as_ref()
+                .is_some_and(|item| item.kind == LocationKind::Town),
+            is_frontend: location
+                .as_ref()
+                .is_some_and(|item| item.kind == LocationKind::Frontend),
             is_timing: self.active_segment.is_some(),
             timer_started_at_ms: self
                 .active_segment
@@ -231,7 +253,7 @@ impl SegmentTracker {
     }
 
     fn start_segment(
-        location: &LocationDefinition,
+        location: &ResolvedLocation,
         journey_id: String,
         segment_index: u32,
         observed_at_frame: u64,
@@ -399,24 +421,6 @@ mod tests {
             .observe_location(area(21), 1_000, 1_000, "start".to_string())
             .unwrap();
         assert!(started.snapshot.current_run_drops.is_empty());
-    }
-
-    #[test]
-    fn confirmed_town_and_frontend_reject_runes_but_unknown_and_wilderness_accept_them() {
-        let mut tracker = tracker();
-        assert!(tracker.accepts_rune_observation());
-        tracker
-            .observe_location(area(1), 100, 100, "town".to_string())
-            .unwrap();
-        assert!(!tracker.accepts_rune_observation());
-        tracker
-            .observe_location(area(6), 200, 200, "wild".to_string())
-            .unwrap();
-        assert!(tracker.accepts_rune_observation());
-        tracker
-            .observe_location(TelemetryMarker::Frontend, 300, 300, "menu".to_string())
-            .unwrap();
-        assert!(!tracker.accepts_rune_observation());
     }
 
     #[test]

@@ -1,8 +1,9 @@
 use super::catalog::{
-    area_definition, marker_signal_number, TelemetryMarker, RUNE_COUNT, TRACKED_AREA_IDS,
+    area_definition, marker_sort_key, TelemetryMarker, MAX_AREA_ID, RUNE_COUNT, TRACKED_AREA_IDS,
 };
 use super::protocol::{
-    detect_markers, embed_marker, interleaved_i32_to_mono, MarkerConfig, PROTOCOL_VERSION,
+    detect_markers, embed_marker, interleaved_i32_to_mono, MarkerConfig, MIN_SAMPLE_RATE,
+    PROTOCOL_VERSION,
 };
 use claxon::FlacReader;
 use flacenc::component::BitRepr;
@@ -12,9 +13,6 @@ use std::path::{Path, PathBuf};
 
 const OUTPUT_DIRECTORY_NAME: &str = "D2RHubTagged";
 const MANIFEST_FILE_NAME: &str = "d2rhub-audio-manifest.json";
-/// 地面物品的 AudioEmitter 没有一次性模式；符文尾部保留一段静音，
-/// 供 Sounds.txt 从该位置持续循环，避免同一个地面对象再次播报。
-pub const RUNE_LOOP_TAIL_SECONDS: f32 = 0.25;
 
 fn next_default_output_directory(input_directory: &Path) -> PathBuf {
     let first = input_directory.join(OUTPUT_DIRECTORY_NAME);
@@ -100,7 +98,7 @@ fn marker_from_path(path: &Path) -> Option<TelemetryMarker> {
         'r' if (1..=RUNE_COUNT).contains(&value) => {
             Some(TelemetryMarker::Rune { rune_number: value })
         }
-        'a' if area_definition(value).is_some() && !number.starts_with('0') => {
+        'a' if (1..=MAX_AREA_ID).contains(&value) && !number.starts_with('0') => {
             Some(TelemetryMarker::Area { area_id: value })
         }
         _ => None,
@@ -117,7 +115,7 @@ fn marker_label(marker: TelemetryMarker) -> String {
     }
 }
 
-fn decode_flac(path: &Path) -> Result<(Vec<i32>, u32, u32, u32), String> {
+pub(crate) fn decode_flac(path: &Path) -> Result<(Vec<i32>, u32, u32, u32), String> {
     let mut reader = FlacReader::open(path)
         .map_err(|error| format!("读取 FLAC 失败 {}: {error}", path.display()))?;
     let stream_info = reader.streaminfo();
@@ -131,7 +129,7 @@ fn decode_flac(path: &Path) -> Result<(Vec<i32>, u32, u32, u32), String> {
     Ok((samples, sample_rate, channels, bits_per_sample))
 }
 
-fn encode_flac(
+pub(crate) fn encode_flac(
     path: &Path,
     samples: &[i32],
     sample_rate: u32,
@@ -164,6 +162,29 @@ fn encode_flac(
         .map_err(|error| format!("写入 FLAC 失败 {}: {error}", path.display()))
 }
 
+pub(crate) fn resample_interleaved_i32(
+    samples: &[i32],
+    channels: usize,
+    source_rate: u32,
+    output_rate: u32,
+) -> Vec<i32> {
+    let source_frames = samples.len() / channels;
+    let output_frames = ((source_frames as u64 * output_rate as u64) / source_rate as u64) as usize;
+    let mut output = Vec::with_capacity(output_frames * channels);
+    for output_frame in 0..output_frames {
+        let position = output_frame as f64 * source_rate as f64 / output_rate as f64;
+        let left = position.floor() as usize;
+        let right = (left + 1).min(source_frames.saturating_sub(1));
+        let fraction = position - left as f64;
+        for channel in 0..channels {
+            let a = samples[left * channels + channel] as f64;
+            let b = samples[right * channels + channel] as f64;
+            output.push((a * (1.0 - fraction) + b * fraction).round() as i32);
+        }
+    }
+    output
+}
+
 fn process_one(
     source_path: &Path,
     output_path: &Path,
@@ -173,7 +194,11 @@ fn process_one(
     if output_path.exists() {
         return Err(format!("输出文件已存在，未覆盖: {}", output_path.display()));
     }
-    let (mut samples, sample_rate, channels, bits_per_sample) = decode_flac(source_path)?;
+    let (mut samples, mut sample_rate, channels, bits_per_sample) = decode_flac(source_path)?;
+    if sample_rate < MIN_SAMPLE_RATE {
+        samples = resample_interleaved_i32(&samples, channels as usize, sample_rate, 48_000);
+        sample_rate = 48_000;
+    }
     let embedding = embed_marker(
         &mut samples,
         channels as usize,
@@ -182,15 +207,9 @@ fn process_one(
         marker,
         config,
     )?;
-    let (loop_start_frame, loop_tail_frames) = match marker {
-        TelemetryMarker::Rune { .. } => {
-            let loop_start = samples.len() / channels as usize;
-            let tail_frames = (sample_rate as f32 * RUNE_LOOP_TAIL_SECONDS).round() as usize;
-            samples.resize(samples.len() + tail_frames * channels as usize, 0);
-            (Some(loop_start), tail_frames)
-        }
-        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => (None, 0),
-    };
+    // Logical replay is owned by D2R's dropsound / SoundEnviron trigger. The
+    // FLAC itself is strictly one-shot; looping it would manufacture events.
+    let (loop_start_frame, loop_tail_frames) = (None, 0);
 
     let temp_path = output_path.with_extension("flac.d2rhub.tmp");
     if temp_path.exists() {
@@ -295,7 +314,7 @@ pub fn process_directory(request: BatchRequest) -> Result<BatchReport, String> {
             }
         }
     }
-    candidates.sort_by_key(|(marker, _)| marker_signal_number(*marker).unwrap_or(u32::MAX));
+    candidates.sort_by_key(|(marker, _)| marker_sort_key(*marker));
     if candidates.is_empty() {
         return Err(
             "目录中没有找到 r1.flac-r33.flac、受支持的 a{AreaId}.flac 或 frontend.flac".to_string(),
@@ -374,8 +393,8 @@ pub async fn process_rune_flac_directory(request: BatchRequest) -> Result<BatchR
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_flac, encode_flac, marker_from_path, next_default_output_directory,
-        process_directory, BatchRequest, RUNE_LOOP_TAIL_SECONDS,
+        encode_flac, marker_from_path, next_default_output_directory, process_directory,
+        BatchRequest,
     };
     use crate::rune_audio::catalog::TelemetryMarker;
     use std::path::Path;
@@ -406,7 +425,10 @@ mod tests {
             marker_from_path(Path::new("A25.FLAC")),
             Some(TelemetryMarker::Area { area_id: 25 })
         );
-        assert_eq!(marker_from_path(Path::new("a20.flac")), None);
+        assert_eq!(
+            marker_from_path(Path::new("a20.flac")),
+            Some(TelemetryMarker::Area { area_id: 20 })
+        );
         assert_eq!(marker_from_path(Path::new("a01.flac")), None);
         assert_eq!(marker_from_path(Path::new("r010.flac")), None);
         assert_eq!(marker_from_path(Path::new("r34.flac")), None);
@@ -475,20 +497,8 @@ mod tests {
         );
         assert_eq!(report.processed[3].marker, TelemetryMarker::Frontend);
         assert!(report.processed.iter().all(|item| item.confidence > 0.8));
-        let expected_tail_frames = (sample_rate as f32 * RUNE_LOOP_TAIL_SECONDS).round() as usize;
-        for item in &report.processed[..2] {
-            assert_eq!(item.loop_tail_frames, expected_tail_frames);
-            assert!(item.loop_start_frame.is_some());
-            let (tagged, _, tagged_channels, _) =
-                decode_flac(Path::new(&item.output_path)).unwrap();
-            let loop_start = item.loop_start_frame.unwrap() * tagged_channels as usize;
-            assert_eq!(
-                tagged.len() - loop_start,
-                expected_tail_frames * tagged_channels as usize
-            );
-            assert!(tagged[loop_start..].iter().all(|sample| *sample == 0));
-        }
-        assert!(report.processed[2..]
+        assert!(report
+            .processed
             .iter()
             .all(|item| item.loop_start_frame.is_none() && item.loop_tail_frames == 0));
         assert!(root

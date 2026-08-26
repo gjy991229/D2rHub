@@ -19,7 +19,7 @@ const defaultConfig: GlobalConfig = {
   theme: "light", theme_overlay: "light", auto_close_browser: true,
   enable_auto_update: true, first_launch: true,
   rune_audio_enabled: false, rune_audio_target_account: "",
-  rune_audio_detection_threshold: 0.58,
+  rune_audio_detection_threshold: 0.56,
   shortcut_bindings_json: "",
   overlay_opacity: 95, main_opacity: 95, font_scale: "default",
   enable_bongo_cat: true, bongo_cat_chatterbox: true,

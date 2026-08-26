@@ -119,7 +119,7 @@ fn default_opacity() -> u8 {
 }
 
 fn default_rune_audio_detection_threshold() -> f32 {
-    0.58
+    0.56
 }
 
 fn default_agent_mode() -> u8 {
