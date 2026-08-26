@@ -1,7 +1,7 @@
 {
   "name": "d2rhub",
   "private": true,
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Windows multi-account manager and OCR run tracker for Diablo II: Resurrected",
   "license": "MIT",
   "repository": {

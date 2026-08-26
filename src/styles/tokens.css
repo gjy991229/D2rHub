@@ -28,6 +28,11 @@
   --duration-normal: 260ms;
   --duration-slow: 400ms;
 
+  /* Layering */
+  --z-dropdown: 40;
+  --z-modal: 50;
+  --z-toast: 100;
+
   /* Font size scale — all driven by --font-scale for user-adjustable sizing */
   --font-scale: 1;
   --text-2xs: calc(8.5px * var(--font-scale));

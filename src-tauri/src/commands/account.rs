@@ -855,6 +855,57 @@ pub fn update_account_meta(
     Ok(())
 }
 
+fn switch_international_account_region(
+    meta: &mut AccountMeta,
+    requested_region: &str,
+) -> Result<(), AppError> {
+    if AuthMode::parse(meta.auth_mode.as_deref())? != AuthMode::Token {
+        return Err(AppError::ConfigReadError(
+            "只有 Token 直启账号可以切换国际服服务器".to_string(),
+        ));
+    }
+
+    let current_region = meta
+        .region
+        .as_deref()
+        .ok_or_else(|| AppError::ConfigReadError("账号缺少区服，无法切换服务器".to_string()))?;
+    if GameRegion::parse(current_region)?.edition() != ClientEdition::Global {
+        return Err(AppError::ConfigReadError(
+            "只有国际服账号可以在亚服、美服和欧服之间切换".to_string(),
+        ));
+    }
+
+    let requested_region = requested_region.trim().to_ascii_uppercase();
+    if !matches!(requested_region.as_str(), "KR" | "NA" | "EU") {
+        return Err(AppError::ConfigReadError(format!(
+            "不支持的国际服服务器: {requested_region}"
+        )));
+    }
+    let next_region = GameRegion::parse(&requested_region)?;
+    meta.region = Some(next_region.canonical().to_string());
+    Ok(())
+}
+
+/// 在共用同一套客户端与 Token 的国际服服务器之间切换。
+#[tauri::command]
+pub fn update_account_region(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    region: String,
+) -> Result<(), AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    let accounts_dir = state
+        .config
+        .read()
+        .as_ref()
+        .map(|config| config.accounts_dir.clone())
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    let mut meta = AccountManager::load_meta(&accounts_dir, &account_id)?;
+    switch_international_account_region(&mut meta, &region)?;
+    AccountManager::save_meta(&accounts_dir, &meta)
+}
+
 /// 删除账号
 #[tauri::command]
 pub fn delete_account(
@@ -1087,9 +1138,9 @@ mod settings_json_tests {
         hydrate_meta_from_runtime_snapshot, prepare_battle_net_runtime_directory,
         recover_account_transactions, remove_account_directory_without_resurrection,
         replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
-        resolve_account_runtime_snapshot, stage_account_directory, validate_runtime_snapshot_root,
-        AccountManager, AccountMeta, BnetInitializationKind, RegistryValueBackup,
-        ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        resolve_account_runtime_snapshot, stage_account_directory,
+        switch_international_account_region, validate_runtime_snapshot_root, AccountManager,
+        AccountMeta, BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
     use crate::error::AppError;
     use crate::launch_context::ClientEdition;
@@ -1107,6 +1158,60 @@ mod settings_json_tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn international_region_switch_preserves_account_configuration() {
+        let mut meta = AccountMeta::new("account1");
+        meta.auth_mode = Some("token".to_string());
+        meta.region = Some("KR".to_string());
+        meta.token = Some("encrypted-token".to_string());
+        meta.language = Some("zhTW".to_string());
+        meta.voicelanguage = Some("enUS".to_string());
+        meta.has_customized_settings = true;
+        meta.snapshot_edition = Some("Global".to_string());
+        meta.initialized = true;
+
+        switch_international_account_region(&mut meta, "EU").unwrap();
+
+        assert_eq!(meta.region.as_deref(), Some("EU"));
+        assert_eq!(meta.token.as_deref(), Some("encrypted-token"));
+        assert_eq!(meta.language.as_deref(), Some("zhTW"));
+        assert_eq!(meta.voicelanguage.as_deref(), Some("enUS"));
+        assert!(meta.has_customized_settings);
+        assert_eq!(meta.snapshot_edition.as_deref(), Some("Global"));
+        assert!(meta.initialized);
+    }
+
+    #[test]
+    fn international_region_switch_accepts_legacy_global_region_aliases() {
+        for legacy_region in ["Global", "Asia", "Americas", "US", "Europe"] {
+            let mut meta = AccountMeta::new("account1");
+            meta.auth_mode = Some("token".to_string());
+            meta.region = Some(legacy_region.to_string());
+
+            switch_international_account_region(&mut meta, "NA").unwrap();
+
+            assert_eq!(meta.region.as_deref(), Some("NA"));
+        }
+    }
+
+    #[test]
+    fn international_region_switch_rejects_cn_and_battle_net_accounts() {
+        let mut cn = AccountMeta::new("cn");
+        cn.auth_mode = Some("token".to_string());
+        cn.region = Some("CN".to_string());
+        assert!(switch_international_account_region(&mut cn, "EU").is_err());
+
+        let mut battle_net = AccountMeta::new("bnet");
+        battle_net.auth_mode = Some("bnet".to_string());
+        battle_net.region = Some("EU".to_string());
+        assert!(switch_international_account_region(&mut battle_net, "NA").is_err());
+
+        let mut invalid_target = AccountMeta::new("invalid");
+        invalid_target.auth_mode = Some("token".to_string());
+        invalid_target.region = Some("KR".to_string());
+        assert!(switch_international_account_region(&mut invalid_target, "CN").is_err());
     }
 
     fn write_valid_runtime_snapshot(root: &std::path::Path, edition: &str) {
