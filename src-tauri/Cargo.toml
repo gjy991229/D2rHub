@@ -25,7 +25,7 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = ["rune-audio"]
 stats = ["dep:rusqlite", "dep:open"]
-rune-audio = ["stats", "dep:claxon", "dep:flacenc", "dep:wasapi"]
+rune-audio = ["stats", "dep:claxon", "dep:flacenc", "dep:wasapi", "dep:casc-core"]
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
@@ -48,6 +48,7 @@ rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 open = { version = "5", optional = true }
 claxon = { version = "0.4.3", optional = true }
 flacenc = { version = "0.5.1", default-features = false, optional = true }
+casc-core = { git = "https://github.com/TrayHard/casc-modern.git", rev = "a7fe4095f4ce445b9135b26509c5f60ae63d8c21", optional = true }
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
 
 [target.'cfg(windows)'.dependencies]

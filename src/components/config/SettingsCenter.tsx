@@ -1609,7 +1609,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      以包含 HD 符文实体的完整 jcy.mpq 为基础；地面掉落不误报背包操作，并生成全部地图心跳
+                      v4.2 实机探针：符文只标记 Flippy 掉落动画；地点仅验证罗格营地与黑色荒地
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1660,7 +1660,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成完整 Audio Telemetry v4 Mod
+                    生成 Audio Telemetry v4.2 探针
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
@@ -1672,7 +1672,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     </div>
                   )}
                   <p className="text-2xs text-warning">
-                    地图心跳只替换随机环境事件，不替换持续环境音或音乐；符文手动丢地也会计入。
+                    地点标记写入原始持续环境音并每 5 秒重复；背包移动不应计入，手动丢地与怪物爆出应计入。
                   </p>
                 </div>
 

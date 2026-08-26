@@ -22,8 +22,8 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置。
-- **音频数据包**：为 33 个符文和 `levels.txt` 中全部有效 AreaId 生成带 CRC 的 v4 超声标记，并按目标 D2R PID 捕获实际混音输出。
-- **一键 Mod 生成器**：基于 jcy 等完整已解包 Mod 复制全部内容，通过 HD 符文地面实体监听掉落，并修改 `sounds/levels/soundenviron` 生成地图心跳；保留原声并逐个 FLAC 自检。
+- **音频数据包**：为 33 个符文和地点生成带 CRC 的 v4 超声标记，并按目标 D2R PID 捕获实际混音输出。
+- **v4.2 实机探针**：符文只标记 HD 掉落状态机的 `Flippy` 状态；地点标记持续场景环境音。本轮只覆盖罗格营地与黑色荒地，验证通过后再扩展全部地图。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可用自定义策略把同一次连续行程中的黑色荒地、高塔 1–5 层等分段合并展示，原始数据不变。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
@@ -32,7 +32,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 1. 从 [Releases](https://github.com/gjy991229/D2RHub/releases) 下载 MSI / NSIS 安装包。
 2. 首次运行时至少完整配置一套“游戏目录 + 存档目录”。
 3. 添加并初始化账号，然后从账号卡片启动单个账号或批量启动。
-4. 在“设置中心 → 自动化”选择完整的 jcy.mpq，一键生成 `D2RHubAudioTelemetryV41`，启动参数使用 `-mod D2RHubAudioTelemetryV41 -txt`。
+4. 在“设置中心 → 自动化”选择完整的 jcy.mpq，生成 `D2RHubAudioProbeV42`，启动参数使用 `-mod D2RHubAudioProbeV42 -txt`。
 5. 选择已初始化账号并开启音频声纹识别；目标 D2R 启动后会按 PID 自动监听、显示诊断、计时和记录掉落。
 
 默认 v4 协议使用 18kHz BPSK 前导、17/19kHz FSK 载荷、双份数据包和 CRC-6；10 位 ID 可覆盖 Area 1–1023，默认声纹增益为 `-30dBFS`。设计、安装和诊断见 [音频遥测 v4](docs/AUDIO_TELEMETRY_V4.md)。
@@ -73,7 +73,7 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
 - Single, batch, and multi-select launch controls, mod arguments, window positions, and per-account game settings.
-- A one-click mod builder for 33 rune IDs and every valid area in the source `levels.txt`, preserving source-mod content and available rune audio with per-file verification.
+- A v4.2 field probe for 33 rune drop-animation IDs plus Rogue Encampment and Black Marsh continuous-ambience IDs, preserving source audio with per-file verification.
 - Per-process WASAPI capture, independent wilderness segments, town/frontend stopping, presentation-only merge strategies, immediate SQLite persistence, and live overlay updates.
 - Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
 
@@ -81,7 +81,7 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 
 1. Download an MSI / NSIS installer from [Releases](https://github.com/gjy991229/D2RHub/releases).
 2. Configure at least one complete game-directory and save-directory pair, then initialize an account.
-3. Under **Settings → Automation**, generate `D2RHubAudioTelemetryV41` from a complete unpacked source mod, then launch with `-mod D2RHubAudioTelemetryV41 -txt`.
+3. Under **Settings → Automation**, generate `D2RHubAudioProbeV42` from a complete unpacked source mod, then launch with `-mod D2RHubAudioProbeV42 -txt`.
 4. Select an initialized monitoring account and enable audio-ID detection. Monitoring starts automatically after its D2R process launches and exposes live capture diagnostics.
 
 The v4 protocol uses an 18kHz BPSK preamble, a 17/19kHz FSK payload, two packet copies, and CRC-6. Its 10-bit ID covers Area 1–1023; the default marker level is `-30dBFS`.

@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioTelemetryV41";
+const MOD_NAME: &str = "D2RHubAudioProbeV42";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
-const AREA_EVENT_DELAY_FRAMES: &str = "50";
+const PROBE_AREA_IDS: [u32; 2] = [1, 6];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildAudioModRequest {
@@ -309,7 +309,14 @@ fn validate_misc(table: &TsvTable) -> Result<(), String> {
     Ok(())
 }
 
-fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
+#[derive(Clone, Copy)]
+enum SoundRole {
+    RuneFlippy,
+    AreaAmbience,
+}
+
+fn configure_sound_row(table: &TsvTable, row: &mut [String], role: SoundRole) {
+    let is_ambience = matches!(role, SoundRole::AreaAmbience);
     for (column, value) in [
         ("Redirect", ""),
         ("Volume Min", "255"),
@@ -317,10 +324,8 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
         ("Pitch Min", "100"),
         ("Pitch Max", "100"),
         ("Group Size", "0"),
-        // SoundEnviron chooses an ambient event by Group Weight.  A zero
-        // weight row is valid data but can never be scheduled.
-        ("Group Weight", "100"),
-        ("Loop", "0"),
+        ("Group Weight", "0"),
+        ("Loop", if is_ambience { "1" } else { "0" }),
         ("Duration", "0"),
         ("Delay", "0"),
         ("Defer Inst", "0"),
@@ -329,8 +334,8 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
         ("Stream", "0"),
         ("Tracking", "0"),
         ("Is2D", "1"),
-        ("IsAmbientScene", "0"),
-        ("IsAmbientEvent", if ambient { "1" } else { "0" }),
+        ("IsAmbientScene", if is_ambience { "1" } else { "0" }),
+        ("IsAmbientEvent", "0"),
     ] {
         set_if_present(table, row, column, value);
     }
@@ -345,6 +350,100 @@ fn rune_unit_definition_candidates(mpq_directory: &Path, rune_number: u32) -> Ve
             mpq_directory.join(format!("data/hd/items/misc/{folder}/{rune_name}_rune.json"))
         })
         .collect()
+}
+
+fn flippy_state_machine_document(
+    original_state_machine: &str,
+    rune_number: u32,
+) -> Result<serde_json::Value, String> {
+    let normalized_state_machine = original_state_machine.replace('\\', "/");
+    let file_name = normalized_state_machine
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.strip_suffix(".json"))
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_')
+        })
+        .ok_or_else(|| format!("无法解析物品落地状态机路径: {original_state_machine}"))?;
+    let animation = format!("data/hd/items/dropped_items/animation/{file_name}.animation");
+    let machine_name = format!("d2rhub_r{rune_number:02}_flippy");
+    Ok(serde_json::json!({
+        "dependencies": {
+            "particles": [],
+            "models": [],
+            "skeletons": [],
+            "animations": [{ "path": animation }],
+            "textures": [],
+            "physics": [],
+            "json": [],
+            "variantdata": [],
+            "objecteffects": [],
+            "other": []
+        },
+        "type": "AnimationStateMachine",
+        "name": machine_name,
+        "unitType": "UNIT_OBJECT",
+        "animations": [{
+            "type": "AnimationItem",
+            "name": format!("{machine_name}001"),
+            "filename": animation
+        }],
+        "states": [{
+            "type": "AnimationState",
+            "name": "AnimationState",
+            "_name": "Flippy",
+            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
+            "loopCount": 1,
+            "stateId": 1,
+            "enableVfxAttributes": false,
+            "modeId": 5,
+            "skillIndex": -1,
+            "stepIndex": 0,
+            "animationBindings": { "hth": [format!("{machine_name}001")] },
+            "enterEvents": [],
+            "exitEvents": [],
+            "exitBlendType": 0
+        }, {
+            "type": "AnimationState",
+            "name": "AnimationState001",
+            "_name": "Ground",
+            "audioId": "",
+            "loopCount": 1,
+            "stateId": 2,
+            "enableVfxAttributes": false,
+            "modeId": 3,
+            "skillIndex": -1,
+            "stepIndex": 0,
+            "animationBindings": { "hth": [format!("{machine_name}001")] },
+            "enterEvents": [],
+            "exitEvents": [],
+            "exitBlendType": 0
+        }],
+        "transitions": [{
+            "type": "AnimationTransitionGroup",
+            "name": "AnimationState_transitiongroup",
+            "from": 1,
+            "settings": [{
+                "type": "AnimationTransitionItem",
+                "name": "AnimationState_transitiongroup_transition",
+                "crossfadeSeconds": 0.2,
+                "to": 2
+            }]
+        }, {
+            "type": "AnimationTransitionGroup",
+            "name": "AnimationState001_transitiongroup",
+            "from": 2,
+            "settings": [{
+                "type": "AnimationTransitionItem",
+                "name": "AnimationState001_transitiongroup_transition",
+                "crossfadeSeconds": 0.2,
+                "to": 1
+            }]
+        }]
+    }))
 }
 
 fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
@@ -376,20 +475,59 @@ fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
             .get_mut("components")
             .and_then(serde_json::Value::as_array_mut)
             .ok_or_else(|| format!("HD 符文 entity_root 缺少 components: {}", path.display()))?;
-        let emitter_name = format!("D2RHub_Rune_{rune_number:02}_AudioEmitter");
+        // An entity-level emitter also fires when the inventory renderer
+        // instantiates the unit.  Only the Flippy animation state is specific
+        // to a world item being dropped.
         components.retain(|component| {
-            component.get("name").and_then(serde_json::Value::as_str) != Some(emitter_name.as_str())
+            !(component.get("type").and_then(serde_json::Value::as_str)
+                == Some("AudioEmitterComponent")
+                && component
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|name| name.starts_with("D2RHub_Rune_")))
         });
-        components.push(serde_json::json!({
-            "type": "AudioEmitterComponent",
-            "name": emitter_name,
-            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
-            "randomDelay": {
-                "x": 0.0,
-                "y": 0.0
-            },
-            "forceNoRandom": true
-        }));
+        let unit_root = components
+            .iter_mut()
+            .find(|component| {
+                component.get("type").and_then(serde_json::Value::as_str)
+                    == Some("UnitRootComponent")
+            })
+            .ok_or_else(|| {
+                format!(
+                    "HD 符文 entity_root 缺少 UnitRootComponent: {}",
+                    path.display()
+                )
+            })?;
+        let original_state_machine = unit_root
+            .get("state_machine_filename")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("HD 符文缺少落地状态机路径: {}", path.display()))?
+            .to_string();
+        let telemetry_state_machine =
+            format!("data/hd/items/d2rhub_audio/runes/r{rune_number:02}_flippy.json");
+        unit_root["state_machine_filename"] =
+            serde_json::Value::String(telemetry_state_machine.clone());
+
+        let dependencies = document
+            .get_mut("dependencies")
+            .and_then(|value| value.get_mut("json"))
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文缺少 dependencies.json: {}", path.display()))?;
+        if let Some(reference) = dependencies.iter_mut().find(|reference| {
+            reference.get("path").and_then(serde_json::Value::as_str)
+                == Some(original_state_machine.as_str())
+        }) {
+            reference["path"] = serde_json::Value::String(telemetry_state_machine.clone());
+        } else {
+            dependencies.push(serde_json::json!({ "path": telemetry_state_machine }));
+        }
+
+        let state_machine = flippy_state_machine_document(&original_state_machine, rune_number)?;
+        write_file(
+            &mpq_directory.join(telemetry_state_machine.replace('/', "\\")),
+            serde_json::to_vec_pretty(&state_machine)
+                .map_err(|error| format!("序列化符文落地状态机失败: {error}"))?,
+        )?;
         write_file(
             &path,
             serde_json::to_vec_pretty(&document)
@@ -408,15 +546,18 @@ fn patch_sounds(
     let rune_template = table
         .row_by("Sound", "item_rune_hd")
         .or_else(|_| table.row_by("Sound", "item_rune"))?;
-    let area_template = table.row_by("Sound", "event_town1_day_hd2").or_else(|_| {
-        let ambient_index = table.column("IsAmbientEvent")?;
-        table
-            .rows
-            .iter()
-            .find(|row| row[ambient_index] == "1")
-            .cloned()
-            .ok_or_else(|| "sounds.txt 中找不到环境事件模板".to_string())
-    })?;
+    let area_template = table
+        .row_by("Sound", "wilderness_day_2_hd")
+        .or_else(|_| table.row_by("Sound", "scene_wilderness_day"))
+        .or_else(|_| {
+            let ambient_index = table.column("IsAmbientScene")?;
+            table
+                .rows
+                .iter()
+                .find(|row| row[ambient_index] == "1")
+                .cloned()
+                .ok_or_else(|| "sounds.txt 中找不到持续环境音模板".to_string())
+        })?;
     let mut definitions = Vec::with_capacity(RUNE_COUNT as usize + areas.len());
 
     for rune_number in 1..=RUNE_COUNT {
@@ -427,7 +568,7 @@ fn patch_sounds(
         table.set(&mut row, "Sound", &sound)?;
         table.set(&mut row, "*Index", next_index.to_string())?;
         table.set(&mut row, "FileName", &relative_path)?;
-        configure_sound_row(&table, &mut row, false);
+        configure_sound_row(&table, &mut row, SoundRole::RuneFlippy);
         table.rows.push(row);
         definitions.push((marker, sound, relative_path));
         next_index += 1;
@@ -443,7 +584,7 @@ fn patch_sounds(
         table.set(&mut row, "Sound", &sound)?;
         table.set(&mut row, "*Index", next_index.to_string())?;
         table.set(&mut row, "FileName", &relative_path)?;
-        configure_sound_row(&table, &mut row, true);
+        configure_sound_row(&table, &mut row, SoundRole::AreaAmbience);
         table.rows.push(row);
         definitions.push((marker, sound, relative_path));
         next_index += 1;
@@ -558,11 +699,14 @@ fn patch_sound_environ_and_levels(
         )?;
         environments.set(&mut row, "Index", next_index.to_string())?;
         let sound = format!("d2rhub_audio_a{area_id}");
-        for column in ["Day Event", "HD Day Event", "Night Event", "HD Night Event"] {
+        for column in [
+            "Day Ambience",
+            "HD Day Ambience",
+            "Night Ambience",
+            "HD Night Ambience",
+        ] {
             environments.set(&mut row, column, &sound)?;
         }
-        environments.set(&mut row, "Event Delay", AREA_EVENT_DELAY_FRAMES)?;
-        environments.set(&mut row, "HD Event Delay", AREA_EVENT_DELAY_FRAMES)?;
         environments.rows.push(row);
         level_row[level_environment] = next_index.to_string();
         next_index += 1;
@@ -591,6 +735,80 @@ fn resolve_sound_filename(sounds: &TsvTable, sound_name: &str) -> Option<String>
         return Some(row[filename_column].clone());
     }
     None
+}
+
+fn collect_area_ambience_filenames(
+    levels: &TsvTable,
+    environments: &TsvTable,
+    sounds: &TsvTable,
+    areas: &[AreaCatalogEntry],
+) -> Result<HashMap<u32, String>, String> {
+    let level_id = levels.column("Id")?;
+    let level_environment = levels.column("SoundEnv")?;
+    let environment_index = environments.column("Index")?;
+    let hd_day = environments.column("HD Day Ambience")?;
+    let day = environments.column("Day Ambience")?;
+    let hd_night = environments.column("HD Night Ambience")?;
+    let night = environments.column("Night Ambience")?;
+    let mut output = HashMap::new();
+    for area in areas {
+        let level = levels
+            .rows
+            .iter()
+            .find(|row| row[level_id].trim() == area.area_id.to_string())
+            .ok_or_else(|| format!("levels.txt 缺少 Area {}", area.area_id))?;
+        let environment = environments
+            .rows
+            .iter()
+            .find(|row| row[environment_index].trim() == level[level_environment].trim())
+            .ok_or_else(|| format!("找不到 Area {} 的 SoundEnv", area.area_id))?;
+        let sound_name = [hd_day, day, hd_night, night]
+            .into_iter()
+            .map(|column| environment[column].trim())
+            .find(|value| !value.is_empty())
+            .ok_or_else(|| format!("Area {} 没有持续环境音定义", area.area_id))?;
+        let filename = resolve_sound_filename(sounds, sound_name).ok_or_else(|| {
+            format!(
+                "无法从 sounds.txt 解析 Area {} 的持续环境音 {sound_name}",
+                area.area_id
+            )
+        })?;
+        output.insert(area.area_id, filename);
+    }
+    Ok(output)
+}
+
+fn find_game_storage_root(source: &Path, output_parent: &Path) -> Option<PathBuf> {
+    [source, output_parent]
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .find(|candidate| {
+            candidate.join(".build.info").is_file() && candidate.join("Data").is_dir()
+        })
+        .map(Path::to_path_buf)
+}
+
+fn extract_area_ambiences_from_casc(
+    game_root: &Path,
+    filenames: &HashMap<u32, String>,
+    cache_directory: &Path,
+) -> Result<HashMap<u32, PathBuf>, String> {
+    let storage = casc_core::Storage::open(game_root)
+        .map_err(|error| format!("打开 D2R CASC 失败 {}: {error}", game_root.display()))?;
+    let mut output = HashMap::new();
+    for (&area_id, filename) in filenames {
+        let casc_path = format!(
+            "data:data\\hd\\global\\sfx\\{}",
+            filename.replace('/', "\\")
+        );
+        let bytes = storage.read(&casc_path).map_err(|error| {
+            format!("从 D2R CASC 读取 Area {area_id} 环境音失败 {casc_path}: {error}")
+        })?;
+        let path = cache_directory.join(format!("a{area_id}.flac"));
+        write_file(&path, bytes)?;
+        output.insert(area_id, path);
+    }
+    Ok(output)
 }
 
 fn source_audio_path(mpq: Option<&Path>, filename: &str) -> Option<PathBuf> {
@@ -645,14 +863,49 @@ fn write_marker_flac(
         samples = resample_interleaved_i32(&samples, channels as usize, sample_rate, 48_000);
         sample_rate = 48_000;
     }
-    embed_marker(
-        &mut samples,
-        channels as usize,
-        bits_per_sample,
-        sample_rate,
-        marker,
-        config,
-    )?;
+    let periodic_area = matches!(marker, TelemetryMarker::Area { .. }) && source_audio.is_some();
+    let mut expected_detections = 1usize;
+    if periodic_area {
+        let interval_samples = sample_rate as usize * 5 * channels as usize;
+        let mut embedded_count = 0usize;
+        for chunk in samples.chunks_mut(interval_samples) {
+            if chunk.len() < interval_samples {
+                break;
+            }
+            let mut marker_chunk = chunk.to_vec();
+            embed_marker(
+                &mut marker_chunk,
+                channels as usize,
+                bits_per_sample,
+                sample_rate,
+                marker,
+                config,
+            )?;
+            chunk.copy_from_slice(&marker_chunk);
+            embedded_count += 1;
+        }
+        if embedded_count == 0 {
+            embed_marker(
+                &mut samples,
+                channels as usize,
+                bits_per_sample,
+                sample_rate,
+                marker,
+                config,
+            )?;
+        } else {
+            expected_detections = embedded_count;
+        }
+    } else {
+        embed_marker(
+            &mut samples,
+            channels as usize,
+            bits_per_sample,
+            sample_rate,
+            marker,
+            config,
+        )?;
+    }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|error| format!("创建音频目录失败 {}: {error}", parent.display()))?;
@@ -664,14 +917,18 @@ fn write_marker_flac(
         .into_iter()
         .filter(|detection| detection.marker == marker)
         .collect::<Vec<_>>();
-    if detections.len() != 1 {
+    let verified = detections.len() == expected_detections;
+    if !verified {
         return Err(format!(
-            "生成的 {:?} FLAC 自检失败：识别到 {} 次",
+            "生成的 {:?} FLAC 自检失败：应识别 {expected_detections} 次，实际识别 {} 次（periodic={periodic_area}）",
             marker,
             detections.len()
         ));
     }
-    Ok(detections[0].confidence)
+    Ok(detections
+        .iter()
+        .map(|detection| detection.confidence)
+        .fold(f32::INFINITY, f32::min))
 }
 
 fn default_output_parent(source: &Path) -> PathBuf {
@@ -740,7 +997,11 @@ fn build(
     let sounds = TsvTable::parse("sounds.txt", &read_utf8(&layout.excel.join("sounds.txt"))?)?;
     let levels = TsvTable::parse("levels.txt", &read_utf8(&layout.excel.join("levels.txt"))?)?;
     let rune_sources = resolve_rune_sources(layout.mpq.as_deref(), &misc, &sounds)?;
-    let areas = collect_areas(&levels)?;
+    let mut areas = collect_areas(&levels)?;
+    areas.retain(|area| PROBE_AREA_IDS.contains(&area.area_id));
+    if areas.len() != PROBE_AREA_IDS.len() {
+        return Err("探针版需要 levels.txt 同时包含 Area 1 和 Area 6".to_string());
+    }
 
     let explicit_sound_environment = request
         .sound_environment_file
@@ -765,6 +1026,15 @@ fn build(
         )
     };
     let environments = TsvTable::parse("soundenviron.txt", &sound_environment_text)?;
+    let area_ambience_filenames =
+        collect_area_ambience_filenames(&levels, &environments, &sounds, &areas)?;
+    let casc_cache = staging_mod_directory.join(".d2rhub-casc-cache");
+    let game_root = find_game_storage_root(&source, &output_parent);
+    let area_sources = if let Some(game_root) = &game_root {
+        extract_area_ambiences_from_casc(game_root, &area_ambience_filenames, &casc_cache)?
+    } else {
+        HashMap::new()
+    };
     validate_misc(&misc)?;
     let (sounds, definitions) = patch_sounds(sounds, &areas)?;
     let (environments, levels) = patch_sound_environ_and_levels(environments, levels, &areas)?;
@@ -790,7 +1060,8 @@ fn build(
             TelemetryMarker::Rune { rune_number } => {
                 rune_sources.get(&rune_number).map(PathBuf::as_path)
             }
-            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => None,
+            TelemetryMarker::Area { area_id } => area_sources.get(&area_id).map(PathBuf::as_path),
+            TelemetryMarker::Frontend => None,
         };
         let output_path = mpq_directory
             .join("data/hd/global/sfx")
@@ -801,7 +1072,16 @@ fn build(
             label: asset_label(marker, &areas),
             sound,
             relative_path,
-            source_audio: source_audio.map(|path| path.to_string_lossy().to_string()),
+            source_audio: match marker {
+                TelemetryMarker::Area { area_id } => source_audio.and_then(|_| {
+                    area_ambience_filenames
+                        .get(&area_id)
+                        .map(|filename| format!("CASC:{filename}"))
+                }),
+                TelemetryMarker::Rune { .. } | TelemetryMarker::Frontend => {
+                    source_audio.map(|path| path.to_string_lossy().to_string())
+                }
+            },
             preserved_source_audio: source_audio.is_some(),
             confidence,
         };
@@ -810,6 +1090,11 @@ fn build(
             TelemetryMarker::Area { .. } => area_assets.push(asset),
             TelemetryMarker::Frontend => {}
         }
+    }
+    if casc_cache.is_dir() {
+        std::fs::remove_dir_all(&casc_cache).map_err(|error| {
+            format!("清理 CASC 环境音缓存失败 {}: {error}", casc_cache.display())
+        })?;
     }
 
     write_file(
@@ -850,13 +1135,23 @@ fn build(
         area_catalog: areas,
         notes: vec![
             format!(
-                "已给 {patched_rune_units} 个 HD 符文地面实体添加一次性 AudioEmitter；不修改 misc.txt dropsound，因此背包/仓库移动不会误报。"
+                "已给 {patched_rune_units} 个符文建立独立 Flippy 动画状态机；只有世界物品进入落地动画时播放，背包实体创建不触发。"
             ),
             "源 Mod 中能定位到的符文 FLAC 会保留原声并混入 v4 标记；缺失资源使用纯超声标记。"
                 .to_string(),
-            "每个地图克隆原 SoundEnv，只替换随机 Day/Night Event；持续环境音和音乐保持原样。"
-                .to_string(),
-            "地图心跳事件权重固定为 100，约每 1.3–2.7 秒播放一次；资源即使已缓存，每次实际混音仍可被进程回环捕获。"
+            if let Some(game_root) = game_root {
+                format!(
+                    "地点探针只覆盖 Area {:?}；已从 {} 的 D2R CASC 提取真实持续环境音，混入 AreaId 后替换克隆 SoundEnv 的 Day/Night Ambience。",
+                    PROBE_AREA_IDS,
+                    game_root.display()
+                )
+            } else {
+                format!(
+                    "地点探针只覆盖 Area {:?}；未定位 D2R CASC，使用静默循环探针。",
+                    PROBE_AREA_IDS
+                )
+            },
+            "地点触发目标是场景切换时必然启动的持续 Ambience，不再依赖实机未执行的随机 Event。"
                 .to_string(),
         ],
     };
@@ -868,7 +1163,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 音频遥测 v4.1\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 进入任意地图，最迟约 3 秒应显示 Area Id/地图名；符文 HD 地面实体每次创建都会上报。\r\n5. 背包/仓库移动不会上报；怪物掉落和玩家扔地都会上报。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 音频探针 v4.2\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 本探针只验证罗格营地 Area 1 与黑色荒地 Area 6。进入后持续环境音启动时应识别地点。\r\n5. 符文只在 Flippy 世界落地动画播放：背包/仓库移动不应上报，玩家扔地和怪物掉落应上报。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -930,6 +1225,11 @@ mod tests {
         std::fs::create_dir_all(&directory).unwrap();
         for (index, name) in crate::rune_data::RUNE_NAMES_EN.iter().enumerate() {
             let document = serde_json::json!({
+                "dependencies": {
+                    "json": [{
+                        "path": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
+                    }]
+                },
                 "type": "UnitDefinition",
                 "name": format!("{}_rune", name.to_ascii_lowercase()),
                 "entities": [{
@@ -938,7 +1238,8 @@ mod tests {
                     "id": 1000 + index,
                     "components": [{
                         "type": "UnitRootComponent",
-                        "name": "component_root"
+                        "name": "component_root",
+                        "state_machine_filename": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
                     }]
                 }]
             });
@@ -951,7 +1252,7 @@ mod tests {
     }
 
     #[test]
-    fn patches_all_runes_and_all_level_rows() {
+    fn patches_all_runes_and_probe_area_rows() {
         let mut misc = "name\tcode\tdropsound\tusesound\n".to_string();
         for number in 1..=33 {
             misc.push_str(&format!(
@@ -980,7 +1281,7 @@ mod tests {
         assert_eq!(areas[1].scene_name, "Black Marsh");
         let environments = TsvTable::parse(
             "soundenviron",
-            "Handle\tIndex\tDay Event\tHD Day Event\tNight Event\tHD Night Event\tEvent Delay\tHD Event Delay\nTown\t1\ta\ta\ta\ta\t500\t500\nWild\t2\tb\tb\tb\tb\t500\t500\n",
+            "Handle\tIndex\tDay Ambience\tHD Day Ambience\tNight Ambience\tHD Night Ambience\tDay Event\tHD Day Event\tNight Event\tHD Night Event\tEvent Delay\tHD Event Delay\nTown\t1\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\ta\ta\ta\ta\t500\t500\nWild\t2\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tb\tb\tb\tb\t500\t500\n",
         )
         .unwrap();
         let (environments, levels) =
@@ -991,12 +1292,13 @@ mod tests {
 
         let sounds = TsvTable::parse(
             "sounds",
-            "Sound\t*Index\tFileName\tIsAmbientEvent\tGroup Weight\nitem_rune_hd\t10\titem\\rune.flac\t0\t0\nevent_town1_day_hd2\t11\tambient\\event.flac\t1\t100\n",
+            "Sound\t*Index\tRedirect\tFileName\tIsAmbientScene\tIsAmbientEvent\tGroup Weight\tLoop\nitem_rune_hd\t10\t\titem\\rune.flac\t0\t0\t0\t0\nscene_wilderness_day\t11\t\tambient\\scene.flac\t1\t0\t0\t1\n",
         )
         .unwrap();
         let (sounds, _) = patch_sounds(sounds, &areas).unwrap();
         let area_row = sounds.row_by("Sound", "d2rhub_audio_a1").unwrap();
-        assert_eq!(sounds.get(&area_row, "Group Weight"), Some("100"));
+        assert_eq!(sounds.get(&area_row, "IsAmbientScene"), Some("1"));
+        assert_eq!(sounds.get(&area_row, "Loop"), Some("1"));
     }
 
     #[test]
@@ -1030,17 +1332,17 @@ mod tests {
         .unwrap();
         std::fs::write(
             excel.join("sounds.txt"),
-            "Sound\t*Index\tFileName\nitem_rune_hd\t1\titem\\rune.flac\n",
+            "Sound\t*Index\tRedirect\tFileName\tIsAmbientScene\nitem_rune_hd\t1\t\titem\\rune.flac\t0\nscene_wilderness_day\t2\t\tambient\\scene.flac\t1\n",
         )
         .unwrap();
         std::fs::write(
             excel.join("levels.txt"),
-            "Name\tId\tSoundEnv\tLevelName\nAct 1 - Town\t1\t1\tRogue Encampment\n",
+            "Name\tId\tSoundEnv\tLevelName\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\n",
         )
         .unwrap();
         std::fs::write(
             excel.join("soundenviron.txt"),
-            "Handle\tIndex\tDay Event\tHD Day Event\tNight Event\tHD Night Event\tEvent Delay\tHD Event Delay\nTown\t1\ta\ta\ta\ta\t500\t500\n",
+            "Handle\tIndex\tDay Ambience\tHD Day Ambience\tNight Ambience\tHD Night Ambience\nTown\t1\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\nWild\t2\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\n",
         )
         .unwrap();
         let error = build(
@@ -1078,7 +1380,7 @@ mod tests {
         std::fs::write(excel.join("misc.txt"), misc).unwrap();
         std::fs::write(
             excel.join("sounds.txt"),
-            "Sound\t*Index\tRedirect\tFileName\tChannel\tIsAmbientScene\tIsAmbientEvent\tVolume Min\tVolume Max\tPitch Min\tPitch Max\tGroup Size\tGroup Weight\tLoop\tDefer Inst\tStop Inst\tCompound\tStream\tTracking\tIs2D\nitem_rune_hd\t10\t\titem\\rune.flac\tsfx/items_hd\t0\t0\t200\t200\t100\t100\t0\t0\t0\t0\t1\t0\t0\t0\t0\nevent_town1_day_hd2\t11\t\tambient\\event.flac\tsfx/ambient\t0\t1\t20\t30\t90\t110\t6\t100\t0\t0\t0\t8\t0\t1\t1\n",
+            "Sound\t*Index\tRedirect\tFileName\tChannel\tIsAmbientScene\tIsAmbientEvent\tVolume Min\tVolume Max\tPitch Min\tPitch Max\tGroup Size\tGroup Weight\tLoop\tDefer Inst\tStop Inst\tCompound\tStream\tTracking\tIs2D\nitem_rune_hd\t10\t\titem\\rune.flac\tsfx/items_hd\t0\t0\t200\t200\t100\t100\t0\t0\t0\t0\t1\t0\t0\t0\t0\nscene_wilderness_day\t11\t\tambient\\scene.flac\tsfx/ambient/scene-2d_hd\t1\t0\t200\t200\t100\t100\t0\t0\t1\t0\t0\t0\t1\t0\t1\n",
         )
         .unwrap();
         std::fs::write(
@@ -1088,7 +1390,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             excel.join("soundenviron.txt"),
-            "Handle\tIndex\tDay Event\tHD Day Event\tNight Event\tHD Night Event\tEvent Delay\tHD Event Delay\nTown\t1\ta\ta\ta\ta\t500\t500\nWild\t2\tb\tb\tb\tb\t500\t500\n",
+            "Handle\tIndex\tDay Ambience\tHD Day Ambience\tNight Ambience\tHD Night Ambience\nTown\t1\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\nWild\t2\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\n",
         )
         .unwrap();
         write_rune_unit_definitions(&source);
@@ -1145,13 +1447,23 @@ mod tests {
             &read_utf8(&output_mpq.join("data/hd/items/misc/rune/el_rune.json")).unwrap(),
         )
         .unwrap();
-        let emitter = el_document["entities"][0]["components"]
+        let unit_root = el_document["entities"][0]["components"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|component| component["type"] == "AudioEmitterComponent")
+            .find(|component| component["type"] == "UnitRootComponent")
             .unwrap();
-        assert_eq!(emitter["audioId"], "d2rhub_audio_r01");
+        assert_eq!(
+            unit_root["state_machine_filename"],
+            "data/hd/items/d2rhub_audio/runes/r01_flippy.json"
+        );
+        let flippy: serde_json::Value = serde_json::from_str(
+            &read_utf8(&output_mpq.join("data/hd/items/d2rhub_audio/runes/r01_flippy.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(flippy["states"][0]["audioId"], "d2rhub_audio_r01");
+        assert_eq!(flippy["states"][1]["audioId"], "");
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1180,7 +1492,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.rune_assets.len(), RUNE_COUNT as usize);
-        assert!(report.area_assets.len() >= 100);
+        assert_eq!(report.area_assets.len(), PROBE_AREA_IDS.len());
         assert!(report
             .rune_assets
             .iter()
@@ -1189,6 +1501,12 @@ mod tests {
             .area_assets
             .iter()
             .all(|asset| asset.confidence > 0.7));
+        if std::env::var_os("D2RHUB_AUDIO_REAL_OUTPUT").is_some() {
+            assert!(report
+                .area_assets
+                .iter()
+                .all(|asset| asset.preserved_source_audio));
+        }
         if std::env::var_os("D2RHUB_AUDIO_REAL_OUTPUT").is_none() {
             std::fs::remove_dir_all(temporary_root).unwrap();
         }
