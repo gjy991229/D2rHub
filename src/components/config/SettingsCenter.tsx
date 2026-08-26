@@ -69,6 +69,8 @@ interface RuneAudioStatus {
   last_marker: string | null;
   last_confidence: number | null;
   last_detected_at: string | null;
+  diagnostic_recording: boolean;
+  diagnostic_recording_path: string | null;
 }
 
 interface AudioModReport {
@@ -677,6 +679,30 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       showToast("error", `生成音频遥测 Mod 失败: ${error}`);
     } finally {
       setAudioModBuilding(false);
+    }
+  };
+
+  const toggleAudioDiagnosticRecording = async () => {
+    try {
+      if (audioStatus?.diagnostic_recording) {
+        const path = await invoke<string | null>("stop_rune_audio_diagnostic_recording");
+        setAudioStatus(previous => previous ? {
+          ...previous,
+          diagnostic_recording: false,
+          diagnostic_recording_path: path ?? previous.diagnostic_recording_path,
+        } : previous);
+        if (path) showToast("success", `诊断录音已保存：${path}`);
+      } else {
+        const path = await invoke<string>("start_rune_audio_diagnostic_recording");
+        setAudioStatus(previous => previous ? {
+          ...previous,
+          diagnostic_recording: true,
+          diagnostic_recording_path: path,
+        } : previous);
+        showToast("success", "诊断录音已开始，仅录制目标 D2R 进程的声音");
+      }
+    } catch (error) {
+      showToast("error", `切换诊断录音失败: ${error}`);
     }
   };
 
@@ -1601,6 +1627,25 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         </Button>
                         <p className="text-2xs text-text-muted text-center mt-1">目标 D2R 必须已运行</p>
                       </div>
+
+                      <div className="border-t border-border-default/50 pt-3 space-y-1.5">
+                        <Button
+                          variant={audioStatus?.diagnostic_recording ? "danger" : "secondary"}
+                          size="md"
+                          disabled={!audioStatus?.running}
+                          onClick={toggleAudioDiagnosticRecording}
+                          className="w-full"
+                        >
+                          {audioStatus?.diagnostic_recording ? "停止并保存诊断录音" : "开始女伯爵诊断录音"}
+                        </Button>
+                        <p className="text-2xs text-text-muted text-center break-all">
+                          {audioStatus?.diagnostic_recording
+                            ? "正在录制目标 D2R 进程的单声道音频，并同步保存识别事件"
+                            : audioStatus?.diagnostic_recording_path
+                              ? `最近保存：${audioStatus.diagnostic_recording_path}`
+                              : "生成 WAV 与同名 events.json；不录制麦克风或其他应用"}
+                        </p>
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1609,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.2 实机探针：符文只标记 Flippy 掉落动画；地点仅验证罗格营地与黑色荒地
+                      v4.3 女伯爵实机版：符文单次 Flippy 标记并按编号错峰；地点覆盖完整女伯爵路线
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1660,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.2 探针
+                    生成 Audio Telemetry v4.3 女伯爵版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
@@ -1672,7 +1717,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     </div>
                   )}
                   <p className="text-2xs text-warning">
-                    地点标记写入原始持续环境音并每 5 秒重复；背包移动不应计入，手动丢地与怪物爆出应计入。
+                    地点覆盖罗格营地、黑色荒地、遗忘之塔和高塔地牢 1–5 层；同号符文完全同步时仍无法判断数量。
                   </p>
                 </div>
 

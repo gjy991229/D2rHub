@@ -15,6 +15,10 @@ pub const SYMBOL_SECONDS: f32 = 0.003;
 pub const PREAMBLE_PAYLOAD_GAP_SECONDS: f32 = 0.002;
 pub const PACKET_GAP_SECONDS: f32 = 0.004;
 pub const MARKER_OFFSET_SECONDS: f32 = 0.008;
+/// A full two-copy marker occupies about 223ms at 48kHz. Rune-specific
+/// 250ms slots keep simultaneous world drops from transmitting on top of
+/// each other while leaving a small guard interval.
+pub const RUNE_SLOT_SECONDS: f32 = 0.250;
 pub const MIN_SAMPLE_RATE: u32 = 44_100;
 
 const PACKET_MAGIC: u32 = 0b10;
@@ -211,8 +215,36 @@ pub fn embed_marker(
     marker: TelemetryMarker,
     config: MarkerConfig,
 ) -> Result<EmbeddingReport, String> {
+    embed_marker_with_delay(
+        samples,
+        channels,
+        bits_per_sample,
+        sample_rate,
+        marker,
+        config,
+        0.0,
+    )
+}
+
+pub fn rune_marker_delay_seconds(rune_number: u32) -> Result<f32, String> {
+    validate_marker(TelemetryMarker::Rune { rune_number })?;
+    Ok((rune_number - 1) as f32 * RUNE_SLOT_SECONDS)
+}
+
+pub fn embed_marker_with_delay(
+    samples: &mut Vec<i32>,
+    channels: usize,
+    bits_per_sample: u32,
+    sample_rate: u32,
+    marker: TelemetryMarker,
+    config: MarkerConfig,
+    additional_delay_seconds: f32,
+) -> Result<EmbeddingReport, String> {
     let config = config.validate()?;
     let payload = encode_payload(marker)?;
+    if !additional_delay_seconds.is_finite() || !(0.0..=30.0).contains(&additional_delay_seconds) {
+        return Err("声纹附加延迟必须位于 0 到 30 秒之间".to_string());
+    }
     if sample_rate < MIN_SAMPLE_RATE {
         return Err(format!(
             "FLAC 采样率 {}Hz 过低；v4 超声数据包最低要求 {}Hz",
@@ -230,7 +262,8 @@ pub fn embed_marker(
     }
 
     let marker_len = marker_frames(sample_rate);
-    let marker_offset = marker_offset_frames(sample_rate);
+    let marker_offset =
+        marker_offset_frames(sample_rate) + seconds_frames(sample_rate, additional_delay_seconds);
     let original_frames = samples.len() / channels;
     let required_frames = marker_offset + marker_len;
     let frames_added = required_frames.saturating_sub(original_frames);
@@ -581,6 +614,25 @@ mod tests {
         interleaved_i32_to_mono(&samples, 1, 16).unwrap()
     }
 
+    fn tagged_rune_in_slot(number: u32, sample_rate: u32, gain_db: f32) -> Vec<f32> {
+        let marker = rune(number);
+        let mut samples = vec![0i32; sample_rate as usize / 3];
+        embed_marker_with_delay(
+            &mut samples,
+            1,
+            16,
+            sample_rate,
+            marker,
+            MarkerConfig {
+                gain_db,
+                ..MarkerConfig::default()
+            },
+            rune_marker_delay_seconds(number).unwrap(),
+        )
+        .unwrap();
+        interleaved_i32_to_mono(&samples, 1, 16).unwrap()
+    }
+
     #[test]
     fn payload_round_trips_runes_full_area_range_and_frontend() {
         for marker in [
@@ -679,6 +731,27 @@ mod tests {
             .filter(|detection| detection.marker == marker)
             .collect::<Vec<_>>();
         assert_eq!(detections.len(), 2, "{detections:?}");
+    }
+
+    #[test]
+    fn simultaneous_different_runes_are_separated_by_rune_slots() {
+        let signals = [
+            tagged_rune_in_slot(1, 48_000, -26.0),
+            tagged_rune_in_slot(12, 48_000, -26.0),
+            tagged_rune_in_slot(33, 48_000, -26.0),
+        ];
+        let output_len = signals.iter().map(Vec::len).max().unwrap();
+        let mut mixed = vec![0.0f32; output_len];
+        for signal in signals {
+            for (target, sample) in mixed.iter_mut().zip(signal) {
+                *target += sample;
+            }
+        }
+        let markers = detect_markers(&mixed, 48_000, 0.50)
+            .into_iter()
+            .map(|detection| detection.marker)
+            .collect::<Vec<_>>();
+        assert_eq!(markers, vec![rune(1), rune(12), rune(33)]);
     }
 
     #[test]

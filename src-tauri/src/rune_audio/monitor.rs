@@ -1,8 +1,11 @@
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
-use super::protocol::StreamingDetector;
+use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::BufWriter;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use tauri::{Emitter, Manager};
@@ -51,6 +54,41 @@ pub struct RuneAudioStatus {
     pub last_marker: Option<String>,
     pub last_confidence: Option<f32>,
     pub last_detected_at: Option<String>,
+    pub diagnostic_recording: bool,
+    pub diagnostic_recording_path: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct DiagnosticDetection {
+    observed_at: String,
+    start_frame: u64,
+    marker: TelemetryMarker,
+    confidence: f32,
+}
+
+#[derive(Debug, Serialize)]
+struct DiagnosticSidecar {
+    protocol_version: u8,
+    started_at: String,
+    stopped_at: String,
+    account_id: String,
+    target_pid: u32,
+    sample_rate: u32,
+    channels: u16,
+    bits_per_sample: u16,
+    wav_file: String,
+    write_error: Option<String>,
+    detections: Vec<DiagnosticDetection>,
+}
+
+struct DiagnosticRecording {
+    path: PathBuf,
+    started_at: String,
+    account_id: String,
+    target_pid: u32,
+    writer: hound::WavWriter<BufWriter<File>>,
+    write_error: Option<String>,
+    detections: Vec<DiagnosticDetection>,
 }
 
 #[derive(Debug, Clone)]
@@ -65,6 +103,11 @@ static RUNNING: AtomicBool = AtomicBool::new(false);
 static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static STATUS: OnceLock<Mutex<RuneAudioStatus>> = OnceLock::new();
+static DIAGNOSTIC_RECORDING: OnceLock<Mutex<Option<DiagnosticRecording>>> = OnceLock::new();
+
+fn diagnostic_recording() -> &'static Mutex<Option<DiagnosticRecording>> {
+    DIAGNOSTIC_RECORDING.get_or_init(|| Mutex::new(None))
+}
 
 fn status() -> &'static Mutex<RuneAudioStatus> {
     STATUS.get_or_init(|| {
@@ -81,12 +124,106 @@ fn status() -> &'static Mutex<RuneAudioStatus> {
             last_marker: None,
             last_confidence: None,
             last_detected_at: None,
+            diagnostic_recording: false,
+            diagnostic_recording_path: None,
         })
     })
 }
 
 fn set_status(next: RuneAudioStatus) {
     *status().lock().unwrap_or_else(|error| error.into_inner()) = next;
+}
+
+fn write_diagnostic_samples(samples: &[f32]) {
+    let mut guard = diagnostic_recording()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let Some(recording) = guard.as_mut() else {
+        return;
+    };
+    if recording.write_error.is_some() {
+        return;
+    }
+    for sample in samples {
+        let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+        if let Err(error) = recording.writer.write_sample(pcm) {
+            recording.write_error = Some(format!("写入诊断 WAV 失败: {error}"));
+            break;
+        }
+    }
+}
+
+fn append_diagnostic_detection(marker: TelemetryMarker, confidence: f32, start_frame: u64) {
+    let mut guard = diagnostic_recording()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(recording) = guard.as_mut() {
+        recording.detections.push(DiagnosticDetection {
+            observed_at: chrono::Local::now().to_rfc3339(),
+            start_frame,
+            marker,
+            confidence,
+        });
+    }
+}
+
+fn finish_diagnostic_recording() -> Result<Option<String>, String> {
+    let recording = diagnostic_recording()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    let Some(recording) = recording else {
+        return Ok(None);
+    };
+    let DiagnosticRecording {
+        path,
+        started_at,
+        account_id,
+        target_pid,
+        writer,
+        write_error,
+        detections,
+    } = recording;
+    let path_text = path.to_string_lossy().to_string();
+    let wav_file = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("diagnostic.wav")
+        .to_string();
+    let events_path = path.with_extension("events.json");
+    let sidecar = DiagnosticSidecar {
+        protocol_version: PROTOCOL_VERSION,
+        started_at,
+        stopped_at: chrono::Local::now().to_rfc3339(),
+        account_id,
+        target_pid,
+        sample_rate: CAPTURE_SAMPLE_RATE,
+        channels: 1,
+        bits_per_sample: 16,
+        wav_file,
+        write_error: write_error.clone(),
+        detections,
+    };
+    let sidecar_result = serde_json::to_vec_pretty(&sidecar)
+        .map_err(|error| format!("序列化诊断事件失败: {error}"))
+        .and_then(|bytes| {
+            std::fs::write(&events_path, bytes)
+                .map_err(|error| format!("写入诊断事件失败 {}: {error}", events_path.display()))
+        });
+    let finalize_result = writer
+        .finalize()
+        .map_err(|error| format!("完成诊断 WAV 失败 {}: {error}", path.display()));
+    {
+        let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+        current.diagnostic_recording = false;
+        current.diagnostic_recording_path = Some(path_text.clone());
+    }
+    if let Some(error) = write_error {
+        return Err(error);
+    }
+    sidecar_result?;
+    finalize_result?;
+    Ok(Some(path_text))
 }
 
 fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, String> {
@@ -144,16 +281,26 @@ fn marker_status_label(marker: TelemetryMarker, catalog: &LocationCatalog) -> St
     }
 }
 
-fn record_decoded_packet(marker: TelemetryMarker, confidence: f32, catalog: &LocationCatalog) {
-    let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
-    current.decoded_packets += 1;
-    match marker {
-        TelemetryMarker::Rune { .. } => current.rune_events += 1,
-        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => current.scene_heartbeats += 1,
+fn record_decoded_packet(
+    marker: TelemetryMarker,
+    confidence: f32,
+    start_frame: u64,
+    catalog: &LocationCatalog,
+) {
+    {
+        let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+        current.decoded_packets += 1;
+        match marker {
+            TelemetryMarker::Rune { .. } => current.rune_events += 1,
+            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {
+                current.scene_heartbeats += 1
+            }
+        }
+        current.last_marker = Some(marker_status_label(marker, catalog));
+        current.last_confidence = Some(confidence);
+        current.last_detected_at = Some(chrono::Local::now().to_rfc3339());
     }
-    current.last_marker = Some(marker_status_label(marker, catalog));
-    current.last_confidence = Some(confidence);
-    current.last_detected_at = Some(chrono::Local::now().to_rfc3339());
+    append_diagnostic_detection(marker, confidence, start_frame);
 }
 
 fn handle_rune_detection(
@@ -408,8 +555,14 @@ fn capture_loop(
             current.captured_frames += chunk.len() as u64;
             current.audio_peak = peak;
         }
+        write_diagnostic_samples(&chunk);
         for detection in detector.push(&chunk) {
-            record_decoded_packet(detection.marker, detection.confidence, &catalog);
+            record_decoded_packet(
+                detection.marker,
+                detection.confidence,
+                detection.start_frame,
+                &catalog,
+            );
             match detection.marker {
                 TelemetryMarker::Rune { rune_number } => handle_rune_detection(
                     &app,
@@ -436,6 +589,9 @@ fn capture_loop(
     }
 
     let _ = audio_client.stop_stream();
+    if let Err(error) = finish_diagnostic_recording() {
+        crate::logger::log_msg("ERROR", "RuneAudio", &error);
+    }
     Ok(())
 }
 
@@ -479,6 +635,8 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         last_marker: None,
         last_confidence: None,
         last_detected_at: None,
+        diagnostic_recording: false,
+        diagnostic_recording_path: None,
     });
 
     std::thread::Builder::new()
@@ -505,6 +663,8 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
                     last_marker: previous.last_marker,
                     last_confidence: previous.last_confidence,
                     last_detected_at: previous.last_detected_at,
+                    diagnostic_recording: previous.diagnostic_recording,
+                    diagnostic_recording_path: previous.diagnostic_recording_path,
                 });
             }
             if let Err(error) = result {
@@ -560,9 +720,116 @@ pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), Str
 }
 
 #[tauri::command]
+pub fn start_rune_audio_diagnostic_recording(app: tauri::AppHandle) -> Result<String, String> {
+    if !RUNNING.load(Ordering::SeqCst) {
+        return Err("请先启动音频声纹监控".to_string());
+    }
+    let config = resolve_monitor_config(&app)?;
+    let mut guard = diagnostic_recording()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if let Some(recording) = guard.as_ref() {
+        return Ok(recording.path.to_string_lossy().to_string());
+    }
+    let app_data_dir = app
+        .state::<crate::state::SharedState>()
+        .app_data_dir
+        .clone();
+    let directory = PathBuf::from(app_data_dir).join("audio-diagnostics");
+    std::fs::create_dir_all(&directory)
+        .map_err(|error| format!("创建诊断录音目录失败 {}: {error}", directory.display()))?;
+    let stamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let suffix = &uuid::Uuid::new_v4().simple().to_string()[..8];
+    let path = directory.join(format!(
+        "d2rhub-audio-{stamp}-pid{}-{suffix}.wav",
+        config.target_pid
+    ));
+    let writer = hound::WavWriter::create(
+        &path,
+        hound::WavSpec {
+            channels: 1,
+            sample_rate: CAPTURE_SAMPLE_RATE,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        },
+    )
+    .map_err(|error| format!("创建诊断 WAV 失败 {}: {error}", path.display()))?;
+    let path_text = path.to_string_lossy().to_string();
+    *guard = Some(DiagnosticRecording {
+        path,
+        started_at: chrono::Local::now().to_rfc3339(),
+        account_id: config.account_id,
+        target_pid: config.target_pid,
+        writer,
+        write_error: None,
+        detections: Vec::new(),
+    });
+    drop(guard);
+    let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+    current.diagnostic_recording = true;
+    current.diagnostic_recording_path = Some(path_text.clone());
+    Ok(path_text)
+}
+
+#[tauri::command]
+pub fn stop_rune_audio_diagnostic_recording() -> Result<Option<String>, String> {
+    finish_diagnostic_recording()
+}
+
+#[tauri::command]
 pub fn get_rune_audio_status() -> RuneAudioStatus {
     status()
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostic_recording_writes_wav_and_detection_sidecar() {
+        let root =
+            std::env::temp_dir().join(format!("d2rhub-audio-recording-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("sample.wav");
+        let writer = hound::WavWriter::create(
+            &path,
+            hound::WavSpec {
+                channels: 1,
+                sample_rate: CAPTURE_SAMPLE_RATE,
+                bits_per_sample: 16,
+                sample_format: hound::SampleFormat::Int,
+            },
+        )
+        .unwrap();
+        *diagnostic_recording()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = Some(DiagnosticRecording {
+            path: path.clone(),
+            started_at: "2026-08-26T00:00:00+08:00".to_string(),
+            account_id: "test-account".to_string(),
+            target_pid: 42,
+            writer,
+            write_error: None,
+            detections: Vec::new(),
+        });
+        write_diagnostic_samples(&[0.0, 0.25, -0.25]);
+        append_diagnostic_detection(TelemetryMarker::Rune { rune_number: 24 }, 0.91, 1_234);
+        assert_eq!(
+            finish_diagnostic_recording().unwrap(),
+            Some(path.to_string_lossy().to_string())
+        );
+
+        let mut reader = hound::WavReader::open(&path).unwrap();
+        assert_eq!(reader.spec().sample_format, hound::SampleFormat::Int);
+        assert_eq!(reader.samples::<i16>().count(), 3);
+        let sidecar: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.with_extension("events.json")).unwrap())
+                .unwrap();
+        assert_eq!(sidecar["detections"].as_array().unwrap().len(), 1);
+        assert_eq!(sidecar["detections"][0]["start_frame"], 1_234);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

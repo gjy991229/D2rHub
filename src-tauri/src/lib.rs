@@ -387,6 +387,10 @@ pub fn run() {
             rune_audio::monitor::stop_rune_audio_monitor,
             #[cfg(feature = "rune-audio")]
             rune_audio::monitor::get_rune_audio_status,
+            #[cfg(feature = "rune-audio")]
+            rune_audio::monitor::start_rune_audio_diagnostic_recording,
+            #[cfg(feature = "rune-audio")]
+            rune_audio::monitor::stop_rune_audio_diagnostic_recording,
             // ── 数据统计 ──
             #[cfg(feature = "stats")]
             stats::save_scene_record,

@@ -4,17 +4,17 @@ use super::catalog::{
 };
 use super::flac::{decode_flac, encode_flac, resample_interleaved_i32};
 use super::protocol::{
-    detect_markers, embed_marker, interleaved_i32_to_mono, MarkerConfig, MIN_SAMPLE_RATE,
-    PROTOCOL_VERSION,
+    detect_markers, embed_marker, embed_marker_with_delay, interleaved_i32_to_mono,
+    rune_marker_delay_seconds, MarkerConfig, MIN_SAMPLE_RATE, PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioProbeV42";
+const MOD_NAME: &str = "D2RHubAudioCountessV43";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
-const PROBE_AREA_IDS: [u32; 2] = [1, 6];
+const COUNTESS_AREA_IDS: [u32; 8] = [1, 6, 20, 21, 22, 23, 24, 25];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BuildAudioModRequest {
@@ -431,16 +431,6 @@ fn flippy_state_machine_document(
                 "name": "AnimationState_transitiongroup_transition",
                 "crossfadeSeconds": 0.2,
                 "to": 2
-            }]
-        }, {
-            "type": "AnimationTransitionGroup",
-            "name": "AnimationState001_transitiongroup",
-            "from": 2,
-            "settings": [{
-                "type": "AnimationTransitionItem",
-                "name": "AnimationState001_transitiongroup_transition",
-                "crossfadeSeconds": 0.2,
-                "to": 1
             }]
         }]
     }))
@@ -897,14 +887,25 @@ fn write_marker_flac(
             expected_detections = embedded_count;
         }
     } else {
-        embed_marker(
-            &mut samples,
-            channels as usize,
-            bits_per_sample,
-            sample_rate,
-            marker,
-            config,
-        )?;
+        match marker {
+            TelemetryMarker::Rune { rune_number } => embed_marker_with_delay(
+                &mut samples,
+                channels as usize,
+                bits_per_sample,
+                sample_rate,
+                marker,
+                config,
+                rune_marker_delay_seconds(rune_number)?,
+            )?,
+            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => embed_marker(
+                &mut samples,
+                channels as usize,
+                bits_per_sample,
+                sample_rate,
+                marker,
+                config,
+            )?,
+        };
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -998,9 +999,9 @@ fn build(
     let levels = TsvTable::parse("levels.txt", &read_utf8(&layout.excel.join("levels.txt"))?)?;
     let rune_sources = resolve_rune_sources(layout.mpq.as_deref(), &misc, &sounds)?;
     let mut areas = collect_areas(&levels)?;
-    areas.retain(|area| PROBE_AREA_IDS.contains(&area.area_id));
-    if areas.len() != PROBE_AREA_IDS.len() {
-        return Err("探针版需要 levels.txt 同时包含 Area 1 和 Area 6".to_string());
+    areas.retain(|area| COUNTESS_AREA_IDS.contains(&area.area_id));
+    if areas.len() != COUNTESS_AREA_IDS.len() {
+        return Err("女伯爵实机版需要 levels.txt 包含 Area 1、6、20–25".to_string());
     }
 
     let explicit_sound_environment = request
@@ -1135,20 +1136,20 @@ fn build(
         area_catalog: areas,
         notes: vec![
             format!(
-                "已给 {patched_rune_units} 个符文建立独立 Flippy 动画状态机；只有世界物品进入落地动画时播放，背包实体创建不触发。"
+                "已给 {patched_rune_units} 个符文建立单向 Flippy→Ground 状态机；每次世界掉落只播放一次，背包实体创建不触发。"
             ),
             "源 Mod 中能定位到的符文 FLAC 会保留原声并混入 v4 标记；缺失资源使用纯超声标记。"
                 .to_string(),
             if let Some(game_root) = game_root {
                 format!(
-                    "地点探针只覆盖 Area {:?}；已从 {} 的 D2R CASC 提取真实持续环境音，混入 AreaId 后替换克隆 SoundEnv 的 Day/Night Ambience。",
-                    PROBE_AREA_IDS,
+                    "女伯爵路线覆盖 Area {:?}；已从 {} 的 D2R CASC 提取真实持续环境音，混入 AreaId 后替换克隆 SoundEnv 的 Day/Night Ambience。",
+                    COUNTESS_AREA_IDS,
                     game_root.display()
                 )
             } else {
                 format!(
-                    "地点探针只覆盖 Area {:?}；未定位 D2R CASC，使用静默循环探针。",
-                    PROBE_AREA_IDS
+                    "女伯爵路线覆盖 Area {:?}；未定位 D2R CASC，使用静默循环标记。",
+                    COUNTESS_AREA_IDS
                 )
             },
             "地点触发目标是场景切换时必然启动的持续 Ambience，不再依赖实机未执行的随机 Event。"
@@ -1163,7 +1164,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 音频探针 v4.2\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 本探针只验证罗格营地 Area 1 与黑色荒地 Area 6。进入后持续环境音启动时应识别地点。\r\n5. 符文只在 Flippy 世界落地动画播放：背包/仓库移动不应上报，玩家扔地和怪物掉落应上报。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 女伯爵音频实机版 v4.3\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文只在 Flippy 世界落地动画播放一次；33 个符文使用不同延迟槽，降低同时爆落的碰撞。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -1252,7 +1253,7 @@ mod tests {
     }
 
     #[test]
-    fn patches_all_runes_and_probe_area_rows() {
+    fn patches_all_runes_and_countess_area_rows() {
         let mut misc = "name\tcode\tdropsound\tusesound\n".to_string();
         for number in 1..=33 {
             misc.push_str(&format!(
@@ -1272,11 +1273,11 @@ mod tests {
 
         let levels = TsvTable::parse(
             "levels",
-            "Name\tId\tSoundEnv\tLevelName\nNull\t0\t0\tNull\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\n",
+            "Name\tId\tSoundEnv\tLevelName\nNull\t0\t0\tNull\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\nAct 1 - Crypt 1\t20\t2\tForgotten Tower\nAct 1 - Crypt 2\t21\t2\tTower Cellar Level 1\nAct 1 - Crypt 3\t22\t2\tTower Cellar Level 2\nAct 1 - Crypt 4\t23\t2\tTower Cellar Level 3\nAct 1 - Crypt 5\t24\t2\tTower Cellar Level 4\nAct 1 - Crypt 6\t25\t2\tTower Cellar Level 5\n",
         )
         .unwrap();
         let areas = collect_areas(&levels).unwrap();
-        assert_eq!(areas.len(), 2);
+        assert_eq!(areas.len(), 8);
         assert_eq!(areas[0].kind, LocationKind::Town);
         assert_eq!(areas[1].scene_name, "Black Marsh");
         let environments = TsvTable::parse(
@@ -1286,7 +1287,7 @@ mod tests {
         .unwrap();
         let (environments, levels) =
             patch_sound_environ_and_levels(environments, levels, &areas).unwrap();
-        assert_eq!(environments.rows.len(), 4);
+        assert_eq!(environments.rows.len(), 10);
         assert_eq!(levels.get(&levels.rows[1], "SoundEnv"), Some("3"));
         assert_eq!(levels.get(&levels.rows[2], "SoundEnv"), Some("4"));
 
@@ -1337,7 +1338,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             excel.join("levels.txt"),
-            "Name\tId\tSoundEnv\tLevelName\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\n",
+            "Name\tId\tSoundEnv\tLevelName\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\nAct 1 - Crypt 1\t20\t2\tForgotten Tower\nAct 1 - Crypt 2\t21\t2\tTower Cellar Level 1\nAct 1 - Crypt 3\t22\t2\tTower Cellar Level 2\nAct 1 - Crypt 4\t23\t2\tTower Cellar Level 3\nAct 1 - Crypt 5\t24\t2\tTower Cellar Level 4\nAct 1 - Crypt 6\t25\t2\tTower Cellar Level 5\n",
         )
         .unwrap();
         std::fs::write(
@@ -1385,7 +1386,7 @@ mod tests {
         .unwrap();
         std::fs::write(
             excel.join("levels.txt"),
-            "Name\tId\tSoundEnv\tLevelName\nNull\t0\t0\tNull\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\n",
+            "Name\tId\tSoundEnv\tLevelName\nNull\t0\t0\tNull\nAct 1 - Town\t1\t1\tRogue Encampment\nAct 1 - Wilderness 5\t6\t2\tBlack Marsh\nAct 1 - Crypt 1\t20\t2\tForgotten Tower\nAct 1 - Crypt 2\t21\t2\tTower Cellar Level 1\nAct 1 - Crypt 3\t22\t2\tTower Cellar Level 2\nAct 1 - Crypt 4\t23\t2\tTower Cellar Level 3\nAct 1 - Crypt 5\t24\t2\tTower Cellar Level 4\nAct 1 - Crypt 6\t25\t2\tTower Cellar Level 5\n",
         )
         .unwrap();
         std::fs::write(
@@ -1415,7 +1416,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.rune_assets.len(), 33);
-        assert_eq!(report.area_assets.len(), 2);
+        assert_eq!(report.area_assets.len(), COUNTESS_AREA_IDS.len());
         assert_eq!(
             report
                 .rune_assets
@@ -1464,6 +1465,8 @@ mod tests {
         .unwrap();
         assert_eq!(flippy["states"][0]["audioId"], "d2rhub_audio_r01");
         assert_eq!(flippy["states"][1]["audioId"], "");
+        assert_eq!(flippy["transitions"].as_array().unwrap().len(), 1);
+        assert_eq!(flippy["transitions"][0]["from"], 1);
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -1492,7 +1495,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(report.rune_assets.len(), RUNE_COUNT as usize);
-        assert_eq!(report.area_assets.len(), PROBE_AREA_IDS.len());
+        assert_eq!(report.area_assets.len(), COUNTESS_AREA_IDS.len());
         assert!(report
             .rune_assets
             .iter()
