@@ -4,15 +4,15 @@ use super::catalog::{
 };
 use super::flac::{decode_flac, encode_flac, resample_interleaved_i32};
 use super::protocol::{
-    detect_markers, embed_marker, embed_marker_with_delay, interleaved_i32_to_mono,
-    rune_marker_delay_seconds, MarkerConfig, MIN_SAMPLE_RATE, PROTOCOL_VERSION,
+    detect_markers, embed_marker, interleaved_i32_to_mono, MarkerConfig, MIN_SAMPLE_RATE,
+    PROTOCOL_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioCountessV44";
+const MOD_NAME: &str = "D2RHubAudioCountessV45";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
 const COUNTESS_AREA_IDS: [u32; 8] = [1, 6, 20, 21, 22, 23, 24, 25];
 
@@ -311,7 +311,7 @@ fn validate_misc(table: &TsvTable) -> Result<(), String> {
 
 #[derive(Clone, Copy)]
 enum SoundRole {
-    RuneDrop,
+    RuneGroundHeartbeat,
     AreaAmbience,
 }
 
@@ -341,19 +341,196 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], role: SoundRole) {
     }
 }
 
-fn patch_rune_drop_sounds(mut table: TsvTable) -> Result<TsvTable, String> {
-    let code_index = table.column("code")?;
-    let drop_sound_index = table.column("dropsound")?;
-    for rune_number in 1..=RUNE_COUNT {
-        let code = format!("r{rune_number:02}");
-        let row = table
-            .rows
-            .iter_mut()
-            .find(|row| row[code_index].eq_ignore_ascii_case(&code))
-            .ok_or_else(|| format!("misc.txt 缺少符文代码 {code}"))?;
-        row[drop_sound_index] = format!("d2rhub_audio_r{rune_number:02}");
+fn rune_unit_definition_candidates(mpq_directory: &Path, rune_number: u32) -> Vec<PathBuf> {
+    let rune_name =
+        crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize].to_ascii_lowercase();
+    ["rune", "runes"]
+        .into_iter()
+        .map(|folder| {
+            mpq_directory.join(format!("data/hd/items/misc/{folder}/{rune_name}_rune.json"))
+        })
+        .collect()
+}
+
+fn ground_heartbeat_state_machine_document(
+    original_state_machine: &str,
+    rune_number: u32,
+) -> Result<serde_json::Value, String> {
+    let normalized_state_machine = original_state_machine.replace('\\', "/");
+    if normalized_state_machine.contains("/d2rhub_audio/") {
+        return Err("源 Mod 已含旧版 D2RHub 符文状态机；请重新选择原始 jcy.mpq 生成".to_string());
     }
-    Ok(table)
+    let file_name = normalized_state_machine
+        .rsplit('/')
+        .next()
+        .and_then(|value| value.strip_suffix(".json"))
+        .filter(|value| {
+            !value.is_empty()
+                && value
+                    .chars()
+                    .all(|character| character.is_ascii_lowercase() || character == '_')
+        })
+        .ok_or_else(|| format!("无法解析物品落地状态机路径: {original_state_machine}"))?;
+    let animation = format!("data/hd/items/dropped_items/animation/{file_name}.animation");
+    let machine_name = format!("d2rhub_r{rune_number:02}_ground_heartbeat");
+    Ok(serde_json::json!({
+        "dependencies": {
+            "particles": [],
+            "models": [],
+            "skeletons": [],
+            "animations": [{ "path": animation }],
+            "textures": [],
+            "physics": [],
+            "json": [],
+            "variantdata": [],
+            "objecteffects": [],
+            "other": []
+        },
+        "type": "AnimationStateMachine",
+        "name": machine_name,
+        "unitType": "UNIT_OBJECT",
+        "animations": [{
+            "type": "AnimationItem",
+            "name": format!("{machine_name}001"),
+            "filename": animation
+        }],
+        "states": [{
+            "type": "AnimationState",
+            "name": "AnimationState",
+            "_name": "Flippy",
+            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
+            "loopCount": 1,
+            "stateId": 1,
+            "enableVfxAttributes": false,
+            "modeId": 5,
+            "skillIndex": -1,
+            "stepIndex": 0,
+            "animationBindings": { "hth": [format!("{machine_name}001")] },
+            "enterEvents": [],
+            "exitEvents": [],
+            "exitBlendType": 0
+        }, {
+            "type": "AnimationState",
+            "name": "AnimationState001",
+            "_name": "Ground",
+            "audioId": "",
+            "loopCount": 1,
+            "stateId": 2,
+            "enableVfxAttributes": false,
+            "modeId": 3,
+            "skillIndex": -1,
+            "stepIndex": 0,
+            "animationBindings": { "hth": [format!("{machine_name}001")] },
+            "enterEvents": [],
+            "exitEvents": [],
+            "exitBlendType": 0
+        }],
+        "transitions": [{
+            "type": "AnimationTransitionGroup",
+            "name": "AnimationState_transitiongroup",
+            "from": 1,
+            "settings": [{
+                "type": "AnimationTransitionItem",
+                "name": "AnimationState_transitiongroup_transition",
+                "crossfadeSeconds": 0.2,
+                "to": 2
+            }]
+        }, {
+            "type": "AnimationTransitionGroup",
+            "name": "AnimationState001_transitiongroup",
+            "from": 2,
+            "settings": [{
+                "type": "AnimationTransitionItem",
+                "name": "AnimationState001_transitiongroup_transition",
+                "crossfadeSeconds": 0.2,
+                "to": 1
+            }]
+        }]
+    }))
+}
+
+fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
+    let mut patched = 0usize;
+    for rune_number in 1..=RUNE_COUNT {
+        let path = rune_unit_definition_candidates(mpq_directory, rune_number)
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                format!(
+                    "源 Mod 缺少 #{rune_number:02} {} 的 HD 地面实体 JSON；无法监听世界物品",
+                    crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize]
+                )
+            })?;
+        let mut document: serde_json::Value = serde_json::from_str(&read_utf8(&path)?)
+            .map_err(|error| format!("解析 HD 符文实体失败 {}: {error}", path.display()))?;
+        let entities = document
+            .get_mut("entities")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文实体缺少 entities 数组: {}", path.display()))?;
+        let root = entities
+            .iter_mut()
+            .find(|entity| {
+                entity.get("name").and_then(serde_json::Value::as_str) == Some("entity_root")
+            })
+            .ok_or_else(|| format!("HD 符文实体缺少 entity_root: {}", path.display()))?;
+        let components = root
+            .get_mut("components")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文 entity_root 缺少 components: {}", path.display()))?;
+        components.retain(|component| {
+            !(component.get("type").and_then(serde_json::Value::as_str)
+                == Some("AudioEmitterComponent")
+                && component
+                    .get("name")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|name| name.starts_with("D2RHub_Rune_")))
+        });
+        let unit_root = components
+            .iter_mut()
+            .find(|component| {
+                component.get("type").and_then(serde_json::Value::as_str)
+                    == Some("UnitRootComponent")
+            })
+            .ok_or_else(|| format!("HD 符文缺少 UnitRootComponent: {}", path.display()))?;
+        let original_state_machine = unit_root
+            .get("state_machine_filename")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("HD 符文缺少落地状态机路径: {}", path.display()))?
+            .to_string();
+        let telemetry_state_machine =
+            format!("data/hd/items/d2rhub_audio/runes/r{rune_number:02}_ground_heartbeat.json");
+        unit_root["state_machine_filename"] =
+            serde_json::Value::String(telemetry_state_machine.clone());
+
+        let dependencies = document
+            .get_mut("dependencies")
+            .and_then(|value| value.get_mut("json"))
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文缺少 dependencies.json: {}", path.display()))?;
+        if let Some(reference) = dependencies.iter_mut().find(|reference| {
+            reference.get("path").and_then(serde_json::Value::as_str)
+                == Some(original_state_machine.as_str())
+        }) {
+            reference["path"] = serde_json::Value::String(telemetry_state_machine.clone());
+        } else {
+            dependencies.push(serde_json::json!({ "path": telemetry_state_machine }));
+        }
+
+        let state_machine =
+            ground_heartbeat_state_machine_document(&original_state_machine, rune_number)?;
+        write_file(
+            &mpq_directory.join(telemetry_state_machine.replace('/', "\\")),
+            serde_json::to_vec_pretty(&state_machine)
+                .map_err(|error| format!("序列化符文地面心跳状态机失败: {error}"))?,
+        )?;
+        write_file(
+            &path,
+            serde_json::to_vec_pretty(&document)
+                .map_err(|error| format!("序列化 HD 符文实体失败: {error}"))?,
+        )?;
+        patched += 1;
+    }
+    Ok(patched)
 }
 
 fn patch_sounds(
@@ -386,7 +563,7 @@ fn patch_sounds(
         table.set(&mut row, "Sound", &sound)?;
         table.set(&mut row, "*Index", next_index.to_string())?;
         table.set(&mut row, "FileName", &relative_path)?;
-        configure_sound_row(&table, &mut row, SoundRole::RuneDrop);
+        configure_sound_row(&table, &mut row, SoundRole::RuneGroundHeartbeat);
         table.rows.push(row);
         definitions.push((marker, sound, relative_path));
         next_index += 1;
@@ -629,42 +806,6 @@ fn extract_area_ambiences_from_casc(
     Ok(output)
 }
 
-fn source_audio_path(mpq: Option<&Path>, filename: &str) -> Option<PathBuf> {
-    let root = mpq?;
-    let relative = filename.replace('\\', "/");
-    let candidates = [
-        root.join("data/hd/global/sfx").join(&relative),
-        root.join("data/global/sfx").join(&relative),
-    ];
-    candidates.into_iter().find(|path| path.is_file())
-}
-
-fn resolve_rune_sources(
-    mpq: Option<&Path>,
-    misc: &TsvTable,
-    sounds: &TsvTable,
-) -> Result<HashMap<u32, PathBuf>, String> {
-    let code = misc.column("code")?;
-    let drop_sound = misc.column("dropsound")?;
-    let mut output = HashMap::new();
-    for rune_number in 1..=RUNE_COUNT {
-        let code_value = format!("r{rune_number:02}");
-        let table_source = misc
-            .rows
-            .iter()
-            .find(|row| row[code].eq_ignore_ascii_case(&code_value))
-            .and_then(|row| resolve_sound_filename(sounds, &row[drop_sound]))
-            .and_then(|filename| source_audio_path(mpq, &filename));
-        let direct_source = mpq
-            .map(|root| root.join(format!("data/hd/global/sfx/item/r{rune_number:02}.flac")))
-            .filter(|path| path.is_file());
-        if let Some(path) = direct_source.or(table_source) {
-            output.insert(rune_number, path);
-        }
-    }
-    Ok(output)
-}
-
 fn write_marker_flac(
     path: &Path,
     marker: TelemetryMarker,
@@ -715,25 +856,14 @@ fn write_marker_flac(
             expected_detections = embedded_count;
         }
     } else {
-        match marker {
-            TelemetryMarker::Rune { rune_number } => embed_marker_with_delay(
-                &mut samples,
-                channels as usize,
-                bits_per_sample,
-                sample_rate,
-                marker,
-                config,
-                rune_marker_delay_seconds(rune_number)?,
-            )?,
-            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => embed_marker(
-                &mut samples,
-                channels as usize,
-                bits_per_sample,
-                sample_rate,
-                marker,
-                config,
-            )?,
-        };
+        embed_marker(
+            &mut samples,
+            channels as usize,
+            bits_per_sample,
+            sample_rate,
+            marker,
+            config,
+        )?;
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -825,7 +955,6 @@ fn build(
     let misc = TsvTable::parse("misc.txt", &read_utf8(&layout.excel.join("misc.txt"))?)?;
     let sounds = TsvTable::parse("sounds.txt", &read_utf8(&layout.excel.join("sounds.txt"))?)?;
     let levels = TsvTable::parse("levels.txt", &read_utf8(&layout.excel.join("levels.txt"))?)?;
-    let rune_sources = resolve_rune_sources(layout.mpq.as_deref(), &misc, &sounds)?;
     let mut areas = collect_areas(&levels)?;
     areas.retain(|area| COUNTESS_AREA_IDS.contains(&area.area_id));
     if areas.len() != COUNTESS_AREA_IDS.len() {
@@ -865,9 +994,9 @@ fn build(
         HashMap::new()
     };
     validate_misc(&misc)?;
-    let misc = patch_rune_drop_sounds(misc)?;
     let (sounds, definitions) = patch_sounds(sounds, &areas)?;
     let (environments, levels) = patch_sound_environ_and_levels(environments, levels, &areas)?;
+    let patched_rune_units = patch_rune_unit_definitions(&mpq_directory)?;
 
     write_file(&excel_output.join("misc.txt"), misc.to_text())?;
     write_file(&excel_output.join("sounds.txt"), sounds.to_text())?;
@@ -886,9 +1015,7 @@ fn build(
     let mut area_assets = Vec::new();
     for (marker, sound, relative_path) in definitions {
         let source_audio = match marker {
-            TelemetryMarker::Rune { rune_number } => {
-                rune_sources.get(&rune_number).map(PathBuf::as_path)
-            }
+            TelemetryMarker::Rune { .. } => None,
             TelemetryMarker::Area { area_id } => area_sources.get(&area_id).map(PathBuf::as_path),
             TelemetryMarker::Frontend => None,
         };
@@ -963,11 +1090,12 @@ fn build(
         area_assets,
         area_catalog: areas,
         notes: vec![
-            "33 个符文的 misc.txt dropsound 已改为各自的声纹音频；usesound 保持源 Mod 原值，背包/仓库移动不触发。"
+            format!(
+                "已给 {patched_rune_units} 个符文建立地面 Flippy 心跳；背包/仓库实体不进入该状态。"
+            ),
+            "misc.txt 的 dropsound 与 usesound 均保持源 Mod 原值；地面心跳为纯声纹，不复制或循环播放符文人声。"
                 .to_string(),
-            "符文不再改写 HD 实体或 Flippy 状态机；怪物爆落与手动扔地均只走游戏原生的一次性 dropsound。"
-                .to_string(),
-            "源 Mod 中能定位到的符文 FLAC 会保留原声并混入 v4 标记；缺失资源使用纯超声标记。"
+            "v5 符文签名在音频起始处立即发送，不再使用 0–8 秒编号延迟；不同符文可完全同步叠加解码。"
                 .to_string(),
             if let Some(game_root) = game_root {
                 format!(
@@ -993,7 +1121,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 女伯爵音频实机版 v4.4\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文声纹直接使用 misc.txt 的原生 dropsound；背包 usesound 保持不变，不再修改 Flippy 状态机。\r\n6. 33 个符文使用不同延迟槽，降低同时爆落的碰撞；同一符文的两个完全同步掉落在纯音频上仍只能计为一次。\r\n7. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 女伯爵音频实机版 v4.5\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文使用仅世界实体进入的 Flippy 地面心跳；不改 misc.txt 的 dropsound/usesound，背包和仓库不应触发。\r\n6. 心跳是纯声纹，不会循环播放“*号符文”；软件按地面存在生命周期只记录一次。\r\n7. v5 短签名无编号延迟，并支持多个不同符文完全同步叠加；完全同步的多个相同符文仍只能视为一个。\r\n8. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -1050,6 +1178,37 @@ pub async fn build_rune_audio_mod(
 mod tests {
     use super::*;
 
+    fn write_rune_unit_definitions(mpq: &Path) {
+        let directory = mpq.join("data/hd/items/misc/rune");
+        std::fs::create_dir_all(&directory).unwrap();
+        for (index, name) in crate::rune_data::RUNE_NAMES_EN.iter().enumerate() {
+            let document = serde_json::json!({
+                "dependencies": {
+                    "json": [{
+                        "path": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
+                    }]
+                },
+                "type": "UnitDefinition",
+                "name": format!("{}_rune", name.to_ascii_lowercase()),
+                "entities": [{
+                    "type": "Entity",
+                    "name": "entity_root",
+                    "id": 1000 + index,
+                    "components": [{
+                        "type": "UnitRootComponent",
+                        "name": "component_root",
+                        "state_machine_filename": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
+                    }]
+                }]
+            });
+            std::fs::write(
+                directory.join(format!("{}_rune.json", name.to_ascii_lowercase())),
+                serde_json::to_vec_pretty(&document).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
     fn patches_all_runes_and_countess_area_rows() {
         let mut misc = "name\tcode\tdropsound\tusesound\n".to_string();
@@ -1060,18 +1219,20 @@ mod tests {
         }
         let original = TsvTable::parse("misc", &misc).unwrap();
         validate_misc(&original).unwrap();
-        let patched = patch_rune_drop_sounds(original).unwrap();
         assert_eq!(
-            patched.get(&patched.rows[0], "dropsound"),
-            Some("d2rhub_audio_r01")
+            original.get(&original.rows[0], "dropsound"),
+            Some("item_rune")
         );
         assert_eq!(
-            patched.get(&patched.rows[32], "dropsound"),
-            Some("d2rhub_audio_r33")
+            original.get(&original.rows[32], "dropsound"),
+            Some("item_rune")
         );
-        assert_eq!(patched.get(&patched.rows[0], "usesound"), Some("item_rune"));
         assert_eq!(
-            patched.get(&patched.rows[32], "usesound"),
+            original.get(&original.rows[0], "usesound"),
+            Some("item_rune")
+        );
+        assert_eq!(
+            original.get(&original.rows[32], "usesound"),
             Some("item_rune")
         );
 
@@ -1108,7 +1269,7 @@ mod tests {
 
     #[test]
     fn generated_marker_flac_self_verifies() {
-        let root = std::env::temp_dir().join(format!("d2rhub-audio-v4-{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("d2rhub-audio-v5-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("a137.flac");
         let confidence = write_marker_flac(
@@ -1168,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_a_complete_mod_and_preserves_available_rune_audio() {
+    fn builds_a_complete_mod_with_silent_rune_heartbeats() {
         let root = std::env::temp_dir().join(format!("d2rhub-audio-mod-{}", uuid::Uuid::new_v4()));
         let source = root.join("jcy.mpq");
         let excel = source.join("data/global/excel");
@@ -1198,6 +1359,7 @@ mod tests {
             "Handle\tIndex\tDay Ambience\tHD Day Ambience\tNight Ambience\tHD Night Ambience\nTown\t1\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\nWild\t2\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\n",
         )
         .unwrap();
+        write_rune_unit_definitions(&source);
         let source_audio = source.join("data/hd/global/sfx/item/r01.flac");
         std::fs::create_dir_all(source_audio.parent().unwrap()).unwrap();
         let samples = (0..24_000)
@@ -1226,7 +1388,7 @@ mod tests {
                 .iter()
                 .filter(|asset| asset.preserved_source_audio)
                 .count(),
-            1
+            0
         );
         let output_mpq = output.join(MOD_NAME).join(format!("{MOD_NAME}.mpq"));
         assert!(output_mpq
@@ -1245,15 +1407,36 @@ mod tests {
         .unwrap();
         assert_eq!(
             misc_output.get(&misc_output.rows[0], "dropsound"),
-            Some("d2rhub_audio_r01")
+            Some("item_rune_hd")
         );
         assert_eq!(
             misc_output.get(&misc_output.rows[0], "usesound"),
             Some("item_rune_hd")
         );
-        assert!(!output_mpq
-            .join("data/hd/items/d2rhub_audio/runes/r01_flippy.json")
-            .exists());
+        let el_document: serde_json::Value = serde_json::from_str(
+            &read_utf8(&output_mpq.join("data/hd/items/misc/rune/el_rune.json")).unwrap(),
+        )
+        .unwrap();
+        let unit_root = el_document["entities"][0]["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|component| component["type"] == "UnitRootComponent")
+            .unwrap();
+        assert_eq!(
+            unit_root["state_machine_filename"],
+            "data/hd/items/d2rhub_audio/runes/r01_ground_heartbeat.json"
+        );
+        let heartbeat: serde_json::Value = serde_json::from_str(
+            &read_utf8(
+                &output_mpq.join("data/hd/items/d2rhub_audio/runes/r01_ground_heartbeat.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(heartbeat["states"][0]["audioId"], "d2rhub_audio_r01");
+        assert_eq!(heartbeat["states"][1]["audioId"], "");
+        assert_eq!(heartbeat["transitions"].as_array().unwrap().len(), 2);
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }

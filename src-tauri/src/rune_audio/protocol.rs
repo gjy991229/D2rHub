@@ -3,11 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
-pub const PROTOCOL_VERSION: u8 = 4;
+pub const PROTOCOL_VERSION: u8 = 5;
 pub const PREAMBLE_CHIPS: usize = 63;
 pub const PAYLOAD_BITS: usize = 20;
 pub const PACKET_REPETITIONS: usize = 2;
 pub const PREAMBLE_CARRIER_HZ: f32 = 18_000.0;
+pub const RUNE_SIGNATURE_CARRIER_HZ: f32 = 19_600.0;
 pub const BIT_ZERO_HZ: f32 = 17_000.0;
 pub const BIT_ONE_HZ: f32 = 19_000.0;
 pub const CHIP_SECONDS: f32 = 0.00075;
@@ -15,10 +16,6 @@ pub const SYMBOL_SECONDS: f32 = 0.003;
 pub const PREAMBLE_PAYLOAD_GAP_SECONDS: f32 = 0.002;
 pub const PACKET_GAP_SECONDS: f32 = 0.004;
 pub const MARKER_OFFSET_SECONDS: f32 = 0.008;
-/// A full two-copy marker occupies about 223ms at 48kHz. Rune-specific
-/// 250ms slots keep simultaneous world drops from transmitting on top of
-/// each other while leaving a small guard interval.
-pub const RUNE_SLOT_SECONDS: f32 = 0.250;
 pub const MIN_SAMPLE_RATE: u32 = 44_100;
 
 const PACKET_MAGIC: u32 = 0b10;
@@ -80,6 +77,16 @@ fn m_sequence() -> [f32; PREAMBLE_CHIPS] {
     let mut output = [0.0f32; PREAMBLE_CHIPS];
     for (target, bit) in output.iter_mut().zip(state) {
         *target = if bit == 0 { -1.0 } else { 1.0 };
+    }
+    output
+}
+
+fn rune_signature(rune_number: u32) -> [f32; PREAMBLE_CHIPS] {
+    let base = m_sequence();
+    let shift = rune_number as usize % PREAMBLE_CHIPS;
+    let mut output = [0.0f32; PREAMBLE_CHIPS];
+    for (index, target) in output.iter_mut().enumerate() {
+        *target = base[(index + shift) % PREAMBLE_CHIPS];
     }
     output
 }
@@ -163,6 +170,7 @@ fn mix_packet(
     channels: usize,
     sample_rate: u32,
     packet_start: usize,
+    marker: TelemetryMarker,
     payload: u32,
     amplitude: f64,
 ) {
@@ -184,8 +192,28 @@ fn mix_packet(
         }
     }
 
-    let symbol_len = symbol_frames(sample_rate);
     let payload_start = packet_start + payload_offset_frames(sample_rate);
+    if let TelemetryMarker::Rune { rune_number } = marker {
+        let signature = rune_signature(rune_number);
+        for (chip_index, sign) in signature.iter().enumerate() {
+            for offset in 0..chip_len {
+                let phase = offset as f64 / chip_len as f64;
+                let envelope = (std::f64::consts::PI * phase).sin().powi(2);
+                let frame = payload_start + chip_index * chip_len + offset;
+                let time = frame as f64 / sample_rate as f64;
+                let value = amplitude
+                    * envelope
+                    * *sign as f64
+                    * (std::f64::consts::TAU * RUNE_SIGNATURE_CARRIER_HZ as f64 * time).sin();
+                for channel in 0..channels {
+                    mixed[frame * channels + channel] += value;
+                }
+            }
+        }
+        return;
+    }
+
+    let symbol_len = symbol_frames(sample_rate);
     for bit_index in 0..PAYLOAD_BITS {
         let shift = PAYLOAD_BITS - 1 - bit_index;
         let frequency = if (payload >> shift) & 1 == 0 {
@@ -224,11 +252,6 @@ pub fn embed_marker(
         config,
         0.0,
     )
-}
-
-pub fn rune_marker_delay_seconds(rune_number: u32) -> Result<f32, String> {
-    validate_marker(TelemetryMarker::Rune { rune_number })?;
-    Ok((rune_number - 1) as f32 * RUNE_SLOT_SECONDS)
 }
 
 pub fn embed_marker_with_delay(
@@ -287,6 +310,7 @@ pub fn embed_marker_with_delay(
             channels,
             sample_rate,
             marker_offset + repetition * (packet_len + packet_gap),
+            marker,
             payload,
             amplitude,
         );
@@ -419,11 +443,60 @@ fn decode_candidate(
     decode_payload(payload).map(|marker| (marker, bit_quality))
 }
 
+fn decode_rune_signatures(
+    demod_i: &[f32],
+    demod_q: &[f32],
+    plan: &DetectorPlan,
+    start: usize,
+    threshold: f32,
+) -> Vec<(TelemetryMarker, f32)> {
+    let signature_start = start + plan.payload_offset;
+    let mut chip_i = [0.0f32; PREAMBLE_CHIPS];
+    let mut chip_q = [0.0f32; PREAMBLE_CHIPS];
+    let mut carrier_power = 0.0f32;
+    for chip_index in 0..PREAMBLE_CHIPS {
+        let chip_start = signature_start + chip_index * plan.chip_len;
+        for offset in 0..plan.chip_len {
+            let frame = chip_start + offset;
+            let weight = plan.chip_weights[offset];
+            chip_i[chip_index] += demod_i[frame] * weight;
+            chip_q[chip_index] += demod_q[frame] * weight;
+        }
+        chip_i[chip_index] /= plan.weight_sum;
+        chip_q[chip_index] /= plan.weight_sum;
+        carrier_power +=
+            chip_i[chip_index] * chip_i[chip_index] + chip_q[chip_index] * chip_q[chip_index];
+    }
+    let carrier_level = (carrier_power / PREAMBLE_CHIPS as f32).sqrt();
+    if carrier_level < 0.000_005 {
+        return Vec::new();
+    }
+
+    let signature_threshold = (threshold * 0.48).clamp(0.24, 0.44);
+    (1..=33)
+        .filter_map(|rune_number| {
+            let signature = rune_signature(rune_number);
+            let mut correlation_i = 0.0f32;
+            let mut correlation_q = 0.0f32;
+            for chip_index in 0..PREAMBLE_CHIPS {
+                correlation_i += signature[chip_index] * chip_i[chip_index];
+                correlation_q += signature[chip_index] * chip_q[chip_index];
+            }
+            let confidence = (correlation_i * correlation_i + correlation_q * correlation_q).sqrt()
+                / (PREAMBLE_CHIPS as f32 * carrier_level);
+            (confidence >= signature_threshold)
+                .then_some((TelemetryMarker::Rune { rune_number }, confidence.min(1.0)))
+        })
+        .collect()
+}
+
 fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) -> Vec<Detection> {
     if samples.len() < plan.packet_len {
         return Vec::new();
     }
     let (demod_i, demod_q) = demodulate(samples, plan.sample_rate, PREAMBLE_CARRIER_HZ);
+    let (signature_i, signature_q) =
+        demodulate(samples, plan.sample_rate, RUNE_SIGNATURE_CARRIER_HZ);
     let mut raw = Vec::new();
     for start in (0..=samples.len() - plan.packet_len).step_by(plan.step) {
         let mut correlation_i = 0.0f32;
@@ -456,9 +529,20 @@ fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) ->
             continue;
         }
         if let Some((marker, bit_quality)) = decode_candidate(samples, plan, start) {
+            if !matches!(marker, TelemetryMarker::Rune { .. }) {
+                raw.push(Detection {
+                    marker,
+                    confidence: (preamble_confidence * 0.75 + bit_quality * 0.25).min(1.0),
+                    start_frame: start as u64,
+                });
+            }
+        }
+        for (marker, signature_confidence) in
+            decode_rune_signatures(&signature_i, &signature_q, plan, start, threshold)
+        {
             raw.push(Detection {
                 marker,
-                confidence: (preamble_confidence * 0.75 + bit_quality * 0.25).min(1.0),
+                confidence: (preamble_confidence * 0.60 + signature_confidence * 0.40).min(1.0),
                 start_frame: start as u64,
             });
         }
@@ -614,25 +698,6 @@ mod tests {
         interleaved_i32_to_mono(&samples, 1, 16).unwrap()
     }
 
-    fn tagged_rune_in_slot(number: u32, sample_rate: u32, gain_db: f32) -> Vec<f32> {
-        let marker = rune(number);
-        let mut samples = vec![0i32; sample_rate as usize / 3];
-        embed_marker_with_delay(
-            &mut samples,
-            1,
-            16,
-            sample_rate,
-            marker,
-            MarkerConfig {
-                gain_db,
-                ..MarkerConfig::default()
-            },
-            rune_marker_delay_seconds(number).unwrap(),
-        )
-        .unwrap();
-        interleaved_i32_to_mono(&samples, 1, 16).unwrap()
-    }
-
     #[test]
     fn payload_round_trips_runes_full_area_range_and_frontend() {
         for marker in [
@@ -669,20 +734,21 @@ mod tests {
 
     #[test]
     fn marker_survives_44100_to_48000_resampling() {
-        let marker = area(99);
-        let source = tagged(marker, 44_100, -26.0);
-        let output_frames = source.len() * 160 / 147;
-        let resampled = (0..output_frames)
-            .map(|output| {
-                let position = output as f32 * 147.0 / 160.0;
-                let left = position.floor() as usize;
-                let right = (left + 1).min(source.len() - 1);
-                source[left] * (1.0 - position.fract()) + source[right] * position.fract()
-            })
-            .collect::<Vec<_>>();
-        assert!(detect_markers(&resampled, 48_000, 0.50)
-            .iter()
-            .any(|detection| detection.marker == marker));
+        for marker in [area(99), rune(24)] {
+            let source = tagged(marker, 44_100, -26.0);
+            let output_frames = source.len() * 160 / 147;
+            let resampled = (0..output_frames)
+                .map(|output| {
+                    let position = output as f32 * 147.0 / 160.0;
+                    let left = position.floor() as usize;
+                    let right = (left + 1).min(source.len() - 1);
+                    source[left] * (1.0 - position.fract()) + source[right] * position.fract()
+                })
+                .collect::<Vec<_>>();
+            assert!(detect_markers(&resampled, 48_000, 0.50)
+                .iter()
+                .any(|detection| detection.marker == marker));
+        }
     }
 
     #[test]
@@ -711,6 +777,7 @@ mod tests {
                 let time = index as f32 / 48_000.0;
                 (std::f32::consts::TAU * 18_000.0 * time).sin() * 0.25
                     + (std::f32::consts::TAU * 19_000.0 * time).sin() * 0.10
+                    + (std::f32::consts::TAU * 19_600.0 * time).sin() * 0.10
             })
             .collect::<Vec<_>>();
         assert!(detect_markers(&samples, 48_000, 0.45).is_empty());
@@ -734,11 +801,16 @@ mod tests {
     }
 
     #[test]
-    fn simultaneous_different_runes_are_separated_by_rune_slots() {
+    fn simultaneous_different_runes_decode_without_time_slots() {
         let signals = [
-            tagged_rune_in_slot(1, 48_000, -26.0),
-            tagged_rune_in_slot(12, 48_000, -26.0),
-            tagged_rune_in_slot(33, 48_000, -26.0),
+            tagged(rune(1), 48_000, -26.0),
+            tagged(rune(4), 48_000, -26.0),
+            tagged(rune(7), 48_000, -26.0),
+            tagged(rune(12), 48_000, -26.0),
+            tagged(rune(16), 48_000, -26.0),
+            tagged(rune(20), 48_000, -26.0),
+            tagged(rune(24), 48_000, -26.0),
+            tagged(rune(33), 48_000, -26.0),
         ];
         let output_len = signals.iter().map(Vec::len).max().unwrap();
         let mut mixed = vec![0.0f32; output_len];
@@ -747,11 +819,50 @@ mod tests {
                 *target += sample;
             }
         }
-        let markers = detect_markers(&mixed, 48_000, 0.50)
+        let mut markers = detect_markers(&mixed, 48_000, 0.50)
             .into_iter()
             .map(|detection| detection.marker)
             .collect::<Vec<_>>();
-        assert_eq!(markers, vec![rune(1), rune(12), rune(33)]);
+        markers.sort_by_key(|marker| match marker {
+            TelemetryMarker::Rune { rune_number } => *rune_number,
+            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => u32::MAX,
+        });
+        assert_eq!(
+            markers,
+            vec![
+                rune(1),
+                rune(4),
+                rune(7),
+                rune(12),
+                rune(16),
+                rune(20),
+                rune(24),
+                rune(33)
+            ]
+        );
+    }
+
+    #[test]
+    fn simultaneous_area_and_runes_remain_independent() {
+        let signals = [
+            tagged(area(25), 48_000, -26.0),
+            tagged(rune(7), 48_000, -26.0),
+            tagged(rune(20), 48_000, -26.0),
+        ];
+        let mut mixed = vec![0.0f32; signals[0].len()];
+        for signal in signals {
+            for (target, sample) in mixed.iter_mut().zip(signal) {
+                *target += sample;
+            }
+        }
+        let markers = detect_markers(&mixed, 48_000, 0.50)
+            .into_iter()
+            .map(|detection| detection.marker)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(markers.len(), 3, "{markers:?}");
+        assert!(markers.contains(&area(25)));
+        assert!(markers.contains(&rune(7)));
+        assert!(markers.contains(&rune(20)));
     }
 
     #[test]

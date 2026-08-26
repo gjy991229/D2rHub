@@ -32,6 +32,45 @@ impl SceneTransitionGate {
     }
 }
 
+/// Converts repeated Flippy packets into one logical ground-presence event.
+/// A rune becomes eligible again after its heartbeat has been absent long
+/// enough for two ordinary ground animation cycles to have been missed.
+#[derive(Debug, Clone)]
+pub struct RunePresenceGate {
+    sample_rate: u32,
+    last_seen: HashMap<u32, u64>,
+}
+
+impl RunePresenceGate {
+    const ABSENCE_SECONDS: f32 = 6.0;
+
+    pub fn new(sample_rate: u32) -> Self {
+        Self {
+            sample_rate,
+            last_seen: HashMap::new(),
+        }
+    }
+
+    /// Returns true only when this rune was not recently present on the ground.
+    pub fn observe(&mut self, rune_number: u32, observed_at_frame: u64) -> bool {
+        if !(1..=33).contains(&rune_number) {
+            return false;
+        }
+        let absence_frames = (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64;
+        let is_new_presence = self
+            .last_seen
+            .get(&rune_number)
+            .is_none_or(|last| observed_at_frame.saturating_sub(*last) >= absence_frames);
+        self.last_seen.insert(rune_number, observed_at_frame);
+        is_new_presence
+    }
+
+    /// A confirmed scene transition removes every ground item from scope.
+    pub fn clear(&mut self) {
+        self.last_seen.clear();
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackedRuneDrop {
     pub observation_id: i64,
@@ -441,5 +480,26 @@ mod tests {
         assert!(!gate.observe(area(6), 48_000 * 4));
         assert!(gate.observe(area(21), 48_000 * 5));
         assert!(gate.observe(area(6), 48_000 * 6));
+    }
+
+    #[test]
+    fn rune_presence_heartbeats_emit_once_until_the_signal_is_absent() {
+        let mut gate = RunePresenceGate::new(48_000);
+        assert!(gate.observe(7, 0));
+        assert!(!gate.observe(7, 48_000 * 2));
+        assert!(!gate.observe(7, 48_000 * 5));
+        assert!(gate.observe(7, 48_000 * 12));
+    }
+
+    #[test]
+    fn rune_presence_is_independent_per_rune_and_resets_on_scene_change() {
+        let mut gate = RunePresenceGate::new(48_000);
+        assert!(gate.observe(7, 0));
+        assert!(gate.observe(20, 100));
+        assert!(!gate.observe(7, 200));
+        gate.clear();
+        assert!(gate.observe(7, 300));
+        assert!(!gate.observe(0, 400));
+        assert!(!gate.observe(34, 500));
     }
 }

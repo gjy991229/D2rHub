@@ -1,6 +1,8 @@
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
-use super::tracking::{SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot};
+use super::tracking::{
+    RunePresenceGate, SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -64,6 +66,7 @@ struct DiagnosticDetection {
     start_frame: u64,
     marker: TelemetryMarker,
     confidence: f32,
+    logical_event: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -153,7 +156,12 @@ fn write_diagnostic_samples(samples: &[f32]) {
     }
 }
 
-fn append_diagnostic_detection(marker: TelemetryMarker, confidence: f32, start_frame: u64) {
+fn append_diagnostic_detection(
+    marker: TelemetryMarker,
+    confidence: f32,
+    start_frame: u64,
+    logical_event: bool,
+) {
     let mut guard = diagnostic_recording()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -163,6 +171,7 @@ fn append_diagnostic_detection(marker: TelemetryMarker, confidence: f32, start_f
             start_frame,
             marker,
             confidence,
+            logical_event,
         });
     }
 }
@@ -286,12 +295,14 @@ fn record_decoded_packet(
     confidence: f32,
     start_frame: u64,
     catalog: &LocationCatalog,
+    logical_event: bool,
 ) {
     {
         let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
         current.decoded_packets += 1;
         match marker {
-            TelemetryMarker::Rune { .. } => current.rune_events += 1,
+            TelemetryMarker::Rune { .. } if logical_event => current.rune_events += 1,
+            TelemetryMarker::Rune { .. } => {}
             TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {
                 current.scene_heartbeats += 1
             }
@@ -300,7 +311,7 @@ fn record_decoded_packet(
         current.last_confidence = Some(confidence);
         current.last_detected_at = Some(chrono::Local::now().to_rfc3339());
     }
-    append_diagnostic_detection(marker, confidence, start_frame);
+    append_diagnostic_detection(marker, confidence, start_frame, logical_event);
 }
 
 fn handle_rune_detection(
@@ -494,6 +505,7 @@ fn capture_loop(
         catalog.clone(),
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
+    let mut rune_gate = RunePresenceGate::new(CAPTURE_SAMPLE_RATE);
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
@@ -557,22 +569,37 @@ fn capture_loop(
         }
         write_diagnostic_samples(&chunk);
         for detection in detector.push(&chunk) {
-            record_decoded_packet(
-                detection.marker,
-                detection.confidence,
-                detection.start_frame,
-                &catalog,
-            );
             match detection.marker {
-                TelemetryMarker::Rune { rune_number } => handle_rune_detection(
-                    &app,
-                    &config,
-                    &mut tracker,
-                    rune_number,
-                    detection.confidence,
-                ),
+                TelemetryMarker::Rune { rune_number } => {
+                    let logical_event = rune_gate.observe(rune_number, detection.start_frame);
+                    record_decoded_packet(
+                        detection.marker,
+                        detection.confidence,
+                        detection.start_frame,
+                        &catalog,
+                        logical_event,
+                    );
+                    if logical_event {
+                        handle_rune_detection(
+                            &app,
+                            &config,
+                            &mut tracker,
+                            rune_number,
+                            detection.confidence,
+                        );
+                    }
+                }
                 marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
-                    if scene_gate.observe(marker, detection.start_frame) {
+                    let logical_event = scene_gate.observe(marker, detection.start_frame);
+                    record_decoded_packet(
+                        detection.marker,
+                        detection.confidence,
+                        detection.start_frame,
+                        &catalog,
+                        logical_event,
+                    );
+                    if logical_event {
+                        rune_gate.clear();
                         handle_location_detection(
                             &app,
                             &config,
@@ -816,7 +843,7 @@ mod tests {
             detections: Vec::new(),
         });
         write_diagnostic_samples(&[0.0, 0.25, -0.25]);
-        append_diagnostic_detection(TelemetryMarker::Rune { rune_number: 24 }, 0.91, 1_234);
+        append_diagnostic_detection(TelemetryMarker::Rune { rune_number: 24 }, 0.91, 1_234, true);
         assert_eq!(
             finish_diagnostic_recording().unwrap(),
             Some(path.to_string_lossy().to_string())
@@ -830,6 +857,7 @@ mod tests {
                 .unwrap();
         assert_eq!(sidecar["detections"].as_array().unwrap().len(), 1);
         assert_eq!(sidecar["detections"][0]["start_frame"], 1_234);
+        assert_eq!(sidecar["detections"][0]["logical_event"], true);
         std::fs::remove_dir_all(root).unwrap();
     }
 }

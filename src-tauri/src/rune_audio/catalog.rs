@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub const RUNE_COUNT: u32 = 33;
-/// v4 packet layout reserves ten bits for an Area Id.
+/// The v5 location packet layout reserves ten bits for an Area Id.
 pub const MAX_AREA_ID: u32 = 1023;
 pub const AREA_CATALOG_FILE_NAME: &str = "rune-audio-area-catalog.json";
 
