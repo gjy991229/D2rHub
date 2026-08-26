@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioTelemetry";
+const MOD_NAME: &str = "D2RHubAudioTelemetryV41";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
 const AREA_EVENT_DELAY_FRAMES: &str = "50";
 
@@ -296,19 +296,17 @@ fn write_file(path: &Path, content: impl AsRef<[u8]>) -> Result<(), String> {
     std::fs::write(path, content).map_err(|error| format!("写入失败 {}: {error}", path.display()))
 }
 
-fn patch_misc(mut table: TsvTable) -> Result<TsvTable, String> {
+fn validate_misc(table: &TsvTable) -> Result<(), String> {
     let code_index = table.column("code")?;
-    let drop_index = table.column("dropsound")?;
     for rune_number in 1..=RUNE_COUNT {
         let code = format!("r{rune_number:02}");
-        let row = table
+        table
             .rows
-            .iter_mut()
+            .iter()
             .find(|row| row[code_index].eq_ignore_ascii_case(&code))
             .ok_or_else(|| format!("misc.txt 缺少符文代码 {code}"))?;
-        row[drop_index] = format!("d2rhub_audio_r{rune_number:02}");
     }
-    Ok(table)
+    Ok(())
 }
 
 fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
@@ -319,7 +317,9 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
         ("Pitch Min", "100"),
         ("Pitch Max", "100"),
         ("Group Size", "0"),
-        ("Group Weight", "0"),
+        // SoundEnviron chooses an ambient event by Group Weight.  A zero
+        // weight row is valid data but can never be scheduled.
+        ("Group Weight", "100"),
         ("Loop", "0"),
         ("Duration", "0"),
         ("Delay", "0"),
@@ -334,6 +334,70 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], ambient: bool) {
     ] {
         set_if_present(table, row, column, value);
     }
+}
+
+fn rune_unit_definition_candidates(mpq_directory: &Path, rune_number: u32) -> Vec<PathBuf> {
+    let rune_name =
+        crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize].to_ascii_lowercase();
+    ["rune", "runes"]
+        .into_iter()
+        .map(|folder| {
+            mpq_directory.join(format!("data/hd/items/misc/{folder}/{rune_name}_rune.json"))
+        })
+        .collect()
+}
+
+fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
+    let mut patched = 0usize;
+    for rune_number in 1..=RUNE_COUNT {
+        let path = rune_unit_definition_candidates(mpq_directory, rune_number)
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                format!(
+                    "源 Mod 缺少 #{rune_number:02} {} 的 HD 地面实体 JSON；无法可靠监听地面掉落",
+                    crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize]
+                )
+            })?;
+        let text = read_utf8(&path)?;
+        let mut document: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|error| format!("解析 HD 符文实体失败 {}: {error}", path.display()))?;
+        let entities = document
+            .get_mut("entities")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文实体缺少 entities 数组: {}", path.display()))?;
+        let root = entities
+            .iter_mut()
+            .find(|entity| {
+                entity.get("name").and_then(serde_json::Value::as_str) == Some("entity_root")
+            })
+            .ok_or_else(|| format!("HD 符文实体缺少 entity_root: {}", path.display()))?;
+        let components = root
+            .get_mut("components")
+            .and_then(serde_json::Value::as_array_mut)
+            .ok_or_else(|| format!("HD 符文 entity_root 缺少 components: {}", path.display()))?;
+        let emitter_name = format!("D2RHub_Rune_{rune_number:02}_AudioEmitter");
+        components.retain(|component| {
+            component.get("name").and_then(serde_json::Value::as_str) != Some(emitter_name.as_str())
+        });
+        components.push(serde_json::json!({
+            "type": "AudioEmitterComponent",
+            "name": emitter_name,
+            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
+            "randomDelay": {
+                "x": 0.0,
+                "y": 0.0
+            },
+            "forceNoRandom": true
+        }));
+        write_file(
+            &path,
+            serde_json::to_vec_pretty(&document)
+                .map_err(|error| format!("序列化 HD 符文实体失败: {error}"))?,
+        )?;
+        patched += 1;
+    }
+    Ok(patched)
 }
 
 fn patch_sounds(
@@ -701,9 +765,10 @@ fn build(
         )
     };
     let environments = TsvTable::parse("soundenviron.txt", &sound_environment_text)?;
-    let misc = patch_misc(misc)?;
+    validate_misc(&misc)?;
     let (sounds, definitions) = patch_sounds(sounds, &areas)?;
     let (environments, levels) = patch_sound_environ_and_levels(environments, levels, &areas)?;
+    let patched_rune_units = patch_rune_unit_definitions(&mpq_directory)?;
 
     write_file(&excel_output.join("misc.txt"), misc.to_text())?;
     write_file(&excel_output.join("sounds.txt"), sounds.to_text())?;
@@ -784,13 +849,14 @@ fn build(
         area_assets,
         area_catalog: areas,
         notes: vec![
-            "符文通过 misc.txt 的 dropsound 触发；玩家手动丢地也会计入，无法与怪物掉落区分。"
-                .to_string(),
+            format!(
+                "已给 {patched_rune_units} 个 HD 符文地面实体添加一次性 AudioEmitter；不修改 misc.txt dropsound，因此背包/仓库移动不会误报。"
+            ),
             "源 Mod 中能定位到的符文 FLAC 会保留原声并混入 v4 标记；缺失资源使用纯超声标记。"
                 .to_string(),
             "每个地图克隆原 SoundEnv，只替换随机 Day/Night Event；持续环境音和音乐保持原样。"
                 .to_string(),
-            "地图心跳约每 1.3–2.7 秒播放一次；资源即使已缓存，每次实际混音仍可被进程回环捕获。"
+            "地图心跳事件权重固定为 100，约每 1.3–2.7 秒播放一次；资源即使已缓存，每次实际混音仍可被进程回环捕获。"
                 .to_string(),
         ],
     };
@@ -802,7 +868,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 音频遥测 v4\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 进入任意地图，最迟约 3 秒应显示 Area Id/地图名；符文每次落地都会上报。\r\n5. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 音频遥测 v4.1\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 进入任意地图，最迟约 3 秒应显示 Area Id/地图名；符文 HD 地面实体每次创建都会上报。\r\n5. 背包/仓库移动不会上报；怪物掉落和玩家扔地都会上报。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -859,6 +925,31 @@ pub async fn build_rune_audio_mod(
 mod tests {
     use super::*;
 
+    fn write_rune_unit_definitions(mpq: &Path) {
+        let directory = mpq.join("data/hd/items/misc/rune");
+        std::fs::create_dir_all(&directory).unwrap();
+        for (index, name) in crate::rune_data::RUNE_NAMES_EN.iter().enumerate() {
+            let document = serde_json::json!({
+                "type": "UnitDefinition",
+                "name": format!("{}_rune", name.to_ascii_lowercase()),
+                "entities": [{
+                    "type": "Entity",
+                    "name": "entity_root",
+                    "id": 1000 + index,
+                    "components": [{
+                        "type": "UnitRootComponent",
+                        "name": "component_root"
+                    }]
+                }]
+            });
+            std::fs::write(
+                directory.join(format!("{}_rune.json", name.to_ascii_lowercase())),
+                serde_json::to_vec_pretty(&document).unwrap(),
+            )
+            .unwrap();
+        }
+    }
+
     #[test]
     fn patches_all_runes_and_all_level_rows() {
         let mut misc = "name\tcode\tdropsound\tusesound\n".to_string();
@@ -867,14 +958,15 @@ mod tests {
                 "Rune {number}\tr{number:02}\titem_rune\titem_rune\n"
             ));
         }
-        let patched = patch_misc(TsvTable::parse("misc", &misc).unwrap()).unwrap();
+        let patched = TsvTable::parse("misc", &misc).unwrap();
+        validate_misc(&patched).unwrap();
         assert_eq!(
             patched.get(&patched.rows[0], "dropsound"),
-            Some("d2rhub_audio_r01")
+            Some("item_rune")
         );
         assert_eq!(
             patched.get(&patched.rows[32], "dropsound"),
-            Some("d2rhub_audio_r33")
+            Some("item_rune")
         );
 
         let levels = TsvTable::parse(
@@ -896,6 +988,15 @@ mod tests {
         assert_eq!(environments.rows.len(), 4);
         assert_eq!(levels.get(&levels.rows[1], "SoundEnv"), Some("3"));
         assert_eq!(levels.get(&levels.rows[2], "SoundEnv"), Some("4"));
+
+        let sounds = TsvTable::parse(
+            "sounds",
+            "Sound\t*Index\tFileName\tIsAmbientEvent\tGroup Weight\nitem_rune_hd\t10\titem\\rune.flac\t0\t0\nevent_town1_day_hd2\t11\tambient\\event.flac\t1\t100\n",
+        )
+        .unwrap();
+        let (sounds, _) = patch_sounds(sounds, &areas).unwrap();
+        let area_row = sounds.row_by("Sound", "d2rhub_audio_a1").unwrap();
+        assert_eq!(sounds.get(&area_row, "Group Weight"), Some("100"));
     }
 
     #[test]
@@ -990,6 +1091,7 @@ mod tests {
             "Handle\tIndex\tDay Event\tHD Day Event\tNight Event\tHD Night Event\tEvent Delay\tHD Event Delay\nTown\t1\ta\ta\ta\ta\t500\t500\nWild\t2\tb\tb\tb\tb\t500\t500\n",
         )
         .unwrap();
+        write_rune_unit_definitions(&source);
         let source_audio = source.join("data/hd/global/sfx/item/r01.flac");
         std::fs::create_dir_all(source_audio.parent().unwrap()).unwrap();
         let samples = (0..24_000)
@@ -1030,6 +1132,26 @@ mod tests {
         assert!(output_mpq
             .join("data/hd/global/sfx/d2rhub_audio/areas/a6.flac")
             .is_file());
+        let misc_output = TsvTable::parse(
+            "misc",
+            &read_utf8(&output_mpq.join("data/global/excel/misc.txt")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            misc_output.get(&misc_output.rows[0], "dropsound"),
+            Some("item_rune_hd")
+        );
+        let el_document: serde_json::Value = serde_json::from_str(
+            &read_utf8(&output_mpq.join("data/hd/items/misc/rune/el_rune.json")).unwrap(),
+        )
+        .unwrap();
+        let emitter = el_document["entities"][0]["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|component| component["type"] == "AudioEmitterComponent")
+            .unwrap();
+        assert_eq!(emitter["audioId"], "d2rhub_audio_r01");
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }

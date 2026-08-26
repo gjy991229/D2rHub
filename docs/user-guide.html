@@ -393,13 +393,13 @@
       <p>“设置中心 → 自动化”提供完整 Mod 生成和实时识别。开始前选择一个<strong>已初始化</strong>账号作为目标，捕获器只监听该账号的 D2R 进程及其子进程。</p>
       <ul>
         <li><strong>完整 Mod：</strong>选择 jcy.mpq 等已解包 Mod，生成器复制其全部内容，再为 33 个符文和源 <code>levels.txt</code> 中所有有效 AreaId 加入标记；源目录不会修改。</li>
-        <li><strong>触发：</strong>符文使用 <code>misc.txt:dropsound</code>，玩家手动丢地也会计入；地图克隆各自 SoundEnv，只占用随机环境事件槽，约 1.3–2.7 秒发送一次心跳。</li>
+        <li><strong>触发：</strong>符文使用 HD 地面实体的 <code>AudioEmitterComponent</code>，怪物爆出和玩家手动丢地都会计入，背包/仓库移动不会计入；地图克隆各自 SoundEnv，以有效权重在随机环境事件槽中约每 1.3–2.7 秒发送一次心跳。</li>
         <li><strong>协议：</strong>18kHz BPSK 前导、17/19kHz FSK 载荷、双份发送与 CRC-6；10 位 ID 覆盖 Area 1–1023，默认增益 <code>-30dBFS</code>。</li>
         <li><strong>落库：</strong>符文先写入原始观测表；离开当前野外时，独立分段和观测归属在同一数据库事务内保存。</li>
         <li><strong>符文重复：</strong>不设置 1 秒业务冷却；解码器确认的两次播放会分别记录，包括一秒内再次播放。同一声纹的完全同步重叠仍无法从单一混合信号推断数量。</li>
         <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、地图心跳和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
       </ul>
-      <div class="callout"><strong>启动方式：</strong>把生成的 <code>D2RHubAudioTelemetry</code> 放入 D2R 的 <code>mods</code> 目录，并使用 <code>-mod D2RHubAudioTelemetry -txt</code>。游戏音效通道必须实际输出；资源缓存不会影响每次播放后的混音识别。</div>
+      <div class="callout"><strong>启动方式：</strong>把生成的 <code>D2RHubAudioTelemetryV41</code> 放入 D2R 的 <code>mods</code> 目录，并使用 <code>-mod D2RHubAudioTelemetryV41 -txt</code>。v4.1 使用独立名称以避免误启用旧测试版；游戏音效通道必须实际输出。</div>
       <p>不同符文同时播放可以分别识别；同一符文在完全相同时间重叠时，只能视为一次事件，这是单一声纹信号的固有限制。</p>
     </section>
 
@@ -482,7 +482,7 @@
       <h3>迷你窗无法变成单行</h3>
       <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
       <h3>声纹无数据或识别不稳定</h3>
-      <p>确认使用了生成器输出的 <code>D2RHubAudioTelemetry</code>、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。先看“音频峰值”，再看地图心跳。保持默认阈值 0.56；误报时提高，漏报时先把生成强度从 -30 调到 -26dBFS，再小幅降低阈值并重启监控。</p>
+      <p>确认使用了生成器输出的 <code>D2RHubAudioTelemetryV41</code>、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。先看“音频峰值”，再看地图心跳。保持默认阈值 0.56；误报时提高，漏报时先把生成强度从 -30 调到 -26dBFS，再小幅降低阈值并重启监控。</p>
       <h3>进一步排查</h3>
       <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
     </section>

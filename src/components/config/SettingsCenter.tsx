@@ -1609,7 +1609,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      以 jcy.mpq 等已解包 Mod 为基础，保留原内容；生成 33 个符文标记和 levels.txt 中全部地图心跳
+                      以包含 HD 符文实体的完整 jcy.mpq 为基础；地面掉落不误报背包操作，并生成全部地图心跳
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1617,7 +1617,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       type="text"
                       value={audioModSourceDirectory}
                       readOnly
-                      placeholder="源：选择 jcy.mpq 或 data/global/excel"
+                      placeholder="源：选择完整的 jcy.mpq"
                       className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
                     />
                     <Button size="sm" onClick={() => pickAudioModDirectory("source")}>
