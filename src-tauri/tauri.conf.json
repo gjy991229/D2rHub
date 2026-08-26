@@ -34,7 +34,7 @@
                 "x": 60,
                 "y": 60,
                 "minWidth": 200,
-                "minHeight": 18,
+                "minHeight": 20,
                 "resizable": true,
                 "maximizable": false,
                 "decorations": false,

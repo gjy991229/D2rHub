@@ -23,7 +23,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、Mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置，可在系统配置与账号快照之间切换。
 - **性能悬浮窗**：展开 / 迷你布局分别记忆尺寸；显示账号状态、OCR 场景计时、符文和邪恶区域信息。拖到四边后自动吸附隐藏，悬停平滑抽出、移开再次隐藏。
-- **高 DPI 迷你布局**：双层最低 36 逻辑像素，压缩后切换单行并可缩至 18；适配 2K 与 Windows 缩放。
+- **高 DPI 迷你布局**：压缩到 40 逻辑像素时只切换为单行布局，窗口高度保持不变；单行最低 20 像素，重新拉高到 40 像素以上时恢复双行。
 - **OCR 与本地统计（Full）**：识别场景和 1–33 号符文，#24 以上保存截图；提供统一筛选、效率分位数、趋势、场景/角色对比、星期×小时热力图、33 号符文图谱、高符命中率与间隔、截图画廊、记录管理和 CSV / JSON 导出。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 响应键鼠输入，支持缩放、气泡和可解锁皮肤。
 
@@ -86,7 +86,7 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 - **Multi-account launch controls**: launch one, launch all, multi-select, cancel a queue, inspect progress, reorder profiles, configure mod arguments, and assign window positions.
 - **Per-account game settings** for display, graphics, audio, gameplay, and automap, with system-settings and account-snapshot modes.
 - **Always-on-top performance overlay** with expanded and mini layouts, account/OCR/Terror Zone status, independent size persistence, and four-edge auto-hide docking. Hover to reveal it smoothly and move away to hide it again.
-- **High-DPI mini layout**: the stacked layout bottoms out at 36 logical pixels, then switches to a single row that can shrink to 18 pixels.
+- **High-DPI mini layout**: at 40 logical pixels the overlay switches to one row without changing height; the single-row minimum is 20 pixels, and heights above 40 pixels restore two rows.
 - **OCR and local analytics (Full)**: scene and rune recognition, screenshots for runes #24+, global filters, timing percentiles, trends, scene/character comparisons, weekday-hour heatmaps, a 33-rune matrix, high-rune hit rate and intervals, screenshot gallery, record management, and filtered CSV/JSON export.
 - **Focus shortcuts and Bongo Cat**, including input reactions, scaling, chatter, and unlockable skins.
 

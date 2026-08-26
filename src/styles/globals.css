@@ -1274,6 +1274,62 @@ html, body, #root {
   padding: 0.125rem 0.375rem;
 }
 
+.overlay-mini-resize-handle {
+  position: absolute;
+  z-index: 4;
+  touch-action: none;
+}
+
+.overlay-mini-resize-handle[data-mini-resize-edge="n"],
+.overlay-mini-resize-handle[data-mini-resize-edge="s"] {
+  right: 8px;
+  left: 8px;
+  height: 4px;
+  cursor: ns-resize;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="n"] { top: 0; }
+.overlay-mini-resize-handle[data-mini-resize-edge="s"] { bottom: 0; }
+
+.overlay-mini-resize-handle[data-mini-resize-edge="e"],
+.overlay-mini-resize-handle[data-mini-resize-edge="w"] {
+  top: 8px;
+  bottom: 8px;
+  width: 4px;
+  cursor: ew-resize;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="e"] { right: 0; }
+.overlay-mini-resize-handle[data-mini-resize-edge="w"] { left: 0; }
+
+.overlay-mini-resize-handle:is(
+  [data-mini-resize-edge="ne"],
+  [data-mini-resize-edge="nw"],
+  [data-mini-resize-edge="se"],
+  [data-mini-resize-edge="sw"]
+) {
+  width: 8px;
+  height: 8px;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="ne"] {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="nw"] {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="se"] {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+.overlay-mini-resize-handle[data-mini-resize-edge="sw"] {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
 .overlay-account-pill {
   padding-block: 1px;
   line-height: 1;
