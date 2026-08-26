@@ -259,7 +259,7 @@ unsafe fn get_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>,
     Ok(handles)
 }
 
-unsafe fn detect_event_type_index() -> Option<u16> {
+unsafe fn detect_event_type_index() -> Result<u16, AppError> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
@@ -281,46 +281,70 @@ unsafe fn detect_event_type_index() -> Option<u16> {
     // 创建 Event
     let event_handle = CreateEventW(std::ptr::null_mut(), 0, 0, name.as_ptr());
     if event_handle.is_null() {
-        return None;
+        return Err(AppError::FileError(
+            "创建 Event 类型探测句柄失败".to_string(),
+        ));
     }
 
-    let mut type_index = None;
-    if let Ok(handles) = get_system_handles() {
+    let result = get_system_handles().and_then(|handles| {
         let current_pid = std::process::id() as usize;
         for entry in handles {
             if entry.UniqueProcessId == current_pid && entry.HandleValue == event_handle as usize {
-                type_index = Some(entry.ObjectTypeIndex);
-                break;
+                return Ok(entry.ObjectTypeIndex);
             }
         }
-    }
+        Err(AppError::FileError(
+            "无法识别 Event 句柄类型索引".to_string(),
+        ))
+    });
 
     CloseHandle(event_handle);
-    type_index
+    result
 }
 
-unsafe fn get_object_name(handle: *mut c_void) -> Option<String> {
-    let size = 1024;
-    let mut buffer = vec![0u8; size];
-    let mut return_length = 0u32;
+unsafe fn get_object_name(handle: *mut c_void) -> Result<Option<String>, AppError> {
+    let mut size = 1024usize;
+    for _ in 0..3 {
+        let mut buffer = vec![0u8; size];
+        let mut return_length = 0u32;
+        let status = NtQueryObject(
+            handle,
+            1, // ObjectNameInformation
+            buffer.as_mut_ptr() as *mut c_void,
+            size as u32,
+            &mut return_length,
+        );
 
-    let status = NtQueryObject(
-        handle,
-        1, // ObjectNameInformation
-        buffer.as_mut_ptr() as *mut c_void,
-        size as u32,
-        &mut return_length,
-    );
-
-    if status == STATUS_SUCCESS {
-        let info = buffer.as_ptr() as *const OBJECT_NAME_INFORMATION;
-        let len = (*info).Name.Length as usize / 2;
-        if len > 0 && !(*info).Name.Buffer.is_null() {
-            let slice = std::slice::from_raw_parts((*info).Name.Buffer, len);
-            return Some(String::from_utf16_lossy(slice));
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            size = (return_length as usize).max(size.saturating_mul(2));
+            continue;
         }
+        if status != STATUS_SUCCESS {
+            return Err(AppError::FileError(format!(
+                "NtQueryObject 读取句柄名称失败: {status:#x}"
+            )));
+        }
+
+        let info = buffer.as_ptr() as *const OBJECT_NAME_INFORMATION;
+        let name_bytes = (*info).Name.Length as usize;
+        if name_bytes == 0 || (*info).Name.Buffer.is_null() {
+            return Ok(None);
+        }
+        let name_start = (*info).Name.Buffer as usize;
+        let buffer_start = buffer.as_ptr() as usize;
+        let buffer_end = buffer_start.saturating_add(buffer.len());
+        let name_end = name_start
+            .checked_add(name_bytes)
+            .ok_or_else(|| AppError::FileError("句柄名称缓冲区长度溢出".to_string()))?;
+        if name_start < buffer_start || name_end > buffer_end || !name_bytes.is_multiple_of(2) {
+            return Err(AppError::FileError("句柄名称缓冲区范围无效".to_string()));
+        }
+        let slice = std::slice::from_raw_parts((*info).Name.Buffer, name_bytes / 2);
+        return Ok(Some(String::from_utf16_lossy(slice)));
     }
-    None
+    Err(AppError::FileError(
+        "句柄名称缓冲区连续扩容后仍不足".to_string(),
+    ))
 }
 
 /// 查询指定进程持有的 Event 句柄 (为兼容前端通信，保持函数名不变)
@@ -331,14 +355,13 @@ pub fn find_mutex_handle(
 ) -> Result<Option<String>, AppError> {
     unsafe {
         // 获取当前系统环境下 Event 类型的索引
-        let event_index = match detect_event_type_index() {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
+        let event_index = detect_event_type_index()?;
 
         let target_process_handle = OpenProcess(0x0040, 0, pid); // PROCESS_DUP_HANDLE
         if target_process_handle.is_null() {
-            return Ok(None);
+            return Err(AppError::FileError(
+                "无法打开目标进程以查询互斥句柄".to_string(),
+            ));
         }
 
         let handles = match get_system_handles() {
@@ -350,6 +373,7 @@ pub fn find_mutex_handle(
         };
 
         let current_process = -1isize as *mut c_void;
+        let mut incomplete_reason = None;
         for entry in handles {
             // 严格过滤：PID 匹配且句柄类型必须是 Event
             if entry.UniqueProcessId == pid as usize && entry.ObjectTypeIndex == event_index {
@@ -365,21 +389,28 @@ pub fn find_mutex_handle(
                 );
 
                 if success != 0 {
-                    if let Some(name) = get_object_name(dup_handle) {
-                        CloseHandle(dup_handle);
-                        // 匹配 Event 名称
-                        if name.contains(event_name) {
+                    let name_result = get_object_name(dup_handle);
+                    CloseHandle(dup_handle);
+                    match name_result {
+                        Ok(Some(name)) if name.contains(event_name) => {
                             CloseHandle(target_process_handle);
                             return Ok(Some(entry.HandleValue.to_string()));
                         }
-                    } else {
-                        CloseHandle(dup_handle);
+                        Ok(_) => {}
+                        Err(error) => {
+                            incomplete_reason = Some(error.to_string());
+                        }
                     }
+                } else {
+                    incomplete_reason = Some("复制目标进程 Event 句柄失败".to_string());
                 }
             }
         }
 
         CloseHandle(target_process_handle);
+        if let Some(reason) = incomplete_reason {
+            return Err(AppError::FileError(format!("互斥句柄扫描不完整: {reason}")));
+        }
     }
     Ok(None)
 }
