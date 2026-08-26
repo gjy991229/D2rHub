@@ -2,44 +2,27 @@ use super::catalog::{location_definition, LocationDefinition, LocationKind, Tele
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-const SCENE_CONFIRMATION_WINDOW_SECONDS: u64 = 3;
-
-/// Filters periodic location heartbeats into stable transitions.
+/// Deduplicates location markers while accepting a different location immediately.
 #[derive(Debug, Clone)]
 pub struct SceneTransitionGate {
     confirmed: Option<TelemetryMarker>,
-    pending: Option<(TelemetryMarker, u64)>,
-    confirmation_window_frames: u64,
 }
 
 impl SceneTransitionGate {
-    pub fn new(sample_rate: u32) -> Self {
-        Self {
-            confirmed: None,
-            pending: None,
-            confirmation_window_frames: sample_rate as u64 * SCENE_CONFIRMATION_WINDOW_SECONDS,
-        }
+    pub fn new(_sample_rate: u32) -> Self {
+        Self { confirmed: None }
     }
 
-    /// Returns true only when a location marker is newly confirmed.
-    pub fn observe(&mut self, marker: TelemetryMarker, observed_at_frame: u64) -> bool {
+    /// Returns true on the first valid marker for a different location.
+    pub fn observe(&mut self, marker: TelemetryMarker, _observed_at_frame: u64) -> bool {
         if location_definition(marker).is_none() {
             return false;
         }
         if self.confirmed == Some(marker) {
             return false;
         }
-        if let Some((pending, first_frame)) = self.pending {
-            if pending == marker
-                && observed_at_frame.saturating_sub(first_frame) <= self.confirmation_window_frames
-            {
-                self.confirmed = Some(marker);
-                self.pending = None;
-                return true;
-            }
-        }
-        self.pending = Some((marker, observed_at_frame));
-        false
+        self.confirmed = Some(marker);
+        true
     }
 }
 
@@ -190,6 +173,17 @@ impl SegmentTracker {
             self.revision += 1;
         }
         self.snapshot()
+    }
+
+    /// Unknown locations stay observable during startup, but a confirmed town
+    /// or frontend is never a loot-producing context.
+    pub fn accepts_rune_observation(&self) -> bool {
+        !matches!(
+            self.current_location
+                .and_then(location_definition)
+                .map(|location| location.kind),
+            Some(LocationKind::Town | LocationKind::Frontend)
+        )
     }
 
     pub fn snapshot(&self) -> TrackingSnapshot {
@@ -408,23 +402,40 @@ mod tests {
     }
 
     #[test]
+    fn confirmed_town_and_frontend_reject_runes_but_unknown_and_wilderness_accept_them() {
+        let mut tracker = tracker();
+        assert!(tracker.accepts_rune_observation());
+        tracker
+            .observe_location(area(1), 100, 100, "town".to_string())
+            .unwrap();
+        assert!(!tracker.accepts_rune_observation());
+        tracker
+            .observe_location(area(6), 200, 200, "wild".to_string())
+            .unwrap();
+        assert!(tracker.accepts_rune_observation());
+        tracker
+            .observe_location(TelemetryMarker::Frontend, 300, 300, "menu".to_string())
+            .unwrap();
+        assert!(!tracker.accepts_rune_observation());
+    }
+
+    #[test]
     fn transition_gate_supports_areas_and_frontend() {
         let mut gate = SceneTransitionGate::new(48_000);
-        assert!(!gate.observe(area(1), 0));
-        assert!(gate.observe(area(1), 24_000));
-        assert!(!gate.observe(TelemetryMarker::Frontend, 48_000));
-        assert!(!gate.observe(area(1), 60_000));
+        assert!(gate.observe(area(1), 0));
+        assert!(!gate.observe(area(1), 24_000));
+        assert!(gate.observe(TelemetryMarker::Frontend, 48_000));
+        assert!(gate.observe(area(1), 60_000));
         assert!(gate.observe(TelemetryMarker::Frontend, 72_000));
         assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 1 }, 96_000));
     }
 
     #[test]
-    fn expired_or_competing_candidate_restarts_confirmation() {
+    fn competing_locations_are_accepted_without_a_confirmation_delay() {
         let mut gate = SceneTransitionGate::new(48_000);
-        assert!(!gate.observe(area(6), 0));
+        assert!(gate.observe(area(6), 0));
         assert!(!gate.observe(area(6), 48_000 * 4));
-        assert!(!gate.observe(area(21), 48_000 * 5));
-        assert!(!gate.observe(area(6), 48_000 * 6));
-        assert!(gate.observe(area(6), 48_000 * 7));
+        assert!(gate.observe(area(21), 48_000 * 5));
+        assert!(gate.observe(area(6), 48_000 * 6));
     }
 }

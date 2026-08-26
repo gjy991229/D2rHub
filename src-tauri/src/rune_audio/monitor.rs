@@ -122,6 +122,9 @@ fn handle_rune_detection(
     rune_number: u32,
     confidence: f32,
 ) {
+    if !tracker.accepts_rune_observation() {
+        return;
+    }
     let rune_name = crate::rune_data::get_rune_name(rune_number)
         .unwrap_or("未知符文")
         .to_string();
