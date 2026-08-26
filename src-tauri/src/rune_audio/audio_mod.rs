@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioCountessV43";
+const MOD_NAME: &str = "D2RHubAudioCountessV44";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
 const COUNTESS_AREA_IDS: [u32; 8] = [1, 6, 20, 21, 22, 23, 24, 25];
 
@@ -311,7 +311,7 @@ fn validate_misc(table: &TsvTable) -> Result<(), String> {
 
 #[derive(Clone, Copy)]
 enum SoundRole {
-    RuneFlippy,
+    RuneDrop,
     AreaAmbience,
 }
 
@@ -341,191 +341,19 @@ fn configure_sound_row(table: &TsvTable, row: &mut [String], role: SoundRole) {
     }
 }
 
-fn rune_unit_definition_candidates(mpq_directory: &Path, rune_number: u32) -> Vec<PathBuf> {
-    let rune_name =
-        crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize].to_ascii_lowercase();
-    ["rune", "runes"]
-        .into_iter()
-        .map(|folder| {
-            mpq_directory.join(format!("data/hd/items/misc/{folder}/{rune_name}_rune.json"))
-        })
-        .collect()
-}
-
-fn flippy_state_machine_document(
-    original_state_machine: &str,
-    rune_number: u32,
-) -> Result<serde_json::Value, String> {
-    let normalized_state_machine = original_state_machine.replace('\\', "/");
-    let file_name = normalized_state_machine
-        .rsplit('/')
-        .next()
-        .and_then(|value| value.strip_suffix(".json"))
-        .filter(|value| {
-            !value.is_empty()
-                && value
-                    .chars()
-                    .all(|character| character.is_ascii_lowercase() || character == '_')
-        })
-        .ok_or_else(|| format!("无法解析物品落地状态机路径: {original_state_machine}"))?;
-    let animation = format!("data/hd/items/dropped_items/animation/{file_name}.animation");
-    let machine_name = format!("d2rhub_r{rune_number:02}_flippy");
-    Ok(serde_json::json!({
-        "dependencies": {
-            "particles": [],
-            "models": [],
-            "skeletons": [],
-            "animations": [{ "path": animation }],
-            "textures": [],
-            "physics": [],
-            "json": [],
-            "variantdata": [],
-            "objecteffects": [],
-            "other": []
-        },
-        "type": "AnimationStateMachine",
-        "name": machine_name,
-        "unitType": "UNIT_OBJECT",
-        "animations": [{
-            "type": "AnimationItem",
-            "name": format!("{machine_name}001"),
-            "filename": animation
-        }],
-        "states": [{
-            "type": "AnimationState",
-            "name": "AnimationState",
-            "_name": "Flippy",
-            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
-            "loopCount": 1,
-            "stateId": 1,
-            "enableVfxAttributes": false,
-            "modeId": 5,
-            "skillIndex": -1,
-            "stepIndex": 0,
-            "animationBindings": { "hth": [format!("{machine_name}001")] },
-            "enterEvents": [],
-            "exitEvents": [],
-            "exitBlendType": 0
-        }, {
-            "type": "AnimationState",
-            "name": "AnimationState001",
-            "_name": "Ground",
-            "audioId": "",
-            "loopCount": 1,
-            "stateId": 2,
-            "enableVfxAttributes": false,
-            "modeId": 3,
-            "skillIndex": -1,
-            "stepIndex": 0,
-            "animationBindings": { "hth": [format!("{machine_name}001")] },
-            "enterEvents": [],
-            "exitEvents": [],
-            "exitBlendType": 0
-        }],
-        "transitions": [{
-            "type": "AnimationTransitionGroup",
-            "name": "AnimationState_transitiongroup",
-            "from": 1,
-            "settings": [{
-                "type": "AnimationTransitionItem",
-                "name": "AnimationState_transitiongroup_transition",
-                "crossfadeSeconds": 0.2,
-                "to": 2
-            }]
-        }]
-    }))
-}
-
-fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
-    let mut patched = 0usize;
+fn patch_rune_drop_sounds(mut table: TsvTable) -> Result<TsvTable, String> {
+    let code_index = table.column("code")?;
+    let drop_sound_index = table.column("dropsound")?;
     for rune_number in 1..=RUNE_COUNT {
-        let path = rune_unit_definition_candidates(mpq_directory, rune_number)
-            .into_iter()
-            .find(|candidate| candidate.is_file())
-            .ok_or_else(|| {
-                format!(
-                    "源 Mod 缺少 #{rune_number:02} {} 的 HD 地面实体 JSON；无法可靠监听地面掉落",
-                    crate::rune_data::RUNE_NAMES_EN[(rune_number - 1) as usize]
-                )
-            })?;
-        let text = read_utf8(&path)?;
-        let mut document: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|error| format!("解析 HD 符文实体失败 {}: {error}", path.display()))?;
-        let entities = document
-            .get_mut("entities")
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| format!("HD 符文实体缺少 entities 数组: {}", path.display()))?;
-        let root = entities
+        let code = format!("r{rune_number:02}");
+        let row = table
+            .rows
             .iter_mut()
-            .find(|entity| {
-                entity.get("name").and_then(serde_json::Value::as_str) == Some("entity_root")
-            })
-            .ok_or_else(|| format!("HD 符文实体缺少 entity_root: {}", path.display()))?;
-        let components = root
-            .get_mut("components")
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| format!("HD 符文 entity_root 缺少 components: {}", path.display()))?;
-        // An entity-level emitter also fires when the inventory renderer
-        // instantiates the unit.  Only the Flippy animation state is specific
-        // to a world item being dropped.
-        components.retain(|component| {
-            !(component.get("type").and_then(serde_json::Value::as_str)
-                == Some("AudioEmitterComponent")
-                && component
-                    .get("name")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|name| name.starts_with("D2RHub_Rune_")))
-        });
-        let unit_root = components
-            .iter_mut()
-            .find(|component| {
-                component.get("type").and_then(serde_json::Value::as_str)
-                    == Some("UnitRootComponent")
-            })
-            .ok_or_else(|| {
-                format!(
-                    "HD 符文 entity_root 缺少 UnitRootComponent: {}",
-                    path.display()
-                )
-            })?;
-        let original_state_machine = unit_root
-            .get("state_machine_filename")
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| format!("HD 符文缺少落地状态机路径: {}", path.display()))?
-            .to_string();
-        let telemetry_state_machine =
-            format!("data/hd/items/d2rhub_audio/runes/r{rune_number:02}_flippy.json");
-        unit_root["state_machine_filename"] =
-            serde_json::Value::String(telemetry_state_machine.clone());
-
-        let dependencies = document
-            .get_mut("dependencies")
-            .and_then(|value| value.get_mut("json"))
-            .and_then(serde_json::Value::as_array_mut)
-            .ok_or_else(|| format!("HD 符文缺少 dependencies.json: {}", path.display()))?;
-        if let Some(reference) = dependencies.iter_mut().find(|reference| {
-            reference.get("path").and_then(serde_json::Value::as_str)
-                == Some(original_state_machine.as_str())
-        }) {
-            reference["path"] = serde_json::Value::String(telemetry_state_machine.clone());
-        } else {
-            dependencies.push(serde_json::json!({ "path": telemetry_state_machine }));
-        }
-
-        let state_machine = flippy_state_machine_document(&original_state_machine, rune_number)?;
-        write_file(
-            &mpq_directory.join(telemetry_state_machine.replace('/', "\\")),
-            serde_json::to_vec_pretty(&state_machine)
-                .map_err(|error| format!("序列化符文落地状态机失败: {error}"))?,
-        )?;
-        write_file(
-            &path,
-            serde_json::to_vec_pretty(&document)
-                .map_err(|error| format!("序列化 HD 符文实体失败: {error}"))?,
-        )?;
-        patched += 1;
+            .find(|row| row[code_index].eq_ignore_ascii_case(&code))
+            .ok_or_else(|| format!("misc.txt 缺少符文代码 {code}"))?;
+        row[drop_sound_index] = format!("d2rhub_audio_r{rune_number:02}");
     }
-    Ok(patched)
+    Ok(table)
 }
 
 fn patch_sounds(
@@ -558,7 +386,7 @@ fn patch_sounds(
         table.set(&mut row, "Sound", &sound)?;
         table.set(&mut row, "*Index", next_index.to_string())?;
         table.set(&mut row, "FileName", &relative_path)?;
-        configure_sound_row(&table, &mut row, SoundRole::RuneFlippy);
+        configure_sound_row(&table, &mut row, SoundRole::RuneDrop);
         table.rows.push(row);
         definitions.push((marker, sound, relative_path));
         next_index += 1;
@@ -1037,9 +865,9 @@ fn build(
         HashMap::new()
     };
     validate_misc(&misc)?;
+    let misc = patch_rune_drop_sounds(misc)?;
     let (sounds, definitions) = patch_sounds(sounds, &areas)?;
     let (environments, levels) = patch_sound_environ_and_levels(environments, levels, &areas)?;
-    let patched_rune_units = patch_rune_unit_definitions(&mpq_directory)?;
 
     write_file(&excel_output.join("misc.txt"), misc.to_text())?;
     write_file(&excel_output.join("sounds.txt"), sounds.to_text())?;
@@ -1135,9 +963,10 @@ fn build(
         area_assets,
         area_catalog: areas,
         notes: vec![
-            format!(
-                "已给 {patched_rune_units} 个符文建立单向 Flippy→Ground 状态机；每次世界掉落只播放一次，背包实体创建不触发。"
-            ),
+            "33 个符文的 misc.txt dropsound 已改为各自的声纹音频；usesound 保持源 Mod 原值，背包/仓库移动不触发。"
+                .to_string(),
+            "符文不再改写 HD 实体或 Flippy 状态机；怪物爆落与手动扔地均只走游戏原生的一次性 dropsound。"
+                .to_string(),
             "源 Mod 中能定位到的符文 FLAC 会保留原声并混入 v4 标记；缺失资源使用纯超声标记。"
                 .to_string(),
             if let Some(game_root) = game_root {
@@ -1164,7 +993,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 女伯爵音频实机版 v4.3\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文只在 Flippy 世界落地动画播放一次；33 个符文使用不同延迟槽，降低同时爆落的碰撞。\r\n6. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 女伯爵音频实机版 v4.4\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文声纹直接使用 misc.txt 的原生 dropsound；背包 usesound 保持不变，不再修改 Flippy 状态机。\r\n6. 33 个符文使用不同延迟槽，降低同时爆落的碰撞；同一符文的两个完全同步掉落在纯音频上仍只能计为一次。\r\n7. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -1221,37 +1050,6 @@ pub async fn build_rune_audio_mod(
 mod tests {
     use super::*;
 
-    fn write_rune_unit_definitions(mpq: &Path) {
-        let directory = mpq.join("data/hd/items/misc/rune");
-        std::fs::create_dir_all(&directory).unwrap();
-        for (index, name) in crate::rune_data::RUNE_NAMES_EN.iter().enumerate() {
-            let document = serde_json::json!({
-                "dependencies": {
-                    "json": [{
-                        "path": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
-                    }]
-                },
-                "type": "UnitDefinition",
-                "name": format!("{}_rune", name.to_ascii_lowercase()),
-                "entities": [{
-                    "type": "Entity",
-                    "name": "entity_root",
-                    "id": 1000 + index,
-                    "components": [{
-                        "type": "UnitRootComponent",
-                        "name": "component_root",
-                        "state_machine_filename": "data/hd/items/dropped_items/dropped_items_helms_flip_ne.json"
-                    }]
-                }]
-            });
-            std::fs::write(
-                directory.join(format!("{}_rune.json", name.to_ascii_lowercase())),
-                serde_json::to_vec_pretty(&document).unwrap(),
-            )
-            .unwrap();
-        }
-    }
-
     #[test]
     fn patches_all_runes_and_countess_area_rows() {
         let mut misc = "name\tcode\tdropsound\tusesound\n".to_string();
@@ -1260,14 +1058,20 @@ mod tests {
                 "Rune {number}\tr{number:02}\titem_rune\titem_rune\n"
             ));
         }
-        let patched = TsvTable::parse("misc", &misc).unwrap();
-        validate_misc(&patched).unwrap();
+        let original = TsvTable::parse("misc", &misc).unwrap();
+        validate_misc(&original).unwrap();
+        let patched = patch_rune_drop_sounds(original).unwrap();
         assert_eq!(
             patched.get(&patched.rows[0], "dropsound"),
-            Some("item_rune")
+            Some("d2rhub_audio_r01")
         );
         assert_eq!(
             patched.get(&patched.rows[32], "dropsound"),
+            Some("d2rhub_audio_r33")
+        );
+        assert_eq!(patched.get(&patched.rows[0], "usesound"), Some("item_rune"));
+        assert_eq!(
+            patched.get(&patched.rows[32], "usesound"),
             Some("item_rune")
         );
 
@@ -1394,7 +1198,6 @@ mod tests {
             "Handle\tIndex\tDay Ambience\tHD Day Ambience\tNight Ambience\tHD Night Ambience\nTown\t1\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\nWild\t2\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\tscene_wilderness_day\n",
         )
         .unwrap();
-        write_rune_unit_definitions(&source);
         let source_audio = source.join("data/hd/global/sfx/item/r01.flac");
         std::fs::create_dir_all(source_audio.parent().unwrap()).unwrap();
         let samples = (0..24_000)
@@ -1442,31 +1245,15 @@ mod tests {
         .unwrap();
         assert_eq!(
             misc_output.get(&misc_output.rows[0], "dropsound"),
+            Some("d2rhub_audio_r01")
+        );
+        assert_eq!(
+            misc_output.get(&misc_output.rows[0], "usesound"),
             Some("item_rune_hd")
         );
-        let el_document: serde_json::Value = serde_json::from_str(
-            &read_utf8(&output_mpq.join("data/hd/items/misc/rune/el_rune.json")).unwrap(),
-        )
-        .unwrap();
-        let unit_root = el_document["entities"][0]["components"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|component| component["type"] == "UnitRootComponent")
-            .unwrap();
-        assert_eq!(
-            unit_root["state_machine_filename"],
-            "data/hd/items/d2rhub_audio/runes/r01_flippy.json"
-        );
-        let flippy: serde_json::Value = serde_json::from_str(
-            &read_utf8(&output_mpq.join("data/hd/items/d2rhub_audio/runes/r01_flippy.json"))
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(flippy["states"][0]["audioId"], "d2rhub_audio_r01");
-        assert_eq!(flippy["states"][1]["audioId"], "");
-        assert_eq!(flippy["transitions"].as_array().unwrap().len(), 1);
-        assert_eq!(flippy["transitions"][0]["from"], 1);
+        assert!(!output_mpq
+            .join("data/hd/items/d2rhub_audio/runes/r01_flippy.json")
+            .exists());
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }

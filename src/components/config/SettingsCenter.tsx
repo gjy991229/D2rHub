@@ -1654,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.3 女伯爵实机版：符文单次 Flippy 标记并按编号错峰；地点覆盖完整女伯爵路线
+                      v4.4 女伯爵实机版：符文使用原生地面掉落声并按编号错峰；背包声不改，地点覆盖完整女伯爵路线
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1705,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.3 女伯爵版
+                    生成 Audio Telemetry v4.4 女伯爵版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
