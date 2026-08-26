@@ -13,11 +13,11 @@ The online region selected by an account: CN, Asia, Americas, or Europe. Asia, A
 _Avoid_: Client version, installation
 
 **Client Edition**:
-One of the two locally installable game distributions: CN or Global. A Client Edition owns its Battle.net executable, game directory, save directory, and edition-specific launch conventions.
+One of the two locally installable game distributions: CN or Global. Each edition owns its game and save directories. Only the CN edition can additionally own the single configured Battle.net executable.
 _Avoid_: Server, Game Region
 
 **Installation Profile**:
-The configured local paths for one Client Edition. Token authentication requires its game and save directories; Battle.net authentication additionally requires its Battle.net executable.
+The configured local paths for one Client Edition. Token authentication requires its game and save directories. Battle.net authentication is a CN-only compatibility mode and additionally requires the single CN Battle.net executable.
 _Avoid_: Global path, shared path
 
 **Launch Context**:

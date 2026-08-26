@@ -13,6 +13,7 @@ import type { AccountMeta, LaunchProgress } from "../../store/types";
 import {
   firstConfiguredRegion,
   hasConfiguredPathsForRegion,
+  requiresTokenMigration,
   type AccountRegion,
 } from "../../utils/regionPaths";
 import {
@@ -73,6 +74,9 @@ const getTokenPrefix = (region: string): string => {
 };
 
 export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Props) {
+  const { config } = useGlobalConfig();
+  const migratingToToken = Boolean(updateAccount
+    && requiresTokenMigration(updateAccount.auth_mode, updateAccount.region, config));
   const [currentStep, setCurrentStep] = useState<InitStep>("input_nickname");
   const [completedSteps, setCompletedSteps] = useState<Set<InitStep>>(new Set());
   const [accountId, setAccountId] = useState<string>("");
@@ -97,7 +101,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   const cancellingRef = useRef(false);
 
   const { createAccount, initializeBnetAccount } = useAccounts();
-  const { config } = useGlobalConfig();
+  const cnBattleNetModeAvailable = hasConfiguredPathsForRegion(config, "CN", "bnet");
 
   const markDone = (step: InitStep) => setCompletedSteps(prev => new Set([...prev, step]));
 
@@ -115,6 +119,8 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
           initialRegion = "KR";
         } else if (["CN", "KR", "NA", "EU"].includes(updateAccount.region as string)) {
           initialRegion = updateAccount.region as "CN" | "KR" | "NA" | "EU";
+        } else if (!updateAccount.region?.trim()) {
+          initialRegion = firstConfiguredRegion(config, "token") || "CN";
         }
         setRegion(initialRegion);
         setToken("");
@@ -144,7 +150,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       activeInitializationRef.current = null;
       cancellingRef.current = false;
     }
-  }, [open, updateAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_battle_net_path, config?.global_game_path, config?.global_saved_games_path]);
+  }, [open, updateAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_game_path, config?.global_saved_games_path]);
 
   useEffect(() => {
     if (!shouldStartBnetInitialization({
@@ -331,14 +337,19 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       setError(`${region === "CN" ? "国服" : "国际服"}游戏与存档路径尚未完整配置，请先前往设置补全`);
       return;
     }
+    if (region !== "CN") setAuthMode("token");
     setError(null);
     setTokenWizard("token_auth");
   };
 
   const tokenStepAuthNext = () => {
     if (authMode === "bnet") {
+      if (region !== "CN") {
+        setError("国际服仅支持 Token 直启");
+        return;
+      }
       if (!hasConfiguredPathsForRegion(config, region, "bnet")) {
-        setError(`${region === "CN" ? "国服" : "国际服"} Battle.net.exe 尚未配置，战网认证无法继续`);
+        setError("国服 Battle.net.exe 尚未配置，战网认证无法继续");
         return;
       }
       // Bnet mode: lock and proceed to old flow
@@ -424,6 +435,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       try {
         await invoke("update_account_meta", {
           accountId: id,
+          authMode: "token",
           token: token.trim() || null,
           region,
           language,
@@ -437,7 +449,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     onDone(id);
     onClose();
     if (updateAccount) {
-      showToast("success", "Token 已更新！");
+      showToast("success", migratingToToken ? "已迁移为 Token 直启！" : "Token 已更新！");
     } else {
       showToast("success", "Token 账号 " + nickname.trim() + " 初始化完成！");
     }
@@ -449,7 +461,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     <Modal
       open={open}
       onClose={handleClose}
-      title="初始化新账号"
+      title={migratingToToken ? "迁移为 Token 直启" : updateAccount ? "更新账号 Token" : "初始化新账号"}
       width="max-w-md"
       footer={
         currentStep === "done" ? (
@@ -460,7 +472,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       }
     >
       {/* ═══════════ Token Wizard Flow ═══════════ */}
-      {!nicknameLocked && (
+      {(!nicknameLocked || Boolean(updateAccount)) && (
         <div className="mb-3 flex flex-col gap-3">
           {/* Step indicator */}
           <div className="flex items-center gap-2 text-xs text-text-muted">
@@ -509,6 +521,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                           : undefined}
                         onClick={() => {
                           setRegion(r);
+                          if (r !== "CN") setAuthMode("token");
                           if (r === "CN") {
                             setLanguage("zhCN");
                             setVoicelanguage("zhCN");
@@ -602,13 +615,31 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                   <input type="radio" checked={authMode === "token"} onChange={() => { setAuthMode("token"); setError(null); }} className="accent-accent" />
                   <span className="text-md">✨ 网页 Token 认证（推荐·免战网）</span>
                 </label>
-                <label
-                  className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-border-default"
-                  title="优点：配置简单，仅需网易账号，无需战网账号。缺点：启动较慢（约 10-20s），需经过战网客户端；授权有效期一个月，容易触发 Token 过期需重新登录。"
-                >
-                  <input type="radio" checked={authMode === "bnet"} onChange={() => { setAuthMode("bnet"); setError(null); }} className="accent-accent" />
-                  <span className="text-md">战网客户端认证（需要通过战网启动）</span>
-                </label>
+                {region === "CN" ? (
+                  <label
+                    className={`flex items-center gap-2 p-3 rounded-xl border border-border-default ${
+                      cnBattleNetModeAvailable
+                        ? "cursor-pointer"
+                        : "cursor-not-allowed opacity-50"
+                    }`}
+                    title={cnBattleNetModeAvailable
+                      ? "国服兼容模式。配置简单，仅需网易账号，但启动较慢且需要经过战网客户端。"
+                      : "国服 Battle.net.exe 尚未完整配置"}
+                  >
+                    <input
+                      type="radio"
+                      checked={authMode === "bnet"}
+                      disabled={!cnBattleNetModeAvailable}
+                      onChange={() => { setAuthMode("bnet"); setError(null); }}
+                      className="accent-accent disabled:cursor-not-allowed"
+                    />
+                    <span className="text-md">战网客户端认证（国服兼容）</span>
+                  </label>
+                ) : (
+                  <p className="text-xs text-text-muted px-1 leading-relaxed">
+                    国际服固定使用 Token 直启，不启动 Battle.net 客户端，避免多客户端冲突。
+                  </p>
+                )}
                 {authMode === "bnet" && (
                   <p className="text-xs text-text-muted px-1">
                     战网认证沿用该账号的客户端快照语言；上一步的语言与配音选择仅用于 Token 直启。

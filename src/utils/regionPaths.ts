@@ -9,6 +9,27 @@ export function isCnRegion(region: string | null | undefined): boolean {
   return region?.trim().toUpperCase() === "CN";
 }
 
+export function isInternationalRegion(region: string | null | undefined): boolean {
+  return ["KR", "NA", "EU", "GLOBAL", "ASIA", "AMERICAS", "EUROPE"]
+    .includes(region?.trim().toUpperCase() || "");
+}
+
+export function requiresTokenMigration(
+  authMode: string | null | undefined,
+  region: string | null | undefined,
+  config?: GlobalConfig | null,
+): boolean {
+  if (authMode === "token") return false;
+  if (isInternationalRegion(region)) return true;
+  if (region?.trim() || !config) return false;
+
+  const cnComplete = Boolean(config.cn_game_path?.trim() && config.cn_saved_games_path?.trim());
+  const globalComplete = Boolean(
+    config.global_game_path?.trim() && config.global_saved_games_path?.trim(),
+  );
+  return globalComplete && !cnComplete;
+}
+
 export function hasConfiguredPathsForRegion(
   config: GlobalConfig | null | undefined,
   region: string | null | undefined,
@@ -21,10 +42,6 @@ export function hasConfiguredPathsForRegion(
   ].includes(normalizedRegion || "");
   if (!knownRegion) return false;
 
-
-  const battleNetPath = isCnRegion(region)
-    ? config.cn_battle_net_path
-    : config.global_battle_net_path;
   const gamePath = isCnRegion(region) ? config.cn_game_path : config.global_game_path;
   const savedGamesPath = isCnRegion(region)
     ? config.cn_saved_games_path
@@ -32,7 +49,7 @@ export function hasConfiguredPathsForRegion(
   const hasGameAndSaves = Boolean(gamePath?.trim() && savedGamesPath?.trim());
   return authMode === "token"
     ? hasGameAndSaves
-    : Boolean(battleNetPath?.trim() && hasGameAndSaves);
+    : Boolean(isCnRegion(region) && config.cn_battle_net_path?.trim() && hasGameAndSaves);
 }
 
 export function firstConfiguredRegion(

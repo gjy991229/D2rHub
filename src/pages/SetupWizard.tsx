@@ -9,9 +9,8 @@ import type { GlobalConfig } from "../store/types";
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 3, cn_battle_net_path: "",
+  version: 4, cn_battle_net_path: "",
   cn_game_path: "", cn_saved_games_path: "",
-  global_battle_net_path: "",
   global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
   accounts_dir: "", first_run_complete: false,
@@ -87,9 +86,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     const globalPaths = [config.global_game_path.trim(), config.global_saved_games_path.trim()];
     const cnComplete = cnPaths.every(Boolean);
     const globalComplete = globalPaths.every(Boolean);
-    const cnPartial = Boolean(config.cn_battle_net_path.trim() || cnPaths.some(Boolean)) && !cnComplete;
-    const globalPartial = Boolean(config.global_battle_net_path.trim() || globalPaths.some(Boolean)) && !globalComplete;
-    return (cnComplete || globalComplete) && !cnPartial && !globalPartial;
+    return cnComplete || globalComplete;
   };
 
   const getMissingSteps = () => {
@@ -99,8 +96,6 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     const cnComplete = cnPaths.every(Boolean);
     const globalComplete = globalPaths.every(Boolean);
     if (!cnComplete && !globalComplete) missing.push("至少完整配置一组国服或国际服的游戏与存档路径");
-    if ((config.cn_battle_net_path.trim() || cnPaths.some(Boolean)) && !cnComplete) missing.push("国服游戏与存档路径需成组配置，Battle.net 可供 Token 模式留空");
-    if ((config.global_battle_net_path.trim() || globalPaths.some(Boolean)) && !globalComplete) missing.push("国际服游戏与存档路径需成组配置，Battle.net 可供 Token 模式留空");
     return missing;
   };
 
@@ -134,10 +129,6 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       icon: <Save size={20} />,
       placeholder: "浏览选择国服存档目录", isFile: false, required: false,
       value: config.cn_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,cn_saved_games_path:v})), detected: detected.cnSavedGames },
-    { key: "global_battle_net_path" as const, title: "国际服战网客户端", desc: "国际服战网认证使用；仅使用 Token 时可留空",
-      icon: <HardDrive size={20} />,
-      placeholder: "浏览选择国际服 Battle.net.exe", isFile: true, required: false,
-      value: config.global_battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,global_battle_net_path:v})), detected: null },
     { key: "global_game_path" as const, title: "国际服游戏安装目录", desc: "亚服、美服、欧服账号共用（可跳过此版本）",
       icon: <FolderOpen size={20} />,
       placeholder: "浏览选择国际服游戏安装目录", isFile: false, required: false,
@@ -220,7 +211,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     return () => {
       active = false;
     };
-  }, [currentStep, config.cn_battle_net_path, config.cn_game_path, config.cn_saved_games_path, config.global_battle_net_path, config.global_game_path, config.global_saved_games_path, config.browser_path]);
+  }, [currentStep, config.cn_battle_net_path, config.cn_game_path, config.cn_saved_games_path, config.global_game_path, config.global_saved_games_path, config.browser_path]);
 
   const current = steps[currentStep];
 
@@ -348,9 +339,11 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
           )}
 
           {(current.key === "cn_battle_net_path" || current.key === "cn_game_path" || current.key === "cn_saved_games_path"
-            || current.key === "global_battle_net_path" || current.key === "global_game_path" || current.key === "global_saved_games_path") && (
+            || current.key === "global_game_path" || current.key === "global_saved_games_path") && (
             <p className="text-xs text-text-muted mt-3">
-              该版本可留空跳过；启用时必须配置游戏安装目录和存档目录，Battle.net 仅在战网认证时需要。
+              {current.key.startsWith("global_")
+                ? "国际服仅支持 Token 直启；游戏安装目录和存档目录需成组配置。"
+                : "国服可留空跳过；游戏安装目录和存档目录需成组配置，Battle.net 仅在战网认证时需要。"}
             </p>
           )}
 

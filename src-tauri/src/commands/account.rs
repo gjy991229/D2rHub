@@ -768,6 +768,7 @@ pub fn create_account(
 pub fn update_account_meta(
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    auth_mode: Option<String>,
     token: Option<String>,
     region: Option<String>,
     language: Option<String>,
@@ -782,19 +783,34 @@ pub fn update_account_meta(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
+    let previous_auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
     let old_edition = meta
         .region
         .as_deref()
         .and_then(|value| GameRegion::parse(value).ok())
         .map(GameRegion::edition);
     let region_updated = region.is_some();
+    let auth_mode_updated = auth_mode.is_some();
 
+    if let Some(value) = auth_mode {
+        meta.auth_mode = Some(value);
+    }
     if let Some(value) = region {
         meta.region = Some(value);
     }
 
     let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::LaunchGame)?;
     meta.region = Some(context.game_region.canonical().to_string());
+    if context.auth_mode == AuthMode::Token
+        && meta.token.is_none()
+        && token
+            .as_deref()
+            .map_or(true, |value| value.trim().is_empty())
+    {
+        return Err(AppError::ConfigReadError(
+            "迁移为 Token 认证时必须提供 Token".to_string(),
+        ));
+    }
 
     if region_updated {
         let edition_changed = old_edition
@@ -818,6 +834,10 @@ pub fn update_account_meta(
     }
 
     if context.auth_mode == AuthMode::Token {
+        meta.initialized = true;
+        if auth_mode_updated && previous_auth_mode != AuthMode::Token {
+            meta.snapshot_edition = None;
+        }
         if let Some(value) = language {
             meta.language = Some(value);
         }

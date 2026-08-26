@@ -5,10 +5,11 @@ import { Play, RotateCw, Sliders, Trash2, FolderOpen, AlertTriangle, X, Locate, 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-import type { AccountMeta, LaunchProgress } from "../../store/types";
+import type { AccountMeta, GlobalConfig, LaunchProgress } from "../../store/types";
 import { useAccounts } from "../../store/accounts";
 import { showToast } from "../ui/Toast";
 import { useLaunch } from "../../store/launch";
+import { requiresTokenMigration } from "../../utils/regionPaths";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
 const stepLabels: Record<string, string> = {
@@ -28,6 +29,7 @@ interface GridItemProps {
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
   onUpdateToken?: (a: AccountMeta) => void;
+  config?: GlobalConfig | null;
 }
 
 /** Token 有效期: 720 小时（30 天） */
@@ -156,7 +158,7 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
-  isMultiSelectMode, selected, onToggleSelect, onUpdateToken
+  isMultiSelectMode, selected, onToggleSelect, onUpdateToken, config
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -279,7 +281,7 @@ export function AccountGridItem({
 
   const handleReinit = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (account.auth_mode === "token" && onUpdateToken) {
+    if ((account.auth_mode === "token" || requiresTokenMigration(account.auth_mode, account.region, config)) && onUpdateToken) {
       onUpdateToken(account);
       return;
     }
@@ -313,6 +315,7 @@ export function AccountGridItem({
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
   const tokenStatus = account.initialized ? getTokenStatus(account.last_reset_at) : null;
   const regionLabel = account.region === "KR" ? "亚服" : account.region === "NA" ? "美服" : account.region === "EU" ? "欧服" : account.region === "Global" ? "国际服" : "国服";
+  const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const performanceLabel = `${drawer.resolution} · ${drawer.fps === 0 ? "unlimited" : `${drawer.fps}fps`}`;
   const configModeLabel = account.has_customized_settings ? "独立配置" : "系统配置";
 
@@ -337,9 +340,11 @@ export function AccountGridItem({
                 <input
                   type="checkbox"
                   checked={!!selected}
+                  disabled={tokenMigrationRequired}
                   onChange={() => onToggleSelect && onToggleSelect(account.id)}
                   onClick={stop}
-                  className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent"
+                  title={tokenMigrationRequired ? "请先迁移为 Token 直启" : undefined}
+                  className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                 />
               ) : (
                 <span className="tile-index index">{String(account.order + 1).padStart(2, "0")} / {account.initialized ? "READY" : "ATTENTION"}</span>
@@ -449,7 +454,7 @@ export function AccountGridItem({
               )}
             </div>
           </div>
-          <span className={account.initialized ? "state-dot state" : "state-dot state warn"} />
+          <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
 
         </div>
 
@@ -461,7 +466,8 @@ export function AccountGridItem({
           ) : (
             <span className="hig-badge hig-badge-blue">战网认证</span>
           )}
-          {tokenStatus && tokenStatus.label && account.auth_mode !== "token" && (
+          {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
+          {tokenStatus && tokenStatus.label && account.auth_mode !== "token" && !tokenMigrationRequired && (
             <span
               className={`hig-badge ${tokenStatus.expired ? "hig-badge-red" : tokenStatus.warning ? "hig-badge-gold" : "hig-badge-green"}`}
               title={tokenStatus.expired ? "Token 已过期，需重新初始化" : `Token ${tokenStatus.warning ? "即将过期" : "有效"}，剩余 ${tokenStatus.label}`}
@@ -485,7 +491,16 @@ export function AccountGridItem({
         <div className="bottom-row">
           {!isMultiSelectMode && (
             <div className="account-card-actions">
-              {account.initialized && (
+              {tokenMigrationRequired && onUpdateToken ? (
+                <button
+                  onClick={e => { stop(e); onUpdateToken(account); }}
+                  className="primary-cta"
+                  title="国际服已停用战网模式，请迁移为 Token 直启"
+                >
+                  <AlertTriangle size={12} />
+                  迁移 Token
+                </button>
+              ) : account.initialized && (
                 <button
                   onClick={e => { stop(e); onLaunch(account.id); }}
                   disabled={account.auth_mode !== "token" && tokenStatus?.expired}
@@ -497,7 +512,7 @@ export function AccountGridItem({
                 </button>
               )}
             <div className="spatial-tools account-card-tools tools">
-              {account.initialized && account.auth_mode !== "token" && (
+              {account.initialized && account.auth_mode !== "token" && !tokenMigrationRequired && (
                 <button onClick={e => { stop(e); onBattleNetOnly(account.id); }} className="mini-action icon-btn" title="仅启动战网">
                   <Globe2 size={12} strokeWidth={1.8} aria-hidden="true" />
                 </button>
@@ -510,7 +525,7 @@ export function AccountGridItem({
                   <button onClick={handleOpenFolder} className="mini-action icon-btn" title="打开配置目录">
                     <FolderOpen size={12} strokeWidth={1.8} />
                   </button>
-                  <button onClick={handleReinit} disabled={reinit} className="mini-action icon-btn disabled:opacity-40" title="重置">
+                  <button onClick={handleReinit} disabled={reinit} className="mini-action icon-btn disabled:opacity-40" title={tokenMigrationRequired ? "迁移为 Token 直启" : "重置"}>
                     <RotateCw size={12} strokeWidth={1.8} className={reinit ? "animate-spin" : ""} />
                   </button>
                 </>
@@ -625,7 +640,7 @@ export function AccountGridItem({
 
 export function SortableAccountCard({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
-  isMultiSelectMode, selected, onToggleSelect, onUpdateToken
+  isMultiSelectMode, selected, onToggleSelect, onUpdateToken, config
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
@@ -654,6 +669,7 @@ export function SortableAccountCard({
         selected={selected}
         onToggleSelect={onToggleSelect}
         onUpdateToken={onUpdateToken}
+        config={config}
       />
     </div>
   );

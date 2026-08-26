@@ -34,6 +34,7 @@ import {
 import { useLaunch } from "./store/launch";
 import { LaunchProgressView } from "./components/Launch/LaunchProgress";
 import { AccountInitDialog } from "./components/accounts/AccountInitDialog";
+import { requiresTokenMigration } from "./utils/regionPaths";
 import { Modal } from "./components/ui/Modal";
 import { Button } from "./components/ui/Button";
 import type { GlobalConfig, AccountMeta } from "./store/types";
@@ -89,7 +90,9 @@ function App() {
   };
 
   const selectAllAccounts = () => {
-    const initializedIds = accounts.filter(a => a.initialized).map(a => a.id);
+    const initializedIds = accounts
+      .filter(a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config))
+      .map(a => a.id);
     setSelectedIds(initializedIds);
   };
 
@@ -201,7 +204,9 @@ function App() {
   );
 
   // ── main ──
-  const initialized = accounts.filter(a => a.initialized);
+  const initialized = accounts.filter(
+    a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config),
+  );
   const sortedAccounts = [...accounts].sort((a, b) => (a.order || 0) - (b.order || 0));
 
   return (
@@ -282,7 +287,9 @@ function App() {
                 <LaunchButton
                   count={initialized.length}
                   loading={launching}
-                  onClick={() => startLaunch(sortedAccounts.filter(a => a.initialized).map(a => a.id))}
+                  onClick={() => startLaunch(sortedAccounts
+                    .filter(a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config))
+                    .map(a => a.id))}
                 />
                 <button
                   onClick={toggleMultiSelectMode}
@@ -334,6 +341,7 @@ function App() {
                     selected={selectedIds.includes(a.id)}
                     onToggleSelect={toggleSelectAccount}
                     onUpdateToken={setTokenUpdateAccount}
+                    config={config}
                   />
                 ))}
               </AccountGrid>

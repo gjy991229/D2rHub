@@ -60,7 +60,6 @@ type InstallationPathField =
   | "cn_battle_net_path"
   | "cn_game_path"
   | "cn_saved_games_path"
-  | "global_battle_net_path"
   | "global_game_path"
   | "global_saved_games_path";
 
@@ -87,22 +86,24 @@ function InstallationProfileFields({
 }: InstallationProfileFieldsProps) {
   const isCn = edition === "CN";
   const label = isCn ? "国服" : "国际服";
-  const fields: Record<"battleNet" | "game" | "savedGames", InstallationPathField> = isCn
+  const fields: Record<"game" | "savedGames", InstallationPathField> = isCn
     ? {
-        battleNet: "cn_battle_net_path",
         game: "cn_game_path",
         savedGames: "cn_saved_games_path",
       }
     : {
-        battleNet: "global_battle_net_path",
         game: "global_game_path",
         savedGames: "global_saved_games_path",
       };
-  const hasConfiguration = Object.values(fields).some((field) => config[field]);
+  const hasConfiguration = Object.values(fields).some((field) => config[field])
+    || (isCn && Boolean(config.cn_battle_net_path));
+  const profileComplete = Boolean(
+    config[fields.game].trim() && config[fields.savedGames].trim(),
+  );
 
   const clearProfile = () => {
     updateConfig((next) => {
-      next[fields.battleNet] = "";
+      if (isCn) next.cn_battle_net_path = "";
       next[fields.game] = "";
       next[fields.savedGames] = "";
     });
@@ -116,22 +117,32 @@ function InstallationProfileFields({
           <p className="text-2xs text-text-muted mt-0.5">
             {isCn
               ? "游戏与存档成组配置即可使用 Token；战网认证还需客户端路径。"
-              : "亚/美/欧服共用；Token 需游戏与存档，战网认证还需客户端。"}
+              : "亚/美/欧服共用，仅支持 Token 直启。"}
           </p>
         </div>
         {hasConfiguration && <Button size="sm" onClick={clearProfile}>清除此版本</Button>}
       </div>
 
-      <label className="text-xs text-text-muted block">{label}战网客户端 (Battle.net.exe)</label>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={config[fields.battleNet]}
-          readOnly
-          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-        />
-        <Button size="sm" onClick={() => pickFile(fields.battleNet, `${label} Battle.net.exe`, ["exe"])}>浏览</Button>
-      </div>
+      {hasConfiguration && !profileComplete && (
+        <p className="text-xs text-text-muted leading-relaxed">
+          当前版本配置尚不完整，不影响保存；创建账号时不会开放该版本。
+        </p>
+      )}
+
+      {isCn && (
+        <>
+          <label className="text-xs text-text-muted block">国服战网客户端 (Battle.net.exe)</label>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={config.cn_battle_net_path}
+              readOnly
+              className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+            />
+            <Button size="sm" onClick={() => pickFile("cn_battle_net_path", "国服 Battle.net.exe", ["exe"])}>浏览</Button>
+          </div>
+        </>
+      )}
 
       <label className="text-xs text-text-muted block">游戏安装目录</label>
       <div className="flex gap-2">
@@ -342,7 +353,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const handleClose = () => {
     if (config && installationPathEditsAreInvalid(originalConfig, config)) {
       setActiveTab("paths");
-      showToast("error", "请至少完整保留一组国服或国际服的游戏与存档路径；Battle.net 仅在战网认证时必需");
+      showToast("error", "请至少完整保留一组国服或国际服的游戏与存档路径；Battle.net 仅供国服兼容模式使用");
       return;
     }
     if (autoSaveTimerRef.current) {
@@ -367,7 +378,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const handleSaveGlobal = async (quiet = false) => {
     if (!config) return true;
     if (installationPathEditsAreInvalid(originalConfig, config)) {
-      if (!quiet) showToast("error", "游戏目录与存档目录必须按国服/国际服成组配置；Battle.net 可供 Token 模式留空");
+      if (!quiet) showToast("error", "游戏目录与存档目录必须按国服/国际服成组配置；Battle.net 仅供国服兼容模式使用");
       return false;
     }
     try {
@@ -628,7 +639,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   // Group Tabs List
   const navTabs: { id: TabType; label: string; icon: any; desc: string }[] = [
-    { id: "paths", label: "连接", icon: Folder, desc: "战网、游戏、浏览器与存档位置" },
+    { id: "paths", label: "连接", icon: Folder, desc: "游戏、国服战网兼容、浏览器与存档位置" },
     { id: "accounts", label: "账号", icon: User, desc: "昵称、启动方式、窗口和画质" },
     { id: "agent", label: "启动策略", icon: Play, desc: "战网 Agent 与启动等待策略" },
     { id: "shortcuts", label: "快捷键", icon: Settings, desc: "账号窗口切换与聚焦" },
@@ -717,7 +728,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">战网/浏览器隔离辅助路径</h3>
+                  <h3 className="text-xs font-bold text-text-primary">国服战网/浏览器辅助路径</h3>
 
                   <div className="space-y-2">
                     <label className="text-xs text-text-muted block">战网进程 Agent.exe 目录</label>
