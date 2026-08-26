@@ -1184,14 +1184,16 @@ mod settings_json_tests {
     }
 
     #[test]
-    fn international_region_switch_accepts_legacy_global_token_accounts() {
-        let mut meta = AccountMeta::new("account1");
-        meta.auth_mode = Some("token".to_string());
-        meta.region = Some("Global".to_string());
+    fn international_region_switch_accepts_legacy_global_region_aliases() {
+        for legacy_region in ["Global", "Asia", "Americas", "US", "Europe"] {
+            let mut meta = AccountMeta::new("account1");
+            meta.auth_mode = Some("token".to_string());
+            meta.region = Some(legacy_region.to_string());
 
-        switch_international_account_region(&mut meta, "NA").unwrap();
+            switch_international_account_region(&mut meta, "NA").unwrap();
 
-        assert_eq!(meta.region.as_deref(), Some("NA"));
+            assert_eq!(meta.region.as_deref(), Some("NA"));
+        }
     }
 
     #[test]

@@ -17,6 +17,7 @@ import {
   ACCOUNT_REGION_LABELS,
   INTERNATIONAL_ACCOUNT_REGIONS,
   accountRegionLabel,
+  normalizeInternationalAccountRegion,
   type InternationalAccountRegion,
 } from "../../utils/regionPaths";
 import { showToast } from "../ui/Toast";
@@ -51,9 +52,7 @@ export function AccountRegionSwitcher({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuId = `account-region-${useId().replaceAll(":", "")}`;
-  const currentCanonicalRegion = INTERNATIONAL_ACCOUNT_REGIONS.find(
-    (region) => region === currentRegion?.trim().toUpperCase(),
-  );
+  const currentCanonicalRegion = normalizeInternationalAccountRegion(currentRegion);
   const currentLabel = accountRegionLabel(currentRegion);
   const menuReady = menuPosition !== null;
 

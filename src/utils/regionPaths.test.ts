@@ -4,6 +4,7 @@ import {
   accountRegionLabel,
   firstConfiguredRegion,
   hasConfiguredPathsForRegion,
+  isInternationalRegion,
   requiresTokenMigration,
 } from "./regionPaths";
 
@@ -54,7 +55,12 @@ export function runTests() {
     "the inline international switcher exposes only Asia, Americas, and Europe",
   );
   assert(accountRegionLabel("KR") === "亚服", "international region labels use the dashboard vocabulary");
-  assert(accountRegionLabel("Global") === "国际服", "legacy global accounts retain a neutral region label");
+  assert(accountRegionLabel("Global") === "亚服", "legacy Global accounts preserve their existing Asia launch behavior");
+  assert(accountRegionLabel("Asia") === "亚服", "legacy Asia aliases normalize to KR");
+  assert(accountRegionLabel("US") === "美服", "legacy US aliases normalize to NA");
+  assert(accountRegionLabel("Americas") === "美服", "legacy Americas aliases normalize to NA");
+  assert(accountRegionLabel("Europe") === "欧服", "legacy Europe aliases normalize to EU");
+  assert(isInternationalRegion("US"), "legacy US accounts expose the international region switcher");
   const cnOnly = config({ cn_battle_net_path: "C:/Battle.net-CN/Battle.net.exe", cn_game_path: "C:/D2R-CN", cn_saved_games_path: "C:/Saves-CN" });
   assert(hasConfiguredPathsForRegion(cnOnly, "CN", "bnet"), "CN Battle.net accounts are enabled by a complete CN path group");
   assert(!hasConfiguredPathsForRegion(cnOnly, "NA", "bnet"), "global accounts stay disabled without a global path group");
