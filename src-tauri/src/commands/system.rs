@@ -462,9 +462,15 @@ struct MIB_TCPROW_OWNER_PID {
 
 #[repr(C)]
 #[allow(non_snake_case)]
-struct MIB_TCPTABLE_OWNER_PID {
-    dwNumEntries: u32,
-    table: [MIB_TCPROW_OWNER_PID; 1],
+struct MIB_TCP6ROW_OWNER_PID {
+    ucLocalAddr: [u8; 16],
+    dwLocalScopeId: u32,
+    dwLocalPort: u32,
+    ucRemoteAddr: [u8; 16],
+    dwRemoteScopeId: u32,
+    dwRemotePort: u32,
+    dwState: u32,
+    dwOwningPid: u32,
 }
 
 extern "system" {
@@ -478,61 +484,168 @@ extern "system" {
     ) -> u32;
 }
 
-/// 检查指定进程是否已建立 TCP 1119 端口连接（连接游戏大厅）
-#[tauri::command]
-pub fn check_game_connected(pid: u32) -> bool {
+const AF_INET: u32 = 2;
+const AF_INET6: u32 = 23;
+const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
+const MIB_TCP_STATE_ESTAB: u32 = 5;
+const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+
+fn tcp_connection_indicates_online_readiness(
+    target_pid: u32,
+    owning_pid: u32,
+    state: u32,
+    _remote_port: u16,
+) -> bool {
+    // 服务器端口会变化，加速器也可能将连接终结在本机。这里只使用目标进程和
+    // ESTABLISHED 状态作为联网信号；调用方会通过连续采样过滤瞬时连接。
+    owning_pid == target_pid && state == MIB_TCP_STATE_ESTAB
+}
+
+struct TcpTableSnapshot {
+    words: Vec<u32>,
+    byte_len: usize,
+}
+
+fn query_tcp_table(address_family: u32) -> Option<TcpTableSnapshot> {
     unsafe {
-        let mut size = 0u32;
-        // 第一次调用获取所需缓冲区大小
-        GetExtendedTcpTable(
+        let mut required_size = 0u32;
+        let initial_result = GetExtendedTcpTable(
             std::ptr::null_mut(),
-            &mut size,
+            &mut required_size,
             0,
-            2, // AF_INET
-            5, // TCP_TABLE_OWNER_PID_ALL
-            0,
-        );
-
-        let mut buffer = vec![0u8; size as usize];
-        let res = GetExtendedTcpTable(
-            buffer.as_mut_ptr() as *mut c_void,
-            &mut size,
-            0,
-            2, // AF_INET
-            5, // TCP_TABLE_OWNER_PID_ALL
+            address_family,
+            TCP_TABLE_OWNER_PID_ALL,
             0,
         );
+        if initial_result != 0 && initial_result != ERROR_INSUFFICIENT_BUFFER {
+            return None;
+        }
 
-        if res == 0 {
-            let table = buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID;
-            let num_entries = (*table).dwNumEntries as usize;
-
-            // 安全边界检查，防止句柄表解析越界
-            let max_possible = (size as usize - std::mem::size_of::<u32>())
-                / std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
-            let actual_num = num_entries.min(max_possible);
-
-            let table_ptr = (*table).table.as_ptr();
-            for i in 0..actual_num {
-                let row = &*table_ptr.add(i);
-                if row.dwOwningPid == pid {
-                    // dwState == 5 表示 MIB_TCP_STATE_ESTAB（已建立连接）
-                    if row.dwState == 5 {
-                        let port = u16::from_be((row.dwRemotePort & 0xFFFF) as u16);
-                        if port == 1119 {
-                            let remote_ip = row.dwRemoteAddr;
-                            // 排除回环地址 (127.0.0.1 字节序对应关系)
-                            if remote_ip != 0 && remote_ip != 0x0100007f && remote_ip != 0x7f000001
-                            {
-                                return true;
-                            }
-                        }
-                    }
-                }
+        // TCP 表可能在两次 API 调用之间增长；按 API 返回的新尺寸有界重试。
+        for _ in 0..3 {
+            if required_size < std::mem::size_of::<u32>() as u32 {
+                return None;
             }
+
+            // Vec<u32> 为 C 结构体解析提供所需的 4 字节对齐。
+            let word_count = (required_size as usize).div_ceil(std::mem::size_of::<u32>());
+            let mut words = vec![0u32; word_count];
+            let capacity_bytes = words.len() * std::mem::size_of::<u32>();
+            let mut returned_size = capacity_bytes as u32;
+            let result = GetExtendedTcpTable(
+                words.as_mut_ptr() as *mut c_void,
+                &mut returned_size,
+                0,
+                address_family,
+                TCP_TABLE_OWNER_PID_ALL,
+                0,
+            );
+            if result == 0 {
+                return Some(TcpTableSnapshot {
+                    words,
+                    byte_len: (returned_size as usize).min(capacity_bytes),
+                });
+            }
+            if result != ERROR_INSUFFICIENT_BUFFER {
+                return None;
+            }
+            required_size = returned_size;
+        }
+    }
+    None
+}
+
+fn tcp_table_indicates_online_readiness<Row>(
+    snapshot: &TcpTableSnapshot,
+    target_pid: u32,
+    row_fields: impl Fn(&Row) -> (u32, u32, u16),
+) -> bool {
+    let header_size = std::mem::size_of::<u32>();
+    if snapshot.byte_len < header_size || std::mem::align_of::<Row>() > std::mem::align_of::<u32>()
+    {
+        return false;
+    }
+
+    let reported_entries = snapshot.words[0] as usize;
+    let max_entries = (snapshot.byte_len - header_size) / std::mem::size_of::<Row>();
+    let actual_entries = reported_entries.min(max_entries);
+    let rows_ptr = unsafe { (snapshot.words.as_ptr() as *const u8).add(header_size) as *const Row };
+
+    for index in 0..actual_entries {
+        let row = unsafe { &*rows_ptr.add(index) };
+        let (owning_pid, state, remote_port) = row_fields(row);
+        if tcp_connection_indicates_online_readiness(target_pid, owning_pid, state, remote_port) {
+            return true;
         }
     }
     false
+}
+
+fn tcp4_indicates_online_readiness(pid: u32) -> bool {
+    query_tcp_table(AF_INET).is_some_and(|snapshot| {
+        tcp_table_indicates_online_readiness(&snapshot, pid, |row: &MIB_TCPROW_OWNER_PID| {
+            (
+                row.dwOwningPid,
+                row.dwState,
+                u16::from_be((row.dwRemotePort & 0xFFFF) as u16),
+            )
+        })
+    })
+}
+
+fn tcp6_indicates_online_readiness(pid: u32) -> bool {
+    query_tcp_table(AF_INET6).is_some_and(|snapshot| {
+        tcp_table_indicates_online_readiness(&snapshot, pid, |row: &MIB_TCP6ROW_OWNER_PID| {
+            (
+                row.dwOwningPid,
+                row.dwState,
+                u16::from_be((row.dwRemotePort & 0xFFFF) as u16),
+            )
+        })
+    })
+}
+
+/// 检查目标进程是否已建立网络连接。
+/// 不假设固定服务器端口，并同时覆盖 IPv4、IPv6 与本机加速器代理。
+#[tauri::command]
+pub fn check_game_connected(pid: u32) -> bool {
+    tcp4_indicates_online_readiness(pid) || tcp6_indicates_online_readiness(pid)
+}
+
+#[cfg(test)]
+mod network_readiness_tests {
+    use super::{check_game_connected, tcp_connection_indicates_online_readiness};
+
+    #[test]
+    fn established_game_connection_is_not_tied_to_battle_net_port() {
+        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 443));
+        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 52_123));
+    }
+
+    #[test]
+    fn readiness_rejects_other_processes_and_non_established_connections() {
+        assert!(!tcp_connection_indicates_online_readiness(42, 7, 5, 443));
+        assert!(!tcp_connection_indicates_online_readiness(42, 42, 2, 443));
+    }
+
+    #[test]
+    fn process_owned_loopback_connection_is_observed() {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (server, _) = listener.accept().unwrap();
+
+        let observed = (0..20).any(|_| {
+            if check_game_connected(std::process::id()) {
+                true
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(25));
+                false
+            }
+        });
+
+        assert!(observed);
+        drop((client, server));
+    }
 }
 
 pub(crate) fn executable_paths_match(actual: &std::path::Path, expected: &std::path::Path) -> bool {

@@ -31,12 +31,22 @@ pub struct LaunchResult {
 }
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
+const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
 
 fn token_launch_is_ready(web_token_read_by_target_pid: bool, mutex_closed: bool) -> bool {
     web_token_read_by_target_pid && mutex_closed
+}
+
+fn record_network_readiness_sample(consecutive_samples: &mut u8, connected: bool) -> bool {
+    if connected {
+        *consecutive_samples = consecutive_samples.saturating_add(1);
+    } else {
+        *consecutive_samples = 0;
+    }
+    *consecutive_samples >= NETWORK_READY_REQUIRED_SAMPLES
 }
 
 fn launch_queue_can_continue(auth_mode: AuthMode, success: bool, mutex_closed: bool) -> bool {
@@ -1744,12 +1754,13 @@ async fn launch_single(
     };
 
     // ── Step 8: 自动按键 + 连接检测 ──
-    emit("connect", "running", "正在跳过动画并等待服务器连接...");
+    emit("connect", "running", "正在跳过动画并等待游戏网络稳定...");
     emit("mutex", "running", "后台监控互斥句柄中...");
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
     let mut connected = false;
+    let mut network_ready_samples = 0u8;
 
     // 先等 2 秒让游戏窗口初始化
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -1768,9 +1779,12 @@ async fn launch_single(
             keys_logged = true;
         }
 
-        if crate::commands::system::check_game_connected(d2r_pid) {
+        if record_network_readiness_sample(
+            &mut network_ready_samples,
+            crate::commands::system::check_game_connected(d2r_pid),
+        ) {
             connected = true;
-            emit("connect", "ok", "游戏已连接到大厅服务器");
+            emit("connect", "ok", "游戏网络已稳定就绪");
             break;
         }
 
@@ -1778,13 +1792,13 @@ async fn launch_single(
     }
 
     if !connected {
-        emit("connect", "error", "连接服务器超时");
+        emit("connect", "error", "等待游戏网络连接超时");
         mutex_task.abort();
         return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
             d2r_pid: None,
-            error: Some("连接服务器超时".to_string()),
+            error: Some("等待游戏网络连接超时".to_string()),
             mutex_killed: false,
         };
     }
@@ -2436,8 +2450,8 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 mod tests {
     use super::{
         launch_queue_can_continue, parse_windows_command_line, persist_window_position,
-        preflight_accounts, replace_bnet_roaming_snapshot, token_launch_is_ready,
-        unique_account_window_executable, validate_launch_account_ids,
+        preflight_accounts, record_network_readiness_sample, replace_bnet_roaming_snapshot,
+        token_launch_is_ready, unique_account_window_executable, validate_launch_account_ids,
         validate_legacy_reg_sections,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
@@ -2456,6 +2470,17 @@ mod tests {
         assert!(!token_launch_is_ready(false, true));
         assert!(!token_launch_is_ready(true, false));
         assert!(token_launch_is_ready(true, true));
+    }
+
+    #[test]
+    fn battle_net_network_readiness_requires_consecutive_samples() {
+        let mut samples = 0;
+        assert!(!record_network_readiness_sample(&mut samples, true));
+        assert!(record_network_readiness_sample(&mut samples, true));
+
+        assert!(!record_network_readiness_sample(&mut samples, false));
+        assert_eq!(samples, 0);
+        assert!(!record_network_readiness_sample(&mut samples, true));
     }
 
     #[test]
