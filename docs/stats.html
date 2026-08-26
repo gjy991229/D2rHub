@@ -1,608 +1,102 @@
-<!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<!doctype html>
+<html lang="zh-CN" data-theme="{{STATS_THEME}}">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>运行统计 - D2RHub</title>
-<style>
-  :root {
-    --bg-main: #09090b;
-    --bg-surface: #18181b;
-    --bg-panel: #27272a;
-    --border: #3f3f46;
-    --border-hover: #52525b;
-    --text-primary: #f4f4f5;
-    --text-secondary: #a1a1aa;
-    --accent: #3b82f6;
-    --accent-hover: #60a5fa;
-    --danger: #ef4444;
-    --danger-hover: #f87171;
-    --success: #10b981;
-    --radius: 8px;
-  }
-  [data-theme="light"] {
-    --bg-main: #f4f4f5;
-    --bg-surface: #ffffff;
-    --bg-panel: #f4f4f5;
-    --border: #e4e4e7;
-    --border-hover: #d4d4d8;
-    --text-primary: #18181b;
-    --text-secondary: #52525b;
-    --accent: #2563eb;
-    --accent-hover: #3b82f6;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    background: var(--bg-main);
-    color: var(--text-primary);
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-  }
-  header {
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border);
-    padding: 1rem 2rem;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-  }
-  .tabs { display: flex; gap: 1rem; }
-  .tab-btn {
-    background: none; border: none; color: var(--text-secondary);
-    padding: 0.5rem 1rem; border-radius: var(--radius); cursor: pointer;
-    font-size: 1rem; transition: all 0.2s;
-  }
-  .tab-btn:hover { background: var(--bg-panel); color: var(--text-primary); }
-  .tab-btn.active { background: var(--bg-panel); color: var(--accent); font-weight: bold; }
-  .theme-toggle {
-    background: transparent; border: 1px solid var(--border); color: var(--text-primary);
-    padding: 0.25rem 0.5rem; border-radius: var(--radius); cursor: pointer;
-  }
-  main { flex: 1; overflow-y: auto; padding: 2rem; }
-  .view { display: none; }
-  .view.active { display: block; }
-  .card {
-    background: var(--bg-surface); border: 1px solid var(--border);
-    border-radius: var(--radius); padding: 1.5rem; margin-bottom: 1.5rem;
-  }
-  .grid-cards {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1.5rem;
-  }
-  .card-title { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 0.5rem; }
-  .card-value { font-size: 1.8rem; font-weight: 600; color: var(--text-primary); }
-  .toolbar {
-    display: flex; gap: 1rem; flex-wrap: wrap; align-items: center;
-    background: var(--bg-surface); padding: 1rem; border-radius: var(--radius);
-    border: 1px solid var(--border); margin-bottom: 1rem;
-  }
-  .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
-  .form-group label { font-size: 0.8rem; color: var(--text-secondary); }
-  .input, .select {
-    background: var(--bg-main); border: 1px solid var(--border);
-    color: var(--text-primary); padding: 0.4rem 0.8rem; border-radius: var(--radius);
-  }
-  .btn {
-    background: var(--bg-panel); border: 1px solid var(--border);
-    color: var(--text-primary); padding: 0.4rem 0.8rem; border-radius: var(--radius);
-    cursor: pointer; transition: all 0.2s;
-  }
-  .btn:hover { background: var(--border); }
-  .btn-danger { color: var(--danger); }
-  .btn-danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
-  .chart-container { position: relative; height: 350px; width: 100%; margin-top: 1rem; }
-  table { width: 100%; border-collapse: collapse; text-align: left; }
-  .table-scroll { width: 100%; overflow-x: auto; }
-  th, td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); }
-  th { background: var(--bg-panel); color: var(--text-secondary); font-size: 0.9rem; }
-  tr:hover td { background: var(--bg-panel); }
-  .tag {
-    background: var(--bg-panel); border: 1px solid var(--border); padding: 0.1rem 0.5rem;
-    border-radius: 999px; font-size: 0.8rem; margin-right: 0.25rem; display: inline-block;
-  }
-  .tag-rune { background: rgba(59, 130, 246, 0.1); color: var(--accent); border-color: rgba(59, 130, 246, 0.2); }
-  .tag-rune-del { cursor: pointer; color: var(--danger); margin-left: 0.25rem; font-weight: bold; }
-
-  .css-chart { display: flex; align-items: flex-end; justify-content: space-around; height: 100%; padding-top: 20px; gap: 4px; }
-  .css-bar-container { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; min-width: 0; }
-  .css-bar-group { display: flex; align-items: flex-end; justify-content: center; width: 100%; height: 100%; gap: 2px; }
-  .css-bar { width: 100%; transform-origin: bottom; animation: grow-y 0.5s ease-out both; }
-  .css-label { font-size: 10px; margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; width: 100%; text-align: center; color: var(--text-secondary); }
-  .css-chart-horiz { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow-y: auto; padding-right: 8px; }
-  .css-bar-row { display: flex; align-items: center; gap: 8px; }
-  .css-row-label { width: 100px; text-align: right; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-secondary); }
-  .css-row-bar-bg { flex: 1; background: var(--bg-panel); height: 16px; border-radius: 4px; overflow: hidden; }
-  .css-row-bar { height: 100%; transform-origin: left; animation: grow-x 0.5s ease-out both; }
-  .css-row-val { width: 30px; font-size: 11px; color: var(--text-primary); text-align: left; }
-  .empty-state { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-secondary); font-size: 0.9rem; }
-  .tag-rune-del { cursor: pointer; color: var(--danger); margin-left: 0.25rem; font-weight: bold; }
-  .scene-rename { cursor: pointer; border-bottom: 1px dashed var(--border); }
-  @keyframes grow-y { from { transform: scaleY(0); opacity: 0.35; } to { transform: scaleY(1); opacity: 1; } }
-  @keyframes grow-x { from { transform: scaleX(0); opacity: 0.35; } to { transform: scaleX(1); opacity: 1; } }
-  @media (max-width: 720px) {
-    header { padding: 0.9rem 1rem; gap: 0.75rem; }
-    .tabs { gap: 0.4rem; }
-    .tab-btn { padding: 0.45rem 0.65rem; font-size: 0.9rem; white-space: nowrap; }
-    .theme-toggle { padding: 0.35rem 0.55rem; }
-    main { padding: 1rem; }
-    .toolbar { gap: 0.75rem; }
-    .form-group { min-width: min(145px, 100%); }
-    .chart-container { height: 260px; }
-    th, td { padding: 0.65rem 0.75rem; }
-  }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>D2RHub OCR 数据中心</title>
+  <style>
+    :root{color-scheme:dark;--surface-base:#000;--surface-glass:#080808;--surface-card:#0d0d0d;--surface-tile:#121212;--surface-tile-soft:#0d0d0d;--surface-control:#121212;--surface-hover:#171717;--surface-active:#1f1f1f;--border-default:#2e2e2e;--border-strong:#505050;--border-focus:#b8b8b8;--text-primary:#f5f5f5;--text-secondary:#d0d0d0;--text-muted:#a3a3a3;--accent:#f5f5f5;--accent-rgb:245 245 245;--cta-text:#080808;--success:#4ade80;--warning:#facc15;--danger:#fb7185;--info:#60a5fa;--violet:#c084fc;--radius-xs:8px;--radius-sm:10px;--radius-md:12px;--radius-card:16px;--radius-full:9999px;--header:44px;--ease-out-expo:cubic-bezier(.16,1,.3,1);--duration-fast:180ms;--duration-normal:260ms;--shadow-card:0 2px 8px rgba(0,0,0,.72)}
+    [data-theme="light"]{color-scheme:light;--surface-base:#f3f5f8;--surface-glass:rgba(249,250,252,.9);--surface-card:rgba(255,255,255,.86);--surface-tile:rgba(255,255,255,.92);--surface-tile-soft:rgba(255,255,255,.78);--surface-control:rgba(255,255,255,.82);--surface-hover:rgba(0,0,0,.035);--surface-active:rgba(0,0,0,.065);--border-default:rgba(24,30,42,.07);--border-strong:rgba(24,30,42,.14);--border-focus:#1a1a1c;--text-primary:#1a1a1c;--text-secondary:rgba(26,26,28,.62);--text-muted:rgba(26,26,28,.48);--accent:#1a1a1c;--accent-rgb:26 26 28;--cta-text:#fff;--success:#34c759;--warning:#c87800;--danger:#ff3b30;--info:#1684b8;--violet:#7e22ce;--shadow-card:0 1px 1px rgba(12,18,28,.035),0 6px 8px rgba(12,18,28,.035)}
+    *{box-sizing:border-box}html{background:var(--surface-base);scroll-behavior:smooth}body{margin:0;min-width:320px;background:var(--surface-base);color:var(--text-primary);font:13px/1.45 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;-webkit-font-smoothing:antialiased}button,input,select{font:inherit}button,select{cursor:pointer}button:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible{outline:2px solid var(--border-focus);outline-offset:2px}::selection{background:rgb(var(--accent-rgb)/.16);color:var(--text-primary)}
+    .app-header{position:sticky;top:0;z-index:20;height:var(--header);display:flex;align-items:center;justify-content:space-between;gap:14px;padding:0 max(18px,calc((100vw - 1320px)/2));background:var(--surface-glass);border-bottom:1px solid var(--border-default)}.brand{display:flex;align-items:center;gap:9px;min-width:0}.swiss-mark{width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--border-default);border-radius:var(--radius-sm);background:rgb(var(--accent-rgb)/.06);color:var(--text-secondary)}.swiss-mark svg{width:15px;height:15px}.brand-name{font-size:11px;font-weight:680;color:var(--text-secondary)}.brand-divider{width:1px;height:14px;background:var(--border-default)}.product-area,.sync-state{color:var(--text-muted);font-size:10px;font-weight:660;white-space:nowrap}.header-actions{display:flex;align-items:center;gap:7px}
+    .button{height:30px;padding:0 12px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-control);color:var(--text-secondary);font-size:11px;font-weight:760;white-space:nowrap;transition:transform var(--duration-fast) var(--ease-out-expo),background var(--duration-normal) var(--ease-out-expo),border-color var(--duration-normal) var(--ease-out-expo),color var(--duration-normal) var(--ease-out-expo)}.button:hover{background:var(--surface-hover);border-color:var(--border-strong);color:var(--text-primary)}.button:active{transform:scale(.97)}.button:disabled{opacity:.34;cursor:not-allowed;transform:none}.button-primary{background:rgb(var(--accent-rgb)/.08);border-color:rgb(var(--accent-rgb)/.14);color:var(--text-primary)}.button-danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 20%,var(--border-default));background:color-mix(in srgb,var(--danger) 5%,var(--surface-control))}.button-small{height:26px;padding:0 8px;border-radius:9px;font-size:10px}.layout{width:min(1320px,100%);margin:auto;padding:16px 18px 28px}
+    .intro{display:flex;align-items:center;justify-content:space-between;gap:24px;margin:2px 0 12px;padding:4px 2px}.intro h1{margin:0;font-size:17px;line-height:1.15;font-weight:780;letter-spacing:-.015em;text-wrap:balance}.intro p{margin:4px 0 0;max-width:72ch;color:var(--text-muted);font-size:10px;font-weight:620}.tabs{display:flex;gap:5px}.tab{height:30px;padding:0 13px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-control);color:var(--text-secondary);font-size:11px;font-weight:760;transition:transform var(--duration-fast) var(--ease-out-expo),background var(--duration-normal) var(--ease-out-expo),border-color var(--duration-normal) var(--ease-out-expo),color var(--duration-normal) var(--ease-out-expo)}.tab:hover{color:var(--text-primary);background:var(--surface-hover);border-color:var(--border-strong)}.tab:active{transform:scale(.97)}.tab[aria-selected="true"]{color:var(--text-primary);background:rgb(var(--accent-rgb)/.08);border-color:rgb(var(--accent-rgb)/.2)}
+    .filters{position:sticky;top:calc(var(--header) + 8px);z-index:15;display:flex;align-items:end;gap:9px;padding:11px;margin-bottom:12px;border:1px solid var(--border-default);border-radius:var(--radius-card);background:linear-gradient(180deg,var(--surface-tile),var(--surface-tile-soft));box-shadow:inset 0 1px 0 rgba(255,255,255,.04),var(--shadow-card)}.filter-field{min-width:122px;flex:1 1 145px}.filter-field label{display:block;margin:0 0 4px;color:var(--text-muted);font-size:9px;font-weight:760}.control{width:100%;height:30px;padding:0 9px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-control);color:var(--text-primary);font-size:10px;font-weight:650;outline:none;transition:border-color var(--duration-normal) var(--ease-out-expo),background var(--duration-normal) var(--ease-out-expo),box-shadow var(--duration-normal) var(--ease-out-expo)}.control:hover{border-color:var(--border-strong)}.control:focus{border-color:rgb(var(--accent-rgb)/.32);box-shadow:0 0 0 3px rgb(var(--accent-rgb)/.08)}.filter-summary{flex:1.7 1 230px;align-self:center;color:var(--text-muted);font-size:10px;font-weight:650}.view[hidden]{display:none}
+    .kpi-strip{display:grid;grid-template-columns:repeat(6,minmax(118px,1fr));gap:10px}.kpi{min-width:0;padding:12px 13px;border:1px solid var(--border-default);border-radius:var(--radius-card);background:linear-gradient(180deg,var(--surface-tile),var(--surface-tile-soft));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.kpi-label{color:var(--text-muted);font-size:9px;font-weight:760}.kpi-value{margin-top:5px;font-size:18px;line-height:1;font-weight:780;letter-spacing:-.015em;font-variant-numeric:tabular-nums}.kpi-note{margin-top:5px;color:var(--text-muted);font-size:9px;font-weight:620;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .dashboard-grid{display:grid;grid-template-columns:minmax(0,1.65fr) minmax(300px,1fr);gap:12px;margin-top:12px}.panel{min-width:0;border:1px solid var(--border-default);border-radius:var(--radius-card);background:linear-gradient(180deg,var(--surface-tile),var(--surface-tile-soft));box-shadow:inset 0 1px 0 rgba(255,255,255,.04);overflow:hidden}.panel-wide{grid-column:1/-1}.panel-header{min-height:48px;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border-default)}.panel-title{margin:0;font-size:12px;line-height:1.1;font-weight:780}.panel-description{margin-top:4px;color:var(--text-muted);font-size:9px;font-weight:620}.panel-body{padding:12px}.panel-body-flush{padding:0}.metric-select{width:auto;min-width:126px}.empty{display:grid;place-items:center;min-height:140px;padding:22px;color:var(--text-muted);font-size:10px;text-align:center}
+    .chart-frame{min-height:258px;overflow-x:auto}.chart-frame svg{display:block;width:100%;min-width:620px;height:258px}.chart-grid-line{stroke:var(--border-default);stroke-width:1}.chart-label{fill:var(--text-muted);font-size:9px}.chart-bar{fill:var(--info);opacity:.72}.chart-area{fill:color-mix(in srgb,var(--info) 12%,transparent)}.chart-line{fill:none;stroke:var(--info);stroke-width:2;vector-effect:non-scaling-stroke}.chart-point{fill:var(--surface-tile-soft);stroke:var(--info);stroke-width:2;vector-effect:non-scaling-stroke}
+    .data-table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:10px}th{position:sticky;top:0;z-index:2;padding:8px 9px;background:var(--surface-control);color:var(--text-muted);text-align:left;font-size:9px;font-weight:780;white-space:nowrap}td{padding:8px 9px;border-top:1px solid var(--border-default);color:var(--text-secondary);vertical-align:middle}tbody tr{transition:background var(--duration-fast) var(--ease-out-expo)}tbody tr:hover{background:var(--surface-hover)}.number{text-align:right;font-variant-numeric:tabular-nums}.scene-name{max-width:220px;color:var(--text-primary);font-weight:720}.subtle{color:var(--text-muted)}.inline-meter{display:inline-flex;align-items:center;gap:7px;min-width:92px}.inline-meter-track{width:50px;height:4px;overflow:hidden;border-radius:var(--radius-full);background:var(--surface-active)}.inline-meter-fill{height:100%;border-radius:inherit;background:var(--info)}
+    .comparison-list{display:flex;flex-direction:column;gap:10px}.comparison-row{display:grid;grid-template-columns:minmax(80px,1fr) 2.2fr auto;align-items:center;gap:10px}.comparison-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-secondary);font-size:10px;font-weight:720}.comparison-track{height:6px;overflow:hidden;border-radius:var(--radius-full);background:var(--surface-active)}.comparison-fill{height:100%;border-radius:inherit;background:var(--success)}.comparison-value{color:var(--text-muted);font-size:10px;font-weight:650;font-variant-numeric:tabular-nums}
+    .heatmap-wrap{overflow-x:auto}.heatmap{display:grid;grid-template-columns:32px repeat(24,minmax(18px,1fr));gap:3px;min-width:720px;align-items:center}.heatmap-label{color:var(--text-muted);font-size:9px;text-align:right;padding-right:4px}.heatmap-hour{color:var(--text-muted);font-size:8px;text-align:center}.heatmap-cell{aspect-ratio:1;min-height:14px;border:1px solid rgb(var(--accent-rgb)/.025);border-radius:4px;background:var(--surface-active)}
+    .rune-summary{display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid var(--border-default)}.rune-tier{padding:11px 12px;border-right:1px solid var(--border-default)}.rune-tier:last-child{border-right:0}.rune-tier strong{display:block;margin-top:4px;font-size:16px;font-weight:780;font-variant-numeric:tabular-nums}.rune-tier span{color:var(--text-muted);font-size:9px;font-weight:680}.rune-matrix{display:grid;grid-template-columns:repeat(11,minmax(58px,1fr));gap:7px}.rune-cell{min-width:0;padding:8px;border:1px solid var(--border-default);border-radius:11px;background:var(--surface-control);color:var(--text-primary);text-align:left;transition:transform var(--duration-fast) var(--ease-out-expo),background var(--duration-normal) var(--ease-out-expo),border-color var(--duration-normal) var(--ease-out-expo)}.rune-cell:hover{transform:translateY(-1px);background:var(--surface-hover);border-color:var(--border-strong)}.rune-cell[data-active="true"]{border-color:rgb(var(--accent-rgb)/.3);background:rgb(var(--accent-rgb)/.08)}.rune-number{color:var(--text-muted);font-size:8px;font-weight:760}.rune-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;font-weight:760}.rune-count{margin-top:5px;color:var(--text-muted);font-size:9px;font-variant-numeric:tabular-nums}.rune-cell[data-tier="high"] .rune-name{color:var(--warning)}.rune-cell[data-tier="elite"] .rune-name{color:var(--violet)}
+    .gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}.gallery-item{overflow:hidden;border:1px solid var(--border-default);border-radius:var(--radius-card);background:var(--surface-control);color:inherit;text-decoration:none;transition:transform var(--duration-normal) var(--ease-out-expo),border-color var(--duration-normal) var(--ease-out-expo)}.gallery-item:hover{transform:translateY(-1px);border-color:var(--border-strong)}.gallery-item img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--surface-base)}.gallery-caption{padding:9px 10px}.gallery-caption strong{display:block;color:var(--warning);font-size:10px}.gallery-caption span{display:block;margin-top:3px;color:var(--text-muted);font-size:9px}
+    .records-toolbar{display:flex;flex-wrap:wrap;gap:7px;padding:10px 11px;border-bottom:1px solid var(--border-default)}.records-search{flex:1 1 280px}.record-drops{display:flex;flex-wrap:wrap;gap:4px;min-width:160px}.drop-chip{height:18px;display:inline-flex;align-items:center;gap:4px;padding:0 6px;border:1px solid var(--border-default);border-radius:5px;background:rgb(var(--accent-rgb)/.055);color:var(--text-secondary);font-size:9px;font-weight:720;white-space:nowrap}.drop-chip.high{border-color:color-mix(in srgb,var(--warning) 34%,var(--border-default));background:color-mix(in srgb,var(--warning) 8%,var(--surface-control));color:var(--warning)}.drop-delete{padding:0;border:0;background:none;color:var(--text-muted);line-height:1}.drop-delete:hover{color:var(--danger)}.pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-top:1px solid var(--border-default)}.pagination-state{color:var(--text-muted);font-size:10px}
+    .methodology{margin-top:12px;border:1px solid var(--border-default);border-radius:var(--radius-card);background:linear-gradient(180deg,var(--surface-tile),var(--surface-tile-soft));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}.methodology summary{padding:10px 12px;cursor:pointer;color:var(--text-secondary);font-size:10px;font-weight:760}.methodology-content{padding:0 12px 12px;color:var(--text-muted);font-size:10px}.methodology-content ul{margin:6px 0 0;padding-left:18px}.methodology-content li+li{margin-top:5px}.toast{position:fixed;right:16px;bottom:16px;z-index:50;max-width:min(420px,calc(100vw - 32px));padding:9px 11px;border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-card);color:var(--text-primary);box-shadow:var(--shadow-card);font-size:10px;font-weight:720;opacity:0;transform:translateY(8px);pointer-events:none;transition:opacity var(--duration-fast) var(--ease-out-expo),transform var(--duration-normal) var(--ease-out-expo)}.toast.show{opacity:1;transform:none}
+    @media(max-width:1080px){.kpi-strip{grid-template-columns:repeat(3,1fr)}.dashboard-grid{grid-template-columns:1fr}.panel-wide{grid-column:auto}.rune-matrix{grid-template-columns:repeat(7,minmax(58px,1fr))}}
+    @media(max-width:760px){:root{--header:44px}.app-header{padding:0 12px}.product-area,.brand-divider,.sync-state{display:none}.layout{padding:12px}.intro{align-items:flex-start;flex-direction:column;gap:10px}.tabs{width:100%}.tab{flex:1;padding-inline:6px}.filters{top:calc(var(--header) + 6px);overflow-x:auto;border-radius:var(--radius-md)}.filter-field{min-width:132px}.filter-summary{display:none}.kpi-strip{grid-template-columns:repeat(2,1fr);gap:8px}.kpi{border-radius:var(--radius-md)}.rune-summary{grid-template-columns:repeat(2,1fr)}.rune-tier:nth-child(2){border-right:0}.rune-tier:nth-child(-n+2){border-bottom:1px solid var(--border-default)}.rune-matrix{grid-template-columns:repeat(4,minmax(58px,1fr))}}
+    @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important}}
+  </style>
 </head>
 <body>
-<header>
-  <div class="tabs">
-    <button class="tab-btn active" data-target="view-dashboard">高级仪表盘</button>
-    <button class="tab-btn" data-target="view-records">原始记录管理</button>
-  </div>
-  <div><button class="theme-toggle" id="themeToggle">切换主题</button></div>
-</header>
-
-<main>
-  <div id="view-dashboard" class="view active">
-    <!-- Controls -->
-    <div class="toolbar">
-      <div class="form-group">
-        <label>日期范围 - 起</label>
-        <input type="date" class="input" id="filter-date-start">
+  <header class="app-header"><div class="brand"><span class="swiss-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 5-7"/></svg></span><span class="brand-name">D2RHub</span><span class="brand-divider" aria-hidden="true"></span><span class="product-area">OCR 数据中心</span></div><div class="header-actions"><span class="sync-state" id="sync-state">本地数据</span><button class="button button-small" id="theme-toggle" type="button">浅色</button><button class="button button-small" id="refresh-data" type="button">刷新</button></div></header>
+  <main class="layout">
+    <div class="intro"><div><h1>刷图与符文统计</h1><p>所有结果均由本机 OCR 场景记录计算。先选择范围，再查看效率、掉落分布与原始记录。</p></div><nav class="tabs" role="tablist" aria-label="统计视图"><button class="tab" role="tab" aria-selected="true" data-view="overview">总览</button><button class="tab" role="tab" aria-selected="false" data-view="runes">符文</button><button class="tab" role="tab" aria-selected="false" data-view="records">记录</button></nav></div>
+    <section class="filters" aria-label="统计筛选">
+      <div class="filter-field"><label for="filter-period">时间范围</label><select class="control" id="filter-period"><option value="all">全部时间</option><option value="today">今天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select></div>
+      <div class="filter-field"><label for="filter-character">角色</label><select class="control" id="filter-character"><option value="">全部角色</option></select></div>
+      <div class="filter-field"><label for="filter-scene">场景</label><select class="control" id="filter-scene"><option value="">全部场景</option></select></div>
+      <div class="filter-field"><label for="filter-drop">掉落条件</label><select class="control" id="filter-drop"><option value="all">不限掉落</option><option value="any">有符文</option><option value="none">无符文</option><option value="high">高级符文 #24+</option><option value="screenshot">有留存截图</option></select></div>
+      <div class="filter-field"><label for="filter-rune">指定符文</label><select class="control" id="filter-rune"><option value="">全部符文</option></select></div>
+      <div class="filter-summary" id="filter-summary">正在读取记录…</div><button class="button" type="button" id="reset-filters">重置</button>
+    </section>
+    <section class="view" id="view-overview" role="tabpanel">
+      <div class="kpi-strip" id="kpi-strip"></div>
+      <div class="dashboard-grid">
+        <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">趋势</h2><div class="panel-description">按自然日聚合，随上方筛选同步</div></div><select class="control metric-select" id="trend-metric"><option value="runs">每日场次</option><option value="avg">平均耗时</option><option value="drops">符文掉落</option><option value="high">高级符文</option></select></div><div class="panel-body chart-frame" id="trend-chart"></div></section>
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">场景效率</h2><div class="panel-description">平均、P90 与百场掉落</div></div></div><div class="panel-body panel-body-flush data-table-wrap" id="scene-table"></div></section>
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">角色对比</h2><div class="panel-description">场次数量与平均耗时</div></div></div><div class="panel-body" id="character-comparison"></div></section>
+        <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">活跃时段</h2><div class="panel-description">星期 × 小时；颜色越实，记录越集中</div></div></div><div class="panel-body heatmap-wrap" id="activity-heatmap"></div></section>
       </div>
-      <div class="form-group">
-        <label>日期范围 - 止</label>
-        <input type="date" class="input" id="filter-date-end">
+    </section>
+    <section class="view" id="view-runes" role="tabpanel" hidden>
+      <div class="dashboard-grid">
+        <section class="panel panel-wide"><div class="rune-summary" id="rune-summary"></div><div class="panel-header"><div><h2 class="panel-title">符文图谱</h2><div class="panel-description">点击任一符文可筛选包含该符文的场次</div></div></div><div class="panel-body rune-matrix" id="rune-matrix"></div></section>
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">掉落排行</h2><div class="panel-description">按独立掉落实例计数</div></div></div><div class="panel-body" id="rune-ranking"></div></section>
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">高级符文效率</h2><div class="panel-description">#24 以上掉落率及间隔</div></div></div><div class="panel-body" id="high-rune-insights"></div></section>
+        <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">高级符文截图</h2><div class="panel-description">仅展示数据库中仍有截图路径的掉落</div></div></div><div class="panel-body gallery" id="screenshot-gallery"></div></section>
       </div>
-      <div class="form-group">
-        <label>角色</label>
-        <select class="select" id="filter-character">
-          <option value="">所有角色</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>场景</label>
-        <select class="select" id="filter-scene">
-          <option value="">所有场景</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>掉落过滤</label>
-        <select class="select" id="filter-drop">
-          <option value="">全部</option>
-          <option value="has_drop">有掉落</option>
-          <option value="high_rune">高阶符文 (>=#24)</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label>分组依据 (用于分组图表)</label>
-        <select class="select" id="group-by">
-          <option value="scene">场景</option>
-          <option value="character">角色</option>
-          <option value="date">日期 (YYYY-MM-DD)</option>
-          <option value="weekday">星期</option>
-          <option value="hour">小时 (0-23)</option>
-          <option value="rune">符文 (Rune)</option>
-        </select>
-      </div>
-      <div style="flex: 1;"></div>
-      <button class="btn" id="btn-apply-filters">应用分析</button>
-    </div>
-
-    <!-- KPIs -->
-    <div class="grid-cards">
-      <div class="card"><div class="card-title">过滤后运行次数</div><div class="card-value" id="kpi-runs">0</div></div>
-      <div class="card"><div class="card-title">过滤后总耗时</div><div class="card-value" id="kpi-time">0h 0m</div></div>
-      <div class="card"><div class="card-title">过滤后掉落数</div><div class="card-value" id="kpi-drops">0</div></div>
-      <div class="card"><div class="card-title">高阶符文 (>=24)</div><div class="card-value" id="kpi-high-runes">0</div></div>
-    </div>
-
-    <!-- Charts -->
-    <div class="card">
-      <h3 style="margin-bottom:1rem;">总览趋势 / 时间分布</h3>
-      <div class="chart-container" id="chart-trend"></div>
-    </div>
-    <div class="card">
-      <h3 style="margin-bottom:1rem;">分组排行统计</h3>
-      <div class="chart-container" id="chart-grouped"></div>
-    </div>
-    <div class="card">
-      <h3 style="margin-bottom:1rem;">符文/物品 掉落分布</h3>
-      <div class="chart-container" id="chart-runes"></div>
-    </div>
-  </div>
-
-  <div id="view-records" class="view">
-    <div class="toolbar">
-      <input type="text" class="input" id="records-search" placeholder="搜索角色/场景/物品..." style="flex:1;">
-      <button class="btn" id="btn-batch-rename-scene">批量重命名场景</button>
-      <button class="btn" id="btn-export-csv">导出 CSV</button>
-      <button class="btn" id="btn-refresh">刷新数据</button>
-    </div>
-    <div class="card" style="padding:0; overflow:hidden;">
-      <div class="table-scroll">
-        <table id="records-table">
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>时间</th>
-              <th>角色</th>
-              <th>场景</th>
-              <th>耗时 (s)</th>
-              <th>掉落</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-</main>
-
-<script>
-
-  // Theme Toggle
-  const themeToggle = document.getElementById('themeToggle');
-  const htmlEl = document.documentElement;
-  const savedTheme = localStorage.getItem('d2rhub-theme') || 'dark';
-  htmlEl.setAttribute('data-theme', savedTheme);
-  themeToggle.addEventListener('click', () => {
-    const currentTheme = htmlEl.getAttribute('data-theme');
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    htmlEl.setAttribute('data-theme', newTheme);
-    localStorage.setItem('d2rhub-theme', newTheme);
-  });
-
-  // Tabs
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-      document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
-      btn.classList.add('active');
-      document.getElementById(btn.dataset.target).classList.add('active');
-    });
-  });
-
-  // State
-  let STATE = { records: [] };
-  const RAW_STATS_DATA = {{STATS_DATA}};
-  const STATS_API_PORT = {{STATS_API_PORT}};
-
-  function initData() {
-    STATE.records = RAW_STATS_DATA.records || [];
-    populateFilters();
-    analyzeData();
-    renderRecords();
-  }
-
-  function escapeHtml(v) { return String(v||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-
-  function populateFilters() {
-    const chars = new Set();
-    const scenes = new Set();
-    STATE.records.forEach(r => {
-      if(r.character_name) chars.add(r.character_name);
-      if(r.scene_name) scenes.add(r.scene_name);
-    });
-
-    const charSelect = document.getElementById('filter-character');
-    charSelect.options.length = 1;
-    [...chars].sort().forEach(c => charSelect.add(new Option(c, c)));
-    const sceneSelect = document.getElementById('filter-scene');
-    sceneSelect.options.length = 1;
-    [...scenes].sort().forEach(s => sceneSelect.add(new Option(s, s)));
-  }
-
-  document.getElementById('btn-apply-filters').addEventListener('click', analyzeData);
-
-  function analyzeData() {
-    const ds = document.getElementById('filter-date-start').value;
-    const de = document.getElementById('filter-date-end').value;
-    const char = document.getElementById('filter-character').value;
-    const scene = document.getElementById('filter-scene').value;
-    const dropF = document.getElementById('filter-drop').value;
-    const groupBy = document.getElementById('group-by').value;
-
-    let filtered = STATE.records.filter(r => {
-      const dDate = (r.absolute_time || '').split(' ')[0];
-      if(ds && dDate < ds) return false;
-      if(de && dDate > de) return false;
-      if(char && r.character_name !== char) return false;
-      if(scene && r.scene_name !== scene) return false;
-
-      const drops = r.drops || [];
-      if(dropF === 'has_drop' && drops.length === 0) return false;
-      if(dropF === 'high_rune' && !drops.some(d => Number(d.rune_number) >= 24)) return false;
-      return true;
-    });
-
-    // KPI
-    let tTime = 0, tDrops = 0, tHigh = 0;
-    filtered.forEach(r => {
-      tTime += r.timer_seconds || 0;
-      tDrops += (r.drops || []).length;
-      tHigh += (r.drops || []).filter(d => Number(d.rune_number) >= 24).length;
-    });
-    document.getElementById('kpi-runs').textContent = filtered.length;
-    document.getElementById('kpi-time').textContent = Math.floor(tTime/3600) + 'h ' + Math.floor((tTime%3600)/60) + 'm';
-    document.getElementById('kpi-drops').textContent = tDrops;
-    document.getElementById('kpi-high-runes').textContent = tHigh;
-
-    renderTrendChart(filtered);
-    renderGroupedChart(filtered, groupBy);
-    renderRunesChart(filtered);
-  }
-
-  function getGroupKey(r, groupBy, drop) {
-    if(groupBy === 'rune') return drop ? (drop.rune_name || 'Unknown') : 'Unknown';
-    if(groupBy === 'scene') return r.scene_name || 'Unknown';
-    if(groupBy === 'character') return r.character_name || 'Unknown';
-    if(groupBy === 'date') return (r.absolute_time || '').split(' ')[0] || 'Unknown';
-    if(groupBy === 'hour') return (r.absolute_time || '').split(' ')[1]?.split(':')[0] || 'Unknown';
-    if(groupBy === 'weekday') {
-      const d = new Date(r.absolute_time || Date.now());
-      return ['日','一','二','三','四','五','六'][d.getDay()];
-    }
-    return 'Unknown';
-  }
-
-  function renderTrendChart(records) {
-    const container = document.getElementById('chart-trend');
-    if(records.length === 0) {
-      container.innerHTML = '<div class="empty-state">暂无数据</div>';
-      return;
-    }
-    const dates = {};
-    records.forEach(r => {
-      const d = (r.absolute_time || '').split(' ')[0] || 'Unknown';
-      if(!dates[d]) dates[d] = 0;
-      dates[d]++;
-    });
-    const sorted = Object.keys(dates).sort();
-    const maxVal = Math.max(...sorted.map(d => dates[d]), 1);
-
-    let html = '<div class="css-chart">';
-    sorted.forEach(d => {
-      const pct = (dates[d] / maxVal) * 100;
-      html += `
-        <div class="css-bar-container" title="${escapeHtml(d)}: ${dates[d]}">
-          <div class="css-bar-group">
-            <div class="css-bar" style="height: ${pct}%; background: #3b82f6;"></div>
-          </div>
-          <div class="css-label">${escapeHtml(d.substring(5))}</div>
-        </div>
-      `;
-    });
-    html += '</div>';
-    container.innerHTML = html;
-  }
-
-  function renderGroupedChart(records, groupBy) {
-    const container = document.getElementById('chart-grouped');
-    if(records.length === 0) {
-      container.innerHTML = '<div class="empty-state">暂无数据</div>';
-      return;
-    }
-
-    const groups = {};
-    if(groupBy === 'rune') {
-      records.forEach(r => {
-        (r.drops || []).forEach(d => {
-          const k = getGroupKey(r, groupBy, d);
-          if(!groups[k]) groups[k] = { runs: 0, drops: 0 };
-          groups[k].drops++;
-        });
-      });
-    } else {
-      records.forEach(r => {
-        const k = getGroupKey(r, groupBy);
-        if(!groups[k]) groups[k] = { runs: 0, drops: 0 };
-        groups[k].runs++;
-        groups[k].drops += (r.drops || []).length;
-      });
-    }
-
-    const sorted = Object.keys(groups).sort((a,b) => {
-      if(groupBy === 'rune') return groups[b].drops - groups[a].drops;
-      return groups[b].runs - groups[a].runs;
-    }).slice(0, 20);
-
-    if(sorted.length === 0) {
-      container.innerHTML = '<div class="empty-state">暂无数据</div>';
-      return;
-    }
-
-    const maxRuns = Math.max(...sorted.map(k => groups[k].runs), 1);
-    const maxDrops = Math.max(...sorted.map(k => groups[k].drops), 1);
-
-    let html = '<div class="css-chart">';
-    sorted.forEach(k => {
-      const rPct = (groups[k].runs / maxRuns) * 100;
-      const dPct = (groups[k].drops / maxDrops) * 100;
-      let bars = '';
-      if(groupBy === 'rune') {
-        bars = `<div class="css-bar" style="height: ${dPct}%; background: #10b981;" title="掉落: ${groups[k].drops}"></div>`;
-      } else {
-        bars = `
-          <div class="css-bar" style="height: ${rPct}%; background: #3b82f6;" title="运行: ${groups[k].runs}"></div>
-          <div class="css-bar" style="height: ${dPct}%; background: #10b981;" title="掉落: ${groups[k].drops}"></div>
-        `;
-      }
-      html += `
-        <div class="css-bar-container" title="${escapeHtml(k)}">
-          <div class="css-bar-group">${bars}</div>
-          <div class="css-label">${escapeHtml(k)}</div>
-        </div>
-      `;
-    });
-    html += '</div>';
-    container.innerHTML = html;
-  }
-
-  function renderRunesChart(records) {
-    const container = document.getElementById('chart-runes');
-    let totalDrops = 0;
-    const counts = {};
-    records.forEach(r => {
-      (r.drops || []).forEach(d => {
-        const n = d.rune_name || 'Unknown';
-        counts[n] = (counts[n] || 0) + 1;
-        totalDrops++;
-      });
-    });
-    if(totalDrops === 0) {
-      container.innerHTML = '<div class="empty-state">暂无数据</div>';
-      return;
-    }
-    const sorted = Object.keys(counts).sort((a,b) => counts[b] - counts[a]).slice(0, 30);
-    const maxVal = Math.max(...sorted.map(k => counts[k]), 1);
-
-    let html = '<div class="css-chart-horiz">';
-    sorted.forEach(k => {
-      const pct = (counts[k] / maxVal) * 100;
-      html += `
-        <div class="css-bar-row">
-          <div class="css-row-label" title="${escapeHtml(k)}">${escapeHtml(k)}</div>
-          <div class="css-row-bar-bg">
-            <div class="css-row-bar" style="width: ${pct}%; background: #8b5cf6;"></div>
-          </div>
-          <div class="css-row-val">${counts[k]}</div>
-        </div>
-      `;
-    });
-    html += '</div>';
-    container.innerHTML = html;
-  }
-
-  function renderRecords() {
-    const search = document.getElementById('records-search').value.toLowerCase();
-    const tbody = document.querySelector('#records-table tbody');
-    tbody.innerHTML = '';
-
-    if(STATE.records.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-secondary); padding:2rem;">暂无数据</td></tr>';
-      return;
-    }
-
-    const filtered = STATE.records.filter(r => {
-      if(!search) return true;
-      const t = search;
-      if(r.character_name?.toLowerCase().includes(t)) return true;
-      if(r.scene_name?.toLowerCase().includes(t)) return true;
-      if(r.drops?.some(d => d.rune_name?.toLowerCase().includes(t))) return true;
-      return false;
-    }).sort((a,b) => (b.id||0) - (a.id||0)).slice(0, 100);
-
-    if(filtered.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:var(--text-secondary); padding:2rem;">无匹配记录</td></tr>';
-      return;
-    }
-
-    filtered.forEach(r => {
-      const tr = document.createElement('tr');
-      const tdId = document.createElement('td'); tdId.textContent = r.id; tr.appendChild(tdId);
-      const tdTime = document.createElement('td'); tdTime.textContent = r.absolute_time; tr.appendChild(tdTime);
-      const tdChar = document.createElement('td'); tdChar.textContent = r.character_name; tr.appendChild(tdChar);
-
-      const tdScene = document.createElement('td');
-      const spanScene = document.createElement('span');
-      spanScene.className = 'scene-rename';
-      spanScene.setAttribute('data-id', r.id);
-      spanScene.textContent = r.scene_name;
-      tdScene.appendChild(spanScene);
-      tr.appendChild(tdScene);
-
-      const tdTimer = document.createElement('td'); tdTimer.textContent = (r.timer_seconds||0).toFixed(1); tr.appendChild(tdTimer);
-
-      const tdDrops = document.createElement('td');
-      (r.drops || []).forEach((d, idx) => {
-        const spanDrop = document.createElement('span');
-        spanDrop.className = 'tag tag-rune';
-        spanDrop.textContent = `#${d.rune_number} ${d.rune_name} `;
-
-        const delBtn = document.createElement('span');
-        delBtn.className = 'tag-rune-del';
-        delBtn.setAttribute('data-rid', r.id);
-        delBtn.setAttribute('data-didx', idx);
-        delBtn.textContent = '×';
-        spanDrop.appendChild(delBtn);
-
-        tdDrops.appendChild(spanDrop);
-      });
-      tr.appendChild(tdDrops);
-
-      const tdAction = document.createElement('td');
-      const btnDel = document.createElement('button');
-      btnDel.className = 'btn btn-danger btn-delete-record';
-      btnDel.setAttribute('data-id', r.id);
-      btnDel.textContent = '删除';
-      tdAction.appendChild(btnDel);
-      tr.appendChild(tdAction);
-
-      tbody.appendChild(tr);
-    });
-  }
-  document.getElementById('records-search').addEventListener('input', renderRecords);
-
-  const apiBase = `http://127.0.0.1:${STATS_API_PORT}`;
-  async function fetchRecords() {
-    try {
-      const res = await fetch(`${apiBase}/api/records`);
-      if(res.ok) {
-        const data = await res.json();
-        if(data && data.records) { STATE.records = data.records; initData(); }
-      }
-    } catch(e) { /* silent fail or ui hint */ }
-  }
-  document.getElementById('btn-refresh').addEventListener('click', fetchRecords);
-
-  // Event Delegation
-  document.addEventListener('click', async (e) => {
-    if(e.target.classList.contains('btn-delete-record')) {
-      const id = e.target.getAttribute('data-id');
-      if(!confirm(`删除 ID ${id}?`)) return;
-      try {
-        if((await fetch(`${apiBase}/api/records/${id}`, {method:'DELETE'})).ok) fetchRecords();
-      } catch(err) {}
-    } else if(e.target.classList.contains('tag-rune-del')) {
-      const rid = e.target.getAttribute('data-rid');
-      const didx = e.target.getAttribute('data-didx');
-      if(!confirm('删除此掉落?')) return;
-      try {
-        if((await fetch(`${apiBase}/api/records/${rid}/drops/${didx}`, {method:'DELETE'})).ok) fetchRecords();
-      } catch(err) {}
-    } else if(e.target.classList.contains('scene-rename')) {
-      const id = e.target.getAttribute('data-id');
-      const cname = e.target.textContent;
-      const n = prompt('重命名场景:', cname);
-      if(n && n !== cname) {
-        try {
-          if((await fetch(`${apiBase}/api/records/${id}/rename?to=${encodeURIComponent(n)}`, {method:'POST'})).ok) fetchRecords();
-        } catch(err) {}
-      }
-    }
-  });
-
-  document.getElementById('btn-batch-rename-scene').addEventListener('click', async () => {
-    const f = prompt('原名:'); if(!f) return;
-    const t = prompt('新名:'); if(!t || f===t) return;
-    try {
-      if((await fetch(`${apiBase}/api/scenes/rename?from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}`, {method:'POST'})).ok) fetchRecords();
-    } catch(e) {}
-  });
-
-  document.getElementById('btn-export-csv').addEventListener('click', () => {
-    let csv = '\uFEFFID,时间,角色,场景,耗时(s),掉落物品\n';
-    STATE.records.forEach(r => {
-      const d = r.drops ? r.drops.map(x=>x.rune_name).join(';') : '';
-      csv += [r.id, r.absolute_time||'', r.character_name||'', r.scene_name||'', r.timer_seconds||0, d].map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',') + '\n';
-    });
-    const blob = new Blob([csv], {type: 'text/csv;charset=utf-8;'});
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'stats.csv';
-    a.click();
-  });
-  initData();
-</script>
+    </section>
+    <section class="view" id="view-records" role="tabpanel" hidden><section class="panel"><div class="records-toolbar"><input class="control records-search" id="records-search" type="search" placeholder="搜索时间、角色、场景或符文…"><select class="control metric-select" id="records-sort"><option value="newest">时间：新到旧</option><option value="oldest">时间：旧到新</option><option value="duration-desc">耗时：长到短</option><option value="duration-asc">耗时：短到长</option><option value="drops-desc">掉落：多到少</option></select><button class="button" type="button" id="export-csv">导出筛选 CSV</button><button class="button" type="button" id="export-json">导出筛选 JSON</button></div><div class="data-table-wrap" id="records-table"></div><div class="pagination"><span class="pagination-state" id="pagination-state"></span><div><button class="button button-small" type="button" id="page-prev">上一页</button> <button class="button button-small" type="button" id="page-next">下一页</button></div></div></section></section>
+    <details class="methodology"><summary>统计口径与数据边界</summary><div class="methodology-content"><ul><li><strong>一场：</strong>OCR 从一个非城镇场景切换到其他场景或返回城镇时保存一条 <code>scene_records</code>；尚未结束的计时不计入。</li><li><strong>耗时：</strong>该场景计时起止之间的秒数。平均值、P90、最佳耗时只基于当前筛选范围内耗时大于 0 的记录。</li><li><strong>掉落：</strong><code>drops_json</code> 数组中的每个元素代表一次独立符文掉落；同一场、同一符文多次掉落分别计数。</li><li><strong>高级符文：</strong>统一按符文编号 ≥24（伊斯特及以上）统计；“命中率”指至少有一次对应掉落的场次 ÷ 总场次。</li><li><strong>命中间隔：</strong>筛选记录按时间排序后，相邻两个高级符文命中场之间相隔的场次数；至少两次命中才计算平均值。</li><li><strong>截图：</strong>只统计带 <code>screenshot_path</code> 的掉落；本地文件被清理后记录仍保留，但预览可能失效。</li></ul></div></details>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const RAW_STATS_DATA={{STATS_DATA}};const API_PORT={{STATS_API_PORT}};const API_BASE=`http://127.0.0.1:${API_PORT}`;const HIGH_RUNE_MIN=24;const PAGE_SIZE=50;
+    const RUNE_NAMES=["艾尔","艾德","特尔","那夫","爱斯","伊司","塔尔","拉尔","欧特","书尔","安姆","索尔","夏","多尔","海尔","艾欧","卢姆","科","法尔","蓝姆","普尔","乌姆","马尔","伊斯特","古尔","伐克斯","欧姆","罗","瑟","贝","乔","查姆","萨德"];const WEEKDAYS=["周一","周二","周三","周四","周五","周六","周日"];
+    const state={records:Array.isArray(RAW_STATS_DATA.records)?RAW_STATS_DATA.records:[],filtered:[],activeView:"overview",page:1};const $=s=>document.querySelector(s),$$=s=>Array.from(document.querySelectorAll(s)),number=v=>Number.isFinite(Number(v))?Number(v):0;
+    function escapeHtml(v){return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
+    function parseRecordDate(v){const t=String(v||""),m=t.match(/^(\d{4})\/(\d{2})\/(\d{2})\/(\d{2}):(\d{2}):(\d{2})$/);if(m){const[,y,mo,d,h,mi,s]=m.map(Number);return new Date(y,mo-1,d,h,mi,s)}const f=new Date(t);return Number.isNaN(f.getTime())?null:f}
+    function formatDate(v,compact=false){const d=parseRecordDate(v);if(!d)return String(v||"—");const p=n=>String(n).padStart(2,"0"),date=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;return compact?date:`${date} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`}
+    function formatDuration(s){const t=Math.max(0,number(s));if(t<60)return`${t.toFixed(t<10?1:0)} 秒`;const m=Math.floor(t/60),r=Math.round(t%60);if(m<60)return`${m}分 ${r}秒`;return`${Math.floor(m/60)}时 ${m%60}分`}
+    function formatRate(v){return`${(number(v)*100).toFixed(v>=.1?1:2)}%`}function quantile(values,q){const s=values.map(number).filter(v=>v>0).sort((a,b)=>a-b);if(!s.length)return 0;const p=(s.length-1)*q,b=Math.floor(p),r=p-b;return s[b+1]===undefined?s[b]:s[b]+r*(s[b+1]-s[b])}
+    const getDrops=r=>Array.isArray(r.drops)?r.drops:[],isHighRune=d=>number(d.rune_number)>=HIGH_RUNE_MIN;
+    function safeScreenshotUrl(path){const n=String(path||"").replaceAll("\\","/");if(!n||n.includes("..")||/^[a-z]+:/i.test(n))return"";return encodeURI(n.replace(/^\.\//,""))}
+    function showToast(message){const t=$("#toast");t.textContent=message;t.classList.add("show");clearTimeout(showToast.timer);showToast.timer=setTimeout(()=>t.classList.remove("show"),2400)}
+    function downloadFile(name,content,type){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement("a");a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),0)}
+    function populateSelects(){const pc=$("#filter-character").value,ps=$("#filter-scene").value,chars=[...new Set(state.records.map(r=>r.character_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"zh-CN")),scenes=[...new Set(state.records.map(r=>r.scene_name).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"zh-CN"));$("#filter-character").innerHTML='<option value="">全部角色</option>'+chars.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");$("#filter-scene").innerHTML='<option value="">全部场景</option>'+scenes.map(n=>`<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join("");$("#filter-rune").innerHTML='<option value="">全部符文</option>'+RUNE_NAMES.map((n,i)=>`<option value="${i+1}">#${i+1} ${n}</option>`).join("");if(chars.includes(pc))$("#filter-character").value=pc;if(scenes.includes(ps))$("#filter-scene").value=ps}
+    function cutoffForPeriod(p){if(p==="all")return null;const n=new Date(),today=new Date(n.getFullYear(),n.getMonth(),n.getDate());if(p==="today")return today;return new Date(today.getTime()-Math.max(0,Number(p)-1)*864e5)}
+    function applyFilters(){const period=$("#filter-period").value,char=$("#filter-character").value,scene=$("#filter-scene").value,dropMode=$("#filter-drop").value,rune=number($("#filter-rune").value),cutoff=cutoffForPeriod(period);state.filtered=state.records.filter(r=>{const date=parseRecordDate(r.absolute_time),drops=getDrops(r);if(cutoff&&(!date||date<cutoff))return false;if(char&&r.character_name!==char)return false;if(scene&&r.scene_name!==scene)return false;if(dropMode==="any"&&!drops.length)return false;if(dropMode==="none"&&drops.length)return false;if(dropMode==="high"&&!drops.some(isHighRune))return false;if(dropMode==="screenshot"&&!drops.some(d=>d.screenshot_path))return false;if(rune&&!drops.some(d=>number(d.rune_number)===rune))return false;return true});state.page=1;const dc=state.filtered.reduce((s,r)=>s+getDrops(r).length,0);$("#filter-summary").textContent=`${state.filtered.length.toLocaleString()} / ${state.records.length.toLocaleString()} 场 · ${dc.toLocaleString()} 次符文掉落`;renderAll()}
+    function summarize(records){const durations=records.map(r=>number(r.timer_seconds)).filter(v=>v>0),drops=records.flatMap(getDrops),highDrops=drops.filter(isHighRune),runsWithDrop=records.filter(r=>getDrops(r).length).length,runsWithHigh=records.filter(r=>getDrops(r).some(isHighRune)).length,totalSeconds=durations.reduce((s,v)=>s+v,0);return{runs:records.length,durations,totalSeconds,average:durations.length?totalSeconds/durations.length:0,median:quantile(durations,.5),best:durations.length?Math.min(...durations):0,p90:quantile(durations,.9),drops,highDrops,runsWithDrop,runsWithHigh,screenshots:drops.filter(d=>d.screenshot_path).length}}
+    function renderKpis(){const s=summarize(state.filtered),cells=[["场次记录",s.runs.toLocaleString(),`累计 ${formatDuration(s.totalSeconds)}`],["平均耗时",s.average?formatDuration(s.average):"—",`中位数 ${s.median?formatDuration(s.median):"—"}`],["最佳耗时",s.best?formatDuration(s.best):"—",`P90 ${s.p90?formatDuration(s.p90):"—"}`],["符文掉落",s.drops.length.toLocaleString(),`${s.runs?(s.drops.length/s.runs*100).toFixed(1):"0"} 次 / 百场`],["高级符文",s.highDrops.length.toLocaleString(),`命中场次 ${formatRate(s.runs?s.runsWithHigh/s.runs:0)}`],["有掉落场次",formatRate(s.runs?s.runsWithDrop/s.runs:0),`${s.screenshots} 张截图留存`]];$("#kpi-strip").innerHTML=cells.map(([l,v,n])=>`<div class="kpi"><div class="kpi-label">${l}</div><div class="kpi-value">${v}</div><div class="kpi-note">${n}</div></div>`).join("")}
+    function dailySeries(records){const groups=new Map;records.forEach(r=>{const d=parseRecordDate(r.absolute_time);if(!d)return;const key=formatDate(r.absolute_time,true);if(!groups.has(key))groups.set(key,{key,runs:0,duration:0,durationCount:0,drops:0,high:0});const g=groups.get(key);g.runs++;const sec=number(r.timer_seconds);if(sec>0){g.duration+=sec;g.durationCount++}g.drops+=getDrops(r).length;g.high+=getDrops(r).filter(isHighRune).length});return[...groups.values()].sort((a,b)=>a.key.localeCompare(b.key))}
+    function renderTrend(){const metric=$("#trend-metric").value,series=dailySeries(state.filtered),c=$("#trend-chart");if(!series.length){c.innerHTML='<div class="empty">当前筛选范围没有可绘制的日期记录</div>';return}const values=series.map(i=>metric==="avg"?(i.durationCount?i.duration/i.durationCount:0):i[metric]),max=Math.max(...values,1),w=Math.max(760,series.length*32),h=250,p={l:44,r:14,t:14,b:34},pw=w-p.l-p.r,ph=h-p.t-p.b,step=pw/series.length,y=v=>p.t+ph-v/max*ph,label=metric==="avg"?"平均耗时（秒）":metric==="runs"?"场次":metric==="drops"?"符文":"高级符文";let svg=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="${label}按日趋势">`;for(let g=0;g<=4;g++){const val=max*(4-g)/4,gy=p.t+ph*g/4;svg+=`<line class="chart-grid-line" x1="${p.l}" y1="${gy}" x2="${w-p.r}" y2="${gy}"/><text class="chart-label" x="${p.l-7}" y="${gy+3}" text-anchor="end">${metric==="avg"?val.toFixed(0):Math.round(val)}</text>`}if(metric==="avg"){const points=values.map((v,i)=>`${p.l+step*(i+.5)},${y(v)}`).join(" "),area=`${p.l+step*.5},${p.t+ph} ${points} ${p.l+step*(series.length-.5)},${p.t+ph}`;svg+=`<polygon class="chart-area" points="${area}"/><polyline class="chart-line" points="${points}"/>`;values.forEach((v,i)=>{const x=p.l+step*(i+.5);svg+=`<circle class="chart-point" cx="${x}" cy="${y(v)}" r="3"><title>${series[i].key} · ${formatDuration(v)}</title></circle>`})}else{const bw=Math.max(3,Math.min(20,step*.66));values.forEach((v,i)=>{const x=p.l+step*(i+.5)-bw/2,by=y(v);svg+=`<rect class="chart-bar" x="${x}" y="${by}" width="${bw}" height="${p.t+ph-by}" rx="2"><title>${series[i].key} · ${v} ${label}</title></rect>`})}const every=Math.max(1,Math.ceil(series.length/8));series.forEach((item,i)=>{if(i%every&&i!==series.length-1)return;svg+=`<text class="chart-label" x="${p.l+step*(i+.5)}" y="${h-10}" text-anchor="middle">${item.key.slice(5)}</text>`});c.innerHTML=svg+"</svg>"}
+    function groupedStats(records,key){const groups=new Map;records.forEach(r=>{const name=r[key]||"未知";if(!groups.has(name))groups.set(name,[]);groups.get(name).push(r)});return[...groups.entries()].map(([name,items])=>({name,items,summary:summarize(items)}))}
+    function renderSceneTable(){const groups=groupedStats(state.filtered,"scene_name").sort((a,b)=>b.summary.runs-a.summary.runs),c=$("#scene-table");if(!groups.length){c.innerHTML='<div class="empty">暂无场景统计</div>';return}const max=Math.max(...groups.map(g=>g.summary.runs),1);c.innerHTML=`<table><thead><tr><th>场景</th><th class="number">场次</th><th class="number">平均</th><th class="number">P90</th><th class="number">符文/百场</th><th></th></tr></thead><tbody>${groups.map(g=>{const s=g.summary;return`<tr><td class="scene-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</td><td class="number"><span class="inline-meter"><span class="inline-meter-track"><span class="inline-meter-fill" style="width:${s.runs/max*100}%"></span></span>${s.runs}</span></td><td class="number">${s.average?formatDuration(s.average):"—"}</td><td class="number">${s.p90?formatDuration(s.p90):"—"}</td><td class="number">${s.runs?(s.drops.length/s.runs*100).toFixed(1):"0"}</td><td><button class="button button-small" data-action="rename-scene" data-scene="${escapeHtml(g.name)}">统一命名</button></td></tr>`}).join("")}</tbody></table>`}
+    function renderCharacterComparison(){const groups=groupedStats(state.filtered,"character_name").sort((a,b)=>b.summary.runs-a.summary.runs),c=$("#character-comparison");if(!groups.length){c.innerHTML='<div class="empty">暂无角色统计</div>';return}const max=Math.max(...groups.map(g=>g.summary.runs),1);c.innerHTML=`<div class="comparison-list">${groups.slice(0,12).map(g=>`<div class="comparison-row"><div class="comparison-name" title="${escapeHtml(g.name)}">${escapeHtml(g.name)}</div><div class="comparison-track"><div class="comparison-fill" style="width:${g.summary.runs/max*100}%"></div></div><div class="comparison-value">${g.summary.runs} 场 · ${g.summary.average?formatDuration(g.summary.average):"—"}</div></div>`).join("")}</div>`}
+    function renderActivityHeatmap(){const matrix=Array.from({length:7},()=>Array(24).fill(0));state.filtered.forEach(r=>{const d=parseRecordDate(r.absolute_time);if(d)matrix[(d.getDay()+6)%7][d.getHours()]++});const max=Math.max(1,...matrix.flat());let html='<div class="heatmap"><span></span>';for(let h=0;h<24;h++)html+=`<span class="heatmap-hour">${h%3===0?String(h).padStart(2,"0"):""}</span>`;matrix.forEach((row,day)=>{html+=`<span class="heatmap-label">${WEEKDAYS[day]}</span>`;row.forEach((v,h)=>{const strength=v?18+v/max*72:0;html+=`<span class="heatmap-cell" style="background:${v?`color-mix(in srgb,var(--info) ${Math.round(strength)}%,var(--surface-active))`:"var(--surface-active)"}" title="${WEEKDAYS[day]} ${String(h).padStart(2,"0")}:00 · ${v} 场"></span>`})});$("#activity-heatmap").innerHTML=html+"</div>"}
+    function runeCounts(){const counts=Array(34).fill(0);state.filtered.forEach(r=>getDrops(r).forEach(d=>{const n=number(d.rune_number);if(n>=1&&n<=33)counts[n]++}));return counts}
+    function renderRunes(){const counts=runeCounts(),ranges=[["低阶 #1–15",1,15],["中阶 #16–23",16,23],["高阶 #24–29",24,29],["顶阶 #30–33",30,33]];$("#rune-summary").innerHTML=ranges.map(([l,s,e])=>`<div class="rune-tier"><span>${l}</span><strong>${counts.slice(s,e+1).reduce((a,b)=>a+b,0).toLocaleString()}</strong></div>`).join("");const active=number($("#filter-rune").value);$("#rune-matrix").innerHTML=RUNE_NAMES.map((name,i)=>{const rune=i+1,tier=rune>=30?"elite":rune>=24?"high":"normal";return`<button class="rune-cell" type="button" data-rune="${rune}" data-tier="${tier}" data-active="${active===rune}"><div class="rune-number">#${rune}</div><div class="rune-name">${name}</div><div class="rune-count">${counts[rune]} 次</div></button>`}).join("");const ranked=RUNE_NAMES.map((name,i)=>({name,rune:i+1,count:counts[i+1]})).filter(i=>i.count).sort((a,b)=>b.count-a.count||b.rune-a.rune),max=Math.max(1,...ranked.map(i=>i.count));$("#rune-ranking").innerHTML=ranked.length?`<div class="comparison-list">${ranked.slice(0,14).map(i=>`<div class="comparison-row"><div class="comparison-name">#${i.rune} ${i.name}</div><div class="comparison-track"><div class="comparison-fill" style="width:${i.count/max*100}%;background:${i.rune>=24?"var(--warning)":"var(--info)"}"></div></div><div class="comparison-value">${i.count}</div></div>`).join("")}</div>`:'<div class="empty">当前范围没有符文掉落</div>';const summary=summarize(state.filtered),ordered=state.filtered.slice().sort((a,b)=>(parseRecordDate(a.absolute_time)?.getTime()||0)-(parseRecordDate(b.absolute_time)?.getTime()||0)),hitIndexes=[];ordered.forEach((r,index)=>{if(getDrops(r).some(isHighRune))hitIndexes.push(index)});const intervals=hitIndexes.slice(1).map((index,i)=>index-hitIndexes[i]),avgInterval=intervals.length?intervals.reduce((a,b)=>a+b,0)/intervals.length:0;$("#high-rune-insights").innerHTML=`<div class="comparison-list"><div class="comparison-row"><div class="comparison-name">高级符文总数</div><div></div><div class="comparison-value">${summary.highDrops.length}</div></div><div class="comparison-row"><div class="comparison-name">命中场次</div><div></div><div class="comparison-value">${summary.runsWithHigh} / ${summary.runs}</div></div><div class="comparison-row"><div class="comparison-name">场次命中率</div><div></div><div class="comparison-value">${formatRate(summary.runs?summary.runsWithHigh/summary.runs:0)}</div></div><div class="comparison-row"><div class="comparison-name">平均命中间隔</div><div></div><div class="comparison-value">${avgInterval?`${avgInterval.toFixed(1)} 场`:"—"}</div></div></div>`;const shots=[];state.filtered.forEach(r=>getDrops(r).forEach(d=>{const url=safeScreenshotUrl(d.screenshot_path);if(url)shots.push({r,d,url})}));$("#screenshot-gallery").innerHTML=shots.length?shots.reverse().map(({r,d,url})=>`<a class="gallery-item" href="${escapeHtml(url)}" target="_blank" rel="noreferrer"><img src="${escapeHtml(url)}" alt="#${number(d.rune_number)} ${escapeHtml(d.rune_name)} 掉落截图" loading="lazy"><div class="gallery-caption"><strong>#${number(d.rune_number)} ${escapeHtml(d.rune_name)}</strong><span>${escapeHtml(r.scene_name)} · ${formatDate(r.absolute_time)}</span></div></a>`).join(""):'<div class="empty">当前范围没有可用的掉落截图</div>'}
+    function recordSearchResults(){const q=$("#records-search").value.trim().toLocaleLowerCase("zh-CN"),results=state.filtered.filter(r=>!q||[r.absolute_time,r.character_name,r.scene_name,...getDrops(r).flatMap(d=>[d.rune_name,d.rune_name_en,`#${d.rune_number}`])].join(" ").toLocaleLowerCase("zh-CN").includes(q)),sort=$("#records-sort").value;results.sort((a,b)=>sort==="oldest"?(parseRecordDate(a.absolute_time)?.getTime()||0)-(parseRecordDate(b.absolute_time)?.getTime()||0):sort==="duration-desc"?number(b.timer_seconds)-number(a.timer_seconds):sort==="duration-asc"?number(a.timer_seconds)-number(b.timer_seconds):sort==="drops-desc"?getDrops(b).length-getDrops(a).length:(parseRecordDate(b.absolute_time)?.getTime()||0)-(parseRecordDate(a.absolute_time)?.getTime()||0));return results}
+    function renderRecords(){const records=recordSearchResults(),pages=Math.max(1,Math.ceil(records.length/PAGE_SIZE));state.page=Math.min(state.page,pages);const page=records.slice((state.page-1)*PAGE_SIZE,state.page*PAGE_SIZE),c=$("#records-table");c.innerHTML=!page.length?'<div class="empty">没有符合条件的原始记录</div>':`<table><thead><tr><th>时间</th><th>角色</th><th>场景</th><th class="number">耗时</th><th>掉落</th><th></th></tr></thead><tbody>${page.map(r=>`<tr><td class="subtle">${formatDate(r.absolute_time)}</td><td>${escapeHtml(r.character_name||"未知角色")}</td><td class="scene-name">${escapeHtml(r.scene_name||"未知场景")}</td><td class="number">${formatDuration(r.timer_seconds)}</td><td><div class="record-drops">${getDrops(r).length?getDrops(r).map((d,i)=>`<span class="drop-chip ${isHighRune(d)?"high":""}">#${number(d.rune_number)} ${escapeHtml(d.rune_name)}<button class="drop-delete" type="button" title="删除这次掉落" data-action="delete-drop" data-record-id="${r.id}" data-drop-index="${i}">×</button></span>`).join(""):'<span class="subtle">无</span>'}</div></td><td><button class="button button-small" type="button" data-action="rename-record" data-record-id="${r.id}" data-scene="${escapeHtml(r.scene_name)}">改名</button> <button class="button button-small button-danger" type="button" data-action="delete-record" data-record-id="${r.id}">删除</button></td></tr>`).join("")}</tbody></table>`;$("#pagination-state").textContent=`${records.length.toLocaleString()} 条 · 第 ${state.page} / ${pages} 页`;$("#page-prev").disabled=state.page<=1;$("#page-next").disabled=state.page>=pages}
+    function renderAll(){renderKpis();renderTrend();renderSceneTable();renderCharacterComparison();renderActivityHeatmap();renderRunes();renderRecords()}
+    async function fetchRecords(){const sync=$("#sync-state");sync.textContent="正在刷新…";try{const response=await fetch(`${API_BASE}/api/records`);if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();state.records=Array.isArray(data.records)?data.records:[];populateSelects();applyFilters();sync.textContent=`已同步 ${new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}`;showToast("统计数据已刷新")}catch(error){sync.textContent="刷新失败，显示打开时快照";showToast(`刷新失败：${error}`)}}
+    async function apiMutation(url,options,message){const response=await fetch(`${API_BASE}${url}`,options);if(!response.ok)throw new Error(`HTTP ${response.status}`);await fetchRecords();showToast(message)}function switchView(view){state.activeView=view;$$('.tab').forEach(t=>t.setAttribute("aria-selected",String(t.dataset.view===view)));$$('.view').forEach(p=>p.hidden=p.id!==`view-${view}`)}
+    $$('.tab').forEach(t=>t.addEventListener("click",()=>switchView(t.dataset.view)));["#filter-period","#filter-character","#filter-scene","#filter-drop","#filter-rune"].forEach(s=>$(s).addEventListener("change",applyFilters));$("#trend-metric").addEventListener("change",renderTrend);$("#records-search").addEventListener("input",()=>{state.page=1;renderRecords()});$("#records-sort").addEventListener("change",()=>{state.page=1;renderRecords()});$("#refresh-data").addEventListener("click",fetchRecords);$("#reset-filters").addEventListener("click",()=>{$("#filter-period").value="all";$("#filter-character").value="";$("#filter-scene").value="";$("#filter-drop").value="all";$("#filter-rune").value="";applyFilters()});$("#page-prev").addEventListener("click",()=>{if(state.page>1){state.page--;renderRecords()}});$("#page-next").addEventListener("click",()=>{state.page++;renderRecords()});
+    $("#rune-matrix").addEventListener("click",e=>{const cell=e.target.closest("[data-rune]");if(!cell)return;$("#filter-rune").value=$("#filter-rune").value===cell.dataset.rune?"":cell.dataset.rune;applyFilters()});
+    $("#scene-table").addEventListener("click",async e=>{const b=e.target.closest('[data-action="rename-scene"]');if(!b)return;const from=b.dataset.scene,to=prompt(`将所有“${from}”记录统一命名为：`,from);if(!to||to.trim()===from)return;try{await apiMutation(`/api/scenes/rename?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to.trim())}`,{method:"POST"},"场景名称已统一更新")}catch(error){showToast(`重命名失败：${error}`)}});
+    $("#records-table").addEventListener("click",async e=>{const b=e.target.closest("[data-action]");if(!b)return;const action=b.dataset.action,id=b.dataset.recordId;try{if(action==="delete-record"){if(!confirm("确定删除整条场景记录？此操作不可恢复。"))return;await apiMutation(`/api/records/${id}`,{method:"DELETE"},"记录已删除")}else if(action==="delete-drop"){if(!confirm("确定从该场记录中删除这次符文掉落？"))return;await apiMutation(`/api/records/${id}/drops/${b.dataset.dropIndex}`,{method:"DELETE"},"掉落记录已删除")}else if(action==="rename-record"){const current=b.dataset.scene,next=prompt("修改这一条记录的场景名称：",current);if(!next||next.trim()===current)return;await apiMutation(`/api/records/${id}/rename?to=${encodeURIComponent(next.trim())}`,{method:"POST"},"记录名称已更新")}}catch(error){showToast(`操作失败：${error}`)}});
+    $("#export-csv").addEventListener("click",()=>{const rows=[["id","time","character","scene","seconds","rune_number","rune_name","rune_name_en","screenshot_path"]];state.filtered.forEach(r=>{const drops=getDrops(r);if(!drops.length)rows.push([r.id,r.absolute_time,r.character_name,r.scene_name,r.timer_seconds,"","","",""]);drops.forEach(d=>rows.push([r.id,r.absolute_time,r.character_name,r.scene_name,r.timer_seconds,d.rune_number,d.rune_name,d.rune_name_en||"",d.screenshot_path||""]))});const csv="\uFEFF"+rows.map(row=>row.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\r\n");downloadFile(`d2rhub-stats-${new Date().toISOString().slice(0,10)}.csv`,csv,"text/csv;charset=utf-8");showToast(`已导出 ${state.filtered.length} 场记录`)});$("#export-json").addEventListener("click",()=>{downloadFile(`d2rhub-stats-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({records:state.filtered},null,2),"application/json;charset=utf-8");showToast(`已导出 ${state.filtered.length} 场记录`)});
+    function applyTheme(theme){const normalized=theme==="light"?"light":"onyx";document.documentElement.dataset.theme=normalized;document.documentElement.style.colorScheme=normalized==="onyx"?"dark":"light";$("#theme-toggle").textContent=normalized==="onyx"?"浅色":"深色";}$("#theme-toggle").addEventListener("click",()=>applyTheme(document.documentElement.dataset.theme==="onyx"?"light":"onyx"));applyTheme(document.documentElement.dataset.theme);populateSelects();applyFilters();
+  </script>
 </body>
 </html>

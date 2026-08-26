@@ -13,6 +13,8 @@ mod state;
 mod stats;
 #[cfg(target_os = "windows")]
 mod token_registry_trace;
+#[cfg(any(feature = "ocr", test))]
+mod stats_page;
 mod tray;
 
 use crate::commands::global_config::GlobalConfig;

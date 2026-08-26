@@ -1,99 +1,143 @@
 <div align="center">
-  <img src="logo.png" alt="D2RHub Logo" width="120" />
+  <img src="logo.png" alt="D2RHub Logo" width="112" />
   <h1>D2RHub</h1>
-  <p><strong>《暗黑破坏神 II：重制版》多账号多开管理器与 OCR 刷图助手 | Diablo II: Resurrected Multi-Account Manager & OCR Run Tracker</strong></p>
+  <p><strong>Diablo II: Resurrected 多账号、多版本与 OCR 刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/platform-Windows_10%2F11-blue" alt="Platform" />
-    <img src="https://img.shields.io/badge/no_memory_injection-local_tool-green" alt="Local Tool" />
-    <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="License" />
+    <img src="https://img.shields.io/badge/version-0.8.0-d5a85a" alt="Version 0.8.0" />
+    <img src="https://img.shields.io/badge/platform-Windows_10%2F11-blue" alt="Windows 10/11" />
+    <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
+    <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
   </p>
 </div>
 
 ---
 
-## 🇨🇳 中文说明
+## 中文
 
-D2RHub 是一款专为《暗黑破坏神 II：重制版》(D2R) 玩家精心设计的**多账号管理与一键多开及 OCR 辅助助手**。无论是多账号挂机、装备倒腾、多角色配置管理，还是刷图效率统计，它都能让您的游戏体验变得无比轻松和高效。
+D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重制版》的多个账号、国服/国际服客户端配置和多开流程。Full 版还包含屏幕 OCR、场景计时、符文掉落记录与本地统计分析。
 
-### ✨ 核心特色功能
-*   **🎮 本地多开管理**：一键清除游戏的多开限制。基于 Windows 标准进程句柄清理技术，不修改游戏文件，不注入内存或 DLL。
-*   **🚀 账号独立配置**：支持为每个账号绑定独立的战网 Token 实现自动排队登录，支持独立启动参数（Mod 启动）以及独立的单机存档目录。
-*   **⚙️ 图形化画质设置**：内置画质编辑器，支持一键切换画质预设（如小号极低画质、大号超高画质），降低多开时的硬件负载。存档目录缺少 `Settings.json` 时，账号创建、登录和多开仍可正常使用，仅画质配置相关功能暂不可用。
-*   **📊 硬件负载监控**：实时监控 CPU、内存、GPU 及显存占用，多开时硬件状态一目了然。
-*   **🪟 迷你悬浮窗 (Overlay)**：可置顶悬浮在桌面上，支持展开与迷你两种布局。展开模式下双击空白处、迷你模式下双击悬浮窗或聚焦后按 Enter/空格即可切换；两种布局会分别记住窗口尺寸。迷你窗口压缩到 36px 高时会自动改为单行，并可继续缩小到 18px；重新拉高到 36px 时恢复双行。展开模式下双击账号可聚焦对应游戏窗口。
-*   **⏱️ OCR 智能刷图统计**：通过实时 OCR 分析游戏画面，自动记录刷图时间、历史平均用时、总场次等统计数据。
-*   **💎 符文掉落自动记录**：自动匹配游戏内掉落的符文并记录，提供可视化数据分析。
-*   **🐱 桌面键盘猫咪 (Bongo Cat)**：可爱的桌面键盘同步互动猫咪，支持自定义皮肤和按键响应。
+### 当前版本能力
 
-### 🛠️ 快速上手步骤
-1.  **下载软件**：前往 [Releases 页面](https://github.com/gjy991229/D2RHub/releases) 下载最新的版本。
-    *   *安装包版（推荐）*：下载 Release 中的 `.msi` 或 NSIS `.exe` 安装包，双击安装即可。
-2.  **首次运行配置**：启动 D2RHub，设置向导会自动扫描并帮您填写好战网客户端路径、游戏目录以及存档路径，确认无误后点击"保存并继续"。
-3.  **添加与启动账号**：
-    *   点击主界面的"添加账号"，输入您的账号别名。
-    *   点击"初始化"，软件会自动关联您当前的战网和游戏配置。
-    *   勾选想要启动的账号，点击"一键启动"，软件就会帮您自动排队登录并清除多开限制！
+- **国服 / 国际服双版本隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
+- **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
+- **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、Mod 参数和窗口位置。
+- **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置，可在系统配置与账号快照之间切换。
+- **性能悬浮窗**：展开 / 迷你布局分别记忆尺寸；显示账号状态、OCR 场景计时、符文和邪恶区域信息。拖到四边后自动吸附隐藏，悬停平滑抽出、移开再次隐藏。
+- **高 DPI 迷你布局**：双层最低 36 逻辑像素，压缩后切换单行并可缩至 18；适配 2K 与 Windows 缩放。
+- **OCR 与本地统计（Full）**：识别场景和 1–33 号符文，#24 以上保存截图；提供统一筛选、效率分位数、趋势、场景/角色对比、星期×小时热力图、33 号符文图谱、高符命中率与间隔、截图画廊、记录管理和 CSV / JSON 导出。
+- **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 响应键鼠输入，支持缩放、气泡和可解锁皮肤。
 
-### 🛡️ 安全说明
-D2RHub 本质上是一个本地配置、进程与窗口管理器。它通过 Windows 系统 API 关闭 D2R.exe 的单实例检测句柄，**不修改游戏文件、不写入游戏内存、不注入 DLL**。但任何第三方工具都可能受游戏服务条款、杀毒软件误报、系统权限和账号风控策略影响；请自行评估风险并保管好账号凭据。
+### Full 与 Lite
 
-### 🔐 数据与隐私
-D2RHub 的账号配置、Token 加密数据、注册表快照、日志、OCR 调试截图和本地统计数据库均保存在本机，不会主动上传账号配置或 Token。程序会访问 Battle.net 登录页面、GitHub Releases 更新接口和恐怖地带信息接口；启用 OCR 调试输出时，程序可能在本地保存游戏截图裁剪图用于排查识别问题。不需要调试时建议关闭该选项并定期清理本地数据。
+| 功能 | Full | Lite |
+| --- | :---: | :---: |
+| 账号管理、双版本配置、多开 | ✓ | ✓ |
+| 网页 Token / Battle.net 认证 | ✓ | ✓ |
+| 画质编辑、悬浮窗、快捷键、桌宠 | ✓ | ✓ |
+| 场景/符文 OCR、截图与统计页 | ✓ | — |
 
-### 🧑‍💻 从源码开发
-开发环境、常用命令、项目结构和 Windows 构建说明见 [开发指南](docs/DEVELOPMENT.md)。提交修改前请阅读 [贡献指南](CONTRIBUTING.md)。
+### 快速开始
 
-### ⚖️ 许可与第三方声明
-项目有权许可的源码与原创素材采用 [MIT License](LICENSE)。PaddleOCR 模型、第三方依赖和第三方商标继续适用各自的许可或权利声明，详见 [第三方声明](THIRD_PARTY_NOTICES.md)。
+1. 从 [Releases](https://github.com/gjy991229/D2RHub/releases) 下载 Full 或 Lite 的 MSI / NSIS 安装包。
+2. 首次运行时至少完整配置一套“游戏目录 + 存档目录”。Battle.net.exe 只在战网客户端认证时必需；游戏和战网路径需要手动确认，存档、Agent、Roaming 和 Edge/Chrome 支持自动探测。
+3. 点击“添加账号”，按向导设置昵称、区服、界面/配音语言和认证模式。网页 Token 按指引获取并粘贴；战网认证按提示完成客户端登录与初始化。
+4. 从账号卡片启动单个账号，或使用“启动全部 / 多选启动”。Full 版可在“设置中心 → 自动化”选择已初始化账号并开启 OCR。
 
-D2RHub 是非官方第三方工具，与 Blizzard Entertainment 不存在隶属、授权、赞助或背书关系。Diablo、Diablo II: Resurrected、Battle.net 及相关名称是 Blizzard Entertainment 的商标或注册商标。
+完整操作、统计口径、数据位置和排障方法见 [D2RHub v0.8 使用手册](docs/user-guide.html)。
 
-### 💬 反馈与交流
-如果您在使用中遇到任何问题，欢迎提出：
-*   [提交 Bug 或建议 (Issues)](https://github.com/gjy991229/D2RHub/issues)
-*   开发者 QQ：`980102315`
+### 数据与安全边界
 
-请勿在公开 Issue 中提交账号 Token、含个人路径的日志或其他敏感数据。安全问题请按 [安全政策](SECURITY.md) 私下报告。
+D2RHub 通过 Windows 进程、句柄、注册表、文件和窗口 API 管理本机环境，**不修改游戏文件、不写入游戏内存、不注入 DLL**。任何第三方工具仍可能受到游戏服务条款、反作弊策略、安全软件、系统权限和账号风控影响，请自行评估风险。
+
+运行数据保存在程序同级目录：
+
+- `config/global_config.json`：全局配置；
+- `config/accounts/`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
+- `config/stateData/data.db`：OCR 场景和掉落数据库；
+- `config/stateData/img/`：高级符文截图；
+- `config/test/`：启用 OCR 调试后产生的图片和识别日志；
+- `logs/`：运行日志，最多自动保留 16 个。
+
+程序不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口。请勿在公开 Issue 中提交 Token、账号目录、个人路径、包含隐私的日志或截图；安全问题请按 [安全政策](SECURITY.md) 私下报告。
+
+### 从源码开发
+
+```powershell
+npm install
+npm run dev
+npm test
+npm run build
+npm run build:full
+npm run build:lite
+```
+
+环境要求、项目结构和 Windows 构建细节见 [开发指南](docs/DEVELOPMENT.md)。提交修改前请阅读 [贡献指南](CONTRIBUTING.md)。
 
 ---
 
-## 🇺🇸 English Description
+## English
 
-D2RHub is a lightweight, player-friendly Windows utility designed for managing multiple accounts, enabling multi-boxing (multi-clienting), and OCR-based run tracking in **Diablo II: Resurrected (D2R)**.
+D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected accounts, separate CN/Global client profiles, and multi-client launch workflows. The Full edition also includes screen OCR, run timing, rune-drop logging, and local analytics.
 
-### ✨ Features
-*   **🎮 Local Multi-Instance Management**: Bypass the D2R single-instance restriction automatically. D2RHub uses native Windows handle closing APIs, with no memory injection, DLL injection, or game-file modification.
-*   **🚀 Configuration Isolation**: Bind different Battle.net accounts, custom launch arguments (Mod support), and **independent save directories** for each profile.
-*   **⚙️ Graphical Settings Editor**: Tweak D2R's `Settings.json` with a full GUI. Apply graphics presets instantly (e.g., Ultra settings for your main character, Minimum settings for alt accounts to save GPU/CPU resources). If the save directory does not contain `Settings.json`, profile creation, login, and multiboxing remain available; only graphics configuration features are unavailable until the path or file is fixed.
-*   **📊 Hardware Load Monitor**: Real-time tracking of CPU, RAM, GPU, and Video Memory (VRAM) so you can monitor your computer's health while multi-boxing.
-*   **🪟 Desktop Overlay**: A semi-transparent always-on-top overlay supports expanded and mini layouts. Double-click the expanded background, double-click anywhere in mini mode, or focus the overlay and press Enter/Space to switch modes. Each mode remembers its own size. The mini layout reflows to one row at 36px high, can shrink to 18px, and returns to two rows when raised back to 36px. Double-clicking a profile in expanded mode focuses its game window.
-*   **⏱️ OCR Run Tracker**: Real-time OCR-based game screen analysis. Automatically records run timers, average times, and session run counts.
-*   **💎 Rune Drop Logging**: Automatically recognizes and logs high-value rune drops with visual stats.
-*   **🐱 Interactive Bongo Cat**: A cute animated desktop pet that mimics your keyboard strokes! It triggers unique visual animations when high-value loot (Uniques/Runes) drops in the game.
+### Current features
 
-### 🛠️ Quick Start
-1.  **Download**: Get the latest MSI or NSIS installer from the [Releases](https://github.com/gjy991229/D2RHub/releases) page.
-2.  **First Run**: The wizard will auto-detect your Battle.net, D2R game path, and save folders. Click **Save & Continue**.
-3.  **Manage Profiles**: Click **Add Account**, name it, click **Initialize**, select the accounts you wish to launch, and click **Launch**. D2RHub handles the login queue and clears the mutexes automatically.
+- **CN / Global profile isolation** with separate game, save, and Battle.net paths; KR, NA, and EU accounts share the Global installation profile.
+- **Two authentication modes**: direct Web Token launch, or Battle.net client authentication with a local runtime snapshot. Tokens are encrypted with Windows DPAPI.
+- **Multi-account launch controls**: launch one, launch all, multi-select, cancel a queue, inspect progress, reorder profiles, configure mod arguments, and assign window positions.
+- **Per-account game settings** for display, graphics, audio, gameplay, and automap, with system-settings and account-snapshot modes.
+- **Always-on-top performance overlay** with expanded and mini layouts, account/OCR/Terror Zone status, independent size persistence, and four-edge auto-hide docking. Hover to reveal it smoothly and move away to hide it again.
+- **High-DPI mini layout**: the stacked layout bottoms out at 36 logical pixels, then switches to a single row that can shrink to 18 pixels.
+- **OCR and local analytics (Full)**: scene and rune recognition, screenshots for runes #24+, global filters, timing percentiles, trends, scene/character comparisons, weekday-hour heatmaps, a 33-rune matrix, high-rune hit rate and intervals, screenshot gallery, record management, and filtered CSV/JSON export.
+- **Focus shortcuts and Bongo Cat**, including input reactions, scaling, chatter, and unlockable skins.
 
-### Security and Data
-D2RHub stores configuration, encrypted token data, registry snapshots, logs, OCR debug images, and local stats databases on your own machine. It does not intentionally upload account configuration or tokens. The app connects to Battle.net login pages, the GitHub Releases API, and a Terror Zone information API. Use of any third-party utility can still be affected by game terms, antivirus false positives, system permissions, and account risk controls.
+### Full vs. Lite
 
-Do not post account tokens, personal filesystem paths, or other sensitive data in public Issues. Report vulnerabilities privately according to the [Security Policy](SECURITY.md).
+| Capability | Full | Lite |
+| --- | :---: | :---: |
+| Account management, dual client profiles, multi-client launch | ✓ | ✓ |
+| Web Token and Battle.net authentication | ✓ | ✓ |
+| Game settings, overlay, shortcuts, desktop pet | ✓ | ✓ |
+| Scene/rune OCR, screenshots, and analytics | ✓ | — |
 
-### Development and Contributions
-See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites, commands, and project structure. Contributions are welcome; please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+### Quick start
 
-### License and Trademarks
-Source code and original assets that D2RHub has the right to license are available under the [MIT License](LICENSE). OCR models, third-party dependencies, and trademarks remain subject to their own terms; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
+1. Download a Full or Lite MSI / NSIS installer from [Releases](https://github.com/gjy991229/D2RHub/releases).
+2. On first run, configure at least one complete **game directory + save directory** pair. Battle.net.exe is only required for Battle.net authentication. Game and Battle.net paths must be confirmed manually; save, Agent, Roaming, and Edge/Chrome paths can be detected.
+3. Click **Add Account** and follow the nickname, region, UI/voice language, and authentication steps. Acquire and paste a Web Token, or complete Battle.net login and initialization.
+4. Launch a profile from its card, or use **Launch All / Multi-select**. In the Full edition, select an initialized OCR target under **Settings → Automation**.
+
+See the [v0.8 User Manual](docs/user-guide.html) for complete workflows, metric definitions, local data paths, and troubleshooting.
+
+### Security and local data
+
+D2RHub uses Windows process, handle, registry, filesystem, and window APIs. It does **not** modify game files, write to game memory, or inject DLLs. Any third-party utility may still be affected by game terms, anti-cheat policy, antivirus software, system permissions, and account risk controls; evaluate those risks yourself.
+
+Runtime data is stored beside the executable in `config/` and `logs/`. This includes global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account game settings, OCR debug images, high-rune screenshots, and the SQLite stats database. D2RHub does not intentionally upload account configuration or tokens. Network access is used for Battle.net Token login, GitHub Releases update checks, and Terror Zone information.
+
+Never post tokens, account directories, personal paths, or sensitive logs/screenshots in a public Issue. Report vulnerabilities privately through the [Security Policy](SECURITY.md).
+
+### Development
+
+```powershell
+npm install
+npm run dev
+npm test
+npm run build
+npm run build:full
+npm run build:lite
+```
+
+See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites, project structure, and Windows build details. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
+
+### License and trademarks
+
+Source code and original assets that D2RHub has the right to license are available under the [MIT License](LICENSE). OCR models, dependencies, and third-party marks remain under their own terms; see [Third-Party Notices](THIRD_PARTY_NOTICES.md).
 
 D2RHub is an unofficial third-party project and is not affiliated with, authorized, sponsored, or endorsed by Blizzard Entertainment. Diablo, Diablo II: Resurrected, Battle.net, and related names are trademarks or registered trademarks of Blizzard Entertainment.
 
 ---
 
 <div align="center">
-  <p>
-    <a href="https://github.com/gjy991229/D2RHub/issues">Report Bug</a> ·
-    <a href="https://github.com/gjy991229/D2RHub/discussions">Discussions</a>
-  </p>
+  <a href="https://github.com/gjy991229/D2RHub/issues">Report a bug</a> ·
+  <a href="https://github.com/gjy991229/D2RHub/discussions">Discussions</a>
 </div>

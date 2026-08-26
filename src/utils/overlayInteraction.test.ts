@@ -36,6 +36,16 @@ export function runTests() {
     !overlaySource.includes("setResizable(false)"),
     "mini mode remains user-resizable after its preferred size is restored",
   );
+  assert(
+    overlaySource.includes("pendingPosition")
+      && overlaySource.includes("moveInFlight")
+      && overlaySource.includes("flushLatestPosition"),
+    "dock animation coalesces native window moves instead of accumulating stale frames",
+  );
+  assert(
+    !overlaySource.includes("const step = async"),
+    "dock animation clock is not blocked by awaited native position writes",
+  );
 }
 
 if (typeof g.process !== "undefined" && typeof g.process.argv !== "undefined") {
