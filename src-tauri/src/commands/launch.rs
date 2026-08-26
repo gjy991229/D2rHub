@@ -29,80 +29,13 @@ pub struct LaunchResult {
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
 const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
-const WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT: u8 = 2;
 const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
-const TOKEN_NETWORK_READY_REQUIRED_SAMPLES: u8 = 4;
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
 
-struct WebTokenChangeTracker {
-    last_value: Vec<u8>,
-    change_count: u8,
-}
-
-impl WebTokenChangeTracker {
-    fn new(written_value: Vec<u8>) -> Self {
-        Self {
-            last_value: written_value,
-            change_count: 0,
-        }
-    }
-
-    fn observe(&mut self, current_value: &[u8]) -> bool {
-        if current_value == self.last_value {
-            return false;
-        }
-
-        self.last_value.clear();
-        self.last_value.extend_from_slice(current_value);
-        self.change_count = self.change_count.saturating_add(1);
-        true
-    }
-
-    fn reached_character_select(&self) -> bool {
-        self.change_count >= WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT
-    }
-
-    fn change_count(&self) -> u8 {
-        self.change_count
-    }
-}
-
-fn token_launch_is_ready(
-    token_reached_character_select: bool,
-    window_ready: bool,
-    network_ready_samples: u8,
-) -> bool {
-    token_reached_character_select
-        || (window_ready && network_ready_samples >= TOKEN_NETWORK_READY_REQUIRED_SAMPLES)
-}
-
-fn read_web_token_raw(registry_path: &str) -> Result<Vec<u8>, AppError> {
-    use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ};
-    use winreg::RegKey;
-
-    let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-    let key = hkcu
-        .open_subkey_with_flags(registry_path, KEY_READ)
-        .map_err(|error| AppError::RegistryError(format!("读取 Token 注册表路径失败: {error}")))?;
-    let value = key.get_raw_value(WEB_TOKEN_VALUE_NAME).map_err(|error| {
-        AppError::RegistryError(format!("读取 {WEB_TOKEN_VALUE_NAME} 失败: {error}"))
-    })?;
-    if value.vtype != RegType::REG_BINARY || value.bytes.is_empty() {
-        return Err(AppError::RegistryError(format!(
-            "{WEB_TOKEN_VALUE_NAME} 不是有效的 REG_BINARY"
-        )));
-    }
-    Ok(value.bytes)
-}
-
-fn observe_web_token(
-    registry_path: &str,
-    tracker: &mut WebTokenChangeTracker,
-) -> Result<bool, AppError> {
-    let current_value = read_web_token_raw(registry_path)?;
-    Ok(tracker.observe(&current_value))
+fn token_launch_is_ready(web_token_read_by_target_pid: bool) -> bool {
+    web_token_read_by_target_pid
 }
 
 fn acquire_account_leases(
@@ -1743,20 +1676,19 @@ async fn launch_single_token(
         return account_path_error(account_id, error);
     }
     emit("copy", "ok", "配置覆盖完成");
-    let mut token_change_tracker = WebTokenChangeTracker::new(protected_bytes);
-    let record_token_change = |tracker: &mut WebTokenChangeTracker| -> Result<(), AppError> {
-        if observe_web_token(&token_registry_path, tracker)? {
-            crate::logger::log_msg(
-                "INFO",
-                "Launch",
-                &format!(
-                    "[Account {}] 检测到 {WEB_TOKEN_VALUE_NAME} 阶段更新 ({}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT})",
-                    account_id,
-                    tracker.change_count()
-                ),
-            );
+    emit("connect", "running", "正在启动 WEB_TOKEN ETW 读取监听...");
+    let token_read_monitor = match crate::token_registry_trace::WebTokenReadMonitor::start() {
+        Ok(monitor) => monitor,
+        Err(error) => {
+            emit("connect", "error", &error);
+            return LaunchResult {
+                account_id: account_id.to_string(),
+                success: false,
+                d2r_pid: None,
+                error: Some(error),
+                mutex_killed: false,
+            };
         }
-        Ok(())
     };
 
     // 3. 记录之前存在的 D2R 进程
@@ -1807,9 +1739,6 @@ async fn launch_single_token(
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state) {
             return cancelled();
-        }
-        if let Err(error) = record_token_change(&mut token_change_tracker) {
-            return account_path_error(account_id, error);
         }
 
         let monitored_game_path = expected_game_path.clone();
@@ -1915,75 +1844,45 @@ async fn launch_single_token(
         })
     };
 
-    // ── WEB_TOKEN 角色选择阶段回写检测与跳过动画 ──
-    emit("connect", "running", "正在跳过动画并等待 Token 启动就绪...");
+    // 跳过动画与 Token 消费检测互不依赖，避免 UI 初始化时间影响下一账号启动。
+    let intro_skip_task = tokio::spawn(async move {
+        for _ in 0..30 {
+            let _ = crate::commands::system::send_keys_to_window(d2r_pid);
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    });
+
+    // ── ETW WEB_TOKEN 读取检测 ──
+    emit("connect", "running", "正在等待 D2R 读取 WEB_TOKEN...");
     emit("mutex", "running", "后台监控互斥句柄中...");
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
-    let mut token_ready =
-        token_launch_is_ready(token_change_tracker.reached_character_select(), false, 0);
-    let mut readiness_from_registry = token_ready;
-    let mut network_ready_samples = 0u8;
-
-    // 保留原有窗口初始化等待，但期间继续记录 Token 阶段变化，避免快速机器上漏采样。
-    for _ in 0..4 {
-        if is_cancelled(state) {
-            mutex_task.abort();
-            return cancelled();
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        if let Err(error) = record_token_change(&mut token_change_tracker) {
-            mutex_task.abort();
-            return account_path_error(account_id, error);
-        }
-        if token_launch_is_ready(token_change_tracker.reached_character_select(), false, 0) {
-            token_ready = true;
-            readiness_from_registry = true;
-            break;
-        }
-    }
+    let mut token_ready = token_launch_is_ready(token_read_monitor.was_read_by(d2r_pid));
 
     while !token_ready && start.elapsed() < timeout {
         if is_cancelled(state) {
             mutex_task.abort();
+            intro_skip_task.abort();
             return cancelled();
         }
 
-        let _ = crate::commands::system::send_keys_to_window(d2r_pid);
-
-        if let Err(error) = record_token_change(&mut token_change_tracker) {
-            mutex_task.abort();
-            return account_path_error(account_id, error);
-        }
-        let token_reached_character_select = token_change_tracker.reached_character_select();
-        let window_ready = crate::commands::system::find_game_hwnd(d2r_pid).is_some();
-        if window_ready && crate::commands::system::check_game_connected(d2r_pid) {
-            network_ready_samples = network_ready_samples.saturating_add(1);
-        } else {
-            network_ready_samples = 0;
-        }
-
-        if token_launch_is_ready(
-            token_reached_character_select,
-            window_ready,
-            network_ready_samples,
-        ) {
+        if token_launch_is_ready(token_read_monitor.was_read_by(d2r_pid)) {
             token_ready = true;
-            readiness_from_registry = token_reached_character_select;
             break;
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
     }
 
     if !token_ready {
         let error = format!(
-            "等待 Token 启动就绪超时：WEB_TOKEN {}/{WEB_TOKEN_CHANGES_UNTIL_CHARACTER_SELECT}，窗口与网络连续就绪 {network_ready_samples}/{TOKEN_NETWORK_READY_REQUIRED_SAMPLES}",
-            token_change_tracker.change_count(),
+            "等待 D2R 读取 WEB_TOKEN 超时：{}",
+            token_read_monitor.diagnostics()
         );
         emit("connect", "error", &error);
         mutex_task.abort();
+        intro_skip_task.abort();
         return LaunchResult {
             account_id: account_id.to_string(),
             success: false,
@@ -1992,14 +1891,9 @@ async fn launch_single_token(
             mutex_killed: false,
         };
     }
-    if readiness_from_registry {
-        emit("connect", "ok", "检测到 WEB_TOKEN 角色选择阶段回写");
-    } else {
-        emit(
-            "connect",
-            "ok",
-            "WEB_TOKEN 未回写，已通过游戏窗口与稳定网络确认启动就绪",
-        );
+    emit("connect", "ok", "检测到 D2R 已读取 WEB_TOKEN");
+    if let Err(error) = token_read_monitor.stop() {
+        crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
     }
 
     if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
@@ -2124,7 +2018,7 @@ mod tests {
     use super::{
         acquire_account_leases, parse_windows_command_line, persist_window_position,
         preflight_accounts, replace_bnet_roaming_snapshot, token_launch_is_ready,
-        validate_legacy_reg_sections, WebTokenChangeTracker,
+        validate_legacy_reg_sections,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::commands::global_config::GlobalConfig;
@@ -2132,50 +2026,13 @@ mod tests {
     use crate::state::{AccountLifecycleLease, AppState};
 
     #[test]
-    fn token_is_ready_only_after_launch_and_character_select_updates() {
-        let mut tracker = WebTokenChangeTracker::new(vec![1, 2, 3]);
-
-        assert!(!tracker.observe(&[1, 2, 3]));
-        assert!(!tracker.reached_character_select());
-
-        assert!(tracker.observe(&[4, 5, 6]));
-        assert_eq!(tracker.change_count(), 1);
-        assert!(!tracker.reached_character_select());
-
-        assert!(tracker.observe(&[7, 8, 9]));
-        assert_eq!(tracker.change_count(), 2);
-        assert!(tracker.reached_character_select());
+    fn stable_game_network_does_not_prove_the_token_was_consumed() {
+        assert!(!token_launch_is_ready(false));
     }
 
     #[test]
-    fn repeated_token_samples_do_not_advance_launch_phase() {
-        let mut tracker = WebTokenChangeTracker::new(vec![1]);
-
-        assert!(tracker.observe(&[2]));
-        assert!(!tracker.observe(&[2]));
-        assert!(!tracker.observe(&[2]));
-
-        assert_eq!(tracker.change_count(), 1);
-        assert!(!tracker.reached_character_select());
-    }
-
-    #[test]
-    fn stable_game_network_allows_next_token_launch_without_registry_writeback() {
-        let tracker = WebTokenChangeTracker::new(vec![1]);
-
-        assert!(token_launch_is_ready(
-            tracker.reached_character_select(),
-            true,
-            4,
-        ));
-    }
-
-    #[test]
-    fn token_network_fallback_requires_a_window_and_consecutive_samples() {
-        assert!(!token_launch_is_ready(false, false, 4));
-        assert!(!token_launch_is_ready(false, true, 3));
-        assert!(token_launch_is_ready(false, true, 4));
-        assert!(token_launch_is_ready(true, false, 0));
+    fn target_pid_web_token_read_allows_next_token_launch() {
+        assert!(token_launch_is_ready(true));
     }
 
     #[test]

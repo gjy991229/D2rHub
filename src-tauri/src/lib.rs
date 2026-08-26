@@ -11,6 +11,8 @@ mod rune_data;
 mod state;
 #[cfg(feature = "ocr")]
 mod stats;
+#[cfg(target_os = "windows")]
+mod token_registry_trace;
 mod tray;
 
 use crate::commands::global_config::GlobalConfig;
