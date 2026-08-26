@@ -39,7 +39,7 @@ if (surface === "overlay" && auditFrame?.startsWith("mini-")) {
   localStorage.setItem("d2rhub-information-overlay-mini-layout", miniLayout);
 }
 
-mockWindows(currentWindowLabel, "main", "overlay", "bongo-cat", "ocr-debug");
+mockWindows(currentWindowLabel, "main", "overlay", "bongo-cat");
 mockConvertFileSrc("windows");
 
 type TauriInternals = Record<string, unknown> & {
@@ -194,11 +194,9 @@ const baseConfig: GlobalConfig = {
   auto_close_browser: true,
   enable_auto_update: true,
   first_launch: false,
-  ocr_enabled: true,
-  ocr_target_account: "sorc-01",
-  ocr_ch_b_profiles_json: "[]",
-  ocr_debug_output: false,
-  ocr_poll_interval_ms: 500,
+  rune_audio_enabled: true,
+  rune_audio_target_account: "sorc-01",
+  rune_audio_detection_threshold: 0.58,
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
   overlay_opacity: 94,
   main_opacity: 96,
@@ -329,13 +327,6 @@ function installIpcMock() {
             ],
           },
         };
-      case "get_ocr_ch_a_results":
-        return [{ text: "Chaos Sanctuary", is_town: false }];
-      case "get_ocr_ch_b_results":
-        return [
-          { text: "Ber Rune", rune_number: 30, screenshot_path: null, rune_name_en: "Ber" },
-          { text: "Ist Rune", rune_number: 24, screenshot_path: null, rune_name_en: "Ist" },
-        ];
       case "load_overlay_geometry":
         return { x: 60, y: 60, width: 240, height: 320 };
       case "detect_saved_games_path":

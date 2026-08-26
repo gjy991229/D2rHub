@@ -6,15 +6,15 @@ product
 
 ## Users
 
-D2RHub is for Diablo II: Resurrected players who run and maintain multiple accounts on a Windows machine. They use it in a practical, task-focused context: preparing accounts, launching one or many game clients, keeping each account's settings and authentication isolated, monitoring active runs, and checking Terror Zone, OCR, and stats signals without losing focus.
+D2RHub is for Diablo II: Resurrected players who run and maintain multiple accounts on a Windows machine. They use it in a practical, task-focused context: preparing accounts, launching one or many game clients, keeping each account's settings and authentication isolated, monitoring active runs, and checking Terror Zone, audio telemetry, and stats signals without losing focus.
 
-The primary user is fluent in the game's routines and wants a tool that feels reliable under pressure. They may be switching between accounts, managing launch order, tuning graphics for performance, watching OCR results, or diagnosing setup problems while the game and Battle.net are already competing for attention.
+The primary user is fluent in the game's routines and wants a tool that feels reliable under pressure. They may be switching between accounts, managing launch order, tuning graphics for performance, watching audio-ID results, or diagnosing setup problems while the game and Battle.net are already competing for attention.
 
 ## Product Purpose
 
-D2RHub exists to make multi-account D2R operation faster, safer, and easier to understand. It manages local account profiles, launch workflows, Battle.net and token authentication, registry and settings isolation, game window focus, desktop overlay status, OCR run tracking, rune drop logging, Terror Zone reporting, and local statistics.
+D2RHub exists to make multi-account D2R operation faster, safer, and easier to understand. It manages local account profiles, launch workflows, Battle.net and token authentication, registry and settings isolation, game window focus, desktop overlay status, audio-ID run tracking, rune drop logging, Terror Zone reporting, and local statistics.
 
-Success means the user can see exactly what is ready, what needs attention, what is running, and what action is safest to take next. The interface should reduce operational anxiety around destructive actions, launch failures, account state, and OCR accuracy.
+Success means the user can see exactly what is ready, what needs attention, what is running, and what action is safest to take next. The interface should reduce operational anxiety around destructive actions, launch failures, account state, and telemetry accuracy.
 
 ## Brand Personality
 
@@ -32,7 +32,7 @@ Treat the current frontend as the visual baseline and product memory. Improve we
 
 ## Design Principles
 
-1. Function is the source of structure. Preserve the real workflows first: setup, account readiness, launch, multi-select launch, settings, overlay, OCR, stats, logs, and destructive process controls.
+1. Function is the source of structure. Preserve the real workflows first: setup, account readiness, launch, multi-select launch, settings, overlay, audio telemetry, stats, logs, and destructive process controls.
 2. State must be legible at a glance. Ready, needs setup, launching, running, expired, warning, error, selected, and disabled states should be visually distinct without loud decoration.
 3. Dangerous actions require calm friction. Killing processes, deleting accounts, resetting auth, and overwriting settings should feel controlled, explicit, and reversible where possible.
 4. Density should feel intentional. Power users need compact information, but hierarchy, grouping, and rhythm must keep repeated use comfortable.

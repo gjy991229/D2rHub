@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { RuneDropEntry } from "./types";
+import type { RuneDropEntry, TrackingSnapshot } from "./types";
 
 const RUNE_NAMES: string[] = [
   "艾尔", "艾德", "特尔", "那夫", "爱斯", "伊司", "塔尔", "拉尔",
@@ -10,7 +10,7 @@ const RUNE_NAMES: string[] = [
   "瑟", "贝", "乔", "查姆", "萨德",
 ];
 
-/// 方言别名 → 标准名（让前端也能识别 OCR 的多种写法）
+/// 方言别名 → 标准名（兼容旧数据库中的文字识别结果）
 const RUNE_ALIASES: Record<string, string> = {
   "提尔": "特尔",
   "奈夫": "那夫",
@@ -76,6 +76,9 @@ interface StatsState {
   // ── 当前场景 ──
   currentScene: string;
   lastCombatScene: string;
+  currentRunKey: string;
+  currentRunName: string;
+  currentRunNameEn: string;
 
   // ── 计时器 ──
   isTiming: boolean;
@@ -102,14 +105,14 @@ interface StatsState {
   startTimer: () => void;
   stopTimerAndSave: () => Promise<void>;
   tick: () => void;
-  processOcrSceneText: (item: { text: string; is_town?: boolean }) => Promise<void>;
-  /// 处理通道B 的 OCR 掉落结果（接收预匹配的符文数据）
-  processOcrDrop: (item: {
-    text: string;
-    rune_number?: number | null;
-    screenshot_path?: string | null;
+  processAreaEvent: (item: { text: string; is_town?: boolean }) => Promise<void>;
+  /// 处理声纹解码器产生的符文掉落事件。
+  processRuneDrop: (item: {
+    rune_number: number;
+    rune_name?: string | null;
     rune_name_en?: string | null;
   }) => void;
+  applyTrackingSnapshot: (snapshot: TrackingSnapshot) => void;
   fetchDbStats: (sceneName: string) => Promise<void>;
   removeCurrentDrop: (index: number) => void;
 }
@@ -117,6 +120,9 @@ interface StatsState {
 export const useStats = create<StatsState>((set, get) => ({
   currentScene: "等待识别...",
   lastCombatScene: "",
+  currentRunKey: "",
+  currentRunName: "",
+  currentRunNameEn: "",
   isTiming: false,
   timerStart: null,
   elapsedMs: 0,
@@ -134,7 +140,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   stopTimerAndSave: async () => {
-    const { timerStart, currentScene, characterName, currentRunDrops } = get();
+    const { timerStart, currentScene, currentRunName, currentRunKey, characterName, currentRunDrops } = get();
     if (!timerStart) return;
 
     const elapsed = Date.now() - timerStart;
@@ -153,24 +159,23 @@ export const useStats = create<StatsState>((set, get) => ({
     }));
 
     try {
-      if (import.meta.env.VITE_ENABLE_OCR !== "false") {
-        await invoke("save_scene_record", {
-          record: {
-            absolute_time: absoluteTime,
-            character_name: characterName || "未知角色",
-            scene_name: currentScene,
-            timer_seconds: seconds,
-            drops: dropsPayload,
-          },
-        });
-      }
+      await invoke("save_scene_record", {
+        record: {
+          absolute_time: absoluteTime,
+          character_name: characterName || "未知角色",
+          scene_name: currentRunName || currentScene,
+          timer_seconds: seconds,
+          drops: dropsPayload,
+        },
+      });
 
       // 记录保存成功后，增加当前场景的本次启动场次
-      const currentSessionRuns = get().sessionRuns[currentScene] || 0;
+      const sessionKey = currentRunKey || currentRunName || currentScene;
+      const currentSessionRuns = get().sessionRuns[sessionKey] || 0;
       set({
         sessionRuns: {
           ...get().sessionRuns,
-          [currentScene]: currentSessionRuns + 1,
+          [sessionKey]: currentSessionRuns + 1,
         },
       });
     } catch (e) {
@@ -189,11 +194,10 @@ export const useStats = create<StatsState>((set, get) => ({
 
   fetchDbStats: async (sceneName: string) => {
     if (!sceneName || sceneName === "等待识别...") return;
-    if (import.meta.env.VITE_ENABLE_OCR === "false") return;
     try {
       const stats: { avg_time: number, total_runs: number } | null = await invoke("get_scene_stats", { sceneName });
       // 竞态校验：如果当前场景已变（如已回城），丢弃迟到的历史数据
-      if (get().currentScene !== sceneName) return;
+      if (get().currentRunName !== sceneName && get().currentScene !== sceneName) return;
       if (stats) {
         set({
           dbAvgTime: Math.round(stats.avg_time * 10) / 10,
@@ -203,13 +207,13 @@ export const useStats = create<StatsState>((set, get) => ({
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     } catch {
-      if (get().currentScene === sceneName) {
+      if (get().currentRunName === sceneName || get().currentScene === sceneName) {
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     }
   },
 
-  processOcrSceneText: async (item) => {
+  processAreaEvent: async (item) => {
     let normalized = item.text.trim();
     if (!normalized) return;
 
@@ -246,35 +250,62 @@ export const useStats = create<StatsState>((set, get) => ({
     }
   },
 
-  processOcrDrop: (item) => {
-    const { text, rune_number, screenshot_path, rune_name_en } = item;
+  processRuneDrop: (item) => {
+    const { rune_number, rune_name, rune_name_en } = item;
 
     // 优先使用后端匹配的符文编号，其次前端本地匹配
     let runeName: string;
     let runeNumber: number;
 
-    if (rune_number && rune_number >= 1 && rune_number <= 33 && RUNE_NAMES[rune_number - 1]) {
+    if (rune_number >= 1 && rune_number <= 33 && RUNE_NAMES[rune_number - 1]) {
       runeNumber = rune_number;
       runeName = RUNE_NAMES[rune_number - 1];
     } else {
-      const matched = matchRune(text);
+      const matched = rune_name ? matchRune(rune_name) : null;
       if (!matched) return;
       runeName = matched;
       runeNumber = getRuneNumber(matched);
     }
 
-    // 每个 OCR 结果 = 一次独立掉落（支持同一符文多次掉落，各有截图）
+    // 每个解码器确认的播放事件 = 一次独立掉落观测；不施加业务冷却。
     const newDrop: DropEntry = {
       runeName,
       runeNameEn: rune_name_en || null,
       runeNumber,
-      screenshotPath: screenshot_path || null,
+      screenshotPath: null,
     };
 
     set({
       currentDrops: [...get().currentDrops, newDrop],
-      currentRunDrops: [...get().currentRunDrops, newDrop],
     });
+  },
+
+  applyTrackingSnapshot: (snapshot) => {
+    const previousRunName = get().currentRunName;
+    const currentRunDrops: DropEntry[] = snapshot.current_run_drops.map((drop) => ({
+      runeName: drop.rune_name,
+      runeNameEn: drop.rune_name_en || null,
+      runeNumber: drop.rune_number,
+      screenshotPath: null,
+    }));
+    set({
+      currentScene: snapshot.current_scene || "等待识别...",
+      lastCombatScene: snapshot.location_kind === "wilderness" ? snapshot.current_scene : "",
+      currentRunKey: snapshot.current_run_key || "",
+      currentRunName: snapshot.current_run_name || "",
+      currentRunNameEn: snapshot.current_run_name_en || "",
+      isTiming: snapshot.is_timing,
+      timerStart: snapshot.timer_started_at_ms,
+      elapsedMs: snapshot.is_timing && snapshot.timer_started_at_ms
+        ? Math.max(0, Date.now() - snapshot.timer_started_at_ms)
+        : 0,
+      currentRunDrops,
+      sessionRuns: snapshot.session_runs,
+      ...(snapshot.is_timing ? {} : { dbAvgTime: null, dbTotalRuns: null }),
+    });
+    if (snapshot.current_run_name && snapshot.current_run_name !== previousRunName) {
+      void get().fetchDbStats(snapshot.current_run_name);
+    }
   },
 
   removeCurrentDrop: (index) => {

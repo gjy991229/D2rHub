@@ -5,6 +5,8 @@ import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { useStats, isHighRune } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import type { RuneAudioEvent, TrackingSnapshot } from "../store/types";
 import {
   currentMonitor,
   getCurrentWindow,
@@ -40,16 +42,6 @@ import {
   type PhysicalRect,
   type PhysicalSize,
 } from "../utils/overlayDocking";
-
-interface OcrTextItem {
-  text: string;
-  source: string;
-  timestamp: string;
-  rune_number?: number | null;
-  screenshot_path?: string | null;
-  is_town?: boolean;
-  rune_name_en?: string | null;
-}
 
 interface TerrorZoneImmunity {
   code: string;
@@ -361,7 +353,7 @@ export function Overlay() {
   const [dockEdge, setDockEdge] = useState<OverlayDockEdge | null>(null);
   const [dockPhase, setDockPhase] = useState<OverlayDockPhase | null>(null);
 
-  const isPollerActive = !!(config?.enable_overlay || config?.ocr_enabled);
+  const isPollerActive = !!(config?.enable_overlay || config?.rune_audio_enabled);
 
   const startupCheckDoneRef = useRef(false);
   const overlayPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1163,13 +1155,13 @@ export function Overlay() {
   // Set character name from monitored account
   useEffect(() => {
     if (!isPollerActive) return;
-    if (config?.ocr_target_account) {
-      const target = accounts.find((a) => a.id === config.ocr_target_account);
+    if (config?.rune_audio_target_account) {
+      const target = accounts.find((a) => a.id === config.rune_audio_target_account);
       if (target) {
         stats.setCharacterName(target.display_name || target.id);
       }
     }
-  }, [config?.ocr_target_account, accounts, stats.setCharacterName, isPollerActive]);
+  }, [config?.rune_audio_target_account, accounts, stats.setCharacterName, isPollerActive]);
 
   // Restore position and each mode's independent preferred size. The geometry
   // file is only a migration fallback for whichever mode was active last.
@@ -1356,7 +1348,7 @@ export function Overlay() {
   useEffect(() => {
     if (startupCheckDoneRef.current) return;
     if (!isPollerActive) return;
-    if (!config?.ocr_target_account) return;
+    if (!config?.rune_audio_target_account) return;
     (async () => {
       try {
         startupCheckDoneRef.current = true;
@@ -1370,10 +1362,10 @@ export function Overlay() {
 
         // 如果任一 D2R 窗口标题包含被监控账号的昵称，直接设置为前台标题
         const titles: string[] = await invoke("get_d2r_window_titles");
-        if (titles.length > 0 && config?.ocr_target_account) {
+        if (titles.length > 0 && config?.rune_audio_target_account) {
           // 使用 getState() 读取最新账号列表，避免将 accounts 加入依赖造成循环
           const latestAccounts = useAccounts.getState().accounts;
-          const target = latestAccounts.find((a) => a.id === config.ocr_target_account);
+          const target = latestAccounts.find((a) => a.id === config.rune_audio_target_account);
           if (target) {
             const displayName = target.display_name || target.id;
             const match = titles.find((t) =>
@@ -1386,7 +1378,7 @@ export function Overlay() {
         }
       } catch {}
     })();
-  }, [config?.ocr_target_account, isPollerActive]);
+  }, [config?.rune_audio_target_account, isPollerActive]);
 
   // 前台窗口标题轮询
   useEffect(() => {
@@ -1409,48 +1401,69 @@ export function Overlay() {
     };
   }, [isOverlayWindowVisible, isPollerActive]);
 
-  // ── OCR 数据轮询（场景 + 掉落）──
+  // ── 符文声纹事件（后端实时捕获并推送）──
   useEffect(() => {
-    if (!isPollerActive || import.meta.env.VITE_ENABLE_OCR === "false" || !config?.ocr_enabled) return;
-
-    const pollInterval = Math.max(100, config.ocr_poll_interval_ms ?? 500);
+    if (!isPollerActive || !config?.rune_audio_enabled) return;
     let cancelled = false;
-    let timer: number | undefined;
-
-    const poll = async () => {
-      try {
-        // Channel A: 场景名称
-        const chA = await invoke<OcrTextItem[]>("get_ocr_ch_a_results");
-        for (const item of chA) {
-          if (item.source === "channel_a" && item.text) {
-            await stats.processOcrSceneText(item);
-          }
-        }
-
-        // Channel B: 掉落文字（符文）— 现在传递完整的预匹配数据
-        const chB = await invoke<OcrTextItem[]>("get_ocr_ch_b_results");
-        for (const item of chB) {
-          if (item.source === "channel_b" && item.text) {
-            stats.processOcrDrop({
-              text: item.text,
-              rune_number: item.rune_number,
-              screenshot_path: item.screenshot_path,
-              rune_name_en: item.rune_name_en,
-            });
-          }
-        }
-      } catch {
-        // OCR 未启动时静默忽略
-      }
-      if (!cancelled) timer = window.setTimeout(poll, pollInterval);
-    };
-
-    void poll();
+    let unlisten: (() => void) | undefined;
+    void listen<RuneAudioEvent>("rune-audio-detected", (event) => {
+      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      stats.processRuneDrop({
+        rune_number: event.payload.rune_number,
+        rune_name: event.payload.rune_name,
+        rune_name_en: event.payload.rune_name_en,
+      });
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      console.error("监听符文声纹事件失败", error);
+    });
     return () => {
       cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
+      unlisten?.();
     };
-  }, [config?.ocr_enabled, config?.ocr_poll_interval_ms, isPollerActive]);
+  }, [config?.rune_audio_enabled, config?.rune_audio_target_account, isPollerActive, stats.processRuneDrop]);
+
+  // 后端状态机是刷图计时、场景切换和单轮掉落归属的事实来源。
+  useEffect(() => {
+    if (!isPollerActive || !config?.rune_audio_enabled) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<TrackingSnapshot>("audio-tracking-state", (event) => {
+      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      useStats.getState().applyTrackingSnapshot(event.payload);
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      console.error("监听自动刷图统计状态失败", error);
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [config?.rune_audio_enabled, config?.rune_audio_target_account, isPollerActive]);
+
+  // 如果程序启动时目标 D2R 已经运行，补启动一次声纹监控。
+  useEffect(() => {
+    if (!config?.rune_audio_enabled || !config.rune_audio_target_account) return;
+    const target = accounts.find((account) => account.id === config.rune_audio_target_account);
+    if (!target?.is_running) return;
+    let cancelled = false;
+    const start = async () => {
+      try {
+        const status = await invoke<{ running: boolean }>("get_rune_audio_status");
+        if (!cancelled && !status.running) await invoke("start_rune_audio_monitor");
+      } catch (error) {
+        console.warn("启动符文声纹监控失败", error);
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, config?.rune_audio_enabled, config?.rune_audio_target_account]);
 
   // ── 计时器 tick (100ms → 0.1s 精度) ──
   useEffect(() => {
@@ -1611,7 +1624,7 @@ export function Overlay() {
         {activeAccounts.length > 0 ? (
           activeAccounts.map((a) => {
             const isMonitored =
-              config?.ocr_enabled && config?.ocr_target_account === a.id;
+              config?.rune_audio_enabled && config?.rune_audio_target_account === a.id;
             const displayName = a.display_name || a.id;
             const isFocused = a.id === focusedAccountId;
 
@@ -1726,8 +1739,6 @@ export function Overlay() {
         <>
       <div className="flex flex-col gap-2 mt-2.5 flex-1 min-h-0">
 
-        {import.meta.env.VITE_ENABLE_OCR !== "false" && (
-          <>
         {/* 场景名称 — 右上角小字 */}
         <div className="flex justify-end px-1">
           <span
@@ -1768,7 +1779,7 @@ export function Overlay() {
                 className="text-2xs font-medium select-none"
                 style={{ color: "var(--text-secondary)", opacity: 0.8 }}
               >
-                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[stats.currentScene] || 0} {runUnitLabel}
+                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[stats.currentRunKey || stats.currentRunName || stats.currentScene] || 0} {runUnitLabel}
               </span>
             </div>
           )}
@@ -1832,8 +1843,6 @@ export function Overlay() {
           </div>
         </div>
 
-          </>
-        )}
         <div
           className="shrink-0 overflow-hidden rounded-lg px-2 py-1.5 transition-all duration-200"
           style={{

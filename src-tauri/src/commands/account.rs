@@ -871,9 +871,9 @@ pub fn delete_account(
         let cfg = config
             .as_mut()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-        if cfg.ocr_target_account.trim() == account_id {
-            cfg.ocr_enabled = false;
-            cfg.ocr_target_account.clear();
+        if cfg.rune_audio_target_account.trim() == account_id {
+            cfg.rune_audio_enabled = false;
+            cfg.rune_audio_target_account.clear();
             cfg.save(&state.app_data_dir)?;
             Some(cfg.clone())
         } else {
@@ -882,8 +882,8 @@ pub fn delete_account(
     };
 
     if let Some(config) = updated_config {
-        #[cfg(feature = "ocr")]
-        crate::ocr::stop_ocr_monitor();
+        #[cfg(feature = "rune-audio")]
+        crate::rune_audio::monitor::stop_rune_audio_monitor();
         let _ = app.emit("global-config-updated", config);
     }
 

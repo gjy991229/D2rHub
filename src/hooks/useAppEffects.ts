@@ -7,7 +7,7 @@ import { useAccounts } from "../store/accounts";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig, LaunchProgress } from "../store/types";
-import { validateOcrTarget } from "../utils/ocrTarget";
+import { validateTrackingTarget } from "../utils/trackingTarget";
 
 async function retryWindowAction(
   action: () => Promise<boolean>,
@@ -175,10 +175,9 @@ export function useLaunchEvents(config: GlobalConfig | null) {
     const wasLaunching = prevLaunchingRef.current;
     prevLaunchingRef.current = launching;
     if (!wasLaunching || launching || !config) return;
-    if (import.meta.env.VITE_ENABLE_OCR === "false") return;
-    if (!config.ocr_enabled) return;
+    if (!config.rune_audio_enabled) return;
 
-    const target = validateOcrTarget(config.ocr_target_account, accounts);
+    const target = validateTrackingTarget(config.rune_audio_target_account, accounts);
     if (!target.valid) return;
 
     const targetResult = results.find(r => r.account_id === target.account.id);
@@ -186,10 +185,10 @@ export function useLaunchEvents(config: GlobalConfig | null) {
 
     const timer = setTimeout(async () => {
       try {
-        await invoke("start_ocr_monitor");
-        showToast("success", "OCR 监控已自动启动");
+        await invoke("start_rune_audio_monitor");
+        showToast("success", "符文声纹监控已自动启动");
       } catch (e) {
-        showToast("error", `OCR 启动失败: ${e}`);
+        showToast("error", `符文声纹监控启动失败: ${e}`);
       }
     }, 3000);
     return () => clearTimeout(timer);

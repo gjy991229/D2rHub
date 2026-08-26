@@ -25,12 +25,9 @@ export interface GlobalConfig {
   auto_close_browser: boolean;
   enable_auto_update: boolean;
   first_launch: boolean;
-  ocr_enabled: boolean;
-  ocr_target_account: string;
-  ocr_ch_b_profiles_json: string;
-  ocr_debug_output?: boolean;
-
-  ocr_poll_interval_ms?: number;
+  rune_audio_enabled: boolean;
+  rune_audio_target_account: string;
+  rune_audio_detection_threshold?: number;
   shortcut_bindings_json: string;
   overlay_opacity: number;
   main_opacity: number;
@@ -52,26 +49,72 @@ export interface RuneDropEntry {
 }
 
 export interface SceneRecord {
+  id?: number;
   absolute_time: string;
   character_name: string;
   scene_name: string;
   timer_seconds: number;
+  journey_id?: string | null;
+  segment_index?: number | null;
   drops: RuneDropEntry[];    // 新版：每个元素 = 一次独立掉落
+}
+
+export interface MergeStrategy {
+  id: number;
+  name: string;
+  scene_names: string[];
+}
+
+export interface RuneDropObservation {
+  id: number;
+  observed_at: string;
+  account_id: string;
+  rune_number: number;
+  rune_name: string;
+  rune_name_en: string;
+  confidence: number;
+  source: string;
+  scene_record_id?: number | null;
 }
 
 export interface StatsData {
   records: SceneRecord[];
+  observations: RuneDropObservation[];
+  strategies: MergeStrategy[];
 }
 
-/// OCR 通道B 的掉落结果（包含符文编号和截图路径）
-export interface OcrDropItem {
-  text: string;
+/// 符文声纹识别事件。
+export interface RuneAudioEvent {
   source: string;
+  account_id: string;
   timestamp: string;
-  rune_number?: number | null;
-  screenshot_path?: string | null;
-  is_town?: boolean;
-  rune_name_en?: string | null;
+  rune_number: number;
+  rune_name: string;
+  rune_name_en: string;
+  confidence: number;
+}
+
+export interface TrackingSnapshot {
+  revision: number;
+  account_id: string;
+  current_area_id: number | null;
+  current_scene: string;
+  current_scene_en: string;
+  location_kind: "town" | "wilderness" | "frontend" | null;
+  is_town: boolean;
+  is_frontend: boolean;
+  is_timing: boolean;
+  timer_started_at_ms: number | null;
+  current_run_key: string | null;
+  current_run_name: string | null;
+  current_run_name_en: string | null;
+  current_run_drops: Array<{
+    observation_id: number;
+    rune_number: number;
+    rune_name: string;
+    rune_name_en: string;
+  }>;
+  session_runs: Record<string, number>;
 }
 
 export interface AccountMeta {

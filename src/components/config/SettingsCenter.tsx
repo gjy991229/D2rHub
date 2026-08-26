@@ -33,7 +33,7 @@ import {
   SettingsMap
 } from "../../pages/SettingsEditor";
 import type { GlobalConfig } from "../../store/types";
-import { validateOcrTarget } from "../../utils/ocrTarget";
+import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
 
 // Helper for quadratic opacity mapping
@@ -178,7 +178,7 @@ type TabType =
   | "accounts"
   | "agent"
   | "appearance"
-  | "ocr"
+  | "automation"
   | "pet"
   | "shortcuts"
   | "advanced";
@@ -187,12 +187,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const { config, save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
   const { theme, setTheme } = useTheme();
-  const initializedOcrAccounts = accounts.filter((account) => account.initialized);
-  const ocrTarget = validateOcrTarget(config?.ocr_target_account ?? "", accounts);
+  const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
+  const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
 
   // Tab and search state
   const [activeTab, setActiveTab] = useState<TabType>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
+  const [runeFlacDirectory, setRuneFlacDirectory] = useState("");
+  const [runeFlacGainDb, setRuneFlacGainDb] = useState(-26);
+  const [runeFlacProcessing, setRuneFlacProcessing] = useState(false);
+  const [runeFlacOutput, setRuneFlacOutput] = useState<string | null>(null);
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -517,6 +521,65 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     }
   };
 
+  const pickRuneFlacDirectory = async () => {
+    try {
+      const selected = await openDialog({
+        multiple: false,
+        directory: true,
+        title: "选择包含符文或场景 FLAC 的目录",
+      });
+      if (typeof selected === "string") {
+        setRuneFlacDirectory(selected);
+        setRuneFlacOutput(null);
+      }
+    } catch (error) {
+      showToast("error", `选择符文 FLAC 目录失败: ${error}`);
+    }
+  };
+
+  const processRuneFlacDirectory = async () => {
+    if (!runeFlacDirectory || runeFlacProcessing) return;
+    setRuneFlacProcessing(true);
+    setRuneFlacOutput(null);
+    try {
+      const report = await invoke<{
+        output_directory: string;
+        processed: Array<{ marker_label: string; confidence: number }>;
+        missing_runes: number[];
+        missing_areas: number[];
+        missing_frontend: boolean;
+      }>("process_rune_flac_directory", {
+        request: {
+          input_directory: runeFlacDirectory,
+          output_directory: null,
+          gain_db: runeFlacGainDb,
+        },
+      });
+      setRuneFlacOutput(report.output_directory);
+      const minimumConfidence = Math.min(...report.processed.map(item => item.confidence));
+      if (report.missing_runes.length > 0 || report.missing_areas.length > 0 || report.missing_frontend) {
+        const missing = [
+          report.missing_runes.length > 0 ? `符文 #${report.missing_runes.join(", #")}` : "",
+          report.missing_areas.length > 0 ? `场景 Area Id ${report.missing_areas.join(", ")}` : "",
+          report.missing_frontend ? "主界面 frontend.flac" : "",
+        ].filter(Boolean).join("；");
+        showToast(
+          "warning",
+          `已生成 ${report.processed.length} 个文件；目录缺少${missing}`,
+        );
+      } else {
+        showToast(
+          "success",
+          `33 个符文、7 个区域与主界面声纹全部通过自检，最低置信度 ${(minimumConfidence * 100).toFixed(1)}%`,
+        );
+      }
+    } catch (error) {
+      showToast("error", `处理符文 FLAC 失败: ${error}`);
+    } finally {
+      setRuneFlacProcessing(false);
+    }
+  };
+
   const applyDetectedPath = (field: keyof GlobalConfig, value: string | null) => {
     if (value) {
       updateConfig(c => {
@@ -633,7 +696,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     { id: "agent", label: "启动策略", icon: Play, desc: "战网 Agent 与启动等待策略" },
     { id: "shortcuts", label: "快捷键", icon: Settings, desc: "账号窗口切换与聚焦" },
     { id: "appearance", label: "显示", icon: Palette, desc: "主题、透明度、字体和悬浮窗" },
-    ...(import.meta.env.VITE_ENABLE_OCR !== "false" ? [{ id: "ocr" as TabType, label: "自动化", icon: ScanEye, desc: "OCR、统计、识别频率与账户" }] : []),
+    { id: "automation", label: "自动化", icon: ScanEye, desc: "符文声纹、统计、监听账户与 FLAC 制作" },
     { id: "pet", label: "伴随", icon: Cat, desc: "桌宠与轻量状态提示" },
     { id: "advanced", label: "维护", icon: ShieldAlert, desc: "修复、日志、重置和向导" },
   ];
@@ -1097,7 +1160,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between py-1">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">软件界面显示语言</span>
-                      <p className="text-2xs text-text-muted">软件界面显示语言，场景识别和符文名称不受影响</p>
+                      <p className="text-2xs text-text-muted">软件界面显示语言，游戏内容和符文名称不受影响</p>
                     </div>
                     <select
                       value={config.app_language || "zh-CN"}
@@ -1288,7 +1351,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between py-1">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">启用桌面上方的信息悬浮窗</span>
-                      <p className="text-2xs text-text-muted">常驻显示运行账号、OCR 场景计时、符文掉落与邪恶区域预报</p>
+                      <p className="text-2xs text-text-muted">常驻显示运行账号、刷图计时、符文掉落与邪恶区域预报</p>
                     </div>
                     <Toggle
                       checked={!!config.enable_overlay}
@@ -1313,90 +1376,77 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
               </div>
             )}
 
-            {/* 5. OCR & Stats Tab */}
-            {import.meta.env.VITE_ENABLE_OCR !== "false" && activeTab === "ocr" && config && (
+            {/* 5. Rune audio telemetry & Stats Tab */}
+            {activeTab === "automation" && config && (
               <div className="settings-content-grid">
                 <div className="spatial-panel p-3 space-y-2">
                   <div className="flex items-center justify-between py-1">
                     <div>
-                      <span className="text-sm font-bold text-text-secondary">场景符文自动识别 (OCR)</span>
-                      <p className="text-2xs text-text-muted">识别所有场景地点与符文掉落，#24 以上高级符文额外截图保存</p>
+                      <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
+                      <p className="text-2xs text-text-muted">按 D2R 进程捕获 Mod 音频；自动识别符文掉落、场景切换并完成刷图计时统计</p>
                     </div>
                     <Toggle
-                      checked={!!config.ocr_enabled && ocrTarget.valid}
-                      disabled={!ocrTarget.valid}
-                      ariaLabel="启用场景符文自动识别"
-                      descriptionId="ocr-target-help"
-                      onChange={v => updateConfig(c => { c.ocr_enabled = v; })}
+                      checked={!!config.rune_audio_enabled && trackingTarget.valid}
+                      disabled={!trackingTarget.valid}
+                      ariaLabel="启用符文声纹自动识别"
+                      descriptionId="rune-audio-target-help"
+                      onChange={v => updateConfig(c => { c.rune_audio_enabled = v; })}
                     />
                   </div>
 
                   <div className="space-y-1.5 border-t border-border-default/50 pt-3">
                     <div className="flex items-center justify-between gap-4">
                       <div>
-                        <label htmlFor="ocr-target-account" className="text-sm font-semibold text-text-secondary">
+                        <label htmlFor="rune-audio-target-account" className="text-sm font-semibold text-text-secondary">
                           识别目标账号
                         </label>
-                        <p className="text-2xs text-text-muted">选择一个已初始化账号作为固定 OCR 识别窗口</p>
+                        <p className="text-2xs text-text-muted">选择一个已初始化账号，声音只从其 D2R PID 捕获</p>
                       </div>
                       <select
-                        id="ocr-target-account"
-                        value={ocrTarget.valid ? ocrTarget.account.id : ""}
-                        disabled={initializedOcrAccounts.length === 0}
-                        aria-describedby="ocr-target-help"
-                        onChange={e => updateConfig(c => { c.ocr_target_account = e.target.value; })}
+                        id="rune-audio-target-account"
+                        value={trackingTarget.valid ? trackingTarget.account.id : ""}
+                        disabled={initializedTrackingAccounts.length === 0}
+                        aria-describedby="rune-audio-target-help"
+                        onChange={e => updateConfig(c => { c.rune_audio_target_account = e.target.value; })}
                         className="h-8 min-w-36 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <option value="" disabled>
-                          {initializedOcrAccounts.length === 0 ? "暂无可用账号" : "请选择账号"}
+                          {initializedTrackingAccounts.length === 0 ? "暂无可用账号" : "请选择账号"}
                         </option>
-                        {initializedOcrAccounts.map(account => (
+                        {initializedTrackingAccounts.map(account => (
                           <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
                         ))}
                       </select>
                     </div>
-                    <p id="ocr-target-help" aria-live="polite" className="text-2xs text-text-secondary">
-                      {initializedOcrAccounts.length === 0
-                        ? "请先初始化至少一个账号，才能启用 OCR。"
-                        : ocrTarget.valid
-                          ? `OCR 将固定监测“${ocrTarget.account.display_name || ocrTarget.account.id}”的游戏窗口。`
-                          : "请先选择目标账号，才能启用 OCR。"}
+                    <p id="rune-audio-target-help" aria-live="polite" className="text-2xs text-text-secondary">
+                      {initializedTrackingAccounts.length === 0
+                        ? "请先初始化至少一个账号，才能启用声纹识别。"
+                        : trackingTarget.valid
+                          ? `将固定监听“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的 D2R 进程。`
+                          : "请先选择目标账号，才能启用声纹识别。"}
                     </p>
                   </div>
 
-                  {config.ocr_enabled && ocrTarget.valid && (
+                  {config.rune_audio_enabled && trackingTarget.valid && (
                     <div className="space-y-3 border-t border-border-default/50 pt-3">
-
                       <div className="flex items-center justify-between">
                         <div>
-                          <span className="text-sm font-semibold text-text-secondary">OCR 帧采样轮询间隔 (ms)</span>
-                          <p className="text-2xs text-text-muted">两次屏幕截取分析的时间差，设置过小可能消耗较高 CPU</p>
+                          <span className="text-sm font-semibold text-text-secondary">识别阈值</span>
+                          <p className="text-2xs text-text-muted">默认 0.58；降低可提高召回，但会增加误报风险</p>
                         </div>
-                        <select
-                          value={config.ocr_poll_interval_ms ?? 500}
-                          onChange={e => updateConfig(c => { c.ocr_poll_interval_ms = Number(e.target.value); })}
-                          className="h-8 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-                        >
-                          <option value={200}>200ms (高刷新-高负荷)</option>
-                          <option value={300}>300ms (流畅响应)</option>
-                          <option value={500}>500ms (平衡默认)</option>
-                          <option value={1000}>1000ms (低能耗限额)</option>
-                          <option value={2000}>2000ms (极佳省电)</option>
-                        </select>
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-sm font-semibold text-text-secondary">保存 OCR 运行调试日志</span>
-                          <p className="text-2xs text-text-muted">开启后程序会在 config/test 保存每次检测的裁剪切片，利于定位识别失败问题</p>
-                        </div>
-                        <Toggle
-                          checked={!!config.ocr_debug_output}
-                          onChange={v => updateConfig(c => { c.ocr_debug_output = v; })}
+                        <input
+                          type="number"
+                          min={0.45}
+                          max={0.95}
+                          step={0.01}
+                          value={config.rune_audio_detection_threshold ?? 0.58}
+                          onChange={event => updateConfig(c => {
+                            c.rune_audio_detection_threshold = Number(event.target.value);
+                          })}
+                          className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
                         />
                       </div>
 
-                      {/* Restart OCR button */}
                       <div className="border-t border-border-default/50 pt-3">
                         <Button
                           variant="secondary"
@@ -1405,44 +1455,85 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             try {
                               await save(config);
                               setOriginalConfig(JSON.parse(JSON.stringify(config)));
-                              await invoke("restart_ocr_monitor");
-                              showToast("success", "OCR 已用新配置重启");
+                              await invoke("restart_rune_audio_monitor");
+                              showToast("success", "符文声纹监控已用新配置重启");
                             } catch (e) {
-                              showToast("error", "重启 OCR 失败: " + e);
+                              showToast("error", "重启符文声纹监控失败: " + e);
                             }
                           }}
                           className="w-full"
                         >
                           <RotateCw size={13} className="shrink-0" />
-                          应用配置并重启 OCR
+                          应用配置并重启声纹监控
                         </Button>
-                        <p className="text-2xs text-text-muted text-center mt-1">使用当前参数重新启动 OCR 识别</p>
+                        <p className="text-2xs text-text-muted text-center mt-1">目标 D2R 必须已运行</p>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {config.ocr_enabled && ocrTarget.valid && (
-                  <div className="spatial-panel p-4 space-y-2">
-                    <span className="text-xs font-bold text-text-primary block mb-1">OCR 统计结果</span>
-                    <p className="text-2xs text-text-muted">查看当前数据库内的符文掉落与统计信息</p>
-                    <div className="flex gap-2 pt-1">
-                      <Button
-                        size="sm"
-                        onClick={async () => {
-                          try {
-                            await invoke("open_stats_page");
-                          } catch (e) {
-                            showToast("error", `打开统计界面失败: ${e}`);
-                          }
-                        }}
-                      >
-                        <Play size={10} className="text-success fill-success" />
-                        打开掉落统计图表
-                      </Button>
-                    </div>
+                <div className="spatial-panel p-4 space-y-3">
+                  <div>
+                    <span className="text-xs font-bold text-text-primary block mb-1">制作带身份证的符文/场景 FLAC</span>
+                    <p className="text-2xs text-text-muted">符文使用 r1-r33；区域使用 a1、a6、a21-a25；主界面使用 frontend.flac；支持 32kHz 及以上</p>
                   </div>
-                )}
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={runeFlacDirectory}
+                      readOnly
+                      placeholder="选择符文/场景音频目录"
+                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
+                    />
+                    <Button size="sm" onClick={pickRuneFlacDirectory}>
+                      <FolderOpen size={13} />
+                      选择目录
+                    </Button>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <span className="text-xs font-semibold text-text-secondary">声纹增益</span>
+                      <p className="text-2xs text-text-muted">建议先用 -26dBFS；越接近 0 越容易识别，也越可能被听见</p>
+                    </div>
+                    <input
+                      type="number"
+                      min={-42}
+                      max={-12}
+                      step={1}
+                      value={runeFlacGainDb}
+                      onChange={event => setRuneFlacGainDb(Number(event.target.value))}
+                      className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
+                    />
+                  </div>
+                  <Button
+                    size="md"
+                    className="w-full"
+                    disabled={!runeFlacDirectory || runeFlacProcessing}
+                    loading={runeFlacProcessing}
+                    onClick={processRuneFlacDirectory}
+                  >
+                    生成并自检声纹 FLAC
+                  </Button>
+                  {runeFlacOutput && (
+                    <p className="text-2xs text-success break-all">输出目录：{runeFlacOutput}</p>
+                  )}
+                  <p className="text-2xs text-warning">处理器可能补长很短的音频；请确保 mod 声音配置不会按旧 Duration 提前截断，并保持游戏音效实际输出。</p>
+                  <div className="border-t border-border-default/50 pt-3">
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        try {
+                          await invoke("open_stats_page");
+                        } catch (e) {
+                          showToast("error", `打开统计界面失败: ${e}`);
+                        }
+                      }}
+                    >
+                      <Play size={10} className="text-success fill-success" />
+                      打开掉落统计图表
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
 

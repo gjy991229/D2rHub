@@ -1,13 +1,13 @@
 import type { AccountMeta } from "../store/types";
 
-export type OcrTargetValidation =
+export type TrackingTargetValidation =
   | { valid: true; account: AccountMeta }
   | { valid: false; reason: "missing" | "not_found" | "not_initialized" };
 
-export function validateOcrTarget(
+export function validateTrackingTarget(
   accountId: string,
   accounts: AccountMeta[],
-): OcrTargetValidation {
+): TrackingTargetValidation {
   const normalizedId = accountId.trim();
   if (!normalizedId) return { valid: false, reason: "missing" };
 

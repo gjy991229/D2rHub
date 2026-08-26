@@ -1,21 +1,77 @@
-/// 符文数据 — 全部从 crate::ocr::game_data 派生，保证全项目统一。
-use std::sync::LazyLock;
-
 /// 符文标准名称（简体中文，按编号 1-33 排列）
 /// 与前端 src/store/stats.ts 保持同步
-static RUNE_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
-    let mut entries: Vec<(u32, &'static str)> = crate::ocr::game_data::RUNE_NAME_MAP
-        .iter()
-        .map(|(name, info)| (info.level, *name))
-        .collect();
-    entries.sort_by_key(|k| k.0);
-    entries.into_iter().map(|(_, name)| name).collect()
-});
+pub const RUNE_NAMES: [&str; 33] = [
+    "艾尔",
+    "艾德",
+    "特尔",
+    "那夫",
+    "爱斯",
+    "伊司",
+    "塔尔",
+    "拉尔",
+    "欧特",
+    "书尔",
+    "安姆",
+    "索尔",
+    "夏",
+    "多尔",
+    "海尔",
+    "艾欧",
+    "卢姆",
+    "科",
+    "法尔",
+    "蓝姆",
+    "普尔",
+    "乌姆",
+    "马尔",
+    "伊斯特",
+    "古尔",
+    "伐克斯",
+    "欧姆",
+    "罗",
+    "瑟",
+    "贝",
+    "乔",
+    "查姆",
+    "萨德",
+];
 
-/// 高级符文阈值（#24 伊斯特 及以上）
-pub const HIGH_RUNE_THRESHOLD: u32 = 24;
+pub const RUNE_NAMES_EN: [&str; 33] = [
+    "El", "Eld", "Tir", "Nef", "Eth", "Ith", "Tal", "Ral", "Ort", "Thul", "Amn", "Sol", "Shael",
+    "Dol", "Hel", "Io", "Lum", "Ko", "Fal", "Lem", "Pul", "Um", "Mal", "Ist", "Gul", "Vex", "Ohm",
+    "Lo", "Sur", "Ber", "Jah", "Cham", "Zod",
+];
 
-/// 从 OCR 文本中匹配符文名称或编号，返回 1-based 编号（1-33）
+const RUNE_ALIASES: [(&str, u32); 26] = [
+    ("伊司特", 24),
+    ("伊斯特", 24),
+    ("Shael", 13),
+    ("提尔", 3),
+    ("奈夫", 4),
+    ("图尔", 10),
+    ("沙伊", 13),
+    ("兰姆", 20),
+    ("玛尔", 23),
+    ("扎哈", 31),
+    ("佐德", 33),
+    ("伊斯", 6),
+    ("艾斯", 5),
+    ("埃欧", 16),
+    ("羅", 28),
+    ("貝", 30),
+    ("Jah", 31),
+    ("Zod", 33),
+    ("Nef", 4),
+    ("Ist", 24),
+    ("L⊕", 28),
+    ("扎", 31),
+    ("伊司", 6),
+    ("那夫", 4),
+    ("特尔", 3),
+    ("萨德", 33),
+];
+
+/// 从旧记录文字或编号中匹配符文，返回 1-based 编号（1-33）
 ///
 /// 匹配策略（按优先级）：
 /// 1. 遍历 ALL_RUNE_ALIASES（按长度降序，标准名→方言→英文→繁体→短称），
@@ -29,9 +85,22 @@ pub fn get_rune_number(text: &str) -> Option<u32> {
 
     let lower = sanitized.to_lowercase();
 
-    // 1. 别名表查找（已按长度降序，最长优先）
-    for &(alias, level) in crate::ocr::game_data::ALL_RUNE_ALIASES.iter() {
-        if lower.contains(alias) {
+    // 1. 标准名优先按长度匹配，避免短名称截获长名称。
+    let mut candidates: Vec<(&str, u32)> = RUNE_NAMES
+        .iter()
+        .enumerate()
+        .map(|(index, name)| (*name, index as u32 + 1))
+        .chain(
+            RUNE_NAMES_EN
+                .iter()
+                .enumerate()
+                .map(|(index, name)| (*name, index as u32 + 1)),
+        )
+        .chain(RUNE_ALIASES)
+        .collect();
+    candidates.sort_by_key(|(alias, _)| std::cmp::Reverse(alias.chars().count()));
+    for (alias, level) in candidates {
+        if lower.contains(&alias.to_lowercase()) {
             return Some(level);
         }
     }
@@ -46,12 +115,6 @@ pub fn get_rune_number(text: &str) -> Option<u32> {
         }
     }
     valid_numbers.pop()
-}
-
-/// 判断是否为高级符文（#24 及以上）
-#[inline]
-pub fn is_high_rune(number: u32) -> bool {
-    number >= HIGH_RUNE_THRESHOLD
 }
 
 /// 根据编号获取符文标准名称（1-based）
@@ -129,15 +192,6 @@ mod tests {
         assert_eq!(get_rune_number("那夫#4"), Some(4));
         // 含英文混杂
         assert_eq!(get_rune_number("頂級：L⊕#28"), Some(28));
-    }
-
-    #[test]
-    fn test_is_high_rune() {
-        assert!(!is_high_rune(1));
-        assert!(!is_high_rune(23));
-        assert!(is_high_rune(24));
-        assert!(is_high_rune(30));
-        assert!(is_high_rune(33));
     }
 
     #[test]

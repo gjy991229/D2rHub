@@ -72,20 +72,15 @@ pub struct GlobalConfig {
     /// 是否首次启动（自动弹出帮助文档）
     #[serde(default = "default_first_launch")]
     pub first_launch: bool,
-    /// OCR：是否启用自动文字识别
-    #[serde(default)]
-    pub ocr_enabled: bool,
-    /// OCR：被监控的账号 ID（对应 account.json 中的 id）
-    #[serde(default)]
-    pub ocr_target_account: String,
-    pub ocr_ch_b_profiles_json: String,
-    /// OCR：是否开启调试输出（保存截图到 config/test）
-    #[serde(default)]
-    pub ocr_debug_output: bool,
-
-    /// OCR：轮询间隔 (ms)，默认 500 (2Hz)，性能不足可设为 1000 (1Hz)
-    #[serde(default = "default_ocr_poll_interval")]
-    pub ocr_poll_interval_ms: u64,
+    /// 是否启用按 D2R 进程捕获的符文声纹识别。
+    #[serde(default, alias = "ocr_enabled")]
+    pub rune_audio_enabled: bool,
+    /// 被监控的账号 ID（对应 account.json 中的 id）。
+    #[serde(default, alias = "ocr_target_account")]
+    pub rune_audio_target_account: String,
+    /// Gold 码相关识别阈值。
+    #[serde(default = "default_rune_audio_detection_threshold")]
+    pub rune_audio_detection_threshold: f32,
     /// 快捷键绑定 JSON: {"1": "Ctrl+1", "2": "Ctrl+2", ...} ，key 为账号位置序号（1-based）
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
@@ -123,8 +118,8 @@ fn default_opacity() -> u8 {
     95
 }
 
-fn default_ocr_poll_interval() -> u64 {
-    500
+fn default_rune_audio_detection_threshold() -> f32 {
+    0.58
 }
 
 fn default_agent_mode() -> u8 {
@@ -465,43 +460,46 @@ mod validation_tests {
     }
 
     #[test]
-    fn enabled_ocr_requires_a_selected_account() {
+    fn enabled_rune_audio_requires_a_selected_account() {
         let config = GlobalConfig {
-            ocr_enabled: true,
+            rune_audio_enabled: true,
             ..GlobalConfig::default()
         };
 
-        assert!(config.resolve_ocr_target_account().is_err());
+        assert!(config.resolve_rune_audio_target_account().is_err());
     }
 
     #[test]
-    fn disabled_ocr_does_not_require_a_target_account() {
+    fn disabled_rune_audio_does_not_require_a_target_account() {
         let config = GlobalConfig::default();
 
-        assert!(config.resolve_ocr_target_account().unwrap().is_none());
+        assert!(config
+            .resolve_rune_audio_target_account()
+            .unwrap()
+            .is_none());
     }
 
     #[test]
-    fn enabled_ocr_requires_an_initialized_account() {
-        let accounts_dir = temp_dir("ocr_uninitialized_account");
+    fn enabled_rune_audio_requires_an_initialized_account() {
+        let accounts_dir = temp_dir("rune_audio_uninitialized_account");
         let account = AccountMeta::new("acount1");
         std::fs::create_dir_all(accounts_dir.join(&account.id)).unwrap();
         AccountManager::save_meta(accounts_dir.to_str().unwrap(), &account).unwrap();
 
         let config = GlobalConfig {
             accounts_dir: accounts_dir.to_string_lossy().to_string(),
-            ocr_enabled: true,
-            ocr_target_account: account.id,
+            rune_audio_enabled: true,
+            rune_audio_target_account: account.id,
             ..GlobalConfig::default()
         };
 
-        assert!(config.resolve_ocr_target_account().is_err());
+        assert!(config.resolve_rune_audio_target_account().is_err());
         let _ = std::fs::remove_dir_all(accounts_dir);
     }
 
     #[test]
-    fn enabled_ocr_accepts_an_initialized_account() {
-        let accounts_dir = temp_dir("ocr_initialized_account");
+    fn enabled_rune_audio_accepts_an_initialized_account() {
+        let accounts_dir = temp_dir("rune_audio_initialized_account");
         let mut account = AccountMeta::new("acount1");
         account.initialized = true;
         std::fs::create_dir_all(accounts_dir.join(&account.id)).unwrap();
@@ -509,25 +507,25 @@ mod validation_tests {
 
         let config = GlobalConfig {
             accounts_dir: accounts_dir.to_string_lossy().to_string(),
-            ocr_enabled: true,
-            ocr_target_account: account.id.clone(),
+            rune_audio_enabled: true,
+            rune_audio_target_account: account.id.clone(),
             ..GlobalConfig::default()
         };
 
-        let resolved = config.resolve_ocr_target_account().unwrap().unwrap();
+        let resolved = config.resolve_rune_audio_target_account().unwrap().unwrap();
         assert_eq!(resolved.id, account.id);
         let _ = std::fs::remove_dir_all(accounts_dir);
     }
 
     #[test]
-    fn invalid_legacy_ocr_configuration_is_disabled() {
+    fn invalid_rune_audio_configuration_is_disabled() {
         let mut config = GlobalConfig {
-            ocr_enabled: true,
+            rune_audio_enabled: true,
             ..GlobalConfig::default()
         };
 
-        assert!(config.normalize_ocr_configuration());
-        assert!(!config.ocr_enabled);
+        assert!(config.normalize_rune_audio_configuration());
+        assert!(!config.rune_audio_enabled);
     }
 
     #[test]
@@ -619,8 +617,8 @@ mod validation_tests {
     }
 
     #[test]
-    fn load_recovers_account_transaction_before_normalizing_ocr_target() {
-        let root = temp_dir("ocr_after_account_recovery");
+    fn load_recovers_account_transaction_before_normalizing_rune_audio_target() {
+        let root = temp_dir("rune_audio_after_account_recovery");
         let accounts = root.join("accounts");
         let backup = accounts.join("acount1.bak");
         let staged = accounts.join("acount1.tmp");
@@ -636,15 +634,15 @@ mod validation_tests {
         let config = GlobalConfig {
             accounts_dir: accounts.to_string_lossy().to_string(),
             first_run_complete: true,
-            ocr_enabled: true,
-            ocr_target_account: account.id,
+            rune_audio_enabled: true,
+            rune_audio_target_account: account.id,
             ..GlobalConfig::default()
         };
         config.save(root.to_str().unwrap()).unwrap();
 
         let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
 
-        assert!(loaded.ocr_enabled);
+        assert!(loaded.rune_audio_enabled);
         assert!(accounts.join("acount1").is_dir());
         assert!(!backup.exists());
         assert!(!staged.exists());
@@ -722,12 +720,9 @@ impl Default for GlobalConfig {
             auto_close_browser: true,
             enable_auto_update: true,
             first_launch: true,
-            ocr_enabled: false,
-            ocr_target_account: String::new(),
-            ocr_ch_b_profiles_json: String::new(),
-            ocr_debug_output: false,
-
-            ocr_poll_interval_ms: 500,
+            rune_audio_enabled: false,
+            rune_audio_target_account: String::new(),
+            rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
             overlay_opacity: 95,
             main_opacity: 95,
@@ -741,37 +736,39 @@ impl Default for GlobalConfig {
 }
 
 impl GlobalConfig {
-    /// 解析并验证当前 OCR 目标。OCR 关闭时不要求配置目标账号。
-    pub(crate) fn resolve_ocr_target_account(&self) -> Result<Option<AccountMeta>, AppError> {
-        if !self.ocr_enabled {
+    /// 解析并验证当前声纹识别目标。识别关闭时不要求配置目标账号。
+    pub(crate) fn resolve_rune_audio_target_account(
+        &self,
+    ) -> Result<Option<AccountMeta>, AppError> {
+        if !self.rune_audio_enabled {
             return Ok(None);
         }
 
-        let account_id = self.ocr_target_account.trim();
+        let account_id = self.rune_audio_target_account.trim();
         if account_id.is_empty() {
             return Err(AppError::ConfigWriteError(
-                "启用 OCR 前请先选择目标账号".to_string(),
+                "启用符文声纹识别前请先选择目标账号".to_string(),
             ));
         }
 
         let account = AccountManager::load_meta(&self.accounts_dir, account_id)
-            .map_err(|_| AppError::ConfigWriteError(format!("OCR 目标账号不存在: {account_id}")))?;
+            .map_err(|_| AppError::ConfigWriteError(format!("声纹目标账号不存在: {account_id}")))?;
         if !account.initialized {
             return Err(AppError::ConfigWriteError(format!(
-                "OCR 目标账号尚未初始化: {account_id}"
+                "声纹目标账号尚未初始化: {account_id}"
             )));
         }
 
         Ok(Some(account))
     }
 
-    /// 兼容旧配置：无效目标不能保持 OCR 启用状态。
-    fn normalize_ocr_configuration(&mut self) -> bool {
-        if !self.ocr_enabled || self.resolve_ocr_target_account().is_ok() {
+    /// 兼容旧配置：无效目标不能保持声纹识别启用状态。
+    fn normalize_rune_audio_configuration(&mut self) -> bool {
+        if !self.rune_audio_enabled || self.resolve_rune_audio_target_account().is_ok() {
             return false;
         }
 
-        self.ocr_enabled = false;
+        self.rune_audio_enabled = false;
         true
     }
 
@@ -812,7 +809,7 @@ impl GlobalConfig {
             migrated = true;
         }
 
-        // OCR 目标依赖账号目录。必须先回滚中断的账号目录交换，再判断目标是否有效。
+        // 声纹目标依赖账号目录。必须先回滚中断的账号目录交换，再判断目标是否有效。
         recover_account_transactions(&config.accounts_dir);
 
         // 迁移：从未配置过快捷键的旧用户，自动写入默认值
@@ -824,8 +821,8 @@ impl GlobalConfig {
         // 迁移：去除旧版本可能存在的 Win/Meta/Cmd 修饰键（v0.6.6 起不再支持）
         migrated |= Self::strip_win_modifiers(&mut config.shortcut_bindings_json);
 
-        if config.normalize_ocr_configuration() {
-            log::warn!("检测到无效的旧版 OCR 目标配置，已自动关闭 OCR");
+        if config.normalize_rune_audio_configuration() {
+            log::warn!("检测到无效的声纹目标配置，已自动关闭自动识别");
             migrated = true;
         }
 
@@ -1175,7 +1172,7 @@ pub fn save_global_config(
     if should_validate_browser_path(previous.as_ref(), &cfg) {
         validate_browser_path(&cfg)?;
     }
-    cfg.resolve_ocr_target_account()?;
+    cfg.resolve_rune_audio_target_account()?;
 
     cfg.save(&state.app_data_dir)?;
     cfg.ensure_dirs()?;

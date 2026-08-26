@@ -1407,7 +1407,7 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
         .ok_or_else(|| "未找到 tag_name 字段".to_string())?;
 
     // Match the current build flavor, then prefer the NSIS installer over MSI.
-    let is_lite_build = !cfg!(feature = "ocr");
+    let is_lite_build = !cfg!(feature = "rune-audio");
     let mut msi_url = None;
     let mut nsis_url = None;
     if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {

@@ -1,9 +1,0 @@
-{
-  "productName": "D2RHub Lite",
-  "identifier": "com.d2rhub.lite.app",
-  "bundle": {
-    "resources": [
-      "../docs/"
-    ]
-  }
-}

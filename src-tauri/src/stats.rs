@@ -32,18 +32,74 @@ pub struct SceneRecord {
     pub character_name: String,
     pub scene_name: String,
     pub timer_seconds: f64,
+    /// 连续离开主城/主界面后的同一次野外行程。旧记录为 None，不做猜测合并。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_id: Option<String>,
+    /// 此原始野外分段在行程中的零基序号。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub segment_index: Option<u32>,
     /// 新版：符文掉落数组（每个元素 = 一次独立掉落）
     pub drops: Vec<RuneDropEntry>,
+}
+
+/// 只影响统计页展示的合并策略；原始场景记录始终保持独立。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MergeStrategy {
+    pub id: i64,
+    pub name: String,
+    pub scene_names: Vec<String>,
+}
+
+/// 原始符文声纹观测；野外分段结束时通过 scene_record_id 原子归属。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuneDropObservation {
+    pub id: i64,
+    pub observed_at: String,
+    pub account_id: String,
+    pub rune_number: u32,
+    pub rune_name: String,
+    pub rune_name_en: String,
+    pub confidence: f32,
+    pub source: String,
+    pub scene_record_id: Option<i64>,
 }
 
 /// 全部统计数据
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsData {
     pub records: Vec<SceneRecord>,
+    pub observations: Vec<RuneDropObservation>,
+    pub strategies: Vec<MergeStrategy>,
 }
 
 /// 懒初始化数据库连接
 static DB: std::sync::OnceLock<Mutex<Connection>> = std::sync::OnceLock::new();
+
+fn ensure_scene_segment_columns(conn: &Connection) -> Result<(), String> {
+    let scene_columns = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(scene_records)")
+            .map_err(|e| format!("检查场景记录表结构失败: {e}"))?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("读取场景记录表结构失败: {e}"))?
+            .filter_map(Result::ok)
+            .collect::<Vec<_>>();
+        columns
+    };
+    if !scene_columns.iter().any(|column| column == "journey_id") {
+        conn.execute("ALTER TABLE scene_records ADD COLUMN journey_id TEXT", [])
+            .map_err(|e| format!("迁移行程标识字段失败: {e}"))?;
+    }
+    if !scene_columns.iter().any(|column| column == "segment_index") {
+        conn.execute(
+            "ALTER TABLE scene_records ADD COLUMN segment_index INTEGER",
+            [],
+        )
+        .map_err(|e| format!("迁移分段序号字段失败: {e}"))?;
+    }
+    Ok(())
+}
 
 fn get_db_path(app_data_dir: &str) -> String {
     Path::new(app_data_dir)
@@ -86,14 +142,105 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
             character_name TEXT NOT NULL,
             scene_name TEXT NOT NULL,
             timer_seconds REAL NOT NULL,
+            journey_id TEXT,
+            segment_index INTEGER,
             drops_json TEXT NOT NULL DEFAULT '[]'
         );
         CREATE INDEX IF NOT EXISTS idx_scene_time ON scene_records(absolute_time);
-        CREATE INDEX IF NOT EXISTS idx_scene_name ON scene_records(scene_name);",
+        CREATE INDEX IF NOT EXISTS idx_scene_name ON scene_records(scene_name);
+        CREATE TABLE IF NOT EXISTS rune_drop_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            observed_at TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            rune_number INTEGER NOT NULL,
+            rune_name TEXT NOT NULL,
+            rune_name_en TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            source TEXT NOT NULL,
+            scene_record_id INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_rune_drop_observed_at
+            ON rune_drop_observations(observed_at);
+        CREATE INDEX IF NOT EXISTS idx_rune_drop_account
+            ON rune_drop_observations(account_id);
+        CREATE TABLE IF NOT EXISTS stats_merge_strategies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            scene_names_json TEXT NOT NULL
+        );",
     )
     .map_err(|e| format!("初始化数据表失败: {}", e))?;
+    let has_scene_record_id = {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(rune_drop_observations)")
+            .map_err(|e| format!("检查观测表结构失败: {e}"))?;
+        let found = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(|e| format!("读取观测表结构失败: {e}"))?
+            .filter_map(Result::ok)
+            .any(|column| column == "scene_record_id");
+        found
+    };
+    if !has_scene_record_id {
+        conn.execute(
+            "ALTER TABLE rune_drop_observations ADD COLUMN scene_record_id INTEGER",
+            [],
+        )
+        .map_err(|e| format!("迁移观测归属字段失败: {e}"))?;
+    }
+    ensure_scene_segment_columns(&conn)?;
+    conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_rune_drop_scene_record
+             ON rune_drop_observations(scene_record_id);
+         CREATE INDEX IF NOT EXISTS idx_scene_journey_segment
+             ON scene_records(journey_id, segment_index);
+         CREATE TRIGGER IF NOT EXISTS clear_rune_drop_scene_record_after_delete
+             AFTER DELETE ON scene_records
+             BEGIN
+                 UPDATE rune_drop_observations
+                    SET scene_record_id = NULL
+                  WHERE scene_record_id = OLD.id;
+             END;",
+    )
+    .map_err(|e| format!("初始化观测归属索引失败: {e}"))?;
     let _ = DB.set(Mutex::new(conn));
     DB.get().ok_or_else(|| "数据库初始化状态不可用".to_string())
+}
+
+pub(crate) struct NewRuneDropObservation<'a> {
+    pub observed_at: &'a str,
+    pub account_id: &'a str,
+    pub rune_number: u32,
+    pub rune_name: &'a str,
+    pub rune_name_en: &'a str,
+    pub confidence: f32,
+    pub source: &'a str,
+}
+
+pub(crate) fn insert_rune_drop_observation(
+    state: &SharedState,
+    observation: NewRuneDropObservation<'_>,
+) -> Result<i64, String> {
+    let db = get_db(&state.app_data_dir)?;
+    let conn = db
+        .lock()
+        .map_err(|error| format!("数据库锁失败: {error}"))?;
+    conn.execute(
+        "INSERT INTO rune_drop_observations
+         (observed_at, account_id, rune_number, rune_name, rune_name_en, confidence, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            observation.observed_at,
+            observation.account_id,
+            observation.rune_number,
+            observation.rune_name,
+            observation.rune_name_en,
+            observation.confidence,
+            observation.source,
+        ],
+    )
+    .map_err(|error| format!("保存符文掉落观测失败: {error}"))?;
+    Ok(conn.last_insert_rowid())
 }
 
 /// 将旧版 drops HashMap 格式迁移为新版 Vec<RuneDropEntry> 格式
@@ -129,6 +276,13 @@ pub fn save_scene_record(
     state: tauri::State<'_, SharedState>,
     record: SceneRecord,
 ) -> Result<(), String> {
+    save_scene_record_inner(&state, &record).map(|_| ())
+}
+
+pub(crate) fn save_scene_record_inner(
+    state: &SharedState,
+    record: &SceneRecord,
+) -> Result<i64, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
@@ -136,19 +290,195 @@ pub fn save_scene_record(
         serde_json::to_string(&record.drops).map_err(|e| format!("序列化掉落失败: {}", e))?;
 
     conn.execute(
-        "INSERT INTO scene_records (absolute_time, character_name, scene_name, timer_seconds, drops_json)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT INTO scene_records
+         (absolute_time, character_name, scene_name, timer_seconds, journey_id, segment_index, drops_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![
-            record.absolute_time,
-            record.character_name,
-            record.scene_name,
+            &record.absolute_time,
+            &record.character_name,
+            &record.scene_name,
             record.timer_seconds,
+            &record.journey_id,
+            record.segment_index,
             drops_json,
         ],
     )
     .map_err(|e| format!("保存记录失败: {}", e))?;
 
-    Ok(())
+    Ok(conn.last_insert_rowid())
+}
+
+pub(crate) fn save_completed_segment(
+    state: &SharedState,
+    segment: &crate::rune_audio::tracking::CompletedSegment,
+) -> Result<i64, String> {
+    let record = SceneRecord {
+        id: None,
+        absolute_time: segment.absolute_time.clone(),
+        character_name: segment.character_name.clone(),
+        scene_name: segment.scene_name.clone(),
+        timer_seconds: segment.timer_seconds,
+        journey_id: Some(segment.journey_id.clone()),
+        segment_index: Some(segment.segment_index),
+        drops: segment
+            .drops
+            .iter()
+            .map(|drop| RuneDropEntry {
+                rune_number: drop.rune_number,
+                rune_name: drop.rune_name.clone(),
+                rune_name_en: Some(drop.rune_name_en.clone()),
+                screenshot_path: None,
+            })
+            .collect(),
+    };
+    let drops_json = serde_json::to_string(&record.drops)
+        .map_err(|error| format!("序列化自动刷图掉落失败: {error}"))?;
+    let db = get_db(&state.app_data_dir)?;
+    let mut conn = db
+        .lock()
+        .map_err(|error| format!("数据库锁失败: {error}"))?;
+    let transaction = conn
+        .transaction()
+        .map_err(|error| format!("开始自动刷图保存事务失败: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO scene_records
+             (absolute_time, character_name, scene_name, timer_seconds, journey_id, segment_index, drops_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                &record.absolute_time,
+                &record.character_name,
+                &record.scene_name,
+                record.timer_seconds,
+                &record.journey_id,
+                record.segment_index,
+                drops_json,
+            ],
+        )
+        .map_err(|error| format!("保存自动刷图记录失败: {error}"))?;
+    let scene_record_id = transaction.last_insert_rowid();
+    for observation_id in segment
+        .drops
+        .iter()
+        .map(|drop| drop.observation_id)
+        .filter(|observation_id| *observation_id > 0)
+    {
+        transaction
+            .execute(
+                "UPDATE rune_drop_observations SET scene_record_id = ?1 WHERE id = ?2",
+                rusqlite::params![scene_record_id, observation_id],
+            )
+            .map_err(|error| format!("关联掉落观测与场次失败: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("提交自动刷图保存事务失败: {error}"))?;
+    Ok(scene_record_id)
+}
+
+fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT id, absolute_time, character_name, scene_name, timer_seconds,
+                    journey_id, segment_index, drops_json
+             FROM scene_records ORDER BY id ASC",
+        )
+        .map_err(|e| format!("查询准备失败: {e}"))?;
+    let records = stmt
+        .query_map([], |row| {
+            let drops_json: String = row.get(7)?;
+            Ok(SceneRecord {
+                id: Some(row.get(0)?),
+                absolute_time: row.get(1)?,
+                character_name: row.get(2)?,
+                scene_name: row.get(3)?,
+                timer_seconds: row.get(4)?,
+                journey_id: row.get(5)?,
+                segment_index: row.get(6)?,
+                drops: migrate_legacy_drops(&drops_json),
+            })
+        })
+        .map_err(|e| format!("查询执行失败: {e}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| format!("读取场景记录失败: {e}"))?;
+    Ok(records)
+}
+
+fn query_merge_strategies(conn: &Connection) -> Result<Vec<MergeStrategy>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, name, scene_names_json FROM stats_merge_strategies ORDER BY id ASC")
+        .map_err(|e| format!("准备查询统计策略失败: {e}"))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .map_err(|e| format!("查询统计策略失败: {e}"))?;
+    let mut strategies = Vec::new();
+    for row in rows {
+        let (id, name, scene_names_json) = row.map_err(|e| format!("读取统计策略失败: {e}"))?;
+        let scene_names = serde_json::from_str(&scene_names_json)
+            .map_err(|e| format!("统计策略“{name}”的数据损坏: {e}"))?;
+        strategies.push(MergeStrategy {
+            id,
+            name,
+            scene_names,
+        });
+    }
+    Ok(strategies)
+}
+
+fn normalize_strategy(
+    name: &str,
+    scene_names: Vec<String>,
+) -> Result<(String, Vec<String>), String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("策略名称不能为空".to_string());
+    }
+    if name.chars().count() > 40 {
+        return Err("策略名称不能超过 40 个字符".to_string());
+    }
+    if scene_names.len() > 64 {
+        return Err("单个策略最多包含 64 个场景".to_string());
+    }
+    let mut normalized = Vec::new();
+    for scene_name in scene_names {
+        let scene_name = scene_name.trim().to_string();
+        if scene_name.chars().count() > 100 {
+            return Err("场景名称不能超过 100 个字符".to_string());
+        }
+        if !scene_name.is_empty() && !normalized.contains(&scene_name) {
+            normalized.push(scene_name);
+        }
+    }
+    if normalized.is_empty() {
+        return Err("至少选择一个野外场景".to_string());
+    }
+    Ok((name, normalized))
+}
+
+fn insert_merge_strategy(
+    conn: &Connection,
+    name: &str,
+    scene_names: Vec<String>,
+) -> Result<MergeStrategy, String> {
+    let (name, scene_names) = normalize_strategy(name, scene_names)?;
+    let scene_names_json =
+        serde_json::to_string(&scene_names).map_err(|e| format!("序列化统计策略失败: {e}"))?;
+    conn.execute(
+        "INSERT INTO stats_merge_strategies (name, scene_names_json) VALUES (?1, ?2)",
+        rusqlite::params![&name, scene_names_json],
+    )
+    .map_err(|e| format!("保存统计策略失败（名称不可重复）: {e}"))?;
+    Ok(MergeStrategy {
+        id: conn.last_insert_rowid(),
+        name,
+        scene_names,
+    })
 }
 
 /// 获取所有统计数据（结构体形式，供前端使用）
@@ -156,29 +486,44 @@ pub fn save_scene_record(
 pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
+    let records = query_scene_records(&conn)?;
+    let observations = query_rune_drop_observations(&conn)?;
+    let strategies = query_merge_strategies(&conn)?;
 
+    Ok(StatsData {
+        records,
+        observations,
+        strategies,
+    })
+}
+
+fn query_rune_drop_observations(conn: &Connection) -> Result<Vec<RuneDropObservation>, String> {
     let mut stmt = conn
-        .prepare("SELECT id, absolute_time, character_name, scene_name, timer_seconds, drops_json FROM scene_records ORDER BY id ASC")
-        .map_err(|e| format!("查询准备失败: {}", e))?;
-
-    let records: Vec<SceneRecord> = stmt
+        .prepare(
+            "SELECT id, observed_at, account_id, rune_number, rune_name, rune_name_en,
+                    confidence, source, scene_record_id
+             FROM rune_drop_observations
+             ORDER BY id ASC",
+        )
+        .map_err(|error| format!("准备查询符文声纹观测失败: {error}"))?;
+    let observations = stmt
         .query_map([], |row| {
-            let drops_json: String = row.get(5)?;
-            let drops = migrate_legacy_drops(&drops_json);
-            Ok(SceneRecord {
-                id: Some(row.get(0)?),
-                absolute_time: row.get(1)?,
-                character_name: row.get(2)?,
-                scene_name: row.get(3)?,
-                timer_seconds: row.get(4)?,
-                drops,
+            Ok(RuneDropObservation {
+                id: row.get(0)?,
+                observed_at: row.get(1)?,
+                account_id: row.get(2)?,
+                rune_number: row.get(3)?,
+                rune_name: row.get(4)?,
+                rune_name_en: row.get(5)?,
+                confidence: row.get(6)?,
+                source: row.get(7)?,
+                scene_record_id: row.get(8)?,
             })
         })
-        .map_err(|e| format!("查询执行失败: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
-
-    Ok(StatsData { records })
+        .map_err(|error| format!("查询符文声纹观测失败: {error}"))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("读取符文声纹观测失败: {error}"))?;
+    Ok(observations)
 }
 
 /// 获取统计数据 JSON 字符串（用于嵌入 HTML 页面）
@@ -341,7 +686,7 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                 let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(3)));
 
                 // 读取请求头
-                let mut buf = [0u8; 4096];
+                let mut buf = [0u8; 16 * 1024];
                 let n = match stream.read(&mut buf) {
                     Ok(n) if n > 0 => n,
                     _ => continue,
@@ -368,7 +713,72 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                     let query_str = path_parts_split.next().unwrap_or("");
                     let query_params = parse_query(query_str);
 
-                    if method == "POST" && path == "/api/scenes/rename" {
+                    if method == "POST" && path == "/api/strategies" {
+                        let name = query_params.get("name").cloned().unwrap_or_default();
+                        let scenes_json = query_params.get("scenes").cloned().unwrap_or_default();
+                        let scene_names = serde_json::from_str::<Vec<String>>(&scenes_json)
+                            .map_err(|error| format!("场景列表格式无效: {error}"));
+                        match scene_names {
+                            Ok(scene_names) => match get_db(&app_data_dir) {
+                                Ok(db) => match db.lock() {
+                                    Ok(conn) => match insert_merge_strategy(&conn, &name, scene_names) {
+                                        Ok(strategy) => {
+                                            let body = serde_json::json!({"ok": true, "strategy": strategy});
+                                            resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                        Err(error) => {
+                                            let body = serde_json::json!({"ok": false, "error": error});
+                                            resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                    },
+                                    Err(error) => {
+                                        let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                        resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                    }
+                                },
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            },
+                            Err(error) => {
+                                let body = serde_json::json!({"ok": false, "error": error});
+                                resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                        }
+                    } else if method == "DELETE" && path.starts_with("/api/strategies/") {
+                        let id_str = path.trim_start_matches("/api/strategies/");
+                        if let Ok(strategy_id) = id_str.parse::<i64>() {
+                            match get_db(&app_data_dir) {
+                                Ok(db) => match db.lock() {
+                                    Ok(conn) => match conn.execute(
+                                        "DELETE FROM stats_merge_strategies WHERE id = ?1",
+                                        rusqlite::params![strategy_id],
+                                    ) {
+                                        Ok(affected) => {
+                                            let body = serde_json::json!({"ok": true, "deleted": affected});
+                                            resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                        Err(error) => {
+                                            let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                            resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                    },
+                                    Err(error) => {
+                                        let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                        resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                    }
+                                },
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            }
+                        } else {
+                            let body = serde_json::json!({"ok": false, "error": "无效的策略 ID"});
+                            resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                        }
+                    } else if method == "POST" && path == "/api/scenes/rename" {
                         let from_name = query_params.get("from").cloned().unwrap_or_default();
                         let to_name = query_params.get("to").cloned().unwrap_or_default();
                         if from_name.is_empty() || to_name.is_empty() {
@@ -439,6 +849,38 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                             }
                         } else {
                             let body = serde_json::json!({"ok": false, "error": "无效的记录 ID"});
+                            resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                        }
+                    } else if method == "DELETE" && path.starts_with("/api/observations/") {
+                        let id_str = path.trim_start_matches("/api/observations/");
+                        if let Ok(observation_id) = id_str.parse::<i64>() {
+                            match get_db(&app_data_dir) {
+                                Ok(db) => match db.lock() {
+                                    Ok(conn) => match conn.execute(
+                                        "DELETE FROM rune_drop_observations WHERE id = ?1",
+                                        rusqlite::params![observation_id],
+                                    ) {
+                                        Ok(affected) => {
+                                            let body = serde_json::json!({"ok": true, "deleted": affected});
+                                            resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                        Err(error) => {
+                                            let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                            resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                    },
+                                    Err(error) => {
+                                        let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                        resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                    }
+                                },
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            }
+                        } else {
+                            let body = serde_json::json!({"ok": false, "error": "无效的声纹观测 ID"});
                             resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
                         }
                     } else if method == "DELETE" && path.starts_with("/api/records/") {
@@ -641,27 +1083,79 @@ pub fn open_stats_page(
 fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
     let db = get_db(app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
+    let records = query_scene_records(&conn)?;
+    let observations = query_rune_drop_observations(&conn)?;
+    let strategies = query_merge_strategies(&conn)?;
 
-    let mut stmt = conn
-        .prepare("SELECT id, absolute_time, character_name, scene_name, timer_seconds, drops_json FROM scene_records ORDER BY id ASC")
-        .map_err(|e| format!("查询准备失败: {}", e))?;
+    Ok(StatsData {
+        records,
+        observations,
+        strategies,
+    })
+}
 
-    let records: Vec<SceneRecord> = stmt
-        .query_map([], |row| {
-            let drops_json: String = row.get(5)?;
-            let drops = migrate_legacy_drops(&drops_json);
-            Ok(SceneRecord {
-                id: Some(row.get(0)?),
-                absolute_time: row.get(1)?,
-                character_name: row.get(2)?,
-                scene_name: row.get(3)?,
-                timer_seconds: row.get(4)?,
-                drops,
+#[cfg(test)]
+mod tests {
+    use super::{ensure_scene_segment_columns, normalize_strategy};
+    use rusqlite::Connection;
+
+    #[test]
+    fn legacy_scene_table_gains_journey_and_segment_columns_without_losing_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE scene_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                absolute_time TEXT NOT NULL,
+                character_name TEXT NOT NULL,
+                scene_name TEXT NOT NULL,
+                timer_seconds REAL NOT NULL,
+                drops_json TEXT NOT NULL DEFAULT '[]'
+            );
+            INSERT INTO scene_records
+                (absolute_time, character_name, scene_name, timer_seconds, drops_json)
+            VALUES ('2026/08/26/12:00:00', '旧角色', '旧场景', 10.0, '[]');",
+        )
+        .unwrap();
+
+        ensure_scene_segment_columns(&conn).unwrap();
+        ensure_scene_segment_columns(&conn).unwrap();
+        let columns = conn
+            .prepare("PRAGMA table_info(scene_records)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(columns.contains(&"journey_id".to_string()));
+        assert!(columns.contains(&"segment_index".to_string()));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM scene_records", [], |row| {
+                row.get::<_, i64>(0)
             })
-        })
-        .map_err(|e| format!("查询执行失败: {}", e))?
-        .filter_map(|r| r.ok())
-        .collect();
+            .unwrap(),
+            1
+        );
+    }
 
-    Ok(StatsData { records })
+    #[test]
+    fn strategy_normalization_trims_and_deduplicates_scene_names() {
+        let (name, scenes) = normalize_strategy(
+            " 女伯爵 ",
+            vec![
+                "黑色荒地".to_string(),
+                " 遗忘之塔地牢第1层 ".to_string(),
+                "黑色荒地".to_string(),
+                "".to_string(),
+            ],
+        )
+        .unwrap();
+        assert_eq!(name, "女伯爵");
+        assert_eq!(scenes, ["黑色荒地", "遗忘之塔地牢第1层"]);
+    }
+
+    #[test]
+    fn strategy_requires_a_name_and_at_least_one_scene() {
+        assert!(normalize_strategy("", vec!["黑色荒地".to_string()]).is_err());
+        assert!(normalize_strategy("女伯爵", vec![" ".to_string()]).is_err());
+    }
 }
