@@ -544,7 +544,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     try {
       const report = await invoke<{
         output_directory: string;
-        processed: Array<{ marker_label: string; confidence: number }>;
+        processed: Array<{
+          marker_label: string;
+          confidence: number;
+          loop_start_frame: number | null;
+          loop_tail_frames: number;
+        }>;
         missing_runes: number[];
         missing_areas: number[];
         missing_frontend: boolean;
@@ -1517,7 +1522,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   {runeFlacOutput && (
                     <p className="text-2xs text-success break-all">输出目录：{runeFlacOutput}</p>
                   )}
-                  <p className="text-2xs text-warning">处理器可能补长很短的音频；请确保 mod 声音配置不会按旧 Duration 提前截断，并保持游戏音效实际输出。</p>
+                  <p className="text-2xs text-warning">处理器会为符文追加 0.25 秒静音循环尾段，并在清单写入循环起点；请配合 v9 Mod 使用，且保持游戏音效实际输出。</p>
                   <div className="border-t border-border-default/50 pt-3">
                     <Button
                       size="sm"

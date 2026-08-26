@@ -12,6 +12,9 @@ use std::path::{Path, PathBuf};
 
 const OUTPUT_DIRECTORY_NAME: &str = "D2RHubTagged";
 const MANIFEST_FILE_NAME: &str = "d2rhub-audio-manifest.json";
+/// 地面物品的 AudioEmitter 没有一次性模式；符文尾部保留一段静音，
+/// 供 Sounds.txt 从该位置持续循环，避免同一个地面对象再次播报。
+pub const RUNE_LOOP_TAIL_SECONDS: f32 = 0.25;
 
 fn next_default_output_directory(input_directory: &Path) -> PathBuf {
     let first = input_directory.join(OUTPUT_DIRECTORY_NAME);
@@ -46,6 +49,8 @@ pub struct ProcessedFlac {
     pub confidence: f32,
     pub frames_added: usize,
     pub output_gain: f32,
+    pub loop_start_frame: Option<usize>,
+    pub loop_tail_frames: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +182,15 @@ fn process_one(
         marker,
         config,
     )?;
+    let (loop_start_frame, loop_tail_frames) = match marker {
+        TelemetryMarker::Rune { .. } => {
+            let loop_start = samples.len() / channels as usize;
+            let tail_frames = (sample_rate as f32 * RUNE_LOOP_TAIL_SECONDS).round() as usize;
+            samples.resize(samples.len() + tail_frames * channels as usize, 0);
+            (Some(loop_start), tail_frames)
+        }
+        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => (None, 0),
+    };
 
     let temp_path = output_path.with_extension("flac.d2rhub.tmp");
     if temp_path.exists() {
@@ -190,10 +204,19 @@ fn process_one(
             decode_flac(&temp_path)?;
         let mono =
             interleaved_i32_to_mono(&verified_samples, verified_channels as usize, verified_bits)?;
-        let detections = detect_markers(&mono, verified_rate, config.detection_threshold);
-        detections
+        let detections = detect_markers(&mono, verified_rate, config.detection_threshold)
             .into_iter()
             .filter(|detection| detection.marker == marker)
+            .collect::<Vec<_>>();
+        if detections.len() != 1 {
+            return Err(format!(
+                "输出自检要求{}恰好出现一次，实际识别到 {} 次",
+                marker_label(marker),
+                detections.len()
+            ));
+        }
+        detections
+            .into_iter()
             .max_by(|left, right| {
                 left.confidence
                     .partial_cmp(&right.confidence)
@@ -225,6 +248,8 @@ fn process_one(
         confidence: detection.confidence,
         frames_added: embedding.frames_added,
         output_gain: embedding.output_gain,
+        loop_start_frame,
+        loop_tail_frames,
     })
 }
 
@@ -349,8 +374,8 @@ pub async fn process_rune_flac_directory(request: BatchRequest) -> Result<BatchR
 #[cfg(test)]
 mod tests {
     use super::{
-        encode_flac, marker_from_path, next_default_output_directory, process_directory,
-        BatchRequest,
+        decode_flac, encode_flac, marker_from_path, next_default_output_directory,
+        process_directory, BatchRequest, RUNE_LOOP_TAIL_SECONDS,
     };
     use crate::rune_audio::catalog::TelemetryMarker;
     use std::path::Path;
@@ -450,6 +475,22 @@ mod tests {
         );
         assert_eq!(report.processed[3].marker, TelemetryMarker::Frontend);
         assert!(report.processed.iter().all(|item| item.confidence > 0.8));
+        let expected_tail_frames = (sample_rate as f32 * RUNE_LOOP_TAIL_SECONDS).round() as usize;
+        for item in &report.processed[..2] {
+            assert_eq!(item.loop_tail_frames, expected_tail_frames);
+            assert!(item.loop_start_frame.is_some());
+            let (tagged, _, tagged_channels, _) =
+                decode_flac(Path::new(&item.output_path)).unwrap();
+            let loop_start = item.loop_start_frame.unwrap() * tagged_channels as usize;
+            assert_eq!(
+                tagged.len() - loop_start,
+                expected_tail_frames * tagged_channels as usize
+            );
+            assert!(tagged[loop_start..].iter().all(|sample| *sample == 0));
+        }
+        assert!(report.processed[2..]
+            .iter()
+            .all(|item| item.loop_start_frame.is_none() && item.loop_tail_frames == 0));
         assert!(root
             .join("D2RHubTagged")
             .join("d2rhub-audio-manifest.json")
