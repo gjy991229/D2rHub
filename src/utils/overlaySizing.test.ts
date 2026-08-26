@@ -1,11 +1,9 @@
 import {
+  calculateMiniOverlayResizeBounds,
   calculateMiniOverlaySize,
   initialMiniOverlayLayout,
-  MINI_OVERLAY_MIN_HEIGHT,
   MINI_OVERLAY_SINGLE_MIN_HEIGHT,
-  MINI_OVERLAY_STACKED_MIN_HEIGHT,
   MINI_OVERLAY_STACKED_HEIGHT,
-  miniOverlayMinHeightForLayout,
   normalizeMiniOverlaySize,
   resolveMiniOverlayLayoutAfterResize,
 } from "./overlaySizing";
@@ -30,28 +28,19 @@ export function runTests() {
   );
   assertEqual(
     MINI_OVERLAY_STACKED_HEIGHT,
-    MINI_OVERLAY_MIN_HEIGHT * 2,
-    "the two-row threshold is exactly twice the new minimum height",
+    40,
+    "the layout threshold clears the Windows native resize floor",
   );
-  assertEqual(
-    miniOverlayMinHeightForLayout("single"),
-    MINI_OVERLAY_SINGLE_MIN_HEIGHT,
-    "single-row mode owns the half-height minimum",
-  );
-  assertEqual(
-    miniOverlayMinHeightForLayout("stacked"),
-    MINI_OVERLAY_STACKED_MIN_HEIGHT,
-    "two-row mode keeps the full two-row minimum",
-  );
+  assertEqual(MINI_OVERLAY_SINGLE_MIN_HEIGHT, 20, "single-row mode owns the 20px minimum");
   assertEqual(
     normalizeMiniOverlaySize({ width: 120, height: 4 }),
-    { width: 200, height: 18 },
-    "mini size respects the new half-height minimum",
+    { width: 200, height: 20 },
+    "mini size respects the 20px single-row minimum",
   );
   assertEqual(
     initialMiniOverlayLayout(MINI_OVERLAY_STACKED_HEIGHT),
     "single",
-    "a restored mini window at the old minimum starts in one row",
+    "a restored mini window at 40px starts in one row",
   );
   assertEqual(
     initialMiniOverlayLayout(MINI_OVERLAY_STACKED_HEIGHT + 1),
@@ -59,34 +48,44 @@ export function runTests() {
     "a restored mini window above the threshold starts in two rows",
   );
   assertEqual(
-    initialMiniOverlayLayout(MINI_OVERLAY_STACKED_HEIGHT, "stacked"),
-    "stacked",
-    "a persisted upward resize preserves the two-row threshold state",
-  );
-  assertEqual(
-    resolveMiniOverlayLayoutAfterResize("stacked", 37, 36),
+    resolveMiniOverlayLayoutAfterResize(39),
     "single",
-    "dragging down to the old minimum switches to one row",
+    "a height below 40px uses one row",
   );
   assertEqual(
-    resolveMiniOverlayLayoutAfterResize("stacked", 38, 36.8),
+    resolveMiniOverlayLayoutAfterResize(40),
     "single",
-    "DPI rounding still allows a two-row window to enter one row",
+    "exactly 40px uses one row without changing height",
   );
   assertEqual(
-    resolveMiniOverlayLayoutAfterResize("single", 36, 36),
-    "single",
-    "duplicate resize events at the threshold do not flicker",
-  );
-  assertEqual(
-    resolveMiniOverlayLayoutAfterResize("single", 18, 36),
+    resolveMiniOverlayLayoutAfterResize(40.01),
     "stacked",
-    "dragging up to twice the new minimum restores two rows",
+    "any height above 40px uses two rows",
   );
   assertEqual(
-    resolveMiniOverlayLayoutAfterResize("stacked", 36, 36),
-    "stacked",
-    "duplicate two-row resize events at the threshold remain stable",
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "s", 0, -10),
+    { width: 240, height: 29, offsetX: 0, offsetY: 0 },
+    "custom south resizing can move continuously below the native 39px floor",
+  );
+  assertEqual(
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "s", 0, -30),
+    { width: 240, height: 20, offsetX: 0, offsetY: 0 },
+    "custom south resizing clamps at the 20px minimum",
+  );
+  assertEqual(
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "n", 0, 9),
+    { width: 240, height: 30, offsetX: 0, offsetY: 9 },
+    "custom north resizing keeps the bottom edge anchored",
+  );
+  assertEqual(
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "w", 50, 0),
+    { width: 200, height: 39, offsetX: 40, offsetY: 0 },
+    "custom west resizing clamps width and keeps the right edge anchored",
+  );
+  assertEqual(
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "se", 30, 5),
+    { width: 270, height: 44, offsetX: 0, offsetY: 0 },
+    "custom corner resizing updates both dimensions",
   );
 }
 

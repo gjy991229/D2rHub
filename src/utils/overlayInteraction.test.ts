@@ -33,8 +33,26 @@ export function runTests() {
     "mini and expanded resize preferences are persisted independently",
   );
   assert(
-    !overlaySource.includes("setResizable(false)"),
-    "mini mode remains user-resizable after its preferred size is restored",
+    overlaySource.includes("setResizable(false)")
+      && overlaySource.includes("MINI_OVERLAY_RESIZE_EDGES")
+      && overlaySource.includes("calculateMiniOverlayResizeBounds"),
+    "mini mode bypasses the native Windows resize floor with custom resize handles",
+  );
+  assert(
+    overlaySource.includes("pendingBounds")
+      && overlaySource.includes("moveInFlight")
+      && overlaySource.includes("flushMiniOverlayResize"),
+    "custom mini resizing coalesces native size writes instead of accumulating stale moves",
+  );
+  assert(
+    overlaySource.includes("cancelMiniOverlayResize")
+      && overlaySource.includes("onLostPointerCapture")
+      && overlaySource.includes("flushPromise"),
+    "custom mini resizing cancels safely on capture loss and waits for native writes during mode changes",
+  );
+  assert(
+    overlaySource.includes("|| miniResizeSessionRef.current"),
+    "programmatic north and west resizing cannot accidentally trigger edge docking",
   );
   assert(
     overlaySource.includes("pendingPosition")

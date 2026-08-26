@@ -17,13 +17,15 @@ import { isEnglishLanguage } from "../i18n";
 import { translateTerrorZoneAreaName } from "../data/terrorZoneAreaNames";
 import {
   calculateMiniOverlaySize,
+  calculateMiniOverlayResizeBounds,
   initialMiniOverlayLayout,
   MINI_OVERLAY_MIN_HEIGHT,
   MINI_OVERLAY_MIN_WIDTH,
-  miniOverlayMinHeightForLayout,
   normalizeMiniOverlaySize,
   resolveMiniOverlayLayoutAfterResize,
   type MiniOverlayLayout,
+  type MiniOverlayResizeBounds,
+  type MiniOverlayResizeEdge,
   type OverlaySize,
 } from "../utils/overlaySizing";
 import {
@@ -79,7 +81,6 @@ type OverlayDisplayMode = "mini" | "expanded";
 
 const OVERLAY_MODE_STORAGE_KEY = "d2rhub-information-overlay-mode";
 const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
-const OVERLAY_MINI_LAYOUT_STORAGE_KEY = "d2rhub-information-overlay-mini-layout";
 const OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-information-overlay-expanded-size";
 const EXPANDED_OVERLAY_MIN_WIDTH = 200;
 const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
@@ -96,6 +97,26 @@ interface OverlayDockState {
   phase: OverlayDockPhase;
 }
 
+interface MiniOverlayResizeSession {
+  active: boolean;
+  cancelled: boolean;
+  pointerId: number;
+  edge: MiniOverlayResizeEdge;
+  startScreenX: number;
+  startScreenY: number;
+  startSize: OverlaySize;
+  startLeftPhysical: number;
+  startTopPhysical: number;
+  scaleFactor: number;
+  pendingBounds: MiniOverlayResizeBounds | null;
+  moveInFlight: boolean;
+  flushPromise: Promise<void> | null;
+}
+
+const MINI_OVERLAY_RESIZE_EDGES: MiniOverlayResizeEdge[] = [
+  "n", "s", "e", "w", "ne", "nw", "se", "sw",
+];
+
 function readStoredOverlayMode(): OverlayDisplayMode {
   try {
     return localStorage.getItem(OVERLAY_MODE_STORAGE_KEY) === "mini" ? "mini" : "expanded";
@@ -109,15 +130,6 @@ function normalizeExpandedOverlaySize(size: OverlaySize): OverlaySize {
     width: Math.max(EXPANDED_OVERLAY_MIN_WIDTH, Math.round(size.width)),
     height: Math.max(EXPANDED_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
   };
-}
-
-function readStoredMiniOverlayLayout(): MiniOverlayLayout | null {
-  try {
-    const value = localStorage.getItem(OVERLAY_MINI_LAYOUT_STORAGE_KEY);
-    return value === "single" || value === "stacked" ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 function readStoredOverlaySize(
@@ -151,12 +163,6 @@ function storeMiniOverlaySize(size: OverlaySize) {
   storeOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, size);
 }
 
-function storeMiniOverlayLayout(layout: MiniOverlayLayout) {
-  try {
-    localStorage.setItem(OVERLAY_MINI_LAYOUT_STORAGE_KEY, layout);
-  } catch {}
-}
-
 function storeExpandedOverlaySize(size: OverlaySize) {
   storeOverlaySize(OVERLAY_EXPANDED_SIZE_STORAGE_KEY, size);
 }
@@ -179,19 +185,17 @@ async function resolveDefaultMiniOverlaySize(): Promise<OverlaySize> {
 async function applyMiniOverlaySize(
   win: ReturnType<typeof getCurrentWindow>,
   miniSize: OverlaySize,
-  miniLayout: MiniOverlayLayout,
 ) {
   const logicalSize = new LogicalSize(miniSize.width, miniSize.height);
 
-  await win.setResizable(true);
+  // Native Windows resizing stops an undecorated window near 39px. Mini mode
+  // uses in-app resize handles so its full 20px–40px single-row range remains reachable.
+  await win.setResizable(false);
   await win.setMinSize(null);
   await win.setMaxSize(null);
   await win.setSize(logicalSize);
   await win.setMinSize(
-    new LogicalSize(
-      MINI_OVERLAY_MIN_WIDTH,
-      miniOverlayMinHeightForLayout(miniLayout),
-    ),
+    new LogicalSize(MINI_OVERLAY_MIN_WIDTH, MINI_OVERLAY_MIN_HEIGHT),
   );
 }
 
@@ -325,13 +329,9 @@ export function Overlay() {
   const displayModeRef = useRef(displayMode);
   const miniSizeRef = useRef<OverlaySize | null>(readStoredMiniOverlaySize());
   const [miniLayout, setMiniLayout] = useState<MiniOverlayLayout>(() =>
-    initialMiniOverlayLayout(
-      miniSizeRef.current?.height ?? Number.POSITIVE_INFINITY,
-      readStoredMiniOverlayLayout() ?? "single",
-    ),
+    initialMiniOverlayLayout(miniSizeRef.current?.height ?? Number.POSITIVE_INFINITY),
   );
   const miniLayoutRef = useRef(miniLayout);
-  const miniHeightRef = useRef<number | null>(miniSizeRef.current?.height ?? null);
   const expandedSizeRef = useRef<OverlaySize>(
     readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
   );
@@ -350,6 +350,8 @@ export function Overlay() {
     startX: number;
     startY: number;
   } | null>(null);
+  const miniResizeInitTokenRef = useRef(0);
+  const miniResizeSessionRef = useRef<MiniOverlayResizeSession | null>(null);
   const suppressOverlayDoubleClickUntilRef = useRef(0);
   const [accountStripScrollable, setAccountStripScrollable] = useState(false);
   const dockStateRef = useRef<OverlayDockState | null>(null);
@@ -577,7 +579,13 @@ export function Overlay() {
   }
 
   async function evaluateOverlayDocking() {
-    if (programmaticDockMoveRef.current || modeTransitionRef.current) return;
+    if (
+      programmaticDockMoveRef.current
+      || modeTransitionRef.current
+      || miniResizeSessionRef.current
+    ) {
+      return;
+    }
     try {
       const win = getCurrentWindow();
       const [position, size, monitor, scale] = await Promise.all([
@@ -648,38 +656,18 @@ export function Overlay() {
   }
 
   function restoreMiniLayoutForHeight(height: number) {
-    const nextLayout = initialMiniOverlayLayout(
-      height,
-      readStoredMiniOverlayLayout() ?? "single",
-    );
-    miniHeightRef.current = height;
+    const nextLayout = initialMiniOverlayLayout(height);
     miniLayoutRef.current = nextLayout;
     setMiniLayout(nextLayout);
-    storeMiniOverlayLayout(nextLayout);
     return nextLayout;
   }
 
   function updateMiniLayoutForResize(height: number) {
-    const previousHeight = miniHeightRef.current ?? height;
-    miniHeightRef.current = height;
     const currentLayout = miniLayoutRef.current;
-    const nextLayout = resolveMiniOverlayLayoutAfterResize(
-      currentLayout,
-      previousHeight,
-      height,
-    );
+    const nextLayout = resolveMiniOverlayLayoutAfterResize(height);
     if (nextLayout !== currentLayout) {
       miniLayoutRef.current = nextLayout;
       setMiniLayout(nextLayout);
-      storeMiniOverlayLayout(nextLayout);
-      void getCurrentWindow().setMinSize(
-        new LogicalSize(
-          MINI_OVERLAY_MIN_WIDTH,
-          miniOverlayMinHeightForLayout(nextLayout),
-        ),
-      ).catch((err) => {
-        console.warn("[Overlay] update mini minimum height failed:", err);
-      });
     }
     return nextLayout;
   }
@@ -770,10 +758,14 @@ export function Overlay() {
   async function toggleOverlayDisplayMode() {
     if (modeTransitionRef.current) return;
     modeTransitionRef.current = true;
+    const pendingMiniResize = cancelMiniOverlayResize();
     clearTerrorZonePanelTimer();
     setOverlayPanelHeight(null);
 
     try {
+      // Let an already-issued native resize settle before applying the other
+      // mode's geometry, so a stale callback cannot overwrite the new size.
+      await pendingMiniResize;
       if (dockStateRef.current) {
         await revealDockedOverlay();
       }
@@ -795,13 +787,12 @@ export function Overlay() {
           readStoredMiniOverlaySize() ??
           await resolveDefaultMiniOverlaySize();
         miniSizeRef.current = miniSize;
-        const restoredLayout = restoreMiniLayoutForHeight(miniSize.height);
+        restoreMiniLayoutForHeight(miniSize.height);
         storeMiniOverlaySize(miniSize);
-        await applyMiniOverlaySize(win, miniSize, restoredLayout);
+        await applyMiniOverlaySize(win, miniSize);
       } else {
         const miniSize = normalizeMiniOverlaySize({ width, height });
         miniSizeRef.current = miniSize;
-        miniHeightRef.current = miniSize.height;
         storeMiniOverlaySize(miniSize);
 
         const expandedSize = expandedSizeRef.current;
@@ -918,6 +909,184 @@ export function Overlay() {
     overlayWindowDragStateRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }
+
+  async function flushMiniOverlayResize(session: MiniOverlayResizeSession) {
+    if (
+      session.cancelled
+      || displayModeRef.current !== "mini"
+      || session.moveInFlight
+      || !session.pendingBounds
+    ) {
+      return;
+    }
+
+    const bounds = session.pendingBounds;
+    session.pendingBounds = null;
+    session.moveInFlight = true;
+    const win = getCurrentWindow();
+
+    const operation = (async () => {
+      try {
+        const operations: Promise<void>[] = [
+          win.setSize(new LogicalSize(bounds.width, bounds.height)),
+        ];
+        if (session.edge.includes("w") || session.edge.includes("n")) {
+          operations.push(
+            win.setPosition(
+              new PhysicalPosition(
+                session.startLeftPhysical + Math.round(bounds.offsetX * session.scaleFactor),
+                session.startTopPhysical + Math.round(bounds.offsetY * session.scaleFactor),
+              ),
+            ),
+          );
+        }
+        await Promise.all(operations);
+      } catch (err) {
+        console.warn("[Overlay] custom mini resize failed:", err);
+      }
+    })();
+    session.flushPromise = operation;
+
+    try {
+      await operation;
+    } finally {
+      session.moveInFlight = false;
+      session.flushPromise = null;
+      if (miniResizeSessionRef.current !== session) return;
+      if (!session.cancelled && session.pendingBounds) {
+        void flushMiniOverlayResize(session);
+      } else if (session.cancelled || !session.active) {
+        miniResizeSessionRef.current = null;
+      }
+    }
+  }
+
+  function cancelMiniOverlayResize() {
+    miniResizeInitTokenRef.current += 1;
+    const session = miniResizeSessionRef.current;
+    if (!session) return Promise.resolve();
+
+    session.active = false;
+    session.cancelled = true;
+    session.pendingBounds = null;
+    if (!session.moveInFlight) {
+      miniResizeSessionRef.current = null;
+    }
+    return session.flushPromise ?? Promise.resolve();
+  }
+
+  function handleMiniOverlayResizePointerDown(
+    event: React.PointerEvent<HTMLDivElement>,
+    edge: MiniOverlayResizeEdge,
+  ) {
+    if (
+      event.button !== 0
+      || displayModeRef.current !== "mini"
+      || miniResizeSessionRef.current?.active
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    suppressOverlayDoubleClickUntilRef.current = performance.now() + 350;
+    clearDocking();
+
+    const handle = event.currentTarget;
+    const pointerId = event.pointerId;
+    const startScreenX = event.screenX;
+    const startScreenY = event.screenY;
+    const initToken = miniResizeInitTokenRef.current + 1;
+    miniResizeInitTokenRef.current = initToken;
+    handle.setPointerCapture(pointerId);
+
+    void (async () => {
+      const win = getCurrentWindow();
+      const [size, position, scaleFactor] = await Promise.all([
+        win.outerSize(),
+        win.outerPosition(),
+        win.scaleFactor(),
+      ]);
+      if (
+        miniResizeInitTokenRef.current !== initToken
+        || !handle.hasPointerCapture(pointerId)
+      ) {
+        return;
+      }
+
+      miniResizeSessionRef.current = {
+        active: true,
+        cancelled: false,
+        pointerId,
+        edge,
+        startScreenX,
+        startScreenY,
+        startSize: {
+          width: Math.round(size.width / scaleFactor),
+          height: Math.round(size.height / scaleFactor),
+        },
+        startLeftPhysical: position.x,
+        startTopPhysical: position.y,
+        scaleFactor,
+        pendingBounds: null,
+        moveInFlight: false,
+        flushPromise: null,
+      };
+    })().catch((err) => {
+      console.warn("[Overlay] initialize custom mini resize failed:", err);
+    });
+  }
+
+  function handleMiniOverlayResizePointerMove(event: React.PointerEvent<HTMLDivElement>) {
+    const session = miniResizeSessionRef.current;
+    if (!session?.active || session.pointerId !== event.pointerId) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    session.pendingBounds = calculateMiniOverlayResizeBounds(
+      session.startSize,
+      session.edge,
+      event.screenX - session.startScreenX,
+      event.screenY - session.startScreenY,
+    );
+    void flushMiniOverlayResize(session);
+  }
+
+  function finishMiniOverlayResize(event: React.PointerEvent<HTMLDivElement>) {
+    miniResizeInitTokenRef.current += 1;
+    const session = miniResizeSessionRef.current;
+    if (session?.pointerId === event.pointerId) {
+      session.active = false;
+      if (!session.moveInFlight && !session.pendingBounds) {
+        miniResizeSessionRef.current = null;
+      } else {
+        void flushMiniOverlayResize(session);
+      }
+    }
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function cancelMiniOverlayResizePointerGesture(event: React.PointerEvent<HTMLDivElement>) {
+    const session = miniResizeSessionRef.current;
+    if (session?.active && session.pointerId === event.pointerId) {
+      void cancelMiniOverlayResize();
+    }
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function handleMiniOverlayResizeLostPointerCapture(event: React.PointerEvent<HTMLDivElement>) {
+    const session = miniResizeSessionRef.current;
+    // A normal pointer-up marks the session inactive before releasing capture.
+    // Only an unexpected capture loss should cancel queued native writes.
+    if (session?.active && session.pointerId === event.pointerId) {
+      void cancelMiniOverlayResize();
     }
   }
 
@@ -1106,6 +1275,7 @@ export function Overlay() {
 
   useEffect(() => {
     return () => {
+      void cancelMiniOverlayResize();
       if (terrorZoneCollapseTimerRef.current !== null) {
         window.clearTimeout(terrorZoneCollapseTimerRef.current);
       }
@@ -1213,13 +1383,13 @@ export function Overlay() {
         if (cancelled) return;
 
         miniSizeRef.current = miniSize;
-        const restoredMiniLayout = restoreMiniLayoutForHeight(miniSize.height);
+        restoreMiniLayoutForHeight(miniSize.height);
         expandedSizeRef.current = expandedSize;
         storeMiniOverlaySize(miniSize);
         storeExpandedOverlaySize(expandedSize);
 
         if (displayModeRef.current === "mini") {
-          await applyMiniOverlaySize(win, miniSize, restoredMiniLayout);
+          await applyMiniOverlaySize(win, miniSize);
         } else {
           await applyExpandedOverlaySize(win, expandedSize);
         }
@@ -1309,7 +1479,14 @@ export function Overlay() {
       try {
         const win = getCurrentWindow();
         const stopListening = await win.onMoved(() => {
-          if (cancelled || programmaticDockMoveRef.current || modeTransitionRef.current) return;
+          if (
+            cancelled
+            || programmaticDockMoveRef.current
+            || modeTransitionRef.current
+            || miniResizeSessionRef.current
+          ) {
+            return;
+          }
           clearDockMoveTimer();
           dockMoveTimerRef.current = window.setTimeout(() => {
             dockMoveTimerRef.current = null;
@@ -1579,6 +1756,20 @@ export function Overlay() {
       title={overlayModeToggleTitle}
     >
       {dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
+      {displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
+        <div
+          key={edge}
+          className="overlay-mini-resize-handle"
+          data-mini-resize-edge={edge}
+          data-overlay-interactive="true"
+          aria-hidden="true"
+          onPointerDown={(event) => handleMiniOverlayResizePointerDown(event, edge)}
+          onPointerMove={handleMiniOverlayResizePointerMove}
+          onPointerUp={finishMiniOverlayResize}
+          onPointerCancel={cancelMiniOverlayResizePointerGesture}
+          onLostPointerCapture={handleMiniOverlayResizeLostPointerCapture}
+        />
+      ))}
       <div
         ref={overlayPanelRef}
         className={`overlay-window flex h-full w-full overflow-hidden ${

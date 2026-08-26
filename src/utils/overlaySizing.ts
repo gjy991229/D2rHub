@@ -4,11 +4,16 @@ export interface OverlaySize {
 }
 
 export type MiniOverlayLayout = "single" | "stacked";
+export type MiniOverlayResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+
+export interface MiniOverlayResizeBounds extends OverlaySize {
+  offsetX: number;
+  offsetY: number;
+}
 
 export const MINI_OVERLAY_MIN_WIDTH = 200;
-export const MINI_OVERLAY_SINGLE_MIN_HEIGHT = 18;
-export const MINI_OVERLAY_STACKED_MIN_HEIGHT = MINI_OVERLAY_SINGLE_MIN_HEIGHT * 2;
-export const MINI_OVERLAY_LAYOUT_THRESHOLD = MINI_OVERLAY_STACKED_MIN_HEIGHT;
+export const MINI_OVERLAY_SINGLE_MIN_HEIGHT = 20;
+export const MINI_OVERLAY_LAYOUT_THRESHOLD = 40;
 
 // Kept as compatibility aliases for the window configuration and older callers.
 export const MINI_OVERLAY_MIN_HEIGHT = MINI_OVERLAY_SINGLE_MIN_HEIGHT;
@@ -31,41 +36,47 @@ export function normalizeMiniOverlaySize(size: OverlaySize): OverlaySize {
   };
 }
 
-export function miniOverlayMinHeightForLayout(layout: MiniOverlayLayout): number {
-  return layout === "single"
-    ? MINI_OVERLAY_SINGLE_MIN_HEIGHT
-    : MINI_OVERLAY_STACKED_MIN_HEIGHT;
-}
-
 export function initialMiniOverlayLayout(
   height: number,
-  layoutAtThreshold: MiniOverlayLayout = "single",
 ): MiniOverlayLayout {
-  if (height < MINI_OVERLAY_LAYOUT_THRESHOLD) return "single";
-  if (height > MINI_OVERLAY_LAYOUT_THRESHOLD) return "stacked";
-  return layoutAtThreshold;
+  return height <= MINI_OVERLAY_LAYOUT_THRESHOLD ? "single" : "stacked";
 }
 
 export function resolveMiniOverlayLayoutAfterResize(
-  currentLayout: MiniOverlayLayout,
-  previousHeight: number,
   nextHeight: number,
 ): MiniOverlayLayout {
-  // Windows rounds physical track sizes to whole pixels. At 125%-175% DPI a
-  // logical 36px minimum can therefore arrive as 36.x CSS pixels. The one-pixel
-  // tolerance lets a downward resize cross into the single row on those screens.
-  const dpiRoundingTolerance = 1;
-  if (
-    nextHeight < previousHeight
-    && nextHeight <= MINI_OVERLAY_LAYOUT_THRESHOLD + dpiRoundingTolerance
-  ) {
-    return "single";
-  }
-  if (
-    nextHeight > previousHeight
-    && nextHeight >= MINI_OVERLAY_LAYOUT_THRESHOLD
-  ) {
-    return "stacked";
-  }
-  return currentLayout;
+  return initialMiniOverlayLayout(nextHeight);
+}
+
+export function calculateMiniOverlayResizeBounds(
+  startSize: OverlaySize,
+  edge: MiniOverlayResizeEdge,
+  deltaX: number,
+  deltaY: number,
+): MiniOverlayResizeBounds {
+  const resizeWest = edge.includes("w");
+  const resizeEast = edge.includes("e");
+  const resizeNorth = edge.includes("n");
+  const resizeSouth = edge.includes("s");
+
+  const requestedWidth = resizeWest
+    ? startSize.width - deltaX
+    : resizeEast
+      ? startSize.width + deltaX
+      : startSize.width;
+  const requestedHeight = resizeNorth
+    ? startSize.height - deltaY
+    : resizeSouth
+      ? startSize.height + deltaY
+      : startSize.height;
+  const normalized = normalizeMiniOverlaySize({
+    width: requestedWidth,
+    height: requestedHeight,
+  });
+
+  return {
+    ...normalized,
+    offsetX: resizeWest ? startSize.width - normalized.width : 0,
+    offsetY: resizeNorth ? startSize.height - normalized.height : 0,
+  };
 }
