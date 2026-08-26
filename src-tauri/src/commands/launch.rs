@@ -34,8 +34,8 @@ const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
 
-fn token_launch_is_ready(web_token_read_by_target_pid: bool) -> bool {
-    web_token_read_by_target_pid
+fn token_launch_is_ready(web_token_read_by_target_pid: bool, mutex_closed: bool) -> bool {
+    web_token_read_by_target_pid && mutex_closed
 }
 
 fn acquire_account_leases(
@@ -1828,16 +1828,52 @@ async fn launch_single_token(
 
     // ── 杀 Mutex ──
     let mutex_killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mutex_found_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let mutex_last_error = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
     let mutex_task = {
         let killed = mutex_killed.clone();
+        let found = mutex_found_once.clone();
+        let last_error = mutex_last_error.clone();
         tokio::spawn(async move {
-            for _ in 0..60 {
-                if let Ok(Some(hid)) =
-                    crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
-                {
-                    let _ = crate::commands::system::close_handle(d2r_pid, &hid);
-                    killed.store(true, std::sync::atomic::Ordering::SeqCst);
-                    break;
+            for _ in 0..120 {
+                match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
+                    Ok(Some(hid)) => {
+                        found.store(true, std::sync::atomic::Ordering::SeqCst);
+                        match crate::commands::system::close_handle(d2r_pid, &hid) {
+                            Ok(()) => {
+                                match crate::commands::system::find_mutex_handle(
+                                    d2r_pid, MUTEX_NAME,
+                                ) {
+                                    Ok(None) => {
+                                        killed.store(true, std::sync::atomic::Ordering::SeqCst);
+                                        break;
+                                    }
+                                    Ok(Some(_)) => {
+                                        if let Ok(mut error) = last_error.lock() {
+                                            *error = Some("关闭后仍检测到互斥句柄".to_string());
+                                        }
+                                    }
+                                    Err(error) => {
+                                        if let Ok(mut last_error) = last_error.lock() {
+                                            *last_error =
+                                                Some(format!("确认互斥句柄清除失败: {error}"));
+                                        }
+                                    }
+                                }
+                            }
+                            Err(error) => {
+                                if let Ok(mut last_error) = last_error.lock() {
+                                    *last_error = Some(error.to_string());
+                                }
+                            }
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        if let Ok(mut last_error) = last_error.lock() {
+                            *last_error = Some(error.to_string());
+                        }
+                    }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
@@ -1858,29 +1894,61 @@ async fn launch_single_token(
 
     let start = std::time::Instant::now();
     let timeout = std::time::Duration::from_secs(60);
-    let mut token_ready = token_launch_is_ready(token_read_monitor.was_read_by(d2r_pid));
+    let mut web_token_read = token_read_monitor.was_read_by(d2r_pid);
+    let mut mutex_closed = mutex_killed.load(std::sync::atomic::Ordering::SeqCst);
+    let mut launch_ready = token_launch_is_ready(web_token_read, mutex_closed);
+    let mut token_read_logged = false;
+    let mut mutex_closed_logged = false;
 
-    while !token_ready && start.elapsed() < timeout {
+    while !launch_ready && start.elapsed() < timeout {
         if is_cancelled(state) {
             mutex_task.abort();
             intro_skip_task.abort();
             return cancelled();
         }
 
-        if token_launch_is_ready(token_read_monitor.was_read_by(d2r_pid)) {
-            token_ready = true;
-            break;
+        web_token_read = token_read_monitor.was_read_by(d2r_pid);
+        mutex_closed = mutex_killed.load(std::sync::atomic::Ordering::SeqCst);
+        if web_token_read && !token_read_logged {
+            emit("connect", "ok", "检测到 D2R 已读取 WEB_TOKEN");
+            token_read_logged = true;
         }
+        if mutex_closed && !mutex_closed_logged {
+            emit("mutex", "ok", "互斥句柄已清除");
+            mutex_closed_logged = true;
+        }
+        launch_ready = token_launch_is_ready(web_token_read, mutex_closed);
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if !launch_ready {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
     }
 
-    if !token_ready {
+    if !launch_ready {
+        let mutex_status = if mutex_closed {
+            "已清除".to_string()
+        } else if mutex_found_once.load(std::sync::atomic::Ordering::SeqCst) {
+            mutex_last_error
+                .lock()
+                .ok()
+                .and_then(|error| error.clone())
+                .map(|error| format!("已检测到但未能确认清除（{error}）"))
+                .unwrap_or_else(|| "已检测到但未能确认清除".to_string())
+        } else {
+            "未检测到".to_string()
+        };
         let error = format!(
-            "等待 D2R 读取 WEB_TOKEN 超时：{}",
+            "等待 Token 消费与互斥句柄清除超时：WEB_TOKEN {}，互斥句柄 {}，{}",
+            if web_token_read {
+                "已读取"
+            } else {
+                "未读取"
+            },
+            mutex_status,
             token_read_monitor.diagnostics()
         );
         emit("connect", "error", &error);
+        emit("mutex", "error", &error);
         mutex_task.abort();
         intro_skip_task.abort();
         return LaunchResult {
@@ -1891,13 +1959,9 @@ async fn launch_single_token(
             mutex_killed: false,
         };
     }
-    emit("connect", "ok", "检测到 D2R 已读取 WEB_TOKEN");
+    let _ = mutex_task.await;
     if let Err(error) = token_read_monitor.stop() {
         crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
-    }
-
-    if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
-        emit("mutex", "ok", "互斥句柄已清除");
     }
 
     // 更新最后启动时间
@@ -2027,12 +2091,15 @@ mod tests {
 
     #[test]
     fn stable_game_network_does_not_prove_the_token_was_consumed() {
-        assert!(!token_launch_is_ready(false));
+        assert!(!token_launch_is_ready(false, false));
     }
 
     #[test]
-    fn target_pid_web_token_read_allows_next_token_launch() {
-        assert!(token_launch_is_ready(true));
+    fn token_read_and_closed_mutex_are_both_required_for_next_launch() {
+        assert!(!token_launch_is_ready(false, false));
+        assert!(!token_launch_is_ready(false, true));
+        assert!(!token_launch_is_ready(true, false));
+        assert!(token_launch_is_ready(true, true));
     }
 
     #[test]
