@@ -9,7 +9,7 @@ use ferrisetw::EventRecord;
 
 const KERNEL_REGISTRY_PROVIDER_GUID: &str = "70eb4f03-c1de-4f73-a051-33d13d5413bd";
 const QUERY_VALUE_EVENT_ID: u16 = 7;
-const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
+pub(crate) const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
 
 #[derive(Default)]
 struct ObservationState {

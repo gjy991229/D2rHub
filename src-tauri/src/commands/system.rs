@@ -259,7 +259,7 @@ unsafe fn get_system_handles() -> Result<Vec<SYSTEM_HANDLE_TABLE_ENTRY_INFO_EX>,
     Ok(handles)
 }
 
-unsafe fn detect_event_type_index() -> Option<u16> {
+unsafe fn detect_event_type_index() -> Result<u16, AppError> {
     use std::ffi::OsStr;
     use std::os::windows::ffi::OsStrExt;
 
@@ -281,46 +281,70 @@ unsafe fn detect_event_type_index() -> Option<u16> {
     // 创建 Event
     let event_handle = CreateEventW(std::ptr::null_mut(), 0, 0, name.as_ptr());
     if event_handle.is_null() {
-        return None;
+        return Err(AppError::FileError(
+            "创建 Event 类型探测句柄失败".to_string(),
+        ));
     }
 
-    let mut type_index = None;
-    if let Ok(handles) = get_system_handles() {
+    let result = get_system_handles().and_then(|handles| {
         let current_pid = std::process::id() as usize;
         for entry in handles {
             if entry.UniqueProcessId == current_pid && entry.HandleValue == event_handle as usize {
-                type_index = Some(entry.ObjectTypeIndex);
-                break;
+                return Ok(entry.ObjectTypeIndex);
             }
         }
-    }
+        Err(AppError::FileError(
+            "无法识别 Event 句柄类型索引".to_string(),
+        ))
+    });
 
     CloseHandle(event_handle);
-    type_index
+    result
 }
 
-unsafe fn get_object_name(handle: *mut c_void) -> Option<String> {
-    let size = 1024;
-    let mut buffer = vec![0u8; size];
-    let mut return_length = 0u32;
+unsafe fn get_object_name(handle: *mut c_void) -> Result<Option<String>, AppError> {
+    let mut size = 1024usize;
+    for _ in 0..3 {
+        let mut buffer = vec![0u8; size];
+        let mut return_length = 0u32;
+        let status = NtQueryObject(
+            handle,
+            1, // ObjectNameInformation
+            buffer.as_mut_ptr() as *mut c_void,
+            size as u32,
+            &mut return_length,
+        );
 
-    let status = NtQueryObject(
-        handle,
-        1, // ObjectNameInformation
-        buffer.as_mut_ptr() as *mut c_void,
-        size as u32,
-        &mut return_length,
-    );
-
-    if status == STATUS_SUCCESS {
-        let info = buffer.as_ptr() as *const OBJECT_NAME_INFORMATION;
-        let len = (*info).Name.Length as usize / 2;
-        if len > 0 && !(*info).Name.Buffer.is_null() {
-            let slice = std::slice::from_raw_parts((*info).Name.Buffer, len);
-            return Some(String::from_utf16_lossy(slice));
+        if status == STATUS_INFO_LENGTH_MISMATCH {
+            size = (return_length as usize).max(size.saturating_mul(2));
+            continue;
         }
+        if status != STATUS_SUCCESS {
+            return Err(AppError::FileError(format!(
+                "NtQueryObject 读取句柄名称失败: {status:#x}"
+            )));
+        }
+
+        let info = buffer.as_ptr() as *const OBJECT_NAME_INFORMATION;
+        let name_bytes = (*info).Name.Length as usize;
+        if name_bytes == 0 || (*info).Name.Buffer.is_null() {
+            return Ok(None);
+        }
+        let name_start = (*info).Name.Buffer as usize;
+        let buffer_start = buffer.as_ptr() as usize;
+        let buffer_end = buffer_start.saturating_add(buffer.len());
+        let name_end = name_start
+            .checked_add(name_bytes)
+            .ok_or_else(|| AppError::FileError("句柄名称缓冲区长度溢出".to_string()))?;
+        if name_start < buffer_start || name_end > buffer_end || !name_bytes.is_multiple_of(2) {
+            return Err(AppError::FileError("句柄名称缓冲区范围无效".to_string()));
+        }
+        let slice = std::slice::from_raw_parts((*info).Name.Buffer, name_bytes / 2);
+        return Ok(Some(String::from_utf16_lossy(slice)));
     }
-    None
+    Err(AppError::FileError(
+        "句柄名称缓冲区连续扩容后仍不足".to_string(),
+    ))
 }
 
 /// 查询指定进程持有的 Event 句柄 (为兼容前端通信，保持函数名不变)
@@ -331,14 +355,13 @@ pub fn find_mutex_handle(
 ) -> Result<Option<String>, AppError> {
     unsafe {
         // 获取当前系统环境下 Event 类型的索引
-        let event_index = match detect_event_type_index() {
-            Some(idx) => idx,
-            None => return Ok(None),
-        };
+        let event_index = detect_event_type_index()?;
 
         let target_process_handle = OpenProcess(0x0040, 0, pid); // PROCESS_DUP_HANDLE
         if target_process_handle.is_null() {
-            return Ok(None);
+            return Err(AppError::FileError(
+                "无法打开目标进程以查询互斥句柄".to_string(),
+            ));
         }
 
         let handles = match get_system_handles() {
@@ -350,6 +373,7 @@ pub fn find_mutex_handle(
         };
 
         let current_process = -1isize as *mut c_void;
+        let mut incomplete_reason = None;
         for entry in handles {
             // 严格过滤：PID 匹配且句柄类型必须是 Event
             if entry.UniqueProcessId == pid as usize && entry.ObjectTypeIndex == event_index {
@@ -365,21 +389,28 @@ pub fn find_mutex_handle(
                 );
 
                 if success != 0 {
-                    if let Some(name) = get_object_name(dup_handle) {
-                        CloseHandle(dup_handle);
-                        // 匹配 Event 名称
-                        if name.contains(event_name) {
+                    let name_result = get_object_name(dup_handle);
+                    CloseHandle(dup_handle);
+                    match name_result {
+                        Ok(Some(name)) if name.contains(event_name) => {
                             CloseHandle(target_process_handle);
                             return Ok(Some(entry.HandleValue.to_string()));
                         }
-                    } else {
-                        CloseHandle(dup_handle);
+                        Ok(_) => {}
+                        Err(error) => {
+                            incomplete_reason = Some(error.to_string());
+                        }
                     }
+                } else {
+                    incomplete_reason = Some("复制目标进程 Event 句柄失败".to_string());
                 }
             }
         }
 
         CloseHandle(target_process_handle);
+        if let Some(reason) = incomplete_reason {
+            return Err(AppError::FileError(format!("互斥句柄扫描不完整: {reason}")));
+        }
     }
     Ok(None)
 }
@@ -431,15 +462,9 @@ struct MIB_TCPROW_OWNER_PID {
 
 #[repr(C)]
 #[allow(non_snake_case)]
-struct MIB_TCP6ROW_OWNER_PID {
-    ucLocalAddr: [u8; 16],
-    dwLocalScopeId: u32,
-    dwLocalPort: u32,
-    ucRemoteAddr: [u8; 16],
-    dwRemoteScopeId: u32,
-    dwRemotePort: u32,
-    dwState: u32,
-    dwOwningPid: u32,
+struct MIB_TCPTABLE_OWNER_PID {
+    dwNumEntries: u32,
+    table: [MIB_TCPROW_OWNER_PID; 1],
 }
 
 extern "system" {
@@ -453,132 +478,61 @@ extern "system" {
     ) -> u32;
 }
 
-const AF_INET: u32 = 2;
-const AF_INET6: u32 = 23;
-const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
-const MIB_TCP_STATE_ESTAB: u32 = 5;
-const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
-
-fn tcp_connection_indicates_online_readiness(
-    target_pid: u32,
-    owning_pid: u32,
-    state: u32,
-    _remote_port: u16,
-) -> bool {
-    // 这只是联网辅助信号，不代表 Token 已消费或已进入大厅。服务器端口会变，
-    // 而且加速器可能将连接终结在本机，因此只使用 PID + ESTABLISHED 信号。
-    owning_pid == target_pid && state == MIB_TCP_STATE_ESTAB
-}
-
-struct TcpTableSnapshot {
-    words: Vec<u32>,
-    byte_len: usize,
-}
-
-fn query_tcp_table(address_family: u32) -> Option<TcpTableSnapshot> {
+/// 检查指定进程是否已建立 TCP 1119 端口连接（连接游戏大厅）
+#[tauri::command]
+pub fn check_game_connected(pid: u32) -> bool {
     unsafe {
-        let mut required_size = 0u32;
-        let initial_result = GetExtendedTcpTable(
+        let mut size = 0u32;
+        // 第一次调用获取所需缓冲区大小
+        GetExtendedTcpTable(
             std::ptr::null_mut(),
-            &mut required_size,
+            &mut size,
             0,
-            address_family,
-            TCP_TABLE_OWNER_PID_ALL,
+            2, // AF_INET
+            5, // TCP_TABLE_OWNER_PID_ALL
             0,
         );
-        if initial_result != 0 && initial_result != ERROR_INSUFFICIENT_BUFFER {
-            return None;
-        }
 
-        // TCP 表在两次 API 调用之间可能增长；按 API 返回的新尺寸有界重试。
-        for _ in 0..3 {
-            if required_size < std::mem::size_of::<u32>() as u32 {
-                return None;
+        let mut buffer = vec![0u8; size as usize];
+        let res = GetExtendedTcpTable(
+            buffer.as_mut_ptr() as *mut c_void,
+            &mut size,
+            0,
+            2, // AF_INET
+            5, // TCP_TABLE_OWNER_PID_ALL
+            0,
+        );
+
+        if res == 0 {
+            let table = buffer.as_ptr() as *const MIB_TCPTABLE_OWNER_PID;
+            let num_entries = (*table).dwNumEntries as usize;
+
+            // 安全边界检查，防止句柄表解析越界
+            let max_possible = (size as usize - std::mem::size_of::<u32>())
+                / std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
+            let actual_num = num_entries.min(max_possible);
+
+            let table_ptr = (*table).table.as_ptr();
+            for i in 0..actual_num {
+                let row = &*table_ptr.add(i);
+                if row.dwOwningPid == pid {
+                    // dwState == 5 表示 MIB_TCP_STATE_ESTAB（已建立连接）
+                    if row.dwState == 5 {
+                        let port = u16::from_be((row.dwRemotePort & 0xFFFF) as u16);
+                        if port == 1119 {
+                            let remote_ip = row.dwRemoteAddr;
+                            // 排除回环地址 (127.0.0.1 字节序对应关系)
+                            if remote_ip != 0 && remote_ip != 0x0100007f && remote_ip != 0x7f000001
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
-
-            // Vec<u32> 为后续 C 结构体解析提供所需的 4 字节对齐。
-            let word_count = (required_size as usize).div_ceil(std::mem::size_of::<u32>());
-            let mut words = vec![0u32; word_count];
-            let capacity_bytes = words.len() * std::mem::size_of::<u32>();
-            let mut returned_size = capacity_bytes as u32;
-            let result = GetExtendedTcpTable(
-                words.as_mut_ptr() as *mut c_void,
-                &mut returned_size,
-                0,
-                address_family,
-                TCP_TABLE_OWNER_PID_ALL,
-                0,
-            );
-            if result == 0 {
-                return Some(TcpTableSnapshot {
-                    words,
-                    byte_len: (returned_size as usize).min(capacity_bytes),
-                });
-            }
-            if result != ERROR_INSUFFICIENT_BUFFER {
-                return None;
-            }
-            required_size = returned_size;
-        }
-    }
-    None
-}
-
-fn tcp_table_indicates_online_readiness<Row>(
-    snapshot: &TcpTableSnapshot,
-    target_pid: u32,
-    row_fields: impl Fn(&Row) -> (u32, u32, u16),
-) -> bool {
-    let header_size = std::mem::size_of::<u32>();
-    if snapshot.byte_len < header_size || std::mem::align_of::<Row>() > std::mem::align_of::<u32>()
-    {
-        return false;
-    }
-
-    let reported_entries = snapshot.words[0] as usize;
-    let max_entries = (snapshot.byte_len - header_size) / std::mem::size_of::<Row>();
-    let actual_entries = reported_entries.min(max_entries);
-    let rows_ptr = unsafe { (snapshot.words.as_ptr() as *const u8).add(header_size) as *const Row };
-
-    for index in 0..actual_entries {
-        let row = unsafe { &*rows_ptr.add(index) };
-        let (owning_pid, state, remote_port) = row_fields(row);
-        if tcp_connection_indicates_online_readiness(target_pid, owning_pid, state, remote_port) {
-            return true;
         }
     }
     false
-}
-
-fn tcp4_indicates_online_readiness(pid: u32) -> bool {
-    query_tcp_table(AF_INET).is_some_and(|snapshot| {
-        tcp_table_indicates_online_readiness(&snapshot, pid, |row: &MIB_TCPROW_OWNER_PID| {
-            (
-                row.dwOwningPid,
-                row.dwState,
-                u16::from_be((row.dwRemotePort & 0xFFFF) as u16),
-            )
-        })
-    })
-}
-
-fn tcp6_indicates_online_readiness(pid: u32) -> bool {
-    query_tcp_table(AF_INET6).is_some_and(|snapshot| {
-        tcp_table_indicates_online_readiness(&snapshot, pid, |row: &MIB_TCP6ROW_OWNER_PID| {
-            (
-                row.dwOwningPid,
-                row.dwState,
-                u16::from_be((row.dwRemotePort & 0xFFFF) as u16),
-            )
-        })
-    })
-}
-
-/// 检查指定进程是否已建立网络连接。
-/// 不假设固定服务器端口，并同时覆盖 IPv4、IPv6 与本机加速器代理。
-#[tauri::command]
-pub fn check_game_connected(pid: u32) -> bool {
-    tcp4_indicates_online_readiness(pid) || tcp6_indicates_online_readiness(pid)
 }
 
 pub(crate) fn executable_paths_match(actual: &std::path::Path, expected: &std::path::Path) -> bool {
@@ -1833,47 +1787,10 @@ pub fn get_window_rect(_hwnd: isize) -> Option<(i32, i32)> {
 #[cfg(test)]
 mod region_process_tests {
     use super::{
-        check_game_connected, executable_paths_match, recover_running_assignments,
-        tcp_connection_indicates_online_readiness, AccountGameIdentity, RunningGameWindow,
+        executable_paths_match, recover_running_assignments, AccountGameIdentity, RunningGameWindow,
     };
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
-
-    #[test]
-    fn established_d2r_https_connection_marks_network_ready() {
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 443));
-    }
-
-    #[test]
-    fn online_readiness_is_not_tied_to_a_server_port() {
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 1119));
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 52_123));
-    }
-
-    #[test]
-    fn online_readiness_rejects_other_processes_and_non_established_connections() {
-        assert!(!tcp_connection_indicates_online_readiness(42, 7, 5, 443));
-        assert!(!tcp_connection_indicates_online_readiness(42, 42, 2, 443));
-    }
-
-    #[test]
-    fn process_owned_loopback_connection_is_observed() {
-        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (server, _) = listener.accept().unwrap();
-
-        let observed = (0..20).any(|_| {
-            if check_game_connected(std::process::id()) {
-                true
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-                false
-            }
-        });
-
-        assert!(observed);
-        drop((client, server));
-    }
 
     #[test]
     fn battle_net_processes_are_matched_to_the_selected_installation() {
