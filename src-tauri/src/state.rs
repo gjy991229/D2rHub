@@ -7,6 +7,12 @@ use std::sync::Arc;
 use crate::commands::global_config::GlobalConfig;
 use crate::error::AppError;
 
+#[derive(Debug, Clone)]
+pub struct ActiveGameLaunch {
+    pub pid: u32,
+    pub mod_args: String,
+}
+
 /// 应用全局运行时状态
 pub struct AppState {
     /// 全局配置（线程安全读写）
@@ -26,6 +32,11 @@ pub struct AppState {
     pub account_catalog: Mutex<()>,
     /// 正在运行的账号游戏 PID 映射：account_id -> d2r_pid
     pub active_games: RwLock<HashMap<String, u32>>,
+    /// 由 D2RHub 启动的实际会话参数快照。账号配置之后发生变化时，不能拿新配置冒充
+    /// 已运行进程的真实参数。
+    pub active_game_launches: RwLock<HashMap<String, ActiveGameLaunch>>,
+    /// 同一时间只允许一个 Mod 加工任务，避免两个生成器写入同一个 mods 目录。
+    pub audio_mod_build_busy: AtomicBool,
     /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
     pub shortcut_map: RwLock<HashMap<String, usize>>,
 }
@@ -52,8 +63,28 @@ impl AppState {
             account_operations: Mutex::new(HashSet::new()),
             account_catalog: Mutex::new(()),
             active_games: RwLock::new(HashMap::new()),
+            active_game_launches: RwLock::new(HashMap::new()),
+            audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
         }
+    }
+
+    pub fn record_active_game(&self, account_id: &str, pid: u32, mod_args: &str) {
+        self.active_games
+            .write()
+            .insert(account_id.to_string(), pid);
+        self.active_game_launches.write().insert(
+            account_id.to_string(),
+            ActiveGameLaunch {
+                pid,
+                mod_args: mod_args.to_string(),
+            },
+        );
+    }
+
+    pub fn remove_active_game(&self, account_id: &str) {
+        self.active_games.write().remove(account_id);
+        self.active_game_launches.write().remove(account_id);
     }
 }
 

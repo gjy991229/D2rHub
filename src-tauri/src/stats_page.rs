@@ -55,6 +55,8 @@ mod tests {
         assert!(!rendered.contains("d2rhub-stats-theme"));
         assert!(rendered.contains("X-D2RHub-Stats-Token"));
         assert!(rendered.contains("apiFetch(\"/api/records\")"));
+        assert!(rendered.contains("id=\"batch-toggle\""));
+        assert!(rendered.contains("/api/records/batch"));
     }
 
     #[test]

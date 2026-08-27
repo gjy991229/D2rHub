@@ -43,22 +43,25 @@ Set-Location src-tauri
 cargo test --lib
 Set-Location ..
 
-# 构建包含 OCR 的完整桌面版
-npm run build:full
+# 从相邻的独立仓库构建并更新随安装包分发的生成器 sidecar
+npm run sync:audio-mod
 
-# 构建不包含 OCR 的 Lite 桌面版
-npm run build:lite
+# 构建桌面安装包
+npm run build:desktop
+
+# 仅构建 NSIS 安装包
+npm run build:nsis
 ```
 
-完整 OCR 构建包含较大的模型和本地推理依赖，第一次编译耗时较长，也可能由 Cargo
-依赖下载原生运行库。普通前端修改通常只需运行 `npm test` 和 `npm run build`；
-涉及 Rust 代码时还必须运行 `cargo test --lib`。
+桌面程序始终包含 SQLite、WAV 诊断录音和 Windows WASAPI 声纹识别依赖。普通前端修改通常只需
+运行 `npm test` 和 `npm run build`；涉及 Rust 代码时还必须运行 `cargo test --lib`。
 
 ## 项目结构
 
 - `src/`：React 页面、组件、状态和前端工具。
-- `src-tauri/src/`：Tauri 命令、Windows 集成、启动流程、OCR 和统计逻辑。
-- `assets/models/`：随完整版分发的 OCR 模型与字典。
+- `src-tauri/src/`：Tauri 命令、Windows 集成、启动流程、符文声纹和统计逻辑。
+- `src-tauri/src/rune_audio/`：v7 协议解码、WASAPI 实时识别和掉落生命周期跟踪。
+- `src-tauri/binaries/`：随安装包分发的独立生成器编译产物；其源码不在本仓库。
 - `public/`：Vite 直接复制的运行时图片和 SVG。
 - `docs/`：用户文档、开发文档及应用内离线页面。
 - `.github/workflows/`：公开仓库的 Pull Request 验证 CI。
@@ -66,15 +69,16 @@ npm run build:lite
 ## 本地数据与调试文件
 
 应用运行时可能在用户数据目录保存账号配置、加密 Token、注册表快照、日志、统计
-数据库和 OCR 调试截图。这些内容可能包含账号或个人路径，绝不能复制进仓库或附在
+数据库。这些内容可能包含账号或个人路径，绝不能复制进仓库或附在
 公开 Issue/PR 中。提交日志或截图前必须脱敏。
 
 不要提交：
 
 - `.env`、私钥、Token 或其他凭据；
 - `node_modules/`、`dist/`、`src-tauri/target/`；
-- 本地日志、注册表导出和 OCR 调试截图；
-- 安装包、可执行文件或个人发布配置。
+- 本地日志、注册表导出、声纹处理清单和统计数据库；
+- 安装包、个人发布配置或其他临时可执行文件。`src-tauri/binaries/` 中由
+  `npm run sync:audio-mod` 更新的固定 sidecar 是发布所需的例外。
 
 ## CI 与发布
 
@@ -85,14 +89,15 @@ npm run build:lite
 
 ### Rust 第一次编译很慢
 
-OCR、Tauri 和 Windows API 依赖量较大，冷编译可能需要数分钟。后续编译会复用
+Tauri、SQLite 和 Windows API 依赖量较大，冷编译可能需要数分钟。后续编译会复用
 `src-tauri/target/` 缓存。
 
 ### WebView 窗口无法打开
 
 确认系统已安装 Microsoft Edge WebView2 Runtime，并重新运行 Tauri 开发命令。
 
-### OCR 完整版编译或运行失败
+### 符文声纹监控无法启动
 
-先确认模型文件完整、磁盘空间充足，并使用 64 位 MSVC Rust 工具链。仅调试不涉及
-OCR 的功能时可先使用 Lite 构建。
+确认使用 64 位 MSVC Rust 工具链和较新的 Windows 11，目标账号的 D2R 进程已经运行，
+并在“设置中心 → 自动化”选择了相同账号。首次开启时按界面提示一键准备识别 Mod；
+若游戏已经运行，需要重启该账号一次。

@@ -10,7 +10,7 @@ import {
 
 function config(overrides: Partial<GlobalConfig>): GlobalConfig {
   return {
-    version: 5,
+    version: 6,
     cn_battle_net_path: "",
     cn_game_path: "",
     cn_saved_games_path: "",
@@ -30,9 +30,10 @@ function config(overrides: Partial<GlobalConfig>): GlobalConfig {
     auto_close_browser: true,
     enable_auto_update: true,
     first_launch: false,
-    ocr_enabled: false,
-    ocr_target_account: "",
-    ocr_ch_b_profiles_json: "",
+    rune_audio_enabled: false,
+    rune_audio_target_account: "",
+    rune_audio_detection_threshold: 0.58,
+    rune_audio_tracked_categories: ["runes"],
     shortcut_bindings_json: "{}",
     overlay_opacity: 95,
     main_opacity: 95,

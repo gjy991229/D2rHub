@@ -1,5 +1,5 @@
 import type { AccountMeta } from "../store/types";
-import { validateOcrTarget } from "./ocrTarget";
+import { validateTrackingTarget } from "./trackingTarget";
 
 function account(overrides: Partial<AccountMeta> = {}): AccountMeta {
   return {
@@ -26,20 +26,23 @@ export function runTests() {
   const uninitialized = account({ id: "acount2", initialized: false });
   const accounts = [initialized, uninitialized];
 
-  const missing = validateOcrTarget("", accounts);
-  assert(!missing.valid && missing.reason === "missing", "OCR requires a selected account");
+  const missing = validateTrackingTarget("", accounts);
+  assert(!missing.valid && missing.reason === "missing", "tracking requires a selected account");
 
-  const unknown = validateOcrTarget("missing-account", accounts);
-  assert(!unknown.valid && unknown.reason === "not_found", "OCR rejects an unknown account");
+  const unknown = validateTrackingTarget("missing-account", accounts);
+  assert(!unknown.valid && unknown.reason === "not_found", "tracking rejects an unknown account");
 
-  const notInitialized = validateOcrTarget("acount2", accounts);
+  const notInitialized = validateTrackingTarget("acount2", accounts);
   assert(
     !notInitialized.valid && notInitialized.reason === "not_initialized",
-    "OCR rejects an uninitialized account",
+    "tracking rejects an uninitialized account",
   );
 
-  const valid = validateOcrTarget("acount1", accounts);
-  assert(valid.valid && valid.account === initialized, "OCR accepts the selected initialized account");
+  const valid = validateTrackingTarget("acount1", accounts);
+  assert(
+    valid.valid && valid.account === initialized,
+    "tracking accepts the selected initialized account",
+  );
 }
 
 const g = globalThis as any;

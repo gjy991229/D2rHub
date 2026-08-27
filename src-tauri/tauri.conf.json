@@ -64,22 +64,6 @@
                 "shadow": false
             },
             {
-                "label": "ocr-debug",
-                "title": "D2RHub OCR 调试",
-                "url": "/ocr-debug",
-                "width": 500,
-                "height": 618,
-                "x": 0,
-                "y": 60,
-                "resizable": true,
-                "decorations": true,
-                "transparent": false,
-                "alwaysOnTop": false,
-                "skipTaskbar": false,
-                "visible": false,
-                "shadow": true
-            },
-            {
                 "label": "bongo-cat",
                 "title": "D2RHub Bongo Cat",
                 "url": "bongo-cat.html",
@@ -101,6 +85,9 @@
     },
     "bundle": {
         "active": true,
+        "externalBin": [
+            "binaries/d2r-audio-mod"
+        ],
         "targets": [
             "msi",
             "nsis"
@@ -113,8 +100,7 @@
             "icons/icon.png"
         ],
         "resources": [
-            "../docs/",
-            "../assets/**/*"
+            "../docs/"
         ],
         "windows": {
             "wix": {

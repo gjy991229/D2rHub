@@ -571,8 +571,7 @@ pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<Account
                 }
             }
             if !running && pid.is_some() {
-                let mut active = state.active_games.write();
-                active.remove(id);
+                state.remove_active_game(id);
             }
             meta.is_running = running;
             meta.running_pid = if running { pid } else { None };
@@ -987,16 +986,16 @@ pub fn delete_account(
             error
         );
     }
-    state.active_games.write().remove(&account_id);
+    state.remove_active_game(&account_id);
 
     let updated_config = {
         let mut config = state.config.write();
         let cfg = config
             .as_mut()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-        if cfg.ocr_target_account.trim() == account_id {
-            cfg.ocr_enabled = false;
-            cfg.ocr_target_account.clear();
+        if cfg.rune_audio_target_account.trim() == account_id {
+            cfg.rune_audio_enabled = false;
+            cfg.rune_audio_target_account.clear();
             cfg.save(&state.app_data_dir)?;
             Some(cfg.clone())
         } else {
@@ -1005,8 +1004,7 @@ pub fn delete_account(
     };
 
     if let Some(config) = updated_config {
-        #[cfg(feature = "ocr")]
-        crate::ocr::stop_ocr_monitor();
+        crate::rune_audio::monitor::stop_rune_audio_monitor();
         let _ = app.emit("global-config-updated", config);
     }
 
@@ -1132,7 +1130,16 @@ pub fn update_account_mods(
     active_mod: String,
     mod_list: Vec<String>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    update_account_mods_inner(state.inner(), account_id, active_mod, mod_list)
+}
+
+pub(crate) fn update_account_mods_inner(
+    state: &SharedState,
+    account_id: String,
+    active_mod: String,
+    mod_list: Vec<String>,
+) -> Result<AccountMeta, AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state, &account_id)?;
     let cfg = state
         .config
         .read()

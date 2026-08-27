@@ -1,17 +1,14 @@
+mod audio_mod;
 mod battle_net_config;
 mod commands;
 mod error;
 mod input_listener;
 mod launch_context;
 pub mod logger;
-#[cfg(feature = "ocr")]
-mod ocr;
-#[cfg(feature = "ocr")]
+mod rune_audio;
 mod rune_data;
 mod state;
-#[cfg(feature = "ocr")]
 mod stats;
-#[cfg(any(feature = "ocr", test))]
 mod stats_page;
 #[cfg(target_os = "windows")]
 mod token_registry_trace;
@@ -179,7 +176,6 @@ pub fn run() {
                                 let _ = overlay_win.show();
                             }
                         }
-                        #[cfg(feature = "ocr")]
                         if overlay_config
                             .as_ref()
                             .map(|config| config.enable_stats_overlay)
@@ -411,31 +407,24 @@ pub fn run() {
             commands::system::open_user_guide,
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
-            // ── OCR 文字检测 ──
-            #[cfg(feature = "ocr")]
-            ocr::start_ocr_monitor,
-            #[cfg(feature = "ocr")]
-            ocr::restart_ocr_monitor,
-            #[cfg(feature = "ocr")]
-            ocr::stop_ocr_monitor,
-            #[cfg(feature = "ocr")]
-            ocr::get_ocr_ch_a_results,
-            #[cfg(feature = "ocr")]
-            ocr::get_ocr_ch_b_results,
+            // ── 声纹 Mod 一键准备 ──
+            audio_mod::get_audio_mod_setup_state,
+            audio_mod::prepare_audio_mod,
+            audio_mod::apply_audio_mod_to_account,
+            // ── 符文音频声纹 ──
+            rune_audio::monitor::start_rune_audio_monitor,
+            rune_audio::monitor::restart_rune_audio_monitor,
+            rune_audio::monitor::stop_rune_audio_monitor,
+            rune_audio::monitor::get_rune_audio_status,
+            rune_audio::monitor::start_rune_audio_diagnostic_recording,
+            rune_audio::monitor::stop_rune_audio_diagnostic_recording,
             // ── 数据统计 ──
-            #[cfg(feature = "ocr")]
             stats::save_scene_record,
-            #[cfg(feature = "ocr")]
             stats::get_stats_data,
-            #[cfg(feature = "ocr")]
             stats::get_stats_json,
-            #[cfg(feature = "ocr")]
             stats::get_scene_avg_time,
-            #[cfg(feature = "ocr")]
             stats::get_scene_stats,
-            #[cfg(feature = "ocr")]
             stats::delete_scene_record,
-            #[cfg(feature = "ocr")]
             stats::open_stats_page,
             commands::system::get_app_version,
             commands::system::install_update,

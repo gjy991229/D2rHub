@@ -11,9 +11,9 @@ export function runTests() {
   const overlayPath = path.join(g.process.cwd(), "src", "pages", "Overlay.tsx");
   const statsPath = path.join(g.process.cwd(), "src", "store", "stats.ts");
   const sizingPath = path.join(g.process.cwd(), "src", "utils", "overlaySizing.ts");
-  const overlaySource = fs.readFileSync(overlayPath, "utf8") as string;
-  const statsSource = fs.readFileSync(statsPath, "utf8") as string;
-  const sizingSource = fs.readFileSync(sizingPath, "utf8") as string;
+  const overlaySource = (fs.readFileSync(overlayPath, "utf8") as string).replace(/\r\n/g, "\n");
+  const statsSource = (fs.readFileSync(statsPath, "utf8") as string).replace(/\r\n/g, "\n");
+  const sizingSource = (fs.readFileSync(sizingPath, "utf8") as string).replace(/\r\n/g, "\n");
 
   assert(
     !overlaySource.includes("data-tauri-drag-region"),
@@ -99,6 +99,16 @@ export function runTests() {
   assert(
     overlaySource.includes("|| miniResizeSessionRef.current"),
     "programmatic north and west resizing cannot accidentally trigger edge docking",
+  );
+  assert(
+    overlaySource.includes("pendingPosition")
+      && overlaySource.includes("moveInFlight")
+      && overlaySource.includes("flushLatestPosition"),
+    "dock animation coalesces native window moves instead of accumulating stale frames",
+  );
+  assert(
+    !overlaySource.includes("const step = async"),
+    "dock animation clock is not blocked by awaited native position writes",
   );
   assert(
     overlaySource.includes("pendingPosition")

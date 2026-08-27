@@ -9,7 +9,7 @@ import type { GlobalConfig } from "../store/types";
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 5, cn_battle_net_path: "",
+  version: 6, cn_battle_net_path: "",
   cn_game_path: "", cn_saved_games_path: "",
   global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
@@ -18,8 +18,10 @@ const defaultConfig: GlobalConfig = {
   enable_tz_overlay: true, enable_stats_overlay: true,
   theme: "light", theme_overlay: "light", auto_close_browser: true,
   enable_auto_update: true, first_launch: true,
-  ocr_enabled: false, ocr_target_account: "",
-  ocr_ch_b_profiles_json: "",
+  rune_audio_enabled: false, rune_audio_target_account: "",
+  rune_audio_detection_threshold: 0.56,
+  rune_audio_tracked_categories: ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"],
+  rune_audio_min_rune_number: 1,
   shortcut_bindings_json: "",
   overlay_opacity: 95, main_opacity: 95, font_scale: "default",
   enable_bongo_cat: true, bongo_cat_chatterbox: true,

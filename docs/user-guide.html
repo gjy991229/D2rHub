@@ -239,7 +239,7 @@
       <a class="nav-link" href="#launch">启动与多开</a>
       <a class="nav-link" href="#settings">设置中心</a>
       <a class="nav-link" href="#overlay">性能悬浮窗</a>
-      <a class="nav-link" href="#ocr">OCR 自动化</a>
+      <a class="nav-link" href="#audio-telemetry">声纹自动化</a>
       <a class="nav-link" href="#stats">统计分析</a>
       <a class="nav-link" href="#pet">Bongo Cat</a>
       <div class="nav-title">维护</div>
@@ -253,26 +253,26 @@
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-08</p>
       <h1>D2RHub v0.8<br>使用手册</h1>
-      <p class="lede">面向当前 0.8.x 版本的完整操作说明，覆盖国服/国际服双版本、多账号认证、悬浮窗、OCR 与新版掉落统计。</p>
+      <p class="lede">面向当前 0.8.x 声纹分支的完整操作说明，覆盖国服/国际服双版本、多账号认证、悬浮窗、符文音频身份证与本地统计。</p>
       <div class="meta-row">
         <span class="badge accent">适用版本 v0.8.x</span>
-        <span class="badge">Windows 10 / 11</span>
-        <span class="badge">Full / Lite</span>
+        <span class="badge">Windows 11</span>
+        <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
       </div>
     </header>
 
     <section>
-      <h2>选择 Full 还是 Lite</h2>
-      <p>两个版本共享账号管理、双版本隔离、多开、画质设置、悬浮窗和桌宠。差异集中在 OCR 识别与掉落统计。</p>
+      <h2>统一桌面版本</h2>
+      <p>D2RHub 只发布一个统一安装包，默认包含账号管理、多开、画质设置、声纹追踪、统计页、悬浮窗和桌宠。</p>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>能力</th><th>Full</th><th>Lite</th></tr></thead>
+          <thead><tr><th>能力</th><th>当前版本</th><th>说明</th></tr></thead>
           <tbody>
-            <tr><td>账号管理、网页 Token / 战网认证、多开</td><td>支持</td><td>支持</td></tr>
-            <tr><td>国服与国际服安装档案、账号独立画质</td><td>支持</td><td>支持</td></tr>
-            <tr><td>性能悬浮窗、快捷键、Bongo Cat</td><td>支持</td><td>支持</td></tr>
-            <tr><td>场景/符文 OCR、掉落截图与统计页</td><td>支持</td><td>不包含</td></tr>
+            <tr><td>账号管理、网页 Token / 战网认证、多开</td><td>支持</td><td>保持原有能力</td></tr>
+            <tr><td>国服与国际服安装档案、账号独立画质</td><td>支持</td><td>保持原有能力</td></tr>
+            <tr><td>性能悬浮窗、快捷键、Bongo Cat</td><td>支持</td><td>保持原有能力</td></tr>
+            <tr><td>符文 FLAC 制作、按进程声纹识别与统计</td><td>支持</td><td>替代原图像识别链路</td></tr>
           </tbody>
         </table>
       </div>
@@ -282,11 +282,11 @@
       <p class="eyebrow">01 · FIRST RUN</p>
       <h2>快速开始</h2>
       <div class="steps">
-        <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 Full 或 Lite 的 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
-        <div class="step"><strong>至少配置一套游戏版本</strong><p>在首次向导中填写国服或国际服的游戏目录。存档目录用于账号独立画质设置，可稍后补充；使用战网认证时，再填写该版本的 Battle.net.exe。</p></div>
+        <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
+        <div class="step"><strong>至少配置一套游戏版本</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。使用战网认证时，再填写该版本的 Battle.net.exe。</p></div>
         <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
         <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，或使用“启动全部 / 多选启动”。启动进度和错误会显示在卡片及运行日志中。</p></div>
-        <div class="step"><strong>按需开启辅助功能</strong><p>在“设置中心”开启悬浮窗、桌宠；Full 版还可在“自动化”选择已初始化账号并启用 OCR。</p></div>
+        <div class="step"><strong>制作并启用声纹资源</strong><p>在“设置中心 → 自动化”处理 mod 的符文与 <code>a{AreaId}.flac</code> 场景音频，替换资源后选择已初始化账号并开启音频声纹识别。</p></div>
       </div>
       <div class="callout"><strong>路径检测边界：</strong>当前向导可自动探测国服/国际服存档目录、Agent、Roaming 配置和 Edge/Chrome；游戏安装目录及 Battle.net.exe 仍应由你确认或手动选择。</div>
     </section>
@@ -302,7 +302,7 @@
       <h3>每套档案需要什么</h3>
       <ul>
         <li><strong>游戏安装目录：</strong>包含 <code>D2R.exe</code>，任何认证方式都需要。</li>
-        <li><strong>存档目录（可选）：</strong>包含或将包含 <code>Settings.json</code>，仅在画质编辑、账号独立游戏配置或系统配置快照时需要。</li>
+        <li><strong>存档目录：</strong>包含或将包含 <code>Settings.json</code>，任何认证方式都需要。</li>
         <li><strong>Battle.net.exe：</strong>仅战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
       </ul>
       <p>如果存档目录暂时没有 <code>Settings.json</code>，账号创建、登录和多开仍可用，但画质编辑、账号独立游戏配置和系统配置快照不可用。先用对应版本正常进入一次游戏，通常会生成该文件。</p>
@@ -318,7 +318,7 @@
         <table>
           <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
           <tbody>
-            <tr><td>所需路径</td><td>游戏；内置获取流程另需 Edge/Chrome</td><td>游戏 + 对应版本 Battle.net.exe</td></tr>
+            <tr><td>所需路径</td><td>游戏 + 存档；获取时需 Edge/Chrome</td><td>游戏 + 存档 + 对应版本 Battle.net.exe</td></tr>
             <tr><td>启动路径</td><td>使用本机 DPAPI 加密保存的 Token 直启</td><td>恢复账号的 Battle.net / UnifiedAuth 本地快照后启动</td></tr>
             <tr><td>特点</td><td>启动快，不依赖战网客户端常驻</td><td>适合无法使用网页 Token 的账号，流程更长</td></tr>
             <tr><td>失效处理</td><td>服务端判定失效时，在账号操作中更新 Token</td><td>界面按 30 天提示有效状态；过期或登录失败时重新初始化</td></tr>
@@ -329,7 +329,6 @@
       <h3>账号卡片可以做什么</h3>
       <ul>
         <li>启动账号、只启动 Battle.net（战网认证账号）、更新 Token 或重新初始化。</li>
-        <li>国际服 Token 账号可点击区服胶囊，在亚服、美服和欧服之间切换。切换只更改下次启动的服务器，不会重新获取或改写已保存的 Token。</li>
         <li>修改昵称、区服/认证信息、Mod 启动参数与常用参数列表。</li>
         <li>设置游戏窗口 X/Y 位置，切换系统配置或账号独立配置。</li>
         <li>展开快速设置修改分辨率和帧率；拖动卡片可改变账号顺序，快捷键位置会随顺序对应。</li>
@@ -358,28 +357,25 @@
         <div class="metric"><strong>账号</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
         <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；隔离浏览器和每日更新</span></div>
         <div class="metric"><strong>快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
-        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体、悬浮窗与游戏任务栏独立开关</span></div>
-        <div class="metric"><strong>自动化（Full）</strong><span>OCR 目标账号、轮询频率、调试输出、重启与统计页</span></div>
+        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体和悬浮窗开关</span></div>
+        <div class="metric"><strong>自动化</strong><span>声纹接收、追踪类别、目标账号、识别阈值、诊断与统计页</span></div>
         <div class="metric"><strong>伴随</strong><span>Bongo Cat 开关、对话框、缩放和已解锁皮肤</span></div>
-        <div class="metric"><strong>维护</strong><span>按所选账号导出/导入 JSON、打开日志目录、重新运行首次配置向导</span></div>
+        <div class="metric"><strong>维护</strong><span>打开日志目录、重新运行首次配置向导</span></div>
       </div>
       <h3>账号独立游戏设置</h3>
       <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。修改会自动保存。选择“系统配置”时跟随当前存档目录的 <code>Settings.json</code>；选择独立配置后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置到当前账号”。</p>
-      <h3>账号导入导出</h3>
-      <p>在“维护 → 账号迁移”中可选择一个或多个账号导出。为实现跨设备迁移，网页 Token 会在原设备通过 Windows DPAPI 解密，并以明文写入导出的 JSON；目标设备导入时会立即使用当前 Windows 用户的 DPAPI 重新加密。隔离浏览器缓存不会导出，Battle.net 认证快照跨设备时仍可能需要重新初始化。</p>
-      <div class="callout danger"><strong>导出文件等同于登录凭据：</strong>任何获得该 JSON 的人都可以使用其中的明文 Token 登录你的账号。不要发送给其他人或上传到公开网盘；只保存到可信位置，并在确认导入成功后立即安全删除。</div>
     </section>
 
     <section id="overlay">
       <p class="eyebrow">06 · PERFORMANCE OVERLAY</p>
       <h2>性能悬浮窗</h2>
-      <p>悬浮窗常驻桌面上方，可显示运行账号状态；Full 版开启 OCR 后还会显示当前场景计时、历史均值、符文掉落和邪恶区域信息。</p>
+      <p>悬浮窗常驻桌面上方，可显示运行账号、当前场景、刷图计时和所选掉落；同类物品自动合并为 <code>#15 海尔 ×2</code> 一类的计数胶囊。后端场景状态机负责计时与落库，即使悬浮窗暂时隐藏也不会中断统计。</p>
       <h3>展开与迷你</h3>
       <ul>
         <li>展开模式双击空白区域，或迷你模式双击悬浮窗，可切换模式。</li>
         <li>窗口获得焦点时按 <kbd>Enter</kbd> 或 <kbd>Space</kbd> 也可切换。</li>
         <li>展开和迷你模式分别记住尺寸；展开模式双击账号可聚焦对应游戏。</li>
-        <li>迷你窗压缩到 <strong>40 逻辑像素</strong>时只切换为单行布局，窗口高度保持不变；单行最低为 <strong>20 逻辑像素</strong>。重新拉高到 40 像素以上时恢复双行。</li>
+        <li>迷你双层布局最低为 <strong>36 逻辑像素</strong>；继续向下缩放会切成单行，最低为 <strong>18 逻辑像素</strong>。拉高到阈值会恢复双层；高 DPI / 2K 屏会按系统缩放正确换算。</li>
       </ul>
       <h3>贴边吸附与自动隐藏</h3>
       <ol>
@@ -391,24 +387,29 @@
       <p>吸附位置按当前显示器的可用工作区计算，也适用于副屏和任务栏占用区域。系统启用“减少动态效果”时，抽出/隐藏会改为即时完成。</p>
     </section>
 
-    <section id="ocr">
-      <p class="eyebrow">07 · OCR · FULL ONLY</p>
-      <h2>OCR 场景与符文识别</h2>
-      <p>Full 版在“设置中心 → 自动化”提供 OCR。开始前必须先选择一个<strong>已初始化</strong>账号作为固定目标窗口，否则开关不可用。</p>
+    <section id="audio-telemetry">
+      <p class="eyebrow">07 · AUDIO TELEMETRY</p>
+      <h2>独立 Mod 工具与实时识别</h2>
+      <p>Mod 由无界面的 <code>d2r-audio-mod.exe</code> 独立生成，D2RHub 只负责接收和统计。两个程序不共享账号、配置、数据库或进程，只约定 v7 声纹与 JSON 清单。“设置中心 → 自动化”选择一个<strong>已初始化</strong>账号后，捕获器只监听该账号的 D2R 进程及其子进程。</p>
       <ul>
-        <li><strong>通道 A：</strong>识别场景名称与城镇状态，用于自动开始、切换和结束场景计时。</li>
-        <li><strong>通道 B：</strong>识别 1–33 号符文；同一场景内的每次识别以独立掉落条目保存。</li>
-        <li><strong>高级符文：</strong>#24 及以上会额外保存完整游戏窗口截图，并在统计页提供画廊。</li>
-        <li><strong>轮询频率：</strong>200–2000ms；间隔越短响应越快，也越消耗 CPU，默认 500ms。</li>
+        <li><strong>两种命令：</strong><code>minimal --game &lt;游戏目录&gt;</code> 从本机游戏资源创建最小 Mod；<code>augment --source &lt;源 Mod/.mpq&gt;</code> 复制并加工 jcy 等现有 Mod，源目录始终不修改。</li>
+        <li><strong>兼容处理：</strong>每个所选掉落克隆自己的世界实体与 <code>Flippy ↔ Ground</code> 状态机；原动画、模型、VFX、依赖和原声音均保留，背包/仓库 <code>usesound</code> 与表格 <code>dropsound</code> 不改。</li>
+        <li><strong>覆盖范围：</strong>地图可选女伯爵路线或游戏数据中的全部 137 个区域；掉落可选 33 个符文、宝石与骷髅、护身符、珠宝、钥匙、器官、精华与赦免徽章。</li>
+        <li><strong>协议：</strong>v7 使用独立地点同步码与 127 个低相关掉落签名，默认增益 <code>-30dBFS</code>；地点标记混入原始持续环境音，主界面有独立标记用于立即结束上一场计时。</li>
+        <li><strong>生命周期：</strong>世界物品在地面持续发送时，软件用 6 秒缺席门限合并成一次掉落；捡起并在门限后再次落地可成为新事件。完全同步的多个同名物品无法从同一混合信号推断数量。</li>
+        <li><strong>落库：</strong>所选掉落先写入通用原始观测表；离开当前野外或返回主界面时，独立分段和观测归属在同一数据库事务内保存。</li>
+        <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、扩展物品、地点信号和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
       </ul>
-      <div class="callout"><strong>调试输出会占用磁盘：</strong>开启后会把处理图和 <code>ocr_debug.txt</code> 写到 <code>%APPDATA%\D2RHub\test</code>。仅在排查识别失败时开启，问题解决后关闭并按需清理。</div>
-      <p>场景记录在离开当前战斗场景、切换到另一场景或回城时写入数据库。尚未结束的当前场景不会提前计入历史统计。</p>
+      <div class="callout"><strong>启动方式：</strong>工具默认生成全区域和全部类别，并输出应使用的 <code>-mod &lt;组合 Mod 名&gt; -txt</code>。它不会修改账号或启用 Mod；请自行启用新组合 Mod，不要同时启用源 Mod。D2RHub 会按目标账号的 <code>-mod</code> 参数，从当前 Mod 根目录读取地图与物品清单。</div>
+      <p>不同代码的掉落同时播放可以分别识别；同一代码在完全相同时间重叠时，只能视为一次事件。护身符、珠宝等只能识别基础代码，无法仅凭声音判断暗金、套装、品质、词缀或鉴定结果。</p>
     </section>
 
     <section id="stats">
       <p class="eyebrow">08 · LOCAL ANALYTICS</p>
       <h2>新版统计页与统计口径</h2>
       <p>从主界面顶部的统计按钮，或“设置中心 → 自动化 → 打开掉落统计图表”进入。页面读取本地数据库，并通过仅监听本机回环地址的临时 API 完成刷新、重命名和删除。</p>
+      <h3>底层分段与自定义策略</h3>
+      <p>不同名称的野外各自开始、结束并保存独立分段；主城和主界面停止计时。统计页可以保存“女伯爵”等策略，把同一次连续野外行程中的黑色荒地和高塔 1–5 层合并展示。策略只对展示、筛选和导出生效，不修改数据库中的原始分段与掉落归属；没有行程标识的旧记录不会被猜测合并。</p>
       <h3>统一筛选</h3>
       <p>时间范围、角色、场景、掉落状态和具体符文会同时作用于顶部指标、趋势、对比、热力图、符文视图、截图与明细。明细另有搜索、排序和每页 50 条分页。</p>
       <div class="grid">
@@ -422,7 +423,7 @@
         <table>
           <thead><tr><th>指标</th><th>口径</th></tr></thead>
           <tbody>
-            <tr><td>一场 / 场次</td><td>数据库中的一条已完成 <code>scene_record</code>；不是一次游戏启动，也不是一次掉落。</td></tr>
+            <tr><td>一场 / 场次</td><td>原始口径是一条已完成的野外 <code>scene_record</code>；启用策略后，则是同一行程中连续命中策略的一个展示组。不是一次游戏启动，也不是一次掉落。</td></tr>
             <tr><td>平均 / 中位 / P90 / 最佳</td><td>筛选后各场 <code>timer_seconds</code> 的算术平均、50 分位、90 分位和最小值。</td></tr>
             <tr><td>掉落数</td><td>筛选后所有记录的 <code>drops</code> 数组元素总和；同场多个符文分别计数。</td></tr>
             <tr><td>每百场掉落</td><td><code>掉落数 ÷ 场次 × 100</code>，方便不同场景样本量对比。</td></tr>
@@ -432,7 +433,7 @@
           </tbody>
         </table>
       </div>
-      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>%APPDATA%\D2RHub\stateData</code> 或导出 JSON。</div>
+      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>config\stateData</code> 或导出 JSON。</div>
     </section>
 
     <section id="pet">
@@ -449,30 +450,28 @@
     <section id="data">
       <p class="eyebrow">10 · DATA & PRIVACY</p>
       <h2>数据位置、备份与更新</h2>
-      <p>D2RHub 使用固定的 <code>%APPDATA%\D2RHub</code> 保存运行数据。旧版程序同级 <code>config</code> 仅在系统目录尚不存在时自动整体搬迁；系统目录一旦存在，后续始终以它为准：</p>
+      <p>D2RHub 当前使用<strong>程序可执行文件同级目录</strong>保存运行数据，而不是 Windows AppData：</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>位置</th><th>内容</th></tr></thead>
           <tbody>
-            <tr><td><code>%APPDATA%\D2RHub\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、OCR 与桌宠设置</td></tr>
-            <tr><td><code>%APPDATA%\D2RHub\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
-            <tr><td><code>%APPDATA%\D2RHub\stateData\data.db</code></td><td>OCR 场景与符文掉落数据库</td></tr>
-            <tr><td><code>%APPDATA%\D2RHub\stateData\img\</code></td><td>#24 及以上符文截图</td></tr>
-            <tr><td><code>%APPDATA%\D2RHub\test\</code></td><td>启用 OCR 调试输出后产生的处理图与日志</td></tr>
+            <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
+            <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
+            <tr><td><code>config\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
             <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
           </tbody>
         </table>
       </div>
-      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>%APPDATA%\D2RHub</code> 目录；排障需要时也可一并备份程序日志。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
+      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>config</code> 目录；排障需要时也可一并备份 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
       <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
-      <p>D2RHub 不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；OCR 调试图片与统计数据留在本机。</p>
+      <p>D2RHub 不会主动上传账号配置、Token 或声纹统计。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；统计数据留在本机。</p>
     </section>
 
     <section id="troubleshooting">
       <p class="eyebrow">11 · TROUBLESHOOTING</p>
       <h2>疑难解答</h2>
       <h3>账号无法创建或对应区服不可选</h3>
-      <p>检查该版本的游戏目录是否包含 <code>D2R.exe</code>。战网认证还需对应版本 Battle.net.exe；亚/美/欧服统一检查国际服档案。存档目录缺失只会停用账号独立画质设置，不会阻止账号创建或启动。</p>
+      <p>检查该版本的游戏目录和存档目录是否成组配置。战网认证还需对应版本 Battle.net.exe；亚/美/欧服统一检查国际服档案。</p>
       <h3>战网初始化超时或快照失效</h3>
       <p>确认 Battle.net 已实际登录完成、路径对应正确版本，并避免同时执行另一个战网认证操作。账号卡片显示过期或启动失败时，执行重新初始化。</p>
       <h3>网页 Token 获取页打不开</h3>
@@ -482,9 +481,9 @@
       <h3>悬浮窗吸附后找不到</h3>
       <p>沿最近使用的屏幕边缘缓慢移动鼠标，触发边会让窗口抽出。仍无法找到时，在“显示”中关闭再开启悬浮窗，或重启应用。</p>
       <h3>迷你窗无法变成单行</h3>
-      <p>继续从底边向上压缩；到 40 逻辑像素时会切换为单行，但窗口高度不会自动变化。进入单行后可继续缩至 20 像素；重新拉高到 40 像素以上时恢复双行。</p>
-      <h3>OCR 无数据或识别不稳定</h3>
-      <p>确认目标账号已初始化、游戏窗口存在且昵称可匹配。先用默认 500ms；需要排查时临时开启调试输出并点击“应用配置并重启 OCR”。一条统计记录只在当前场景结束后写入。</p>
+      <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
+      <h3>声纹无数据或识别不稳定</h3>
+      <p>确认账号使用的是独立工具最新输出的组合 Mod、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。Mod 实际发出的类别由工具的 <code>--track</code> 决定；D2RHub 设置只过滤接收后要记录的类别。先看“音频峰值”，再看“地点信号”和掉落计数；日志会提示当前 Mod 清单缺失或协议版本不兼容。</p>
       <h3>进一步排查</h3>
       <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
     </section>

@@ -230,11 +230,7 @@ function App() {
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}
           onStats={async () => {
             try {
-              if (import.meta.env.VITE_ENABLE_OCR !== "false") {
-                await invoke("open_stats_page");
-              } else {
-                showToast("info", "当前版本未包含自动化统计功能");
-              }
+              await invoke("open_stats_page");
             } catch (e) {
               showToast("error", `打开统计失败: ${e}`);
             }

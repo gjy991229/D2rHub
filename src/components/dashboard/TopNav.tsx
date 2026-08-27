@@ -34,12 +34,10 @@ export function TopNav({
         >
           <Settings size={14} strokeWidth={1.8} />
         </button>
-        {import.meta.env.VITE_ENABLE_OCR !== "false" && (
-          <button onClick={onStats}
-            className="icon-btn w-7 h-7" title="查看统计">
-            <BarChart3 size={14} strokeWidth={1.8} />
-          </button>
-        )}
+        <button onClick={onStats}
+          className="icon-btn w-7 h-7" title="查看统计">
+          <BarChart3 size={14} strokeWidth={1.8} />
+        </button>
         <button onClick={onHelp}
           className="icon-btn w-7 h-7" title="帮助文档">
           <BookOpen size={14} strokeWidth={1.8} />

@@ -3,27 +3,6 @@
 D2RHub 自有源码与项目原创素材按根目录 [MIT License](LICENSE) 提供。下列第三方
 内容、上游作品、名称与商标不因包含在本仓库中而改为 MIT。
 
-## PaddlePaddle OCR 模型与字典
-
-下列文件源自或转换自 PaddlePaddle 生态的官方 OCR 模型/字典：
-
-- `assets/models/ch_PP-OCRv5_det_mobile.onnx`
-- `assets/models/ch_PP-OCRv5_rec_mobile.onnx`
-- `assets/models/ch_PP-LCNet_x0_25_textline_ori_cls_mobile.onnx`
-- `assets/models/ppocr_keys_v1.txt`
-- `assets/models/ppocr_keys_v1_fixed.txt`
-
-上游项目：
-
-- [PaddlePaddle/PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR)
-- [PaddleOCR License](https://github.com/PaddlePaddle/PaddleOCR/blob/main/LICENSE)
-
-PaddleOCR 采用 Apache License 2.0。本仓库随这些模型和字典提供一份
-[Apache License 2.0](LICENSES/Apache-2.0.txt)。ONNX 文件属于用于本项目本地推理
-的转换产物；`ppocr_keys_v1_fixed.txt` 是为本项目识别流程调整过的字典版本。
-
-Copyright (c) 2016 PaddlePaddle Authors. All Rights Reserved.
-
 ## Bongo Cat 形象
 
 `public/bongo-cat-*.svg` 是 D2RHub 项目作者绘制的原创文件，并按项目 MIT License
