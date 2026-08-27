@@ -305,7 +305,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const normalizedAudioSetupName = audioSetupName.trim();
-  const audioSetupNameError = validateAudioModName(audioSetupName);
+  const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
+  const audioSetupNameError = validateAudioModName(audioSetupName, installedAudioModNames);
   const showAudioSetupNameError = audioSetupName.length > 0 && !!audioSetupNameError;
 
   // Config backup for rollback

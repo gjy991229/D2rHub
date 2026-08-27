@@ -2,7 +2,7 @@ export const AUDIO_MOD_NAME_MAX_LENGTH = 128;
 
 const WINDOWS_RESERVED_NAMES = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
 
-export function validateAudioModName(value: string): string | null {
+export function validateAudioModName(value: string, existingNames: readonly string[] = []): string | null {
   const name = value.trim();
   if (!name) return "请输入新 Mod 名称";
   if (name.length > AUDIO_MOD_NAME_MAX_LENGTH) {
@@ -13,6 +13,9 @@ export function validateAudioModName(value: string): string | null {
   }
   if (WINDOWS_RESERVED_NAMES.test(name)) {
     return "该名称是 Windows 保留名称，请换一个";
+  }
+  if (existingNames.some(existingName => existingName.trim().toLowerCase() === name.toLowerCase())) {
+    return `Mod 名称“${name}”已存在，请换一个名称`;
   }
   return null;
 }

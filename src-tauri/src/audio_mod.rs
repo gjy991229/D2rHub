@@ -158,6 +158,22 @@ fn generated_audio_mod_name(value: &str) -> Result<&str, String> {
     Ok(value)
 }
 
+fn find_existing_mod_name(
+    mods_directory: &Path,
+    candidate: &str,
+) -> Result<Option<String>, String> {
+    let entries = std::fs::read_dir(mods_directory)
+        .map_err(|error| format!("读取 mods 目录失败: {error}"))?;
+    for entry in entries {
+        let entry = entry.map_err(|error| format!("读取 mods 目录项失败: {error}"))?;
+        let existing_name = entry.file_name().to_string_lossy().into_owned();
+        if existing_name.eq_ignore_ascii_case(candidate) {
+            return Ok(Some(existing_name));
+        }
+    }
+    Ok(None)
+}
+
 fn active_mod_name(mod_args: &str) -> Result<Option<String>, String> {
     let args = parse_windows_command_line(mod_args)
         .map_err(|error| format!("无法解析账号启动参数: {error}"))?;
@@ -416,8 +432,8 @@ pub async fn prepare_audio_mod(
         .map_err(|error| format!("创建 mods 目录失败: {error}"))?;
 
     let mod_name = generated_audio_mod_name(&mod_name)?.to_string();
-    if mods_directory.join(&mod_name).exists() {
-        return Err(format!("Mod 名称“{mod_name}”已存在，请换一个名称"));
+    if let Some(existing_name) = find_existing_mod_name(&mods_directory, &mod_name)? {
+        return Err(format!("Mod 名称“{existing_name}”已存在，请换一个名称"));
     }
 
     let source_mod_name = source_mod_name
@@ -743,7 +759,8 @@ pub(crate) fn emit_runtime_compatibility_warning(
 #[cfg(test)]
 mod tests {
     use super::{
-        active_mod_name, arguments_with_audio_mod, generated_audio_mod_name, has_txt_argument,
+        active_mod_name, arguments_with_audio_mod, find_existing_mod_name,
+        generated_audio_mod_name, has_txt_argument,
     };
 
     #[test]
@@ -789,5 +806,26 @@ mod tests {
         assert!(generated_audio_mod_name("我的Mod").is_err());
         assert!(generated_audio_mod_name("CON").is_err());
         assert!(generated_audio_mod_name("lpt9").is_err());
+    }
+
+    #[test]
+    fn detects_existing_mod_names_case_insensitively() {
+        let root = std::env::temp_dir().join(format!(
+            "d2rhub_audio_mod_collision_{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(root.join("jcy")).unwrap();
+
+        assert_eq!(
+            find_existing_mod_name(&root, "jcy").unwrap().as_deref(),
+            Some("jcy")
+        );
+        assert_eq!(
+            find_existing_mod_name(&root, "JCY").unwrap().as_deref(),
+            Some("jcy")
+        );
+        assert_eq!(find_existing_mod_name(&root, "fresh").unwrap(), None);
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

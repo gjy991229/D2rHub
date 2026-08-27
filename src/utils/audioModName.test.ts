@@ -14,6 +14,9 @@ export function runTests() {
   assert(validateAudioModName("My Audio Mod") !== null, "rejects spaces unsupported by the generator");
   assert(validateAudioModName("CON") !== null, "rejects Windows reserved directory names");
   assert(validateAudioModName("a".repeat(129)) !== null, "enforces the generator length limit");
+  assert(validateAudioModName("jcy", ["jcy"]) !== null, "rejects an existing Mod name");
+  assert(validateAudioModName("JCY", ["jcy"]) !== null, "rejects an existing Mod name case-insensitively");
+  assert(validateAudioModName("fresh", ["jcy"]) === null, "accepts a name not used by an installed Mod");
 }
 
 const g = globalThis as any;
