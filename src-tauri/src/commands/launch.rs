@@ -2244,9 +2244,10 @@ async fn launch_single_token(
         })
     };
 
-    // 跳过动画与 Token 消费检测互不依赖，避免 UI 初始化时间影响下一账号启动。
+    // 在 ETW 确认目标 D2R 已消费 WEB_TOKEN 前持续跳过动画。停止条件由实际 Token
+    // 消费事件驱动，避免用固定次数或固定时长猜测游戏初始化进度。
     let intro_skip_task = tokio::spawn(async move {
-        for _ in 0..30 {
+        loop {
             let _ = crate::commands::system::send_keys_to_window(d2r_pid);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
@@ -2274,6 +2275,7 @@ async fn launch_single_token(
         web_token_read = token_read_monitor.was_read_by(d2r_pid);
         mutex_closed = mutex_state.is_closed();
         if web_token_read && !token_read_logged {
+            intro_skip_task.abort();
             emit("connect", "ok", "检测到 D2R 已读取 WEB_TOKEN");
             token_read_logged = true;
         }
