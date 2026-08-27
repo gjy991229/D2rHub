@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioCountessV46";
+const MOD_NAME: &str = "D2RHubAudioCountessV49";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
 const COUNTESS_AREA_IDS: [u32; 8] = [1, 6, 20, 21, 22, 23, 24, 25];
 
@@ -1121,7 +1121,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 女伯爵音频实机版 v4.6\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文使用仅世界实体进入的 Flippy 地面心跳；不改 misc.txt 的 dropsound/usesound，背包和仓库不应触发。\r\n6. 心跳是纯声纹，不会循环播放“*号符文”；软件按地面存在生命周期只记录一次。\r\n7. v6 为地点与符文使用独立同步码，并为 33 个符文使用低相关 Gold 码；支持多个不同符文完全同步叠加，完全同步的多个相同符文仍只能视为一个。\r\n8. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 女伯爵音频稳定版 v4.9\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文使用仅世界实体进入的 Flippy 地面心跳；不改 misc.txt 的 dropsound/usesound，背包和仓库不应触发。\r\n6. 心跳是纯声纹，不会循环播放“*号符文”；软件按地面存在生命周期只记录一次。\r\n7. 场景每 5 秒发送一次冗余标记，以穿过区域淡入、缓存复用和恐怖区域音效叠加；软件只记录真实场景变化。\r\n8. v6 为地点与符文使用独立同步码，并为 33 个符文使用低相关 Gold 码；支持多个不同符文完全同步叠加，完全同步的多个相同符文仍只能视为一个。\r\n9. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;

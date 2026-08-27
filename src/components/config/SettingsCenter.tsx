@@ -1654,7 +1654,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div>
                     <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
                     <p className="text-2xs text-text-muted">
-                      v4.6 女伯爵实机版：独立地点/符文同步码、低相关 Gold 符文码、纯声纹地面心跳与生命周期去重
+                      v4.9 稳定版：恢复可靠的符文地面载波与生命周期去重，场景每 5 秒冗余发送以适应淡入和恐怖区域叠加
                     </p>
                   </div>
                   <div className="flex gap-2">
@@ -1705,7 +1705,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     loading={audioModBuilding}
                     onClick={buildAudioTelemetryMod}
                   >
-                    生成 Audio Telemetry v4.6 女伯爵版
+                    生成 Audio Telemetry v4.9 稳定版
                   </Button>
                   {audioModReport && (
                     <div className="space-y-1 text-2xs">
