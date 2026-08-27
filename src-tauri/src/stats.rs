@@ -8,15 +8,39 @@ use tauri::Manager;
 use crate::state::SharedState;
 use crate::stats_page::{render_stats_template, stats_template_candidates};
 
-/// 单条符文掉落记录
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DropKind {
+    #[default]
+    Rune,
+    Item,
+}
+
+fn default_drop_category() -> String {
+    "runes".to_string()
+}
+
+/// One persisted drop. Aliases keep every historical rune JSON readable.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuneDropEntry {
-    /// 符文编号 1-33
-    pub rune_number: u32,
-    /// 符文中文名
-    pub rune_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rune_name_en: Option<String>,
+pub struct DropEntry {
+    #[serde(default)]
+    pub kind: DropKind,
+    #[serde(default)]
+    pub telemetry_id: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub item_code: Option<String>,
+    #[serde(default = "default_drop_category")]
+    pub category: String,
+    #[serde(alias = "rune_name")]
+    pub display_name: String,
+    #[serde(
+        default,
+        alias = "rune_name_en",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub display_name_en: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rune_number: Option<u32>,
     /// 截图相对路径（相对于 stateData 目录），低号符文为 null
     #[serde(skip_serializing_if = "Option::is_none")]
     pub screenshot_path: Option<String>,
@@ -38,8 +62,8 @@ pub struct SceneRecord {
     /// 此原始野外分段在行程中的零基序号。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub segment_index: Option<u32>,
-    /// 新版：符文掉落数组（每个元素 = 一次独立掉落）
-    pub drops: Vec<RuneDropEntry>,
+    /// 新版：通用掉落数组（每个元素 = 一次独立掉落）
+    pub drops: Vec<DropEntry>,
 }
 
 /// 只影响统计页展示的合并策略；原始场景记录始终保持独立。
@@ -50,15 +74,19 @@ pub struct MergeStrategy {
     pub scene_names: Vec<String>,
 }
 
-/// 原始符文声纹观测；野外分段结束时通过 scene_record_id 原子归属。
+/// 原始掉落声纹观测；野外分段结束时通过 scene_record_id 原子归属。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RuneDropObservation {
+pub struct DropObservation {
     pub id: i64,
     pub observed_at: String,
     pub account_id: String,
-    pub rune_number: u32,
-    pub rune_name: String,
-    pub rune_name_en: String,
+    pub kind: DropKind,
+    pub telemetry_id: u32,
+    pub item_code: Option<String>,
+    pub category: String,
+    pub display_name: String,
+    pub display_name_en: String,
+    pub rune_number: Option<u32>,
     pub confidence: f32,
     pub source: String,
     pub scene_record_id: Option<i64>,
@@ -68,7 +96,7 @@ pub struct RuneDropObservation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsData {
     pub records: Vec<SceneRecord>,
-    pub observations: Vec<RuneDropObservation>,
+    pub observations: Vec<DropObservation>,
     pub strategies: Vec<MergeStrategy>,
 }
 
@@ -99,6 +127,56 @@ fn ensure_scene_segment_columns(conn: &Connection) -> Result<(), String> {
         .map_err(|e| format!("迁移分段序号字段失败: {e}"))?;
     }
     Ok(())
+}
+
+fn ensure_drop_observation_schema(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS drop_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            observed_at TEXT NOT NULL,
+            account_id TEXT NOT NULL,
+            kind TEXT NOT NULL,
+            telemetry_id INTEGER NOT NULL,
+            item_code TEXT,
+            category TEXT NOT NULL,
+            display_name TEXT NOT NULL,
+            display_name_en TEXT NOT NULL,
+            rune_number INTEGER,
+            confidence REAL NOT NULL,
+            source TEXT NOT NULL,
+            scene_record_id INTEGER,
+            legacy_rune_observation_id INTEGER UNIQUE
+        );
+        CREATE INDEX IF NOT EXISTS idx_drop_observed_at
+            ON drop_observations(observed_at);
+        CREATE INDEX IF NOT EXISTS idx_drop_account
+            ON drop_observations(account_id);
+        INSERT OR IGNORE INTO drop_observations
+             (observed_at, account_id, kind, telemetry_id, item_code, category,
+              display_name, display_name_en, rune_number, confidence, source,
+              scene_record_id, legacy_rune_observation_id)
+         SELECT observed_at, account_id, 'rune', rune_number,
+                printf('r%02d', rune_number), 'runes', rune_name, rune_name_en,
+                rune_number, confidence, source, scene_record_id, id
+           FROM rune_drop_observations;
+        CREATE INDEX IF NOT EXISTS idx_drop_scene_record
+            ON drop_observations(scene_record_id);
+        CREATE TRIGGER IF NOT EXISTS clear_drop_scene_record_after_delete
+            AFTER DELETE ON scene_records
+            BEGIN
+                UPDATE drop_observations
+                   SET scene_record_id = NULL
+                 WHERE scene_record_id = OLD.id;
+            END;
+        CREATE TRIGGER IF NOT EXISTS delete_legacy_rune_after_drop_delete
+            AFTER DELETE ON drop_observations
+            WHEN OLD.legacy_rune_observation_id IS NOT NULL
+            BEGIN
+                DELETE FROM rune_drop_observations
+                 WHERE id = OLD.legacy_rune_observation_id;
+            END;",
+    )
+    .map_err(|error| format!("初始化通用掉落观测表失败: {error}"))
 }
 
 fn get_db_path(app_data_dir: &str) -> String {
@@ -189,6 +267,7 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
         .map_err(|e| format!("迁移观测归属字段失败: {e}"))?;
     }
     ensure_scene_segment_columns(&conn)?;
+    ensure_drop_observation_schema(&conn)?;
     conn.execute_batch(
         "CREATE INDEX IF NOT EXISTS idx_rune_drop_scene_record
              ON rune_drop_observations(scene_record_id);
@@ -207,48 +286,74 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
     DB.get().ok_or_else(|| "数据库初始化状态不可用".to_string())
 }
 
-pub(crate) struct NewRuneDropObservation<'a> {
+pub(crate) struct NewDropObservation<'a> {
     pub observed_at: &'a str,
     pub account_id: &'a str,
-    pub rune_number: u32,
-    pub rune_name: &'a str,
-    pub rune_name_en: &'a str,
+    pub kind: &'a str,
+    pub telemetry_id: u32,
+    pub item_code: Option<&'a str>,
+    pub category: &'a str,
+    pub display_name: &'a str,
+    pub display_name_en: &'a str,
+    pub rune_number: Option<u32>,
     pub confidence: f32,
     pub source: &'a str,
 }
 
-pub(crate) fn insert_rune_drop_observation(
+pub(crate) fn insert_drop_observation(
     state: &SharedState,
-    observation: NewRuneDropObservation<'_>,
+    observation: NewDropObservation<'_>,
 ) -> Result<i64, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db
         .lock()
         .map_err(|error| format!("数据库锁失败: {error}"))?;
     conn.execute(
-        "INSERT INTO rune_drop_observations
-         (observed_at, account_id, rune_number, rune_name, rune_name_en, confidence, source)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        "INSERT INTO drop_observations
+         (observed_at, account_id, kind, telemetry_id, item_code, category,
+          display_name, display_name_en, rune_number, confidence, source)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             observation.observed_at,
             observation.account_id,
+            observation.kind,
+            observation.telemetry_id,
+            observation.item_code,
+            observation.category,
+            observation.display_name,
+            observation.display_name_en,
             observation.rune_number,
-            observation.rune_name,
-            observation.rune_name_en,
             observation.confidence,
             observation.source,
         ],
     )
-    .map_err(|error| format!("保存符文掉落观测失败: {error}"))?;
+    .map_err(|error| format!("保存掉落观测失败: {error}"))?;
     Ok(conn.last_insert_rowid())
 }
 
-/// 将旧版 drops HashMap 格式迁移为新版 Vec<RuneDropEntry> 格式
-fn migrate_legacy_drops(drops_json: &str) -> Vec<RuneDropEntry> {
+fn normalize_drop(mut drop: DropEntry) -> DropEntry {
+    if drop.kind == DropKind::Rune {
+        let rune_number = drop.rune_number.unwrap_or(drop.telemetry_id);
+        drop.rune_number = (1..=33).contains(&rune_number).then_some(rune_number);
+        if drop.telemetry_id == 0 {
+            drop.telemetry_id = rune_number;
+        }
+        if drop.item_code.is_none() && rune_number > 0 {
+            drop.item_code = Some(format!("r{rune_number:02}"));
+        }
+        if drop.category.trim().is_empty() {
+            drop.category = "runes".to_string();
+        }
+    }
+    drop
+}
+
+/// 将旧版 drops HashMap/符文数组迁移为通用掉落数组。
+fn migrate_legacy_drops(drops_json: &str) -> Vec<DropEntry> {
     // 尝试解析为新版数组格式
-    if let Ok(drops) = serde_json::from_str::<Vec<RuneDropEntry>>(drops_json) {
+    if let Ok(drops) = serde_json::from_str::<Vec<DropEntry>>(drops_json) {
         if !drops.is_empty() || drops_json.trim().starts_with('[') {
-            return drops;
+            return drops.into_iter().map(normalize_drop).collect();
         }
     }
     // 尝试解析为旧版 HashMap 格式 { "符文名": count }
@@ -257,10 +362,14 @@ fn migrate_legacy_drops(drops_json: &str) -> Vec<RuneDropEntry> {
         for (name, count) in legacy {
             let rune_number = crate::rune_data::get_rune_number(&name).unwrap_or(0);
             for _ in 0..count {
-                result.push(RuneDropEntry {
-                    rune_number,
-                    rune_name: name.clone(),
-                    rune_name_en: None,
+                result.push(DropEntry {
+                    kind: DropKind::Rune,
+                    telemetry_id: rune_number,
+                    item_code: (rune_number > 0).then(|| format!("r{rune_number:02}")),
+                    category: "runes".to_string(),
+                    display_name: name.clone(),
+                    display_name_en: None,
+                    rune_number: (rune_number > 0).then_some(rune_number),
                     screenshot_path: None,
                 });
             }
@@ -323,10 +432,17 @@ pub(crate) fn save_completed_segment(
         drops: segment
             .drops
             .iter()
-            .map(|drop| RuneDropEntry {
+            .map(|drop| DropEntry {
+                kind: match drop.kind {
+                    crate::rune_audio::tracking::TrackedDropKind::Rune => DropKind::Rune,
+                    crate::rune_audio::tracking::TrackedDropKind::Item => DropKind::Item,
+                },
+                telemetry_id: drop.telemetry_id,
+                item_code: drop.code.clone(),
+                category: drop.category.clone(),
+                display_name: drop.name.clone(),
+                display_name_en: Some(drop.name_en.clone()),
                 rune_number: drop.rune_number,
-                rune_name: drop.rune_name.clone(),
-                rune_name_en: Some(drop.rune_name_en.clone()),
                 screenshot_path: None,
             })
             .collect(),
@@ -365,7 +481,7 @@ pub(crate) fn save_completed_segment(
     {
         transaction
             .execute(
-                "UPDATE rune_drop_observations SET scene_record_id = ?1 WHERE id = ?2",
+                "UPDATE drop_observations SET scene_record_id = ?1 WHERE id = ?2",
                 rusqlite::params![scene_record_id, observation_id],
             )
             .map_err(|error| format!("关联掉落观测与场次失败: {error}"))?;
@@ -487,7 +603,7 @@ pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData,
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
     let records = query_scene_records(&conn)?;
-    let observations = query_rune_drop_observations(&conn)?;
+    let observations = query_drop_observations(&conn)?;
     let strategies = query_merge_strategies(&conn)?;
 
     Ok(StatsData {
@@ -497,32 +613,41 @@ pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData,
     })
 }
 
-fn query_rune_drop_observations(conn: &Connection) -> Result<Vec<RuneDropObservation>, String> {
+fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, String> {
     let mut stmt = conn
         .prepare(
-            "SELECT id, observed_at, account_id, rune_number, rune_name, rune_name_en,
-                    confidence, source, scene_record_id
-             FROM rune_drop_observations
+            "SELECT id, observed_at, account_id, kind, telemetry_id, item_code, category,
+                    display_name, display_name_en, rune_number, confidence, source,
+                    scene_record_id
+             FROM drop_observations
              ORDER BY id ASC",
         )
-        .map_err(|error| format!("准备查询符文声纹观测失败: {error}"))?;
+        .map_err(|error| format!("准备查询掉落声纹观测失败: {error}"))?;
     let observations = stmt
         .query_map([], |row| {
-            Ok(RuneDropObservation {
+            let kind = match row.get::<_, String>(3)?.as_str() {
+                "item" => DropKind::Item,
+                _ => DropKind::Rune,
+            };
+            Ok(DropObservation {
                 id: row.get(0)?,
                 observed_at: row.get(1)?,
                 account_id: row.get(2)?,
-                rune_number: row.get(3)?,
-                rune_name: row.get(4)?,
-                rune_name_en: row.get(5)?,
-                confidence: row.get(6)?,
-                source: row.get(7)?,
-                scene_record_id: row.get(8)?,
+                kind,
+                telemetry_id: row.get(4)?,
+                item_code: row.get(5)?,
+                category: row.get(6)?,
+                display_name: row.get(7)?,
+                display_name_en: row.get(8)?,
+                rune_number: row.get(9)?,
+                confidence: row.get(10)?,
+                source: row.get(11)?,
+                scene_record_id: row.get(12)?,
             })
         })
-        .map_err(|error| format!("查询符文声纹观测失败: {error}"))?
+        .map_err(|error| format!("查询掉落声纹观测失败: {error}"))?
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| format!("读取符文声纹观测失败: {error}"))?;
+        .map_err(|error| format!("读取掉落声纹观测失败: {error}"))?;
     Ok(observations)
 }
 
@@ -857,7 +982,7 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                             match get_db(&app_data_dir) {
                                 Ok(db) => match db.lock() {
                                     Ok(conn) => match conn.execute(
-                                        "DELETE FROM rune_drop_observations WHERE id = ?1",
+                                        "DELETE FROM drop_observations WHERE id = ?1",
                                         rusqlite::params![observation_id],
                                     ) {
                                         Ok(affected) => {
@@ -1084,7 +1209,7 @@ fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
     let db = get_db(app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
     let records = query_scene_records(&conn)?;
-    let observations = query_rune_drop_observations(&conn)?;
+    let observations = query_drop_observations(&conn)?;
     let strategies = query_merge_strategies(&conn)?;
 
     Ok(StatsData {
@@ -1096,7 +1221,10 @@ fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ensure_scene_segment_columns, normalize_strategy};
+    use super::{
+        ensure_drop_observation_schema, ensure_scene_segment_columns, migrate_legacy_drops,
+        normalize_strategy, DropKind,
+    };
     use rusqlite::Connection;
 
     #[test]
@@ -1135,6 +1263,111 @@ mod tests {
             .unwrap(),
             1
         );
+    }
+
+    #[test]
+    fn legacy_rune_observations_migrate_once_into_generic_drops() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE scene_records (id INTEGER PRIMARY KEY);
+             INSERT INTO scene_records(id) VALUES (9);
+             CREATE TABLE rune_drop_observations (
+                 id INTEGER PRIMARY KEY,
+                 observed_at TEXT NOT NULL,
+                 account_id TEXT NOT NULL,
+                 rune_number INTEGER NOT NULL,
+                 rune_name TEXT NOT NULL,
+                 rune_name_en TEXT NOT NULL,
+                 confidence REAL NOT NULL,
+                 source TEXT NOT NULL,
+                 scene_record_id INTEGER
+             );
+             INSERT INTO rune_drop_observations
+                 (id, observed_at, account_id, rune_number, rune_name, rune_name_en,
+                  confidence, source, scene_record_id)
+             VALUES (7, '2026-08-27T00:00:00+08:00', 'account', 15,
+                     '海尔', 'Hel', 0.91, 'rune_audio', 9);",
+        )
+        .unwrap();
+
+        ensure_drop_observation_schema(&conn).unwrap();
+        ensure_drop_observation_schema(&conn).unwrap();
+        let migrated = conn
+            .query_row(
+                "SELECT kind, telemetry_id, item_code, display_name, scene_record_id
+                   FROM drop_observations",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, u32>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            migrated,
+            (
+                "rune".to_string(),
+                15,
+                "r15".to_string(),
+                "海尔".to_string(),
+                Some(9)
+            )
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM drop_observations", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        conn.execute("DELETE FROM scene_records WHERE id = 9", [])
+            .unwrap();
+        assert_eq!(
+            conn.query_row(
+                "SELECT scene_record_id FROM drop_observations WHERE id = 1",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .unwrap(),
+            None
+        );
+        conn.execute("DELETE FROM drop_observations WHERE id = 1", [])
+            .unwrap();
+        ensure_drop_observation_schema(&conn).unwrap();
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM rune_drop_observations", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM drop_observations", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn historical_rune_json_and_new_item_json_share_one_drop_model() {
+        let legacy =
+            migrate_legacy_drops(r#"[{"rune_number":15,"rune_name":"海尔","rune_name_en":"Hel"}]"#);
+        assert_eq!(legacy.len(), 1);
+        assert_eq!(legacy[0].kind, DropKind::Rune);
+        assert_eq!(legacy[0].telemetry_id, 15);
+        assert_eq!(legacy[0].display_name, "海尔");
+
+        let item = migrate_legacy_drops(
+            r#"[{"kind":"item","telemetry_id":40,"item_code":"pk1","category":"keys","display_name":"恐惧之钥","display_name_en":"Key of Terror"}]"#,
+        );
+        assert_eq!(item.len(), 1);
+        assert_eq!(item[0].kind, DropKind::Item);
+        assert_eq!(item[0].item_code.as_deref(), Some("pk1"));
+        assert_eq!(item[0].rune_number, None);
     }
 
     #[test]

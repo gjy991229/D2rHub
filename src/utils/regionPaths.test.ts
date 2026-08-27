@@ -6,7 +6,7 @@ import {
 
 function config(overrides: Partial<GlobalConfig>): GlobalConfig {
   return {
-    version: 3,
+    version: 4,
     cn_battle_net_path: "",
     cn_game_path: "",
     cn_saved_games_path: "",
@@ -28,6 +28,7 @@ function config(overrides: Partial<GlobalConfig>): GlobalConfig {
     rune_audio_enabled: false,
     rune_audio_target_account: "",
     rune_audio_detection_threshold: 0.58,
+    rune_audio_tracked_categories: ["runes"],
     shortcut_bindings_json: "{}",
     overlay_opacity: 95,
     main_opacity: 95,

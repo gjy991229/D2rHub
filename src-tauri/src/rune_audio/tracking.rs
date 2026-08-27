@@ -1,5 +1,6 @@
 use super::catalog::{
-    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_AREA_ID,
+    LocationCatalog, LocationKind, ResolvedLocation, TelemetryMarker, MAX_AREA_ID, MAX_ITEM_ID,
+    RUNE_COUNT,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -36,12 +37,12 @@ impl SceneTransitionGate {
 /// A rune becomes eligible again after its heartbeat has been absent long
 /// enough for two ordinary ground animation cycles to have been missed.
 #[derive(Debug, Clone)]
-pub struct RunePresenceGate {
+pub struct DropPresenceGate {
     sample_rate: u32,
-    last_seen: HashMap<u32, u64>,
+    last_seen: HashMap<TelemetryMarker, u64>,
 }
 
-impl RunePresenceGate {
+impl DropPresenceGate {
     const ABSENCE_SECONDS: f32 = 6.0;
 
     pub fn new(sample_rate: u32) -> Self {
@@ -51,17 +52,23 @@ impl RunePresenceGate {
         }
     }
 
-    /// Returns true only when this rune was not recently present on the ground.
-    pub fn observe(&mut self, rune_number: u32, observed_at_frame: u64) -> bool {
-        if !(1..=33).contains(&rune_number) {
+    /// Returns true only when this drop identity was not recently present on the ground.
+    pub fn observe(&mut self, marker: TelemetryMarker, observed_at_frame: u64) -> bool {
+        if !matches!(
+            marker,
+            TelemetryMarker::Rune { rune_number } if (1..=RUNE_COUNT).contains(&rune_number)
+        ) && !matches!(
+            marker,
+            TelemetryMarker::Item { item_id } if (1..=MAX_ITEM_ID).contains(&item_id)
+        ) {
             return false;
         }
         let absence_frames = (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64;
         let is_new_presence = self
             .last_seen
-            .get(&rune_number)
+            .get(&marker)
             .is_none_or(|last| observed_at_frame.saturating_sub(*last) >= absence_frames);
-        self.last_seen.insert(rune_number, observed_at_frame);
+        self.last_seen.insert(marker, observed_at_frame);
         is_new_presence
     }
 
@@ -71,12 +78,23 @@ impl RunePresenceGate {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackedDropKind {
+    Rune,
+    Item,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct TrackedRuneDrop {
+pub struct TrackedDrop {
     pub observation_id: i64,
-    pub rune_number: u32,
-    pub rune_name: String,
-    pub rune_name_en: String,
+    pub kind: TrackedDropKind,
+    pub telemetry_id: u32,
+    pub code: Option<String>,
+    pub category: String,
+    pub name: String,
+    pub name_en: String,
+    pub rune_number: Option<u32>,
 }
 
 /// One persisted raw wilderness segment. Display strategies may merge adjacent
@@ -91,7 +109,7 @@ pub struct CompletedSegment {
     pub journey_id: String,
     pub segment_index: u32,
     pub timer_seconds: f64,
-    pub drops: Vec<TrackedRuneDrop>,
+    pub drops: Vec<TrackedDrop>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -109,7 +127,7 @@ pub struct TrackingSnapshot {
     pub current_run_key: Option<String>,
     pub current_run_name: Option<String>,
     pub current_run_name_en: Option<String>,
-    pub current_run_drops: Vec<TrackedRuneDrop>,
+    pub current_run_drops: Vec<TrackedDrop>,
     pub session_runs: HashMap<String, u32>,
 }
 
@@ -130,7 +148,7 @@ struct ActiveSegment {
     started_at_frame: u64,
     started_at_ms: i64,
     absolute_time: String,
-    drops: Vec<TrackedRuneDrop>,
+    drops: Vec<TrackedDrop>,
 }
 
 /// The deep timing module: callers submit confirmed locations and rune drops;
@@ -231,7 +249,7 @@ impl SegmentTracker {
         })
     }
 
-    pub fn observe_rune(&mut self, drop: TrackedRuneDrop) -> TrackingSnapshot {
+    pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
         if let Some(active_segment) = &mut self.active_segment {
             active_segment.drops.push(drop);
             self.revision += 1;
@@ -248,7 +266,9 @@ impl SegmentTracker {
             account_id: self.account_id.clone(),
             current_area_id: self.current_location.and_then(|marker| match marker {
                 TelemetryMarker::Area { area_id } => Some(area_id),
-                TelemetryMarker::Rune { .. } | TelemetryMarker::Frontend => None,
+                TelemetryMarker::Rune { .. }
+                | TelemetryMarker::Item { .. }
+                | TelemetryMarker::Frontend => None,
             }),
             current_scene: location
                 .as_ref()
@@ -352,6 +372,19 @@ mod tests {
         SegmentTracker::new("account-1".to_string(), "测试角色".to_string(), 48_000)
     }
 
+    fn rune_drop(observation_id: i64, rune_number: u32, name: &str, name_en: &str) -> TrackedDrop {
+        TrackedDrop {
+            observation_id,
+            kind: TrackedDropKind::Rune,
+            telemetry_id: rune_number,
+            code: Some(format!("r{rune_number:02}")),
+            category: "runes".to_string(),
+            name: name.to_string(),
+            name_en: name_en.to_string(),
+            rune_number: Some(rune_number),
+        }
+    }
+
     #[test]
     fn every_different_wilderness_is_an_independent_segment_in_one_journey() {
         let mut tracker = tracker();
@@ -362,12 +395,7 @@ mod tests {
             black_marsh.snapshot.current_run_name.as_deref(),
             Some("黑色荒地")
         );
-        tracker.observe_rune(TrackedRuneDrop {
-            observation_id: 7,
-            rune_number: 24,
-            rune_name: "伊斯特".to_string(),
-            rune_name_en: "Ist".to_string(),
-        });
+        tracker.observe_drop(rune_drop(7, 24, "伊斯特", "Ist"));
 
         let tower_one = tracker
             .observe_location(area(21), 144_000, 3_000, "2026/08/26/12:00:02".to_string())
@@ -450,12 +478,7 @@ mod tests {
     #[test]
     fn rune_outside_wilderness_stays_raw() {
         let mut tracker = tracker();
-        tracker.observe_rune(TrackedRuneDrop {
-            observation_id: 1,
-            rune_number: 1,
-            rune_name: "艾尔".to_string(),
-            rune_name_en: "El".to_string(),
-        });
+        tracker.observe_drop(rune_drop(1, 1, "艾尔", "El"));
         let started = tracker
             .observe_location(area(21), 1_000, 1_000, "start".to_string())
             .unwrap();
@@ -484,22 +507,26 @@ mod tests {
 
     #[test]
     fn rune_presence_heartbeats_emit_once_until_the_signal_is_absent() {
-        let mut gate = RunePresenceGate::new(48_000);
-        assert!(gate.observe(7, 0));
-        assert!(!gate.observe(7, 48_000 * 2));
-        assert!(!gate.observe(7, 48_000 * 5));
-        assert!(gate.observe(7, 48_000 * 12));
+        let mut gate = DropPresenceGate::new(48_000);
+        let marker = TelemetryMarker::Rune { rune_number: 7 };
+        assert!(gate.observe(marker, 0));
+        assert!(!gate.observe(marker, 48_000 * 2));
+        assert!(!gate.observe(marker, 48_000 * 5));
+        assert!(gate.observe(marker, 48_000 * 12));
     }
 
     #[test]
     fn rune_presence_is_independent_per_rune_and_resets_on_scene_change() {
-        let mut gate = RunePresenceGate::new(48_000);
-        assert!(gate.observe(7, 0));
-        assert!(gate.observe(20, 100));
-        assert!(!gate.observe(7, 200));
+        let mut gate = DropPresenceGate::new(48_000);
+        let rune7 = TelemetryMarker::Rune { rune_number: 7 };
+        let rune20 = TelemetryMarker::Rune { rune_number: 20 };
+        assert!(gate.observe(rune7, 0));
+        assert!(gate.observe(rune20, 100));
+        assert!(!gate.observe(rune7, 200));
         gate.clear();
-        assert!(gate.observe(7, 300));
-        assert!(!gate.observe(0, 400));
-        assert!(!gate.observe(34, 500));
+        assert!(gate.observe(rune7, 300));
+        assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 0 }, 400));
+        assert!(!gate.observe(TelemetryMarker::Rune { rune_number: 34 }, 500));
+        assert!(gate.observe(TelemetryMarker::Item { item_id: 40 }, 600));
     }
 }

@@ -21,6 +21,7 @@ const surface = ((params.get("surface") as Surface | null) || "main") as Surface
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
 const auditFrame = params.get("frame");
 const settingsState = params.get("settingsState");
+const seedSampleDrops = params.get("drops") === "sample";
 const currentWindowLabel =
   surface === "overlay" ? "overlay" : surface === "bongo" ? "bongo-cat" : "main";
 
@@ -170,7 +171,7 @@ const accounts: AccountMeta[] = [
 ];
 
 const baseConfig: GlobalConfig = {
-  version: 3,
+  version: 4,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -197,6 +198,7 @@ const baseConfig: GlobalConfig = {
   rune_audio_enabled: true,
   rune_audio_target_account: "sorc-01",
   rune_audio_detection_threshold: 0.58,
+  rune_audio_tracked_categories: ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"],
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
   overlay_opacity: 94,
   main_opacity: 96,
@@ -364,10 +366,11 @@ installIpcMock();
 installWindowMetadata();
 
 async function primeStores() {
-  const [{ useGlobalConfig }, { useAccounts }, { useTheme }] = await Promise.all([
+  const [{ useGlobalConfig }, { useAccounts }, { useTheme }, { useStats }] = await Promise.all([
     import("./store/globalConfig"),
     import("./store/accounts"),
     import("./store/theme"),
+    import("./store/stats"),
   ]);
 
   useGlobalConfig.setState({
@@ -378,6 +381,27 @@ async function primeStores() {
   });
   useAccounts.setState({ accounts, loading: false, error: null });
   useTheme.setState({ theme: requestedTheme });
+  if (surface === "overlay" && seedSampleDrops) {
+    useStats.setState({
+      currentScene: "混沌魔殿",
+      currentRunName: "混沌魔殿",
+      currentRunKey: "area:108",
+      isTiming: true,
+      timerStart: Date.now() - 73_400,
+      elapsedMs: 73_400,
+      dbAvgTime: 81.2,
+      dbTotalRuns: 218,
+      sessionRuns: { "area:108": 6 },
+      currentDrops: [
+        { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
+        { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
+        { kind: "rune", telemetryId: 30, itemCode: "r30", category: "runes", name: "贝", nameEn: "Ber", runeNumber: 30, screenshotPath: null },
+        { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
+        { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
+        { kind: "item", telemetryId: 36, itemCode: "cm1", category: "charms", name: "小型护身符", nameEn: "Small Charm", runeNumber: null, screenshotPath: null },
+      ],
+    });
+  }
   document.documentElement.setAttribute("data-theme", requestedTheme);
 }
 

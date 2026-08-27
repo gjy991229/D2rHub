@@ -1,6 +1,8 @@
-pub mod audio_mod;
+#[allow(dead_code)]
 pub mod catalog;
-pub mod flac;
+#[allow(dead_code)]
+pub mod item_catalog;
 pub mod monitor;
+#[allow(dead_code)]
 pub mod protocol;
 pub mod tracking;

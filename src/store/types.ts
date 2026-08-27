@@ -28,6 +28,7 @@ export interface GlobalConfig {
   rune_audio_enabled: boolean;
   rune_audio_target_account: string;
   rune_audio_detection_threshold?: number;
+  rune_audio_tracked_categories: string[];
   shortcut_bindings_json: string;
   overlay_opacity: number;
   main_opacity: number;
@@ -40,11 +41,17 @@ export interface GlobalConfig {
 
 // ── 数据统计 ──
 
-/// 单条符文掉落记录（与 Rust RuneDropEntry 对应）
-export interface RuneDropEntry {
-  rune_number: number;       // 1-33
-  rune_name: string;         // 中文名
-  rune_name_en?: string | null;
+export type DropKind = "rune" | "item";
+
+/// 单条通用掉落记录（兼容旧版符文字段由 Rust 迁移）。
+export interface PersistedDropEntry {
+  kind: DropKind;
+  telemetry_id: number;
+  item_code?: string | null;
+  category: string;
+  display_name: string;
+  display_name_en?: string | null;
+  rune_number?: number | null;
   screenshot_path?: string | null;  // 截图相对路径（仅 #24+ 符文）
 }
 
@@ -56,7 +63,7 @@ export interface SceneRecord {
   timer_seconds: number;
   journey_id?: string | null;
   segment_index?: number | null;
-  drops: RuneDropEntry[];    // 新版：每个元素 = 一次独立掉落
+  drops: PersistedDropEntry[];    // 每个元素 = 一次独立掉落
 }
 
 export interface MergeStrategy {
@@ -65,13 +72,17 @@ export interface MergeStrategy {
   scene_names: string[];
 }
 
-export interface RuneDropObservation {
+export interface DropObservation {
   id: number;
   observed_at: string;
   account_id: string;
-  rune_number: number;
-  rune_name: string;
-  rune_name_en: string;
+  kind: DropKind;
+  telemetry_id: number;
+  item_code?: string | null;
+  category: string;
+  display_name: string;
+  display_name_en: string;
+  rune_number?: number | null;
   confidence: number;
   source: string;
   scene_record_id?: number | null;
@@ -79,7 +90,7 @@ export interface RuneDropObservation {
 
 export interface StatsData {
   records: SceneRecord[];
-  observations: RuneDropObservation[];
+  observations: DropObservation[];
   strategies: MergeStrategy[];
 }
 
@@ -91,6 +102,18 @@ export interface RuneAudioEvent {
   rune_number: number;
   rune_name: string;
   rune_name_en: string;
+  confidence: number;
+}
+
+export interface ItemAudioEvent {
+  source: string;
+  account_id: string;
+  timestamp: string;
+  item_id: number;
+  item_code: string;
+  category: string;
+  item_name: string;
+  item_name_en: string;
   confidence: number;
 }
 
@@ -110,9 +133,13 @@ export interface TrackingSnapshot {
   current_run_name_en: string | null;
   current_run_drops: Array<{
     observation_id: number;
-    rune_number: number;
-    rune_name: string;
-    rune_name_en: string;
+    kind: DropKind;
+    telemetry_id: number;
+    code?: string | null;
+    category: string;
+    name: string;
+    name_en: string;
+    rune_number?: number | null;
   }>;
   session_runs: Record<string, number>;
 }

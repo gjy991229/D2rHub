@@ -264,7 +264,7 @@
 
     <section>
       <h2>统一桌面版本</h2>
-      <p>当前分支不再区分 Full / Lite，也不包含 OCR 模型或图像识别运行时。账号管理、多开、画质设置、声纹追踪、统计页、悬浮窗和桌宠均由同一安装包提供。</p>
+      <p>D2RHub 只发布一个统一安装包，默认包含账号管理、多开、画质设置、声纹追踪、统计页、悬浮窗和桌宠。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>能力</th><th>当前版本</th><th>说明</th></tr></thead>
@@ -358,7 +358,7 @@
         <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；隔离浏览器和每日更新</span></div>
         <div class="metric"><strong>快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
         <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体和悬浮窗开关</span></div>
-        <div class="metric"><strong>自动化</strong><span>FLAC 声纹制作、目标账号、识别阈值、重启监控与统计页</span></div>
+        <div class="metric"><strong>自动化</strong><span>声纹接收、追踪类别、目标账号、识别阈值、诊断与统计页</span></div>
         <div class="metric"><strong>伴随</strong><span>Bongo Cat 开关、对话框、缩放和已解锁皮肤</span></div>
         <div class="metric"><strong>维护</strong><span>打开日志目录、重新运行首次配置向导</span></div>
       </div>
@@ -369,7 +369,7 @@
     <section id="overlay">
       <p class="eyebrow">06 · PERFORMANCE OVERLAY</p>
       <h2>性能悬浮窗</h2>
-      <p>悬浮窗常驻桌面上方，可显示运行账号、当前场景、刷图计时和符文掉落。后端场景状态机负责计时与落库，即使悬浮窗暂时隐藏也不会中断统计。</p>
+      <p>悬浮窗常驻桌面上方，可显示运行账号、当前场景、刷图计时和所选掉落；同类物品自动合并为 <code>#15 海尔 ×2</code> 一类的计数胶囊。后端场景状态机负责计时与落库，即使悬浮窗暂时隐藏也不会中断统计。</p>
       <h3>展开与迷你</h3>
       <ul>
         <li>展开模式双击空白区域，或迷你模式双击悬浮窗，可切换模式。</li>
@@ -389,18 +389,19 @@
 
     <section id="audio-telemetry">
       <p class="eyebrow">07 · AUDIO TELEMETRY</p>
-      <h2>音频遥测 Mod 与实时识别</h2>
-      <p>“设置中心 → 自动化”提供完整 Mod 生成和实时识别。开始前选择一个<strong>已初始化</strong>账号作为目标，捕获器只监听该账号的 D2R 进程及其子进程。</p>
+      <h2>独立 Mod 工具与实时识别</h2>
+      <p>Mod 由无界面的 <code>d2r-audio-mod.exe</code> 独立生成，D2RHub 只负责接收和统计。两个程序不共享账号、配置、数据库或进程，只约定 v7 声纹与 JSON 清单。“设置中心 → 自动化”选择一个<strong>已初始化</strong>账号后，捕获器只监听该账号的 D2R 进程及其子进程。</p>
       <ul>
-        <li><strong>v4.9 女伯爵稳定版：</strong>选择 jcy.mpq 等已解包 Mod，生成器复制其全部内容，为 33 个符文及女伯爵路线八个 Area 加入标记；源目录不会修改。</li>
-        <li><strong>触发：</strong>符文在世界实体的 <code>Flippy</code> 状态发送纯声纹地面载波，软件按生命周期只记录一次；地点把标记混入原始持续场景环境音，并每 5 秒重复，以穿过区域淡入和恐怖区域音效叠加。</li>
-        <li><strong>协议：</strong>18kHz BPSK 前导、17/19kHz FSK 载荷、双份发送与 CRC-6；10 位 ID 覆盖 Area 1–1023，默认增益 <code>-30dBFS</code>。</li>
-        <li><strong>落库：</strong>符文先写入原始观测表；离开当前野外时，独立分段和观测归属在同一数据库事务内保存。</li>
-        <li><strong>符文重复：</strong>同号载波持续存在时只记录一次；载波消失 6 秒或确认切换场景后，同号符文可再次成为新事件。完全同步的多个同号符文仍无法从单一混合信号推断数量。</li>
-        <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、地图心跳和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
+        <li><strong>两种命令：</strong><code>minimal --game &lt;游戏目录&gt;</code> 从本机游戏资源创建最小 Mod；<code>augment --source &lt;源 Mod/.mpq&gt;</code> 复制并加工 jcy 等现有 Mod，源目录始终不修改。</li>
+        <li><strong>兼容处理：</strong>每个所选掉落克隆自己的世界实体与 <code>Flippy ↔ Ground</code> 状态机；原动画、模型、VFX、依赖和原声音均保留，背包/仓库 <code>usesound</code> 与表格 <code>dropsound</code> 不改。</li>
+        <li><strong>覆盖范围：</strong>地图可选女伯爵路线或游戏数据中的全部 137 个区域；掉落可选 33 个符文、宝石与骷髅、护身符、珠宝、钥匙、器官、精华与赦免徽章。</li>
+        <li><strong>协议：</strong>v7 使用独立地点同步码与 127 个低相关掉落签名，默认增益 <code>-30dBFS</code>；地点标记混入原始持续环境音，主界面有独立标记用于立即结束上一场计时。</li>
+        <li><strong>生命周期：</strong>世界物品在地面持续发送时，软件用 6 秒缺席门限合并成一次掉落；捡起并在门限后再次落地可成为新事件。完全同步的多个同名物品无法从同一混合信号推断数量。</li>
+        <li><strong>落库：</strong>所选掉落先写入通用原始观测表；离开当前野外或返回主界面时，独立分段和观测归属在同一数据库事务内保存。</li>
+        <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、扩展物品、地点信号和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
       </ul>
-      <div class="callout"><strong>启动方式：</strong>把生成的 <code>D2RHubAudioCountessV49</code> 放入 D2R 的 <code>mods</code> 目录，并只使用 <code>-mod D2RHubAudioCountessV49 -txt</code>。请勿同时启用旧版；游戏音效通道必须实际输出。</div>
-      <p>不同符文同时播放可以分别识别；同一符文在完全相同时间重叠时，只能视为一次事件，这是单一声纹信号的固有限制。</p>
+      <div class="callout"><strong>启动方式：</strong>工具默认生成全区域和全部类别，并输出应使用的 <code>-mod &lt;组合 Mod 名&gt; -txt</code>。它不会修改账号或启用 Mod；请自行启用新组合 Mod，不要同时启用源 Mod。D2RHub 会按目标账号的 <code>-mod</code> 参数，从当前 Mod 根目录读取地图与物品清单。</div>
+      <p>不同代码的掉落同时播放可以分别识别；同一代码在完全相同时间重叠时，只能视为一次事件。护身符、珠宝等只能识别基础代码，无法仅凭声音判断暗金、套装、品质、词缀或鉴定结果。</p>
     </section>
 
     <section id="stats">
@@ -456,7 +457,7 @@
           <tbody>
             <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
             <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
-            <tr><td><code>config\stateData\data.db</code></td><td>场次历史与原始符文声纹观测数据库</td></tr>
+            <tr><td><code>config\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
             <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
           </tbody>
         </table>
@@ -482,7 +483,7 @@
       <h3>迷你窗无法变成单行</h3>
       <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
       <h3>声纹无数据或识别不稳定</h3>
-      <p>确认使用了生成器输出的 <code>D2RHubAudioCountessV49</code>、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。先看“音频峰值”，再看地图心跳。本轮地点覆盖罗格营地、黑色荒地、遗忘之塔和高塔地牢 1–5 层。可用“开始女伯爵诊断录音”保存目标 D2R 进程 WAV 与识别事件。</p>
+      <p>确认账号使用的是独立工具最新输出的组合 Mod、启动参数包含 <code>-txt</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。Mod 实际发出的类别由工具的 <code>--track</code> 决定；D2RHub 设置只过滤接收后要记录的类别。先看“音频峰值”，再看“地点信号”和掉落计数；日志会提示当前 Mod 清单缺失或协议版本不兼容。</p>
       <h3>进一步排查</h3>
       <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
     </section>

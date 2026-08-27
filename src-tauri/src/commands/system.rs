@@ -1406,19 +1406,13 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| "未找到 tag_name 字段".to_string())?;
 
-    // Match the current build flavor, then prefer the NSIS installer over MSI.
-    let is_lite_build = !cfg!(feature = "rune-audio");
+    // D2RHub only ships one complete build; prefer the NSIS installer over MSI.
     let mut msi_url = None;
     let mut nsis_url = None;
     if let Some(assets) = json.get("assets").and_then(|a| a.as_array()) {
         for asset in assets {
             if let Some(name) = asset.get("name").and_then(|n| n.as_str()) {
                 let lower = name.to_lowercase();
-                let is_lite_asset = lower.contains("lite");
-                if is_lite_build != is_lite_asset {
-                    continue;
-                }
-
                 let url = asset.get("browser_download_url").and_then(|u| u.as_str());
                 if lower.ends_with(".msi") && msi_url.is_none() {
                     msi_url = url.map(|u| u.to_string());

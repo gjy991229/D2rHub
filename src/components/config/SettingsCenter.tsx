@@ -65,6 +65,7 @@ interface RuneAudioStatus {
   audio_peak: number;
   decoded_packets: number;
   rune_events: number;
+  item_events: number;
   scene_heartbeats: number;
   last_marker: string | null;
   last_confidence: number | null;
@@ -73,16 +74,17 @@ interface RuneAudioStatus {
   diagnostic_recording_path: string | null;
 }
 
-interface AudioModReport {
-  protocol_version: number;
-  mod_directory: string;
-  source_mod_copied: boolean;
-  sound_environment_source: string;
-  launch_arguments: string;
-  rune_assets: Array<{ preserved_source_audio: boolean }>;
-  area_assets: Array<unknown>;
-  notes: string[];
-}
+const TRACKING_CATEGORIES = [
+  { id: "runes", label: "符文", detail: "#1–#33" },
+  { id: "gems", label: "宝石与骷髅", detail: "35 种等级/颜色" },
+  { id: "charms", label: "护身符", detail: "小型/大型/超大型；不区分词缀" },
+  { id: "jewels", label: "珠宝", detail: "基础珠宝；不区分品质或词缀" },
+  { id: "keys", label: "钥匙", detail: "恐惧/憎恨/毁灭" },
+  { id: "organs", label: "器官", detail: "角/眼/脑" },
+  { id: "essences", label: "精华与徽章", detail: "四种精华及赦免徽章" },
+] as const;
+
+const DEFAULT_TRACKING_CATEGORIES = TRACKING_CATEGORIES.map(category => category.id);
 
 type InstallationPathField =
   | "cn_battle_net_path"
@@ -221,14 +223,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   // Tab and search state
   const [activeTab, setActiveTab] = useState<TabType>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
-  const [runeFlacDirectory, setRuneFlacDirectory] = useState("");
-  const [runeFlacGainDb, setRuneFlacGainDb] = useState(-30);
-  const [runeFlacProcessing, setRuneFlacProcessing] = useState(false);
-  const [runeFlacOutput, setRuneFlacOutput] = useState<string | null>(null);
-  const [audioModSourceDirectory, setAudioModSourceDirectory] = useState("");
-  const [audioModOutputDirectory, setAudioModOutputDirectory] = useState("");
-  const [audioModBuilding, setAudioModBuilding] = useState(false);
-  const [audioModReport, setAudioModReport] = useState<AudioModReport | null>(null);
   const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
 
   // Config backup for rollback
@@ -574,114 +568,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     }
   };
 
-  const pickRuneFlacDirectory = async () => {
-    try {
-      const selected = await openDialog({
-        multiple: false,
-        directory: true,
-        title: "选择包含符文或场景 FLAC 的目录",
-      });
-      if (typeof selected === "string") {
-        setRuneFlacDirectory(selected);
-        setRuneFlacOutput(null);
-      }
-    } catch (error) {
-      showToast("error", `选择符文 FLAC 目录失败: ${error}`);
-    }
-  };
-
-  const processRuneFlacDirectory = async () => {
-    if (!runeFlacDirectory || runeFlacProcessing) return;
-    setRuneFlacProcessing(true);
-    setRuneFlacOutput(null);
-    try {
-      const report = await invoke<{
-        output_directory: string;
-        processed: Array<{
-          marker_label: string;
-          confidence: number;
-          loop_start_frame: number | null;
-          loop_tail_frames: number;
-        }>;
-        missing_runes: number[];
-        missing_areas: number[];
-        missing_frontend: boolean;
-      }>("process_rune_flac_directory", {
-        request: {
-          input_directory: runeFlacDirectory,
-          output_directory: null,
-          gain_db: runeFlacGainDb,
-        },
-      });
-      setRuneFlacOutput(report.output_directory);
-      const minimumConfidence = Math.min(...report.processed.map(item => item.confidence));
-      if (report.missing_runes.length > 0 || report.missing_areas.length > 0 || report.missing_frontend) {
-        const missing = [
-          report.missing_runes.length > 0 ? `符文 #${report.missing_runes.join(", #")}` : "",
-          report.missing_areas.length > 0 ? `场景 Area Id ${report.missing_areas.join(", ")}` : "",
-          report.missing_frontend ? "主界面 frontend.flac" : "",
-        ].filter(Boolean).join("；");
-        showToast(
-          "warning",
-          `已生成 ${report.processed.length} 个文件；目录缺少${missing}`,
-        );
-      } else {
-        showToast(
-          "success",
-          `33 个符文、7 个区域与主界面声纹全部通过自检，最低置信度 ${(minimumConfidence * 100).toFixed(1)}%`,
-        );
-      }
-    } catch (error) {
-      showToast("error", `处理符文 FLAC 失败: ${error}`);
-    } finally {
-      setRuneFlacProcessing(false);
-    }
-  };
-
-  const pickAudioModDirectory = async (kind: "source" | "output") => {
-    try {
-      const selected = await openDialog({
-        multiple: false,
-        directory: true,
-        title: kind === "source"
-          ? "选择作为基础的已解包 Mod（例如 jcy.mpq）"
-          : "选择输出目录（建议 D2R 安装目录下的 mods）",
-      });
-      if (typeof selected === "string") {
-        if (kind === "source") setAudioModSourceDirectory(selected);
-        else setAudioModOutputDirectory(selected);
-        setAudioModReport(null);
-      }
-    } catch (error) {
-      showToast("error", `选择目录失败: ${error}`);
-    }
-  };
-
-  const buildAudioTelemetryMod = async () => {
-    if (!audioModSourceDirectory || audioModBuilding) return;
-    setAudioModBuilding(true);
-    setAudioModReport(null);
-    try {
-      const report = await invoke<AudioModReport>("build_rune_audio_mod", {
-        request: {
-          source_directory: audioModSourceDirectory,
-          output_directory: audioModOutputDirectory || null,
-          sound_environment_file: null,
-          gain_db: runeFlacGainDb,
-        },
-      });
-      setAudioModReport(report);
-      showToast(
-        "success",
-        `音频遥测 Mod 已生成：33 个符文、${report.area_assets.length} 个地图`,
-      );
-    } catch (error) {
-      showToast("error", `生成音频遥测 Mod 失败: ${error}`);
-    } finally {
-      setAudioModBuilding(false);
-    }
-  };
-
   const toggleAudioDiagnosticRecording = async () => {
     try {
       if (audioStatus?.diagnostic_recording) {
@@ -822,7 +708,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     { id: "agent", label: "启动策略", icon: Play, desc: "战网 Agent 与启动等待策略" },
     { id: "shortcuts", label: "快捷键", icon: Settings, desc: "账号窗口切换与聚焦" },
     { id: "appearance", label: "显示", icon: Palette, desc: "主题、透明度、字体和悬浮窗" },
-    { id: "automation", label: "自动化", icon: ScanEye, desc: "符文声纹、统计、监听账户与 FLAC 制作" },
+    { id: "automation", label: "自动化", icon: ScanEye, desc: "掉落声纹、统计、监听账号与协议诊断" },
     { id: "pet", label: "伴随", icon: Cat, desc: "桌宠与轻量状态提示" },
     { id: "advanced", label: "维护", icon: ShieldAlert, desc: "修复、日志、重置和向导" },
   ];
@@ -1477,7 +1363,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between py-1">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">启用桌面上方的信息悬浮窗</span>
-                      <p className="text-2xs text-text-muted">常驻显示运行账号、刷图计时、符文掉落与邪恶区域预报</p>
+                      <p className="text-2xs text-text-muted">常驻显示运行账号、刷图计时、所选掉落与邪恶区域预报</p>
                     </div>
                     <Toggle
                       checked={!!config.enable_overlay}
@@ -1509,12 +1395,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between py-1">
                     <div>
                       <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
-                      <p className="text-2xs text-text-muted">按 D2R 进程捕获 Mod 音频；自动识别符文掉落、场景切换并完成刷图计时统计</p>
+                      <p className="text-2xs text-text-muted">按 D2R 进程捕获 Mod 音频；自动识别所选掉落、场景切换并完成刷图计时统计</p>
                     </div>
                     <Toggle
                       checked={!!config.rune_audio_enabled && trackingTarget.valid}
                       disabled={!trackingTarget.valid}
-                      ariaLabel="启用符文声纹自动识别"
+                      ariaLabel="启用音频声纹自动识别"
                       descriptionId="rune-audio-target-help"
                       onChange={v => updateConfig(c => { c.rune_audio_enabled = v; })}
                     />
@@ -1554,13 +1440,57 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   </div>
 
                   <div className="space-y-2 border-t border-border-default/50 pt-3">
+                    <div>
+                      <span className="text-sm font-semibold text-text-secondary">识别与记录内容</span>
+                      <p className="text-2xs text-text-muted">
+                        这里只控制 D2RHub 记录哪些已接收事件；独立 Mod 工具不会读取这份设置
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {TRACKING_CATEGORIES.map(category => {
+                        const selected = (config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES)
+                          .includes(category.id);
+                        return (
+                          <label
+                            key={category.id}
+                            className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${selected
+                              ? "border-accent/40 bg-accent/5"
+                              : "border-border-default bg-surface-hover"}`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selected}
+                              onChange={event => updateConfig(next => {
+                                const current = new Set(next.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES);
+                                if (event.target.checked) current.add(category.id);
+                                else current.delete(category.id);
+                                next.rune_audio_tracked_categories = TRACKING_CATEGORIES
+                                  .map(item => item.id)
+                                  .filter(id => current.has(id));
+                              })}
+                              className="mt-0.5 accent-[var(--accent)]"
+                            />
+                            <span>
+                              <span className="block text-xs font-semibold text-text-secondary">{category.label}</span>
+                              <span className="block text-2xs text-text-muted">{category.detail}</span>
+                            </span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-2xs text-warning">
+                      声纹按基础物品代码识别；同一代码的暗金/套装/词缀，以及完全同步落地的两个同名物品，无法仅凭游戏音频可靠区分。
+                    </p>
+                  </div>
+
+                  <div className="space-y-2 border-t border-border-default/50 pt-3">
                     <div className="flex items-center justify-between text-xs">
                       <span className={audioStatus?.running ? "text-success" : "text-text-secondary"}>
                         {audioStatus?.running ? `正在捕获 · PID ${audioStatus.target_pid}` : "监控未运行"}
                       </span>
                       <span className="text-text-muted">数据包 {audioStatus?.decoded_packets ?? 0}</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 text-center text-2xs">
+                    <div className="grid grid-cols-4 gap-2 text-center text-2xs">
                       <div className="rounded bg-surface-hover px-2 py-1.5">
                         <span className="block text-text-muted">音频峰值</span>
                         <span className="font-mono text-text-primary">
@@ -1572,7 +1502,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         <span className="font-mono text-text-primary">{audioStatus?.rune_events ?? 0}</span>
                       </div>
                       <div className="rounded bg-surface-hover px-2 py-1.5">
-                        <span className="block text-text-muted">地图心跳</span>
+                        <span className="block text-text-muted">物品</span>
+                        <span className="font-mono text-text-primary">{audioStatus?.item_events ?? 0}</span>
+                      </div>
+                      <div className="rounded bg-surface-hover px-2 py-1.5">
+                        <span className="block text-text-muted">地点信号</span>
                         <span className="font-mono text-text-primary">{audioStatus?.scene_heartbeats ?? 0}</span>
                       </div>
                     </div>
@@ -1591,7 +1525,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       <div className="flex items-center justify-between">
                         <div>
                           <span className="text-sm font-semibold text-text-secondary">识别阈值</span>
-                          <p className="text-2xs text-text-muted">v6 默认 0.56；独立同步码会隔离地点与符文，通常无需调整</p>
+                          <p className="text-2xs text-text-muted">v7 默认 0.56；独立同步码会隔离地点与掉落，通常无需调整</p>
                         </div>
                         <input
                           type="number"
@@ -1615,9 +1549,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                               await save(config);
                               setOriginalConfig(JSON.parse(JSON.stringify(config)));
                               await invoke("restart_rune_audio_monitor");
-                              showToast("success", "符文声纹监控已用新配置重启");
+                              showToast("success", "声纹监控已用新配置重启");
                             } catch (e) {
-                              showToast("error", "重启符文声纹监控失败: " + e);
+                              showToast("error", "重启声纹监控失败: " + e);
                             }
                           }}
                           className="w-full"
@@ -1636,7 +1570,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           onClick={toggleAudioDiagnosticRecording}
                           className="w-full"
                         >
-                          {audioStatus?.diagnostic_recording ? "停止并保存诊断录音" : "开始女伯爵诊断录音"}
+                          {audioStatus?.diagnostic_recording ? "停止并保存诊断录音" : "开始声纹诊断录音"}
                         </Button>
                         <p className="text-2xs text-text-muted text-center break-all">
                           {audioStatus?.diagnostic_recording
@@ -1652,121 +1586,17 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
                 <div className="spatial-panel p-4 space-y-3">
                   <div>
-                    <span className="text-xs font-bold text-text-primary block mb-1">一键生成可用的音频遥测 Mod</span>
+                    <span className="text-xs font-bold text-text-primary block mb-1">独立协议接收器 · v7</span>
                     <p className="text-2xs text-text-muted">
-                      v4.9 稳定版：恢复可靠的符文地面载波与生命周期去重，场景每 5 秒冗余发送以适应淡入和恐怖区域叠加
+                      D2RHub 只监听并统计当前账号的音频协议事件；会按该账号的 -mod 参数，从当前 Mod 根目录读取地图与物品清单。
                     </p>
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={audioModSourceDirectory}
-                      readOnly
-                      placeholder="源：选择完整的 jcy.mpq"
-                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                    />
-                    <Button size="sm" onClick={() => pickAudioModDirectory("source")}>
-                      <FolderOpen size={13} />
-                      选择源
-                    </Button>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={audioModOutputDirectory}
-                      readOnly
-                      placeholder="输出：建议选择 Diablo II Resurrected/mods"
-                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                    />
-                    <Button size="sm" onClick={() => pickAudioModDirectory("output")}>
-                      <FolderOpen size={13} />
-                      选择输出
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <span className="text-xs font-semibold text-text-secondary">超声标记强度</span>
-                      <p className="text-2xs text-text-muted">默认 -30dBFS；第一次实机测试可改为 -26</p>
-                    </div>
-                    <input
-                      type="number"
-                      min={-42}
-                      max={-12}
-                      step={1}
-                      value={runeFlacGainDb}
-                      onChange={event => setRuneFlacGainDb(Number(event.target.value))}
-                      className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-                    />
-                  </div>
-                  <Button
-                    size="md"
-                    className="w-full"
-                    disabled={!audioModSourceDirectory || audioModBuilding}
-                    loading={audioModBuilding}
-                    onClick={buildAudioTelemetryMod}
-                  >
-                    生成 Audio Telemetry v4.9 稳定版
-                  </Button>
-                  {audioModReport && (
-                    <div className="space-y-1 text-2xs">
-                      <p className="text-success break-all">输出：{audioModReport.mod_directory}</p>
-                      <p className="text-text-secondary">启动参数：<code>{audioModReport.launch_arguments}</code></p>
-                      <p className="text-text-muted">
-                        符文原声保留 {audioModReport.rune_assets.filter(asset => asset.preserved_source_audio).length}/33 · 地图 {audioModReport.area_assets.length}
-                      </p>
-                    </div>
-                  )}
-                  <p className="text-2xs text-warning">
-                    地点覆盖罗格营地、黑色荒地、遗忘之塔和高塔地牢 1–5 层；同号符文完全同步时仍无法判断数量。
+                  <p className="text-2xs text-text-secondary">
+                    Mod 由独立的 d2r-audio-mod 命令行工具生成。两个程序不共享配置、数据库或进程，只约定声纹编码和 JSON 清单。
                   </p>
-                </div>
-
-                <div className="spatial-panel p-4 space-y-3">
-                  <div>
-                    <span className="text-xs font-bold text-text-primary block mb-1">高级：单独处理自定义 FLAC</span>
-                    <p className="text-2xs text-text-muted">通常无需使用；支持 r1-r33、任意 a&#123;AreaId&#125; 与 frontend.flac，低采样率会转为 48kHz</p>
-                  </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      value={runeFlacDirectory}
-                      readOnly
-                      placeholder="选择符文/场景音频目录"
-                      className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                    />
-                    <Button size="sm" onClick={pickRuneFlacDirectory}>
-                      <FolderOpen size={13} />
-                      选择目录
-                    </Button>
-                  </div>
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <span className="text-xs font-semibold text-text-secondary">声纹增益</span>
-                      <p className="text-2xs text-text-muted">与上方完整 Mod 使用同一 v6 强度</p>
-                    </div>
-                    <input
-                      type="number"
-                      min={-42}
-                      max={-12}
-                      step={1}
-                      value={runeFlacGainDb}
-                      onChange={event => setRuneFlacGainDb(Number(event.target.value))}
-                      className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-                    />
-                  </div>
-                  <Button
-                    size="md"
-                    className="w-full"
-                    disabled={!runeFlacDirectory || runeFlacProcessing}
-                    loading={runeFlacProcessing}
-                    onClick={processRuneFlacDirectory}
-                  >
-                    生成并自检声纹 FLAC
-                  </Button>
-                  {runeFlacOutput && (
-                    <p className="text-2xs text-success break-all">输出目录：{runeFlacOutput}</p>
-                  )}
-                  <p className="text-2xs text-warning">输出使用 v6 数据包并逐文件自检；游戏音效通道必须非静音。</p>
+                  <p className="text-2xs text-warning">
+                    这里勾选的是接收端记录范围；独立工具的 --track 决定 Mod 实际发出哪些掉落标记。
+                  </p>
                   <div className="border-t border-border-default/50 pt-3">
                     <Button
                       size="sm"

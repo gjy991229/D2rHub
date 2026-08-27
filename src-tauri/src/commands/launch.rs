@@ -1884,7 +1884,7 @@ async fn launch_single_token(
 
 /// Parse a Windows command-line fragment into arguments without losing quoted spaces.
 /// Implements the backslash-before-quote rules used by the Microsoft C runtime.
-fn parse_windows_command_line(input: &str) -> Result<Vec<String>, String> {
+pub(crate) fn parse_windows_command_line(input: &str) -> Result<Vec<String>, String> {
     let chars: Vec<char> = input.chars().collect();
     let mut args = Vec::new();
     let mut index = 0;

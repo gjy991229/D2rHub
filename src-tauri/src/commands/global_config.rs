@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 3;
+const CURRENT_CONFIG_VERSION: u32 = 4;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -73,14 +73,17 @@ pub struct GlobalConfig {
     #[serde(default = "default_first_launch")]
     pub first_launch: bool,
     /// 是否启用按 D2R 进程捕获的符文声纹识别。
-    #[serde(default, alias = "ocr_enabled")]
+    #[serde(default)]
     pub rune_audio_enabled: bool,
     /// 被监控的账号 ID（对应 account.json 中的 id）。
-    #[serde(default, alias = "ocr_target_account")]
+    #[serde(default)]
     pub rune_audio_target_account: String,
     /// Gold 码相关识别阈值。
     #[serde(default = "default_rune_audio_detection_threshold")]
     pub rune_audio_detection_threshold: f32,
+    /// Drop categories decoded and persisted by the audio monitor.
+    #[serde(default = "default_rune_audio_tracked_categories")]
+    pub rune_audio_tracked_categories: Vec<String>,
     /// 快捷键绑定 JSON: {"1": "Ctrl+1", "2": "Ctrl+2", ...} ，key 为账号位置序号（1-based）
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
@@ -120,6 +123,10 @@ fn default_opacity() -> u8 {
 
 fn default_rune_audio_detection_threshold() -> f32 {
     0.56
+}
+
+fn default_rune_audio_tracked_categories() -> Vec<String> {
+    crate::rune_audio::item_catalog::default_tracked_categories()
 }
 
 fn default_agent_mode() -> u8 {
@@ -529,6 +536,38 @@ mod validation_tests {
     }
 
     #[test]
+    fn missing_tracking_categories_use_the_full_default_catalog() {
+        let mut value = serde_json::to_value(GlobalConfig::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("rune_audio_tracked_categories");
+
+        let config: GlobalConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(
+            config.rune_audio_tracked_categories,
+            crate::rune_audio::item_catalog::default_tracked_categories()
+        );
+    }
+
+    #[test]
+    fn tracking_categories_are_normalized_before_use() {
+        let mut config = GlobalConfig {
+            rune_audio_tracked_categories: vec![
+                " keys ".to_string(),
+                "unknown".to_string(),
+                "runes".to_string(),
+                "KEYS".to_string(),
+            ],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_rune_audio_configuration());
+        assert_eq!(config.rune_audio_tracked_categories, ["runes", "keys"]);
+    }
+
+    #[test]
     fn legacy_paths_are_migrated_to_the_detected_edition() {
         let root = temp_dir("legacy_region_path_migration");
         let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
@@ -723,6 +762,7 @@ impl Default for GlobalConfig {
             rune_audio_enabled: false,
             rune_audio_target_account: String::new(),
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
+            rune_audio_tracked_categories: default_rune_audio_tracked_categories(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
             overlay_opacity: 95,
             main_opacity: 95,
@@ -764,12 +804,16 @@ impl GlobalConfig {
 
     /// 兼容旧配置：无效目标不能保持声纹识别启用状态。
     fn normalize_rune_audio_configuration(&mut self) -> bool {
-        if !self.rune_audio_enabled || self.resolve_rune_audio_target_account().is_ok() {
-            return false;
+        let normalized = crate::rune_audio::item_catalog::normalize_tracked_categories(
+            &self.rune_audio_tracked_categories,
+        );
+        let mut changed = normalized != self.rune_audio_tracked_categories;
+        self.rune_audio_tracked_categories = normalized;
+        if self.rune_audio_enabled && self.resolve_rune_audio_target_account().is_err() {
+            self.rune_audio_enabled = false;
+            changed = true;
         }
-
-        self.rune_audio_enabled = false;
-        true
+        changed
     }
 
     fn config_path(app_data_dir: &str) -> PathBuf {
@@ -1165,6 +1209,10 @@ pub fn save_global_config(
     cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
         .to_string_lossy()
         .to_string();
+    cfg.rune_audio_tracked_categories =
+        crate::rune_audio::item_catalog::normalize_tracked_categories(
+            &cfg.rune_audio_tracked_categories,
+        );
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

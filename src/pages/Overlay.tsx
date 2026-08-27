@@ -6,7 +6,7 @@ import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { useStats, isHighRune } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import type { RuneAudioEvent, TrackingSnapshot } from "../store/types";
+import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
 import {
   currentMonitor,
   getCurrentWindow,
@@ -1425,6 +1425,26 @@ export function Overlay() {
     };
   }, [config?.rune_audio_enabled, config?.rune_audio_target_account, isPollerActive, stats.processRuneDrop]);
 
+  // ── 扩展物品声纹事件 ──
+  useEffect(() => {
+    if (!isPollerActive || !config?.rune_audio_enabled) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<ItemAudioEvent>("item-audio-detected", (event) => {
+      if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
+      stats.processItemDrop(event.payload);
+    }).then((stop) => {
+      if (cancelled) stop();
+      else unlisten = stop;
+    }).catch((error) => {
+      console.error("监听物品声纹事件失败", error);
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [config?.rune_audio_enabled, config?.rune_audio_target_account, isPollerActive, stats.processItemDrop]);
+
   // 后端状态机是刷图计时、场景切换和单轮掉落归属的事实来源。
   useEffect(() => {
     if (!isPollerActive || !config?.rune_audio_enabled) return;
@@ -1476,6 +1496,24 @@ export function Overlay() {
 
   // ── 派生数据 ──
   const activeAccounts = accounts.filter((a) => a.is_running);
+  const aggregatedDrops = React.useMemo(() => {
+    const groups = new Map<string, {
+      drop: (typeof stats.currentDrops)[number];
+      count: number;
+      latestIndex: number;
+    }>();
+    stats.currentDrops.forEach((drop, index) => {
+      const key = `${drop.kind}:${drop.itemCode || drop.telemetryId}`;
+      const current = groups.get(key);
+      if (current) {
+        current.count += 1;
+        current.latestIndex = index;
+      } else {
+        groups.set(key, { drop, count: 1, latestIndex: index });
+      }
+    });
+    return [...groups.values()].sort((left, right) => right.latestIndex - left.latestIndex);
+  }, [stats.currentDrops]);
   const activeAccountIdsKey = activeAccounts.map((account) => account.id).join("|");
   const foregroundTitleLower = foregroundTitle.toLowerCase();
   const focusedAccountId = activeAccounts.find((account) => {
@@ -1791,7 +1829,7 @@ export function Overlay() {
           style={{ height: 1, background: "var(--border-default)" }}
         />
 
-        {/* 符文掉落 — 瀑布流 + 滑条 */}
+        {/* 所选掉落 — 同类聚合 + 滚动 */}
         <div className="flex flex-col gap-1 flex-1 min-h-0">
           <span className="text-2xs font-medium text-text-muted px-1">
             {dropsLabel}
@@ -1804,12 +1842,16 @@ export function Overlay() {
             className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
             style={{ flex: 1, scrollbarWidth: "thin" }}
           >
-            {stats.currentDrops.length > 0 ? (
-              stats.currentDrops.map((drop, i) => ({ drop, index: i })).reverse().map(({ drop, index }) => {
-                const high = isHighRune(drop.runeNumber);
+            {aggregatedDrops.length > 0 ? (
+              aggregatedDrops.map(({ drop, count, latestIndex }) => {
+                const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
+                const localizedName = useEnglish && drop.nameEn ? drop.nameEn : drop.name;
+                const label = drop.kind === "rune" && drop.runeNumber !== null
+                  ? `#${drop.runeNumber} ${localizedName}`
+                  : localizedName;
                 return (
                   <span
-                    key={`${drop.runeName}-${index}`}
+                    key={`${drop.kind}:${drop.itemCode || drop.telemetryId}`}
                     className="relative inline-flex items-center pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
                       transition-all duration-200 hover:brightness-110 group"
                     style={{
@@ -1821,12 +1863,12 @@ export function Overlay() {
                       WebkitAppRegion: "no-drag",
                     } as React.CSSProperties}
                   >
-                    <span>{(useEnglish && drop.runeNameEn ? drop.runeNameEn : drop.runeName)}#{drop.runeNumber}</span>
+                    <span>{label}{count > 1 ? ` ×${count}` : ""}</span>
                     <button
                       className="absolute right-0.5 top-0 bottom-0 flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => {
                         e.stopPropagation();
-                        stats.removeCurrentDrop(index);
+                        stats.removeCurrentDrop(latestIndex);
                       }}
                       title={deleteDropTitle}
                     >

@@ -882,7 +882,6 @@ pub fn delete_account(
     };
 
     if let Some(config) = updated_config {
-        #[cfg(feature = "rune-audio")]
         crate::rune_audio::monitor::stop_rune_audio_monitor();
         let _ = app.emit("global-config-updated", config);
     }

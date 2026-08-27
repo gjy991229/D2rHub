@@ -3,14 +3,18 @@ use std::collections::HashMap;
 use std::path::Path;
 
 pub const RUNE_COUNT: u32 = 33;
-/// The v6 location packet layout reserves ten bits for an Area Id.
+/// Gold-code slots 34-127 are reserved for generated, catalog-backed item identities.
+pub const MAX_ITEM_ID: u32 = 94;
+/// The v7 location packet layout reserves ten bits for an Area Id.
 pub const MAX_AREA_ID: u32 = 1023;
-pub const AREA_CATALOG_FILE_NAME: &str = "rune-audio-area-catalog.json";
+pub const AREA_CATALOG_FILE_NAME: &str = "audio-telemetry-area-catalog.json";
+pub const LEGACY_AREA_CATALOG_FILE_NAME: &str = "rune-audio-area-catalog.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TelemetryMarker {
     Rune { rune_number: u32 },
+    Item { item_id: u32 },
     Area { area_id: u32 },
     Frontend,
 }
@@ -143,6 +147,8 @@ pub fn validate_marker(marker: TelemetryMarker) -> Result<(), String> {
     match marker {
         TelemetryMarker::Rune { rune_number } if (1..=RUNE_COUNT).contains(&rune_number) => Ok(()),
         TelemetryMarker::Rune { .. } => Err(format!("符文编号必须位于 1-{RUNE_COUNT}")),
+        TelemetryMarker::Item { item_id } if (1..=MAX_ITEM_ID).contains(&item_id) => Ok(()),
+        TelemetryMarker::Item { .. } => Err(format!("物品编号必须位于 1-{MAX_ITEM_ID}")),
         TelemetryMarker::Area { area_id } if (1..=MAX_AREA_ID).contains(&area_id) => Ok(()),
         TelemetryMarker::Area { .. } => Err(format!("Area Id 必须位于 1-{MAX_AREA_ID}")),
         TelemetryMarker::Frontend => Ok(()),
@@ -152,6 +158,7 @@ pub fn validate_marker(marker: TelemetryMarker) -> Result<(), String> {
 pub fn marker_sort_key(marker: TelemetryMarker) -> u32 {
     match marker {
         TelemetryMarker::Rune { rune_number } => rune_number,
+        TelemetryMarker::Item { item_id } => 100 + item_id,
         TelemetryMarker::Area { area_id } => 1_000 + area_id,
         TelemetryMarker::Frontend => u32::MAX,
     }
@@ -163,26 +170,35 @@ pub struct LocationCatalog {
 }
 
 impl LocationCatalog {
-    pub fn load(app_data_dir: &str) -> Self {
-        let path = Path::new(app_data_dir).join(AREA_CATALOG_FILE_NAME);
-        let Ok(bytes) = std::fs::read(&path) else {
-            return Self::default();
-        };
-        let Ok(file) = serde_json::from_slice::<AreaCatalogFile>(&bytes) else {
-            crate::logger::log_msg(
-                "WARN",
-                "RuneAudio",
-                &format!("地图声纹目录无效，回退到 Area Id: {}", path.display()),
-            );
-            return Self::default();
-        };
-        Self {
-            areas: file
-                .areas
-                .into_iter()
-                .map(|entry| (entry.area_id, entry))
-                .collect(),
+    pub fn load_from_directory(directory: &Path) -> Result<Self, String> {
+        let path = [AREA_CATALOG_FILE_NAME, LEGACY_AREA_CATALOG_FILE_NAME]
+            .into_iter()
+            .map(|name| directory.join(name))
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| format!("目录中没有协议地图清单: {}", directory.display()))?;
+        let bytes = std::fs::read(&path)
+            .map_err(|error| format!("读取地图协议清单失败 {}: {error}", path.display()))?;
+        let file = serde_json::from_slice::<AreaCatalogFile>(&bytes)
+            .map_err(|error| format!("解析地图协议清单失败 {}: {error}", path.display()))?;
+        if file.protocol_version != super::protocol::PROTOCOL_VERSION {
+            return Err(format!(
+                "地图清单协议版本 {} 与接收端 v{} 不兼容: {}",
+                file.protocol_version,
+                super::protocol::PROTOCOL_VERSION,
+                path.display()
+            ));
         }
+        let areas = file
+            .areas
+            .into_iter()
+            .filter(|entry| (1..=MAX_AREA_ID).contains(&entry.area_id))
+            .map(|entry| (entry.area_id, entry))
+            .collect();
+        Ok(Self { areas })
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.areas.is_empty()
     }
 
     pub fn resolve(&self, marker: TelemetryMarker) -> Option<ResolvedLocation> {
@@ -215,6 +231,7 @@ impl LocationCatalog {
                 })
             }
             TelemetryMarker::Rune { .. }
+            | TelemetryMarker::Item { .. }
             | TelemetryMarker::Area { .. }
             | TelemetryMarker::Frontend => None,
         }
@@ -229,6 +246,15 @@ mod tests {
     fn validates_packet_ranges() {
         assert!(validate_marker(TelemetryMarker::Rune { rune_number: 1 }).is_ok());
         assert!(validate_marker(TelemetryMarker::Rune { rune_number: 34 }).is_err());
+        assert!(validate_marker(TelemetryMarker::Item { item_id: 1 }).is_ok());
+        assert!(validate_marker(TelemetryMarker::Item {
+            item_id: MAX_ITEM_ID
+        })
+        .is_ok());
+        assert!(validate_marker(TelemetryMarker::Item {
+            item_id: MAX_ITEM_ID + 1
+        })
+        .is_err());
         assert!(validate_marker(TelemetryMarker::Area { area_id: 137 }).is_ok());
         assert!(validate_marker(TelemetryMarker::Area { area_id: 1024 }).is_err());
     }

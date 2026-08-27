@@ -50,14 +50,14 @@ npm run build:desktop
 npm run build:nsis
 ```
 
-音频遥测构建包含 FLAC 编解码、SQLite 和 Windows WASAPI 依赖。普通前端修改通常只需
+桌面程序始终包含 SQLite、WAV 诊断录音和 Windows WASAPI 声纹识别依赖。普通前端修改通常只需
 运行 `npm test` 和 `npm run build`；涉及 Rust 代码时还必须运行 `cargo test --lib`。
 
 ## 项目结构
 
 - `src/`：React 页面、组件、状态和前端工具。
 - `src-tauri/src/`：Tauri 命令、Windows 集成、启动流程、符文声纹和统计逻辑。
-- `src-tauri/src/rune_audio/`：共享声纹协议、FLAC 批处理和 WASAPI 实时识别。
+- `src-tauri/src/rune_audio/`：v7 协议解码、WASAPI 实时识别和掉落生命周期跟踪。
 - `public/`：Vite 直接复制的运行时图片和 SVG。
 - `docs/`：用户文档、开发文档及应用内离线页面。
 - `.github/workflows/`：公开仓库的 Pull Request 验证 CI。
@@ -84,7 +84,7 @@ npm run build:nsis
 
 ### Rust 第一次编译很慢
 
-FLAC、Tauri 和 Windows API 依赖量较大，冷编译可能需要数分钟。后续编译会复用
+Tauri、SQLite 和 Windows API 依赖量较大，冷编译可能需要数分钟。后续编译会复用
 `src-tauri/target/` 缓存。
 
 ### WebView 窗口无法打开
@@ -94,4 +94,4 @@ FLAC、Tauri 和 Windows API 依赖量较大，冷编译可能需要数分钟。
 ### 符文声纹监控无法启动
 
 确认使用 64 位 MSVC Rust 工具链和较新的 Windows 11，目标账号的 D2R 进程已经运行，
-并在“设置中心 → 自动化”选择了相同账号。FLAC 批处理不依赖外部 ffmpeg。
+并在“设置中心 → 自动化”选择了相同账号。Mod 的创建与加工由独立的无界面工具负责。

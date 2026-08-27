@@ -1,10 +1,14 @@
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
+use super::item_catalog::{ItemCatalog, CATEGORY_RUNES};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
-    RunePresenceGate, SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot,
+    DropPresenceGate, SceneTransitionGate, SegmentTracker, TrackedDrop, TrackedDropKind,
+    TrackingSnapshot,
 };
+use crate::commands::launch::parse_windows_command_line;
+use crate::launch_context::{ContextPurpose, LaunchContext};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
@@ -23,6 +27,19 @@ pub struct RuneAudioEvent {
     pub rune_number: u32,
     pub rune_name: String,
     pub rune_name_en: String,
+    pub confidence: f32,
+    pub timestamp: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ItemAudioEvent {
+    pub source: String,
+    pub account_id: String,
+    pub item_id: u32,
+    pub item_code: String,
+    pub category: String,
+    pub item_name: String,
+    pub item_name_en: String,
     pub confidence: f32,
     pub timestamp: String,
 }
@@ -52,6 +69,7 @@ pub struct RuneAudioStatus {
     pub audio_peak: f32,
     pub decoded_packets: u64,
     pub rune_events: u64,
+    pub item_events: u64,
     pub scene_heartbeats: u64,
     pub last_marker: Option<String>,
     pub last_confidence: Option<f32>,
@@ -100,6 +118,8 @@ struct MonitorConfig {
     character_name: String,
     target_pid: u32,
     threshold: f32,
+    tracked_categories: HashSet<String>,
+    catalog_directory: Option<PathBuf>,
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -123,6 +143,7 @@ fn status() -> &'static Mutex<RuneAudioStatus> {
             audio_peak: 0.0,
             decoded_packets: 0,
             rune_events: 0,
+            item_events: 0,
             scene_heartbeats: 0,
             last_marker: None,
             last_confidence: None,
@@ -255,6 +276,28 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         .copied()
         .or(account.running_pid)
         .ok_or_else(|| format!("目标账号“{}”的 D2R 尚未运行", account.display_name))?;
+    let catalog_directory = match active_mod_name(&account.mod_args)? {
+        Some(mod_name) => {
+            match LaunchContext::for_account(&config, &account, ContextPurpose::Settings) {
+                Ok(context) => Some(
+                    context
+                        .installation
+                        .game_directory
+                        .join("mods")
+                        .join(mod_name),
+                ),
+                Err(error) => {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RuneAudio",
+                        &format!("无法定位当前 Mod 的协议清单目录: {error}"),
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     Ok(MonitorConfig {
         character_name: if account.display_name.trim().is_empty() {
             account.id.clone()
@@ -264,7 +307,37 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         account_id: account.id,
         target_pid,
         threshold: config.rune_audio_detection_threshold.clamp(0.40, 0.95),
+        tracked_categories: config.rune_audio_tracked_categories.into_iter().collect(),
+        catalog_directory,
     })
+}
+
+fn active_mod_name(mod_args: &str) -> Result<Option<String>, String> {
+    if mod_args.trim().is_empty() {
+        return Ok(None);
+    }
+    let args = parse_windows_command_line(mod_args)
+        .map_err(|error| format!("无法解析声纹账号的 Mod 参数: {error}"))?;
+    let value = args.iter().enumerate().find_map(|(index, argument)| {
+        if argument.eq_ignore_ascii_case("-mod") {
+            args.get(index + 1).cloned()
+        } else {
+            argument
+                .get(..5)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-mod="))
+                .then(|| argument[5..].to_string())
+        }
+    });
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return Ok(None);
+    };
+    let path = std::path::Path::new(&value);
+    if path.components().count() != 1
+        || path.file_name().and_then(|name| name.to_str()) != Some(value.as_str())
+    {
+        return Err("-mod 名称不能包含目录路径".to_string());
+    }
+    Ok(Some(value))
 }
 
 fn emit_tracking_snapshot(app: &tauri::AppHandle, snapshot: &TrackingSnapshot) {
@@ -277,12 +350,20 @@ fn emit_tracking_snapshot(app: &tauri::AppHandle, snapshot: &TrackingSnapshot) {
     }
 }
 
-fn marker_status_label(marker: TelemetryMarker, catalog: &LocationCatalog) -> String {
+fn marker_status_label(
+    marker: TelemetryMarker,
+    catalog: &LocationCatalog,
+    item_catalog: &ItemCatalog,
+) -> String {
     match marker {
         TelemetryMarker::Rune { rune_number } => {
             let name = crate::rune_data::get_rune_name(rune_number).unwrap_or("未知符文");
             format!("符文 #{rune_number:02} {name}")
         }
+        TelemetryMarker::Item { item_id } => item_catalog
+            .resolve(item_id)
+            .map(|item| format!("物品 {} ({})", item.name, item.code))
+            .unwrap_or_else(|| format!("物品 #{item_id}")),
         marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => catalog
             .resolve(marker)
             .map(|location| location.scene_name)
@@ -295,6 +376,7 @@ fn record_decoded_packet(
     confidence: f32,
     start_frame: u64,
     catalog: &LocationCatalog,
+    item_catalog: &ItemCatalog,
     logical_event: bool,
 ) {
     {
@@ -303,11 +385,13 @@ fn record_decoded_packet(
         match marker {
             TelemetryMarker::Rune { .. } if logical_event => current.rune_events += 1,
             TelemetryMarker::Rune { .. } => {}
+            TelemetryMarker::Item { .. } if logical_event => current.item_events += 1,
+            TelemetryMarker::Item { .. } => {}
             TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {
                 current.scene_heartbeats += 1
             }
         }
-        current.last_marker = Some(marker_status_label(marker, catalog));
+        current.last_marker = Some(marker_status_label(marker, catalog, item_catalog));
         current.last_confidence = Some(confidence);
         current.last_detected_at = Some(chrono::Local::now().to_rfc3339());
     }
@@ -339,14 +423,19 @@ fn handle_rune_detection(
         timestamp: chrono::Local::now().to_rfc3339(),
     };
     let state = app.state::<crate::state::SharedState>();
-    let observation_id = match crate::stats::insert_rune_drop_observation(
+    let rune_code = format!("r{rune_number:02}");
+    let observation_id = match crate::stats::insert_drop_observation(
         &state,
-        crate::stats::NewRuneDropObservation {
+        crate::stats::NewDropObservation {
             observed_at: &event.timestamp,
             account_id: &event.account_id,
-            rune_number: event.rune_number,
-            rune_name: &event.rune_name,
-            rune_name_en: &event.rune_name_en,
+            kind: "rune",
+            telemetry_id: event.rune_number,
+            item_code: Some(&rune_code),
+            category: CATEGORY_RUNES,
+            display_name: &event.rune_name,
+            display_name_en: &event.rune_name_en,
+            rune_number: Some(event.rune_number),
             confidence: event.confidence,
             source: &event.source,
         },
@@ -361,17 +450,98 @@ fn handle_rune_detection(
             -1
         }
     };
-    let snapshot = tracker.observe_rune(TrackedRuneDrop {
+    let snapshot = tracker.observe_drop(TrackedDrop {
         observation_id,
-        rune_number,
-        rune_name: event.rune_name.clone(),
-        rune_name_en: event.rune_name_en.clone(),
+        kind: TrackedDropKind::Rune,
+        telemetry_id: rune_number,
+        code: Some(rune_code),
+        category: CATEGORY_RUNES.to_string(),
+        name: event.rune_name.clone(),
+        name_en: event.rune_name_en.clone(),
+        rune_number: Some(rune_number),
     });
     if let Err(error) = app.emit("rune-audio-detected", &event) {
         crate::logger::log_msg(
             "WARN",
             "RuneAudio",
             &format!("推送符文声纹事件失败: {error}"),
+        );
+    }
+    emit_tracking_snapshot(app, &snapshot);
+}
+
+fn handle_item_detection(
+    app: &tauri::AppHandle,
+    config: &MonitorConfig,
+    tracker: &mut SegmentTracker,
+    item_catalog: &ItemCatalog,
+    item_id: u32,
+    confidence: f32,
+) {
+    let Some(item) = item_catalog.resolve(item_id) else {
+        crate::logger::log_msg(
+            "WARN",
+            "RuneAudio",
+            &format!("识别到物品声纹 #{item_id}，但本机物品目录未登记"),
+        );
+        return;
+    };
+    if !config.tracked_categories.contains(&item.category) {
+        return;
+    }
+    let event = ItemAudioEvent {
+        source: "item_audio".to_string(),
+        account_id: config.account_id.clone(),
+        item_id,
+        item_code: item.code.clone(),
+        category: item.category.clone(),
+        item_name: item.name.clone(),
+        item_name_en: item.name_en.clone(),
+        confidence,
+        timestamp: chrono::Local::now().to_rfc3339(),
+    };
+    let state = app.state::<crate::state::SharedState>();
+    let observation_id = match crate::stats::insert_drop_observation(
+        &state,
+        crate::stats::NewDropObservation {
+            observed_at: &event.timestamp,
+            account_id: &event.account_id,
+            kind: "item",
+            telemetry_id: event.item_id,
+            item_code: Some(&event.item_code),
+            category: &event.category,
+            display_name: &event.item_name,
+            display_name_en: &event.item_name_en,
+            rune_number: None,
+            confidence: event.confidence,
+            source: &event.source,
+        },
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            crate::logger::log_msg(
+                "ERROR",
+                "RuneAudio",
+                &format!("保存物品声纹事件失败: {error}"),
+            );
+            -1
+        }
+    };
+    let snapshot = tracker.observe_drop(TrackedDrop {
+        observation_id,
+        kind: TrackedDropKind::Item,
+        telemetry_id: item_id,
+        code: Some(event.item_code.clone()),
+        category: event.category.clone(),
+        name: event.item_name.clone(),
+        name_en: event.item_name_en.clone(),
+        rune_number: None,
+    });
+    if let Err(error) = app.emit("item-audio-detected", &event) {
+        crate::logger::log_msg(
+            "WARN",
+            "RuneAudio",
+            &format!("推送物品声纹事件失败: {error}"),
         );
     }
     emit_tracking_snapshot(app, &snapshot);
@@ -421,7 +591,9 @@ fn handle_location_detection(
         account_id: config.account_id.clone(),
         area_id: match marker {
             TelemetryMarker::Area { area_id } => Some(area_id),
-            TelemetryMarker::Rune { .. } | TelemetryMarker::Frontend => None,
+            TelemetryMarker::Rune { .. }
+            | TelemetryMarker::Item { .. }
+            | TelemetryMarker::Frontend => None,
         },
         scene_key: location.scene_key,
         scene_name: location.scene_name,
@@ -493,11 +665,27 @@ fn capture_loop(
     let mut bytes = VecDeque::new();
     let mut pending_mono = Vec::<f32>::with_capacity(SCAN_INTERVAL_FRAMES * 2);
     let mut detector = StreamingDetector::new(CAPTURE_SAMPLE_RATE, config.threshold)?;
-    let app_data_dir = app
-        .state::<crate::state::SharedState>()
-        .app_data_dir
-        .clone();
-    let catalog = LocationCatalog::load(&app_data_dir);
+    let (catalog, item_catalog) = if let Some(directory) = config.catalog_directory.as_deref() {
+        let catalog = LocationCatalog::load_from_directory(directory).unwrap_or_else(|error| {
+            crate::logger::log_msg(
+                "WARN",
+                "RuneAudio",
+                &format!("当前 Mod 没有可用的地图协议清单，将仅显示内置地点: {error}"),
+            );
+            LocationCatalog::default()
+        });
+        let item_catalog = ItemCatalog::load_from_directory(directory).unwrap_or_else(|error| {
+            crate::logger::log_msg(
+                "WARN",
+                "RuneAudio",
+                &format!("当前 Mod 没有可用的物品协议清单，将使用协议内置名称: {error}"),
+            );
+            ItemCatalog::default()
+        });
+        (catalog, item_catalog)
+    } else {
+        (LocationCatalog::default(), ItemCatalog::default())
+    };
     let mut tracker = SegmentTracker::with_catalog(
         config.account_id.clone(),
         config.character_name.clone(),
@@ -505,7 +693,7 @@ fn capture_loop(
         catalog.clone(),
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
-    let mut rune_gate = RunePresenceGate::new(CAPTURE_SAMPLE_RATE);
+    let mut drop_gate = DropPresenceGate::new(CAPTURE_SAMPLE_RATE);
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
@@ -570,13 +758,15 @@ fn capture_loop(
         write_diagnostic_samples(&chunk);
         for detection in detector.push(&chunk) {
             match detection.marker {
-                TelemetryMarker::Rune { rune_number } => {
-                    let logical_event = rune_gate.observe(rune_number, detection.start_frame);
+                marker @ TelemetryMarker::Rune { rune_number } => {
+                    let tracked = config.tracked_categories.contains(CATEGORY_RUNES);
+                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
                         detection.start_frame,
                         &catalog,
+                        &item_catalog,
                         logical_event,
                     );
                     if logical_event {
@@ -589,6 +779,30 @@ fn capture_loop(
                         );
                     }
                 }
+                marker @ TelemetryMarker::Item { item_id } => {
+                    let tracked = item_catalog
+                        .resolve(item_id)
+                        .is_some_and(|item| config.tracked_categories.contains(&item.category));
+                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
+                    record_decoded_packet(
+                        detection.marker,
+                        detection.confidence,
+                        detection.start_frame,
+                        &catalog,
+                        &item_catalog,
+                        logical_event,
+                    );
+                    if logical_event {
+                        handle_item_detection(
+                            &app,
+                            &config,
+                            &mut tracker,
+                            &item_catalog,
+                            item_id,
+                            detection.confidence,
+                        );
+                    }
+                }
                 marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
                     let logical_event = scene_gate.observe(marker, detection.start_frame);
                     record_decoded_packet(
@@ -596,10 +810,11 @@ fn capture_loop(
                         detection.confidence,
                         detection.start_frame,
                         &catalog,
+                        &item_catalog,
                         logical_event,
                     );
                     if logical_event {
-                        rune_gate.clear();
+                        drop_gate.clear();
                         handle_location_detection(
                             &app,
                             &config,
@@ -658,6 +873,7 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         audio_peak: 0.0,
         decoded_packets: 0,
         rune_events: 0,
+        item_events: 0,
         scene_heartbeats: 0,
         last_marker: None,
         last_confidence: None,
@@ -686,6 +902,7 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
                     audio_peak: previous.audio_peak,
                     decoded_packets: previous.decoded_packets,
                     rune_events: previous.rune_events,
+                    item_events: previous.item_events,
                     scene_heartbeats: previous.scene_heartbeats,
                     last_marker: previous.last_marker,
                     last_confidence: previous.last_confidence,
@@ -814,6 +1031,20 @@ pub fn get_rune_audio_status() -> RuneAudioStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_active_mod_name_without_accepting_paths() {
+        assert_eq!(
+            active_mod_name(r#"-mod "jcy-AudioTelemetry" -txt"#).unwrap(),
+            Some("jcy-AudioTelemetry".to_string())
+        );
+        assert_eq!(
+            active_mod_name("-MOD=AudioTelemetry -txt").unwrap(),
+            Some("AudioTelemetry".to_string())
+        );
+        assert_eq!(active_mod_name("-txt").unwrap(), None);
+        assert!(active_mod_name(r#"-mod "..\\outside" -txt"#).is_err());
+    }
 
     #[test]
     fn diagnostic_recording_writes_wav_and_detection_sidecar() {

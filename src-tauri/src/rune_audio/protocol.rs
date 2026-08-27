@@ -1,9 +1,9 @@
-use super::catalog::{validate_marker, TelemetryMarker};
+use super::catalog::{validate_marker, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::f32::consts::PI;
 
-pub const PROTOCOL_VERSION: u8 = 6;
+pub const PROTOCOL_VERSION: u8 = 7;
 pub const PREAMBLE_CHIPS: usize = 63;
 pub const RUNE_SIGNATURE_CHIPS: usize = 127;
 pub const PAYLOAD_BITS: usize = 20;
@@ -20,11 +20,13 @@ pub const MARKER_OFFSET_SECONDS: f32 = 0.008;
 pub const MIN_SAMPLE_RATE: u32 = 44_100;
 
 const PACKET_MAGIC: u32 = 0b10;
+const TYPE_ITEM: u32 = 0b00;
 const TYPE_RUNE: u32 = 0b01;
 const TYPE_AREA: u32 = 0b10;
 const TYPE_FRONTEND: u32 = 0b11;
 const PAYLOAD_HEADER_BITS: usize = 14;
 const CRC_BITS: usize = 6;
+const DROP_SIGNATURE_COUNT: usize = (RUNE_COUNT + MAX_ITEM_ID) as usize;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MarkerConfig {
@@ -124,6 +126,27 @@ fn rune_signature(rune_number: u32) -> [f32; RUNE_SIGNATURE_CHIPS] {
     output
 }
 
+fn drop_signature_number(marker: TelemetryMarker) -> Option<u32> {
+    match marker {
+        TelemetryMarker::Rune { rune_number } => Some(rune_number),
+        TelemetryMarker::Item { item_id } => Some(RUNE_COUNT + item_id),
+        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => None,
+    }
+}
+
+fn marker_from_drop_signature(signature_number: u32) -> Option<TelemetryMarker> {
+    if (1..=RUNE_COUNT).contains(&signature_number) {
+        Some(TelemetryMarker::Rune {
+            rune_number: signature_number,
+        })
+    } else {
+        let item_id = signature_number.checked_sub(RUNE_COUNT)?;
+        (1..=MAX_ITEM_ID)
+            .contains(&item_id)
+            .then_some(TelemetryMarker::Item { item_id })
+    }
+}
+
 fn crc6(data: u32) -> u32 {
     let mut crc = 0u32;
     for bit_index in (0..PAYLOAD_HEADER_BITS).rev() {
@@ -141,6 +164,7 @@ fn crc6(data: u32) -> u32 {
 fn encode_payload(marker: TelemetryMarker) -> Result<u32, String> {
     validate_marker(marker)?;
     let (kind, id) = match marker {
+        TelemetryMarker::Item { item_id } => (TYPE_ITEM, item_id),
         TelemetryMarker::Rune { rune_number } => (TYPE_RUNE, rune_number),
         TelemetryMarker::Area { area_id } => (TYPE_AREA, area_id),
         TelemetryMarker::Frontend => (TYPE_FRONTEND, 0),
@@ -157,6 +181,7 @@ fn decode_payload(payload: u32) -> Option<TelemetryMarker> {
     let kind = (header >> 10) & 0b11;
     let id = header & 0x3ff;
     let marker = match kind {
+        TYPE_ITEM => TelemetryMarker::Item { item_id: id },
         TYPE_RUNE => TelemetryMarker::Rune { rune_number: id },
         TYPE_AREA => TelemetryMarker::Area { area_id: id },
         TYPE_FRONTEND if id == 0 => TelemetryMarker::Frontend,
@@ -209,7 +234,7 @@ fn mix_packet(
     payload: u32,
     amplitude: f64,
 ) {
-    let code = if matches!(marker, TelemetryMarker::Rune { .. }) {
+    let code = if drop_signature_number(marker).is_some() {
         rune_preamble()
     } else {
         location_preamble()
@@ -232,8 +257,8 @@ fn mix_packet(
     }
 
     let payload_start = packet_start + payload_offset_frames(sample_rate);
-    if let TelemetryMarker::Rune { rune_number } = marker {
-        let signature = rune_signature(rune_number);
+    if let Some(signature_number) = drop_signature_number(marker) {
+        let signature = rune_signature(signature_number);
         for (chip_index, sign) in signature.iter().enumerate() {
             for offset in 0..chip_len {
                 let phase = offset as f64 / chip_len as f64;
@@ -309,7 +334,7 @@ pub fn embed_marker_with_delay(
     }
     if sample_rate < MIN_SAMPLE_RATE {
         return Err(format!(
-            "FLAC 采样率 {}Hz 过低；v6 超声数据包最低要求 {}Hz",
+            "FLAC 采样率 {}Hz 过低；v7 超声数据包最低要求 {}Hz",
             sample_rate, MIN_SAMPLE_RATE
         ));
     }
@@ -388,7 +413,7 @@ struct DetectorPlan {
     step: usize,
     location_code: [f32; PREAMBLE_CHIPS],
     rune_code: [f32; PREAMBLE_CHIPS],
-    rune_signatures: [[f32; RUNE_SIGNATURE_CHIPS]; 33],
+    rune_signatures: [[f32; RUNE_SIGNATURE_CHIPS]; DROP_SIGNATURE_COUNT],
     chip_weights: Vec<f32>,
     weight_sum: f32,
 }
@@ -516,9 +541,9 @@ fn decode_rune_signatures(
     }
 
     let signature_threshold = (threshold * 0.48).clamp(0.24, 0.44);
-    (1..=33)
-        .filter_map(|rune_number| {
-            let signature = &plan.rune_signatures[rune_number as usize - 1];
+    (1..=DROP_SIGNATURE_COUNT as u32)
+        .filter_map(|signature_number| {
+            let signature = &plan.rune_signatures[signature_number as usize - 1];
             let mut correlation_i = 0.0f32;
             let mut correlation_q = 0.0f32;
             for chip_index in 0..RUNE_SIGNATURE_CHIPS {
@@ -527,8 +552,10 @@ fn decode_rune_signatures(
             }
             let confidence = (correlation_i * correlation_i + correlation_q * correlation_q).sqrt()
                 / (RUNE_SIGNATURE_CHIPS as f32 * carrier_level);
-            (confidence >= signature_threshold)
-                .then_some((TelemetryMarker::Rune { rune_number }, confidence.min(1.0)))
+            (confidence >= signature_threshold).then(|| {
+                marker_from_drop_signature(signature_number)
+                    .map(|marker| (marker, confidence.min(1.0)))
+            })?
         })
         .collect()
 }
@@ -582,7 +609,10 @@ fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) ->
         }
         if location_preamble_confidence >= threshold {
             if let Some((marker, bit_quality)) = decode_candidate(samples, plan, start) {
-                if !matches!(marker, TelemetryMarker::Rune { .. }) {
+                if !matches!(
+                    marker,
+                    TelemetryMarker::Rune { .. } | TelemetryMarker::Item { .. }
+                ) {
                     raw.push(Detection {
                         marker,
                         confidence: (location_preamble_confidence * 0.75 + bit_quality * 0.25)
@@ -596,12 +626,15 @@ fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) ->
             for (marker, signature_confidence) in
                 decode_rune_signatures(&signature_i, &signature_q, plan, start, threshold)
             {
-                raw.push(Detection {
-                    marker,
-                    confidence: (rune_preamble_confidence * 0.60 + signature_confidence * 0.40)
-                        .min(1.0),
-                    start_frame: start as u64,
-                });
+                let confidence =
+                    (rune_preamble_confidence * 0.60 + signature_confidence * 0.40).min(1.0);
+                if confidence >= threshold {
+                    raw.push(Detection {
+                        marker,
+                        confidence,
+                        start_frame: start as u64,
+                    });
+                }
             }
         }
     }
@@ -739,6 +772,10 @@ mod tests {
         TelemetryMarker::Area { area_id: id }
     }
 
+    fn item(id: u32) -> TelemetryMarker {
+        TelemetryMarker::Item { item_id: id }
+    }
+
     fn tagged(marker: TelemetryMarker, sample_rate: u32, gain_db: f32) -> Vec<f32> {
         let mut samples = vec![0i32; sample_rate as usize / 3];
         embed_marker(
@@ -767,6 +804,8 @@ mod tests {
         for marker in [
             rune(1),
             rune(33),
+            item(1),
+            item(MAX_ITEM_ID),
             area(1),
             area(137),
             area(1023),
@@ -779,7 +818,93 @@ mod tests {
     }
 
     #[test]
-    fn v6_code_families_have_bounded_cyclic_correlation() {
+    fn item_signatures_round_trip_at_both_ends_of_the_reserved_range() {
+        for marker in [item(1), item(50), item(MAX_ITEM_ID)] {
+            let detections = detect_markers(&tagged(marker, 48_000, -26.0), 48_000, 0.50);
+            assert!(detections
+                .iter()
+                .any(|detection| detection.marker == marker));
+            assert!(detections
+                .iter()
+                .all(|detection| detection.marker == marker));
+        }
+    }
+
+    #[test]
+    fn simultaneous_runes_and_items_use_independent_gold_signatures() {
+        let expected = [rune(7), rune(24), item(1), item(39), item(50)];
+        let signals = expected.map(|marker| tagged(marker, 48_000, -24.0));
+        let mut mixed = vec![0.0f32; signals[0].len()];
+        for signal in signals {
+            for (target, sample) in mixed.iter_mut().zip(signal) {
+                *target += sample;
+            }
+        }
+        let markers = detect_markers(&mixed, 48_000, 0.50)
+            .into_iter()
+            .map(|detection| detection.marker)
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(markers, expected.into_iter().collect());
+    }
+
+    #[test]
+    fn drop_detections_never_bypass_the_configured_final_threshold() {
+        let threshold = 0.56;
+        let signals = [
+            tagged(rune(2), 48_000, -24.0),
+            tagged(rune(5), 48_000, -24.0),
+            tagged(rune(8), 48_000, -24.0),
+            tagged(item(33), 48_000, -24.0),
+        ];
+        let mut mixed = vec![0.0f32; signals[0].len()];
+        for signal in signals {
+            for (target, sample) in mixed.iter_mut().zip(signal) {
+                *target += sample;
+            }
+        }
+        let detections = detect_markers(&mixed, 48_000, threshold);
+        assert!(!detections.is_empty());
+        assert!(
+            detections
+                .iter()
+                .all(|detection| detection.confidence >= threshold),
+            "{detections:?}"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires D2RHUB_V7_FALSE_POSITIVE_WAV"]
+    fn countess_overlap_recording_does_not_invent_item_47() {
+        let path = std::env::var("D2RHUB_V7_FALSE_POSITIVE_WAV")
+            .expect("set D2RHUB_V7_FALSE_POSITIVE_WAV to the diagnostic WAV path");
+        let mut reader = hound::WavReader::open(path).unwrap();
+        let spec = reader.spec();
+        assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+        assert_eq!(spec.bits_per_sample, 16);
+        let interleaved = reader
+            .samples::<i16>()
+            .map(|sample| sample.unwrap() as i32)
+            .collect::<Vec<_>>();
+        let mono = interleaved_i32_to_mono(&interleaved, spec.channels as usize, 16).unwrap();
+        let detections = detect_markers(&mono, spec.sample_rate, 0.56);
+        assert!(detections
+            .iter()
+            .any(|detection| detection.marker == item(33)));
+        for expected in [rune(2), rune(5), rune(8)] {
+            assert!(detections
+                .iter()
+                .any(|detection| detection.marker == expected));
+        }
+        assert!(
+            detections
+                .iter()
+                .all(|detection| detection.marker != item(47)),
+            "{detections:?}"
+        );
+    }
+
+    #[test]
+    fn v7_code_families_have_bounded_cyclic_correlation() {
         let location = location_preamble();
         let rune_sync = rune_preamble();
         let preamble_peak = (0..PREAMBLE_CHIPS)
@@ -972,6 +1097,7 @@ mod tests {
             .collect::<Vec<_>>();
         markers.sort_by_key(|marker| match marker {
             TelemetryMarker::Rune { rune_number } => *rune_number,
+            TelemetryMarker::Item { item_id } => RUNE_COUNT + *item_id,
             TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => u32::MAX,
         });
         assert_eq!(
@@ -1014,7 +1140,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires D2RHUB_REAL_AUDIO_WAVS with semicolon-separated diagnostic WAV paths"]
-    fn real_v5_recordings_cannot_create_v6_phantom_runes() {
+    fn real_v5_recordings_cannot_create_v7_phantom_runes() {
         let paths = std::env::var("D2RHUB_REAL_AUDIO_WAVS")
             .expect("set D2RHUB_REAL_AUDIO_WAVS before running this diagnostic regression");
         for path in paths.split(';').filter(|path| !path.is_empty()) {
@@ -1034,7 +1160,7 @@ mod tests {
                 baseline
                     .iter()
                     .all(|detection| !matches!(detection.marker, TelemetryMarker::Rune { .. })),
-                "phantom v6 rune in {path}: {baseline:?}"
+                "phantom v7 rune in {path}: {baseline:?}"
             );
 
             let signal = tagged(rune(20), spec.sample_rate, -26.0);
@@ -1047,7 +1173,9 @@ mod tests {
                 .iter()
                 .filter_map(|detection| match detection.marker {
                     TelemetryMarker::Rune { rune_number } => Some(rune_number),
-                    TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => None,
+                    TelemetryMarker::Item { .. }
+                    | TelemetryMarker::Area { .. }
+                    | TelemetryMarker::Frontend => None,
                 })
                 .collect::<Vec<_>>();
             assert_eq!(runes, vec![20], "real-audio overlay failed in {path}");

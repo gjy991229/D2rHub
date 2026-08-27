@@ -4,13 +4,10 @@ mod error;
 mod input_listener;
 mod launch_context;
 pub mod logger;
-#[cfg(feature = "rune-audio")]
 mod rune_audio;
 mod rune_data;
 mod state;
-#[cfg(feature = "stats")]
 mod stats;
-#[cfg(any(feature = "stats", test))]
 mod stats_page;
 mod tray;
 
@@ -375,36 +372,19 @@ pub fn run() {
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
             // ── 符文音频声纹 ──
-            #[cfg(feature = "rune-audio")]
-            rune_audio::flac::process_rune_flac_directory,
-            #[cfg(feature = "rune-audio")]
-            rune_audio::audio_mod::build_rune_audio_mod,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::start_rune_audio_monitor,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::restart_rune_audio_monitor,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::stop_rune_audio_monitor,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::get_rune_audio_status,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::start_rune_audio_diagnostic_recording,
-            #[cfg(feature = "rune-audio")]
             rune_audio::monitor::stop_rune_audio_diagnostic_recording,
             // ── 数据统计 ──
-            #[cfg(feature = "stats")]
             stats::save_scene_record,
-            #[cfg(feature = "stats")]
             stats::get_stats_data,
-            #[cfg(feature = "stats")]
             stats::get_stats_json,
-            #[cfg(feature = "stats")]
             stats::get_scene_avg_time,
-            #[cfg(feature = "stats")]
             stats::get_scene_stats,
-            #[cfg(feature = "stats")]
             stats::delete_scene_record,
-            #[cfg(feature = "stats")]
             stats::open_stats_page,
             commands::system::get_app_version,
             commands::system::install_update,

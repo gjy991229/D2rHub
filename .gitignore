@@ -4,6 +4,7 @@ example_acount/
 DESIGN.md
 muti.ps1
 src-tauri/target/
+**/target/
 .reasonix/
 reasonix.toml
 .codegraph/

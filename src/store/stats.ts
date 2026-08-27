@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { RuneDropEntry, TrackingSnapshot } from "./types";
+import type { PersistedDropEntry, TrackingSnapshot } from "./types";
 
 const RUNE_NAMES: string[] = [
   "艾尔", "艾德", "特尔", "那夫", "爱斯", "伊司", "塔尔", "拉尔",
@@ -64,11 +64,15 @@ function matchRune(text: string): string | null {
   return null;
 }
 
-/// 单次符文掉落（前端追踪用，非持久化）
+/// 单次掉落（前端追踪用，非持久化）
 export interface DropEntry {
-  runeName: string;
-  runeNameEn: string | null;
-  runeNumber: number;
+  kind: "rune" | "item";
+  telemetryId: number;
+  itemCode: string | null;
+  category: string;
+  name: string;
+  nameEn: string | null;
+  runeNumber: number | null;
   screenshotPath: string | null;  // 仅 #24+ 有值
 }
 
@@ -112,6 +116,13 @@ interface StatsState {
     rune_name?: string | null;
     rune_name_en?: string | null;
   }) => void;
+  processItemDrop: (item: {
+    item_id: number;
+    item_code: string;
+    category: string;
+    item_name: string;
+    item_name_en?: string | null;
+  }) => void;
   applyTrackingSnapshot: (snapshot: TrackingSnapshot) => void;
   fetchDbStats: (sceneName: string) => Promise<void>;
   removeCurrentDrop: (index: number) => void;
@@ -151,10 +162,14 @@ export const useStats = create<StatsState>((set, get) => ({
     const absoluteTime = `${now.getFullYear()}/${pad(now.getMonth() + 1)}/${pad(now.getDate())}/${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
 
     // 仅使用当前单次场景的掉落（非累计），发送到后端存储
-    const dropsPayload: RuneDropEntry[] = currentRunDrops.map((d) => ({
+    const dropsPayload: PersistedDropEntry[] = currentRunDrops.map((d) => ({
+      kind: d.kind,
+      telemetry_id: d.telemetryId,
+      item_code: d.itemCode,
+      category: d.category,
+      display_name: d.name,
+      display_name_en: d.nameEn || null,
       rune_number: d.runeNumber,
-      rune_name: d.runeName,
-      rune_name_en: d.runeNameEn || null,
       screenshot_path: d.screenshotPath || null,
     }));
 
@@ -269,8 +284,12 @@ export const useStats = create<StatsState>((set, get) => ({
 
     // 每个解码器确认的播放事件 = 一次独立掉落观测；不施加业务冷却。
     const newDrop: DropEntry = {
-      runeName,
-      runeNameEn: rune_name_en || null,
+      kind: "rune",
+      telemetryId: runeNumber,
+      itemCode: `r${String(runeNumber).padStart(2, "0")}`,
+      category: "runes",
+      name: runeName,
+      nameEn: rune_name_en || null,
       runeNumber,
       screenshotPath: null,
     };
@@ -280,12 +299,31 @@ export const useStats = create<StatsState>((set, get) => ({
     });
   },
 
+  processItemDrop: (item) => {
+    if (!item.item_id || !item.item_code || !item.item_name) return;
+    const newDrop: DropEntry = {
+      kind: "item",
+      telemetryId: item.item_id,
+      itemCode: item.item_code,
+      category: item.category,
+      name: item.item_name,
+      nameEn: item.item_name_en || null,
+      runeNumber: null,
+      screenshotPath: null,
+    };
+    set({ currentDrops: [...get().currentDrops, newDrop] });
+  },
+
   applyTrackingSnapshot: (snapshot) => {
     const previousRunName = get().currentRunName;
     const currentRunDrops: DropEntry[] = snapshot.current_run_drops.map((drop) => ({
-      runeName: drop.rune_name,
-      runeNameEn: drop.rune_name_en || null,
-      runeNumber: drop.rune_number,
+      kind: drop.kind,
+      telemetryId: drop.telemetry_id,
+      itemCode: drop.code || null,
+      category: drop.category,
+      name: drop.name,
+      nameEn: drop.name_en || null,
+      runeNumber: drop.rune_number || null,
       screenshotPath: null,
     }));
     set({
