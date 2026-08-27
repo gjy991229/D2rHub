@@ -142,6 +142,19 @@ pub fn run() {
                 }
             }
 
+            let stats_overlay_geo =
+                GlobalConfig::load_stats_overlay_geometry_fn(&app_state.app_data_dir);
+            if let Some(g) = &stats_overlay_geo {
+                if g.x > -32000 && g.y > -32000 && g.width >= 220 && g.height >= 180 {
+                    if let Some(win) = app.get_webview_window("stats-overlay") {
+                        use tauri::LogicalPosition;
+                        use tauri::LogicalSize;
+                        let _ = win.set_position(LogicalPosition::new(g.x as f64, g.y as f64));
+                        let _ = win.set_size(LogicalSize::new(g.width as f64, g.height as f64));
+                    }
+                }
+            }
+
             // 拦截主窗口关闭事件
             if let Some(main_win) = app.get_webview_window("main") {
                 let main_win_clone = main_win.clone();
@@ -150,18 +163,33 @@ pub fn run() {
                         api.prevent_close();
                         let _ = main_win_clone.hide();
 
-                        // 显示悬浮窗逻辑
-                        let overlay_enabled = commands::global_config::get_global_config_ext(
+                        // 两个悬浮窗分别遵循自己的开关。
+                        let overlay_config = commands::global_config::get_global_config_ext(
                             main_win_clone.app_handle(),
-                        )
-                        .map(|c| c.enable_overlay)
-                        .unwrap_or(true);
+                        );
 
-                        if overlay_enabled {
+                        if overlay_config
+                            .as_ref()
+                            .map(|config| config.enable_tz_overlay)
+                            .unwrap_or(true)
+                        {
                             if let Some(overlay_win) =
                                 main_win_clone.app_handle().get_webview_window("overlay")
                             {
                                 let _ = overlay_win.show();
+                            }
+                        }
+                        #[cfg(feature = "ocr")]
+                        if overlay_config
+                            .as_ref()
+                            .map(|config| config.enable_stats_overlay)
+                            .unwrap_or(true)
+                        {
+                            if let Some(stats_win) = main_win_clone
+                                .app_handle()
+                                .get_webview_window("stats-overlay")
+                            {
+                                let _ = stats_win.show();
                             }
                         }
                     }
@@ -319,6 +347,8 @@ pub fn run() {
             commands::global_config::load_window_geometry,
             commands::global_config::save_overlay_geometry,
             commands::global_config::load_overlay_geometry,
+            commands::global_config::save_stats_overlay_geometry,
+            commands::global_config::load_stats_overlay_geometry,
             commands::global_config::save_theme,
             commands::global_config::detect_saved_games_path,
             commands::global_config::detect_global_saved_games_path,
@@ -335,6 +365,7 @@ pub fn run() {
             commands::account::update_account_region,
             commands::account::delete_account,
             commands::account::rename_account,
+            commands::account::add_account_mod,
             commands::account::update_account_mods,
             commands::account::mark_settings_customized,
             commands::account::set_settings_customized,

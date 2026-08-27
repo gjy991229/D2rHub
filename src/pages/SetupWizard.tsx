@@ -15,6 +15,7 @@ const defaultConfig: GlobalConfig = {
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
   accounts_dir: "", first_run_complete: false,
   browser_path: "", browser_type: "", enable_overlay: true,
+  enable_tz_overlay: true, enable_stats_overlay: true,
   theme: "light", theme_overlay: "light", auto_close_browser: true,
   enable_auto_update: true, first_launch: true,
   ocr_enabled: false, ocr_target_account: "",

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::Ordering;
 
@@ -14,7 +14,9 @@ use crate::commands::account::{
 use crate::commands::system::LaunchProgress;
 use crate::commands::utils::silent_cmd;
 use crate::error::AppError;
-use crate::launch_context::{AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext};
+use crate::launch_context::{
+    account_game_executable_identity, AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext,
+};
 use crate::state::{AccountLifecycleLease, SharedState};
 use crate::token_registry_trace::{WebTokenReadMonitor, WEB_TOKEN_VALUE_NAME};
 
@@ -156,6 +158,28 @@ fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String 
     }
 }
 
+fn unique_account_window_executable(
+    config: &crate::commands::global_config::GlobalConfig,
+    meta: &crate::commands::account::AccountMeta,
+) -> Option<PathBuf> {
+    let title = account_window_title(meta);
+    let expected = account_game_executable_identity(config, meta).ok()?;
+    let matching_accounts = AccountManager::list_ids(&config.accounts_dir)
+        .into_iter()
+        .filter_map(|id| AccountManager::load_meta(&config.accounts_dir, &id).ok())
+        .filter_map(|candidate| {
+            let candidate_title = account_window_title(&candidate);
+            let executable = account_game_executable_identity(config, &candidate).ok()?;
+            Some((candidate_title, executable))
+        })
+        .filter(|(candidate_title, executable)| {
+            candidate_title.eq_ignore_ascii_case(&title)
+                && crate::commands::system::executable_paths_match(executable, &expected)
+        })
+        .count();
+    (matching_accounts == 1).then_some(expected)
+}
+
 fn already_running_result(
     app: &tauri::AppHandle,
     state: &SharedState,
@@ -196,7 +220,11 @@ fn skip_existing_account_window(
     meta: &crate::commands::account::AccountMeta,
 ) -> Option<LaunchResult> {
     let window_title = account_window_title(meta);
-    let pid = crate::commands::system::find_d2r_pid_by_exact_window_title(&window_title)?;
+    let expected_executable = unique_account_window_executable(config, meta)?;
+    let pid = crate::commands::system::find_unique_d2r_pid_by_window_identity(
+        &window_title,
+        &expected_executable,
+    )?;
     if config.separate_game_taskbar_icons {
         let app_id = format!("D2RHub.Account.{account_id}");
         if let Err(error) = crate::commands::system::set_game_window_app_user_model_id(pid, &app_id)
@@ -524,14 +552,79 @@ pub async fn launch_battle_net_only(
         cfg.clone()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
     };
-    preflight_accounts(&config, &account_ids, ContextPurpose::BattleNetOnly)?;
-    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
-    state.cancel_launch.store(false, Ordering::SeqCst);
-
     let mut results = Vec::new();
     let total = account_ids.len();
+    let mut host_runtime_lease: Option<HostRuntimeLease> = None;
 
     for (i, account_id) in account_ids.iter().enumerate() {
+        // 宿主租约已建立后，取消标记才属于当前批次。首次有效账号取得租约时会清除
+        // 上一批遗留的标记，避免新请求一进入循环就被旧状态误取消。
+        if host_runtime_lease.is_some() && is_cancelled(&state) {
+            emit_cancelled(&app, account_id);
+            results.push(LaunchResult {
+                account_id: account_id.to_string(),
+                success: false,
+                d2r_pid: None,
+                error: Some("启动已被用户取消".to_string()),
+                mutex_killed: false,
+            });
+            for remaining in &account_ids[i + 1..] {
+                emit_cancelled(&app, remaining);
+                results.push(LaunchResult {
+                    account_id: remaining.to_string(),
+                    success: false,
+                    d2r_pid: None,
+                    error: Some("启动已被用户取消".to_string()),
+                    mutex_killed: false,
+                });
+            }
+            return Ok(results);
+        }
+
+        let _account_lease = match AccountLifecycleLease::try_acquire(state.inner(), account_id) {
+            Ok(lease) => lease,
+            Err(error) => {
+                let message = error.to_string();
+                let _ = app.emit(
+                    "launch-progress",
+                    LaunchProgress::new(account_id, "done", "error", &message),
+                );
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
+        };
+        if let Err(error) = preflight_accounts(
+            &config,
+            std::slice::from_ref(account_id),
+            ContextPurpose::BattleNetOnly,
+        ) {
+            let message = error.to_string();
+            let _ = app.emit(
+                "launch-progress",
+                LaunchProgress::new(account_id, "done", "error", &message),
+            );
+            results.push(account_path_error(account_id, error));
+            continue;
+        }
+
+        if host_runtime_lease.is_none() {
+            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+                Ok(lease) => {
+                    host_runtime_lease = Some(lease);
+                    state.cancel_launch.store(false, Ordering::SeqCst);
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = app.emit(
+                        "launch-progress",
+                        LaunchProgress::new(account_id, "done", "error", &message),
+                    );
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            }
+        }
+
         if is_cancelled(&state) {
             emit_cancelled(&app, account_id);
             results.push(LaunchResult {
@@ -2330,7 +2423,8 @@ mod tests {
     use super::{
         launch_queue_can_continue, parse_windows_command_line, persist_window_position,
         preflight_accounts, replace_bnet_roaming_snapshot, token_launch_is_ready,
-        validate_launch_account_ids, validate_legacy_reg_sections,
+        unique_account_window_executable, validate_launch_account_ids,
+        validate_legacy_reg_sections,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::commands::global_config::GlobalConfig;
@@ -2417,6 +2511,26 @@ mod tests {
 
         let meta = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
         assert_eq!((meta.window_x, meta.window_y), (Some(120), Some(240)));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn duplicate_window_identities_are_not_assigned_to_an_account() {
+        let root = temp_dir("duplicate_window_identity");
+        let config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        let first = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+        assert!(unique_account_window_executable(&config, &first).is_some());
+
+        save_account(&config, "acount2", "token", Some("00"));
+        for id in ["acount1", "acount2"] {
+            let mut meta = AccountManager::load_meta(&config.accounts_dir, id).unwrap();
+            meta.display_name = "同名账号".to_string();
+            AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
+        }
+        let first = AccountManager::load_meta(&config.accounts_dir, "acount1").unwrap();
+        assert!(unique_account_window_executable(&config, &first).is_none());
+
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -2551,18 +2665,26 @@ mod tests {
         GlobalConfig {
             accounts_dir: root.join("accounts").to_string_lossy().to_string(),
             cn_battle_net_path,
-            cn_game_path: with_bnet
-                .then(|| game.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            cn_saved_games_path: with_bnet
-                .then(|| saves.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            global_game_path: (!with_bnet)
-                .then(|| game.to_string_lossy().to_string())
-                .unwrap_or_default(),
-            global_saved_games_path: (!with_bnet)
-                .then(|| saves.to_string_lossy().to_string())
-                .unwrap_or_default(),
+            cn_game_path: if with_bnet {
+                game.to_string_lossy().to_string()
+            } else {
+                String::new()
+            },
+            cn_saved_games_path: if with_bnet {
+                saves.to_string_lossy().to_string()
+            } else {
+                String::new()
+            },
+            global_game_path: if with_bnet {
+                String::new()
+            } else {
+                game.to_string_lossy().to_string()
+            },
+            global_saved_games_path: if with_bnet {
+                String::new()
+            } else {
+                saves.to_string_lossy().to_string()
+            },
             ..GlobalConfig::default()
         }
     }

@@ -12,6 +12,7 @@ type Surface =
   | "account-init"
   | "about"
   | "overlay"
+  | "stats-overlay"
   | "bongo";
 
 type SettingsMap = Record<string, unknown>;
@@ -22,24 +23,27 @@ const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
 const auditFrame = params.get("frame");
 const settingsState = params.get("settingsState");
 const currentWindowLabel =
-  surface === "overlay" ? "overlay" : surface === "bongo" ? "bongo-cat" : "main";
+  surface === "overlay"
+    ? "overlay"
+    : surface === "stats-overlay"
+      ? "stats-overlay"
+      : surface === "bongo"
+        ? "bongo-cat"
+        : "main";
 
 document.documentElement.setAttribute("data-theme", requestedTheme);
 if (auditFrame) {
   document.documentElement.setAttribute("data-visual-audit-frame", auditFrame);
 }
 if (surface === "overlay" && auditFrame?.startsWith("mini-")) {
-  const miniLayout = auditFrame === "mini-single" ? "single" : "stacked";
-  const miniHeight = miniLayout === "single" ? 18 : 36;
   localStorage.setItem("d2rhub-information-overlay-mode", "mini");
   localStorage.setItem(
     "d2rhub-information-overlay-mini-size",
-    JSON.stringify({ width: 200, height: miniHeight }),
+    JSON.stringify({ width: 260, height: 28 }),
   );
-  localStorage.setItem("d2rhub-information-overlay-mini-layout", miniLayout);
 }
 
-mockWindows(currentWindowLabel, "main", "overlay", "bongo-cat", "ocr-debug");
+mockWindows(currentWindowLabel, "main", "overlay", "stats-overlay", "bongo-cat", "ocr-debug");
 mockConvertFileSrc("windows");
 
 type TauriInternals = Record<string, unknown> & {
@@ -188,6 +192,8 @@ const baseConfig: GlobalConfig = {
   bongo_cat_skin: "original",
   bongo_cat_unlocked_skins: ["original"],
   enable_overlay: true,
+  enable_tz_overlay: true,
+  enable_stats_overlay: true,
   theme: requestedTheme,
   theme_overlay: requestedTheme,
   auto_close_browser: true,
@@ -232,12 +238,12 @@ function installIpcMock() {
     if (cmd.startsWith("plugin:window|")) {
       if (cmd.endsWith("|outer_size") || cmd.endsWith("|inner_size")) {
         return currentWindowLabel === "overlay"
-          ? auditFrame === "mini-single"
-            ? { width: 200, height: 18 }
-            : auditFrame === "mini-stacked"
-              ? { width: 200, height: 36 }
-              : { width: 240, height: 320 }
-          : currentWindowLabel === "bongo-cat"
+          ? auditFrame?.startsWith("mini-")
+            ? { width: 260, height: 28 }
+              : { width: 280, height: 250 }
+          : currentWindowLabel === "stats-overlay"
+            ? { width: 280, height: 300 }
+            : currentWindowLabel === "bongo-cat"
             ? { width: 240, height: 400 }
             : { width: 1120, height: 720 };
       }
@@ -401,7 +407,7 @@ function AuditRuntime() {
       try {
         await primeStores();
 
-        if (surface === "overlay") {
+        if (surface === "overlay" || surface === "stats-overlay") {
           const { Overlay } = await import("./pages/Overlay");
           if (!cancelled) setContent(<Overlay />);
           return;

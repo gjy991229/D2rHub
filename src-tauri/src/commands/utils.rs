@@ -36,47 +36,115 @@ pub fn sanitize_folder_name(name: &str) -> String {
     }
 }
 
-/// 强制关闭指定名称的进程，并确认它们已退出。
-/// 调用方可据此避免在旧 Battle.net/Agent 仍写入共享状态时切换账号。
-pub fn kill_processes_by_name(names: &[&str]) -> Result<(), crate::error::AppError> {
+/// Battle.net 与 Agent 会互相拉起进程；必须先停止 Agent，再清理 Battle.net。
+/// 其余进程名保持调用方给出的顺序，并按名称忽略大小写去重。
+fn ordered_process_names<'a>(names: &'a [&'a str]) -> Vec<&'a str> {
+    let mut ordered = Vec::with_capacity(names.len());
+    for preferred in ["Agent.exe", "Battle.net.exe"] {
+        if let Some(name) = names
+            .iter()
+            .copied()
+            .find(|name| name.eq_ignore_ascii_case(preferred))
+        {
+            ordered.push(name);
+        }
+    }
+    for name in names.iter().copied() {
+        if !ordered
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(name))
+        {
+            ordered.push(name);
+        }
+    }
+    ordered
+}
+
+fn matching_processes(names: &[&str]) -> Vec<(sysinfo::Pid, String)> {
     use sysinfo::ProcessesToUpdate;
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(4);
-    loop {
-        let remaining = {
-            let mut sys = shared_system()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            sys.refresh_processes(ProcessesToUpdate::All);
+    let mut sys = shared_system()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    sys.refresh_processes(ProcessesToUpdate::All);
+    sys.processes()
+        .values()
+        .filter_map(|process| {
+            let process_name = process.name().to_string_lossy();
+            names
+                .iter()
+                .any(|target| process_name.eq_ignore_ascii_case(target))
+                .then(|| (process.pid(), process_name.into_owned()))
+        })
+        .collect()
+}
 
-            let mut remaining = Vec::new();
-            for process in sys.processes().values() {
-                let process_name = process.name().to_string_lossy();
-                if names
-                    .iter()
-                    .any(|target| process_name.eq_ignore_ascii_case(target))
-                {
-                    remaining.push(format!("{}({})", process_name, process.pid()));
-                    if !process.kill() {
-                        let _ = silent_cmd("taskkill")
-                            .args(["/F", "/PID", &process.pid().to_string()])
-                            .output();
+/// 强制关闭指定名称的进程，并确认它们已退出。
+///
+/// Windows 下先使用 `/IM` 一次终止同名进程，避免逐 PID 清理时 Agent 与 Battle.net
+/// 互相重启；若整批终止失败，再按本轮快照中的 PID 兜底。这里不能使用 `/T`：该函数
+/// 也会在游戏启动后调用，递归终止进程树可能误杀仍在运行的 D2R.exe。
+pub fn kill_processes_by_name(names: &[&str]) -> Result<(), crate::error::AppError> {
+    let ordered_names = ordered_process_names(names);
+    if ordered_names.is_empty() {
+        return Ok(());
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let snapshot = matching_processes(&ordered_names);
+        if snapshot.is_empty() {
+            return Ok(());
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            for name in &ordered_names {
+                let image_killed = silent_cmd("taskkill")
+                    .args(["/F", "/IM", name])
+                    .output()
+                    .is_ok_and(|output| output.status.success());
+
+                if !image_killed {
+                    for (pid, process_name) in &snapshot {
+                        if process_name.eq_ignore_ascii_case(name) {
+                            let _ = silent_cmd("taskkill")
+                                .args(["/F", "/PID", &pid.to_string()])
+                                .output();
+                        }
                     }
                 }
             }
-            remaining
-        };
+        }
 
+        #[cfg(not(target_os = "windows"))]
+        {
+            let sys = shared_system()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            for (pid, _) in &snapshot {
+                if let Some(process) = sys.process(*pid) {
+                    let _ = process.kill();
+                }
+            }
+        }
+
+        // 终止命令成功只代表请求已被系统接受；短暂等待后必须重新枚举确认。
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let remaining = matching_processes(&ordered_names);
         if remaining.is_empty() {
             return Ok(());
         }
         if std::time::Instant::now() >= deadline {
             return Err(crate::error::AppError::Unknown(format!(
                 "无法在超时前终止共享进程: {}",
-                remaining.join(", ")
+                remaining
+                    .iter()
+                    .map(|(pid, name)| format!("{name}({pid})"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )));
         }
-        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -97,4 +165,17 @@ pub fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod process_kill_tests {
+    use super::ordered_process_names;
+
+    #[test]
+    fn agent_is_stopped_before_battle_net_and_names_are_deduplicated() {
+        assert_eq!(
+            ordered_process_names(&["Battle.net.exe", "helper.exe", "agent.EXE", "HELPER.EXE",]),
+            vec!["agent.EXE", "Battle.net.exe", "helper.exe"]
+        );
+    }
 }

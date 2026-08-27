@@ -20,6 +20,8 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
     browser_path: "C:/Browser/browser.exe",
     browser_type: "edge",
     enable_overlay: true,
+    enable_tz_overlay: true,
+    enable_stats_overlay: true,
     theme: "light",
     theme_overlay: "light",
     auto_close_browser: true,

@@ -9,7 +9,11 @@ function assert(condition: boolean, message: string) {
 
 export function runTests() {
   const overlayPath = path.join(g.process.cwd(), "src", "pages", "Overlay.tsx");
+  const statsPath = path.join(g.process.cwd(), "src", "store", "stats.ts");
+  const sizingPath = path.join(g.process.cwd(), "src", "utils", "overlaySizing.ts");
   const overlaySource = fs.readFileSync(overlayPath, "utf8") as string;
+  const statsSource = fs.readFileSync(statsPath, "utf8") as string;
+  const sizingSource = fs.readFileSync(sizingPath, "utf8") as string;
 
   assert(
     !overlaySource.includes("data-tauri-drag-region"),
@@ -24,8 +28,50 @@ export function runTests() {
     "information overlay distinguishes a drag from a stationary double-click with a movement threshold",
   );
   assert(
+    overlaySource.includes('data-overlay-account-scroll="true"')
+      && overlaySource.includes('overlayWindowLabel === "stats-overlay"'),
+    "statistics overlay owns the account strip and is selected by its native window label",
+  );
+  assert(
+    overlaySource.includes('data-overlay-kind={isStatsOverlay ? "stats" : "tz"}')
+      && overlaySource.includes("onDoubleClickCapture={!isStatsOverlay ? handleTzOverlayDoubleClick : undefined}")
+      && overlaySource.includes('window.addEventListener("keydown", handleTzOverlayWindowKeyDown, true)')
+      && overlaySource.includes('if (event.key !== "Enter" || event.repeat) return;'),
+    "TZ overlay toggles mini mode from any double-click or Enter while statistics does not",
+  );
+  assert(
+    overlaySource.includes('className="tz-expanded-layout')
+      && overlaySource.includes('className="tz-forecast-divider"')
+      && !overlaySource.includes("terrorZoneExpanded")
+      && !overlaySource.includes("toggleTerrorZoneDrawer"),
+    "expanded TZ uses a direct forecast layout without a drawer or nested card interaction",
+  );
+  assert(
+    !overlaySource.includes("data-mini-layout")
+      && !sizingSource.includes("LAYOUT_THRESHOLD")
+      && !sizingSource.includes("MiniOverlayLayout"),
+    "mini TZ stays in one row without a height-based layout threshold",
+  );
+  assert(
+    overlaySource.includes("if (isStatsOverlay) {")
+      && overlaySource.includes('isStatsOverlay ? "load_stats_overlay_geometry" : "load_overlay_geometry"')
+      && overlaySource.includes("await persistOverlayGeometry();\n      return;"),
+    "statistics overlay has independent geometry and bypasses mini and edge-docking behavior",
+  );
+  assert(
+    overlaySource.includes("onDoubleClick={handleTimerDoubleClick}")
+      && overlaySource.includes("useStats.getState().finishRunAsTown()")
+      && statsSource.includes("await get().finishRunAsTown(normalized)"),
+    "timer double-click and OCR town detection share the same run-finishing transition",
+  );
+  assert(
     overlaySource.includes('OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size"'),
     "mini mode owns a dedicated persisted size preference",
+  );
+  assert(
+    overlaySource.includes('OVERLAY_MINI_SIZE_VERSION = "2"')
+      && overlaySource.includes("return { ...stored, height: MINI_OVERLAY_MIN_HEIGHT }"),
+    "legacy mini preferences migrate once to the new content-height layout while keeping width",
   );
   assert(
     overlaySource.includes("storeMiniOverlaySize(miniSize)")

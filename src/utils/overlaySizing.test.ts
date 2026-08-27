@@ -1,11 +1,9 @@
 import {
   calculateMiniOverlayResizeBounds,
   calculateMiniOverlaySize,
-  initialMiniOverlayLayout,
-  MINI_OVERLAY_SINGLE_MIN_HEIGHT,
-  MINI_OVERLAY_STACKED_HEIGHT,
+  MINI_OVERLAY_MIN_HEIGHT,
+  MINI_OVERLAY_MIN_WIDTH,
   normalizeMiniOverlaySize,
-  resolveMiniOverlayLayoutAfterResize,
 } from "./overlaySizing";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
@@ -18,68 +16,39 @@ function assertEqual(actual: unknown, expected: unknown, message: string) {
 export function runTests() {
   assertEqual(
     calculateMiniOverlaySize({ width: 1920, height: 1040 }),
-    { width: 346, height: 83 },
-    "mini size matches the requested compact two-row proportions",
+    { width: 346, height: 28 },
+    "mini defaults to one content-height row",
   );
   assertEqual(
     calculateMiniOverlaySize({ width: 2560, height: 1400 }),
-    { width: 461, height: 112 },
-    "mini size scales proportionally on a larger logical work area",
+    { width: 461, height: 28 },
+    "mini width scales while its content-height minimum remains stable",
   );
-  assertEqual(
-    MINI_OVERLAY_STACKED_HEIGHT,
-    40,
-    "the layout threshold clears the Windows native resize floor",
-  );
-  assertEqual(MINI_OVERLAY_SINGLE_MIN_HEIGHT, 20, "single-row mode owns the 20px minimum");
+  assertEqual(MINI_OVERLAY_MIN_WIDTH, 220, "mini mode keeps a practical horizontal minimum");
+  assertEqual(MINI_OVERLAY_MIN_HEIGHT, 28, "mini mode keeps its text fully visible");
   assertEqual(
     normalizeMiniOverlaySize({ width: 120, height: 4 }),
-    { width: 200, height: 20 },
-    "mini size respects the 20px single-row minimum",
+    { width: 220, height: 28 },
+    "mini size clamps directly to its content and width minimums",
   );
   assertEqual(
-    initialMiniOverlayLayout(MINI_OVERLAY_STACKED_HEIGHT),
-    "single",
-    "a restored mini window at 40px starts in one row",
+    calculateMiniOverlayResizeBounds({ width: 240, height: 48 }, "s", 0, -10),
+    { width: 240, height: 38, offsetX: 0, offsetY: 0 },
+    "custom south resizing remains continuous without a layout threshold",
   );
   assertEqual(
-    initialMiniOverlayLayout(MINI_OVERLAY_STACKED_HEIGHT + 1),
-    "stacked",
-    "a restored mini window above the threshold starts in two rows",
+    calculateMiniOverlayResizeBounds({ width: 240, height: 48 }, "s", 0, -30),
+    { width: 240, height: 28, offsetX: 0, offsetY: 0 },
+    "custom south resizing clamps at the content-height minimum",
   );
   assertEqual(
-    resolveMiniOverlayLayoutAfterResize(39),
-    "single",
-    "a height below 40px uses one row",
-  );
-  assertEqual(
-    resolveMiniOverlayLayoutAfterResize(40),
-    "single",
-    "exactly 40px uses one row without changing height",
-  );
-  assertEqual(
-    resolveMiniOverlayLayoutAfterResize(40.01),
-    "stacked",
-    "any height above 40px uses two rows",
-  );
-  assertEqual(
-    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "s", 0, -10),
-    { width: 240, height: 29, offsetX: 0, offsetY: 0 },
-    "custom south resizing can move continuously below the native 39px floor",
-  );
-  assertEqual(
-    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "s", 0, -30),
-    { width: 240, height: 20, offsetX: 0, offsetY: 0 },
-    "custom south resizing clamps at the 20px minimum",
-  );
-  assertEqual(
-    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "n", 0, 9),
-    { width: 240, height: 30, offsetX: 0, offsetY: 9 },
+    calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "n", 0, 20),
+    { width: 240, height: 28, offsetX: 0, offsetY: 11 },
     "custom north resizing keeps the bottom edge anchored",
   );
   assertEqual(
     calculateMiniOverlayResizeBounds({ width: 240, height: 39 }, "w", 50, 0),
-    { width: 200, height: 39, offsetX: 40, offsetY: 0 },
+    { width: 220, height: 39, offsetX: 20, offsetY: 0 },
     "custom west resizing clamps width and keeps the right edge anchored",
   );
   assertEqual(

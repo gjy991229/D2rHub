@@ -305,17 +305,41 @@ fn parse_query(query_str: &str) -> HashMap<String, String> {
     params
 }
 
+fn request_header_value<'a>(headers: &'a str, expected_name: &str) -> Option<&'a str> {
+    headers.lines().skip(1).find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim()
+            .eq_ignore_ascii_case(expected_name)
+            .then_some(value.trim())
+    })
+}
+
+fn stats_api_token_is_valid(headers: &str, expected_token: &str) -> bool {
+    request_header_value(headers, "X-D2RHub-Stats-Token") == Some(expected_token)
+}
+
+const STATS_API_CORS_HEADERS: &str = "Access-Control-Allow-Origin: null\r\n\
+                                       Vary: Origin\r\n\
+                                       Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
+                                       Access-Control-Allow-Headers: Content-Type, X-D2RHub-Stats-Token\r\n";
+
 /// 统计 API 服务端口
 static STATS_API_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+static STATS_API_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
-fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
+fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
     if STATS_API_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return STATS_API_PORT
+        let port = STATS_API_PORT
             .get()
             .copied()
-            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string());
+            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
+        let token = STATS_API_TOKEN
+            .get()
+            .cloned()
+            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
+        return Ok((port, token));
     }
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| {
@@ -329,6 +353,12 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
             format!("读取统计 API 端口失败: {error}")
         })?
         .port();
+    let api_token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let expected_api_token = api_token.clone();
 
     let api_thread = std::thread::Builder::new().name("stats-api".into()).spawn(move || {
         for stream in listener.incoming() {
@@ -353,15 +383,18 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                 let method = parts[0];
                 let full_path = parts[1];
 
-                // CORS 相关
-                let cors_headers = "Access-Control-Allow-Origin: *\r\n\
-                                    Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
-                                    Access-Control-Allow-Headers: Content-Type\r\n";
+                let cors_headers = STATS_API_CORS_HEADERS;
 
                 let resp_body: String;
 
                 if method == "OPTIONS" {
                     resp_body = format!("HTTP/1.1 204 No Content\r\n{}\r\n", cors_headers);
+                } else if !stats_api_token_is_valid(&raw, &expected_api_token) {
+                    resp_body = format!(
+                        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n{}\r\n\r\n{}",
+                        cors_headers,
+                        r#"{"ok":false,"error":"Unauthorized"}"#
+                    );
                 } else {
                     let mut path_parts_split = full_path.split('?');
                     let path = path_parts_split.next().unwrap_or("");
@@ -557,7 +590,8 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
     }
 
     let _ = STATS_API_PORT.set(port);
-    Ok(port)
+    let _ = STATS_API_TOKEN.set(api_token.clone());
+    Ok((port, api_token))
 }
 
 /// 转义 JSON 字符串以安全地嵌入 HTML `<script>` 标签中
@@ -612,7 +646,7 @@ pub fn open_stats_page(
     })?;
 
     // 3. 启动统计 API 服务并注入端口号
-    let api_port = start_stats_api(state.app_data_dir.clone())?;
+    let (api_port, api_token) = start_stats_api(state.app_data_dir.clone())?;
     let stats_json = escape_json_for_html_script(&stats_json);
     let stats_theme = state
         .config
@@ -621,7 +655,7 @@ pub fn open_stats_page(
         .map(|config| config.theme.as_str())
         .unwrap_or("light")
         .to_string();
-    let html = render_stats_template(&template, &stats_json, api_port, &stats_theme);
+    let html = render_stats_template(&template, &stats_json, api_port, &api_token, &stats_theme);
 
     // 4. 写入 stateData/stats.html（使相对路径 img/ 可用）
     let state_data_dir = Path::new(&state.app_data_dir).join("stateData");
@@ -664,4 +698,27 @@ fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
         .collect();
 
     Ok(StatsData { records })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stats_api_requires_the_exact_session_token() {
+        let headers = "GET /api/records HTTP/1.1\r\nX-D2RHub-Stats-Token: secret\r\n\r\n";
+        assert!(stats_api_token_is_valid(headers, "secret"));
+        assert!(!stats_api_token_is_valid(headers, "other"));
+        assert!(!stats_api_token_is_valid(
+            "GET /api/records HTTP/1.1\r\n\r\n",
+            "secret"
+        ));
+    }
+
+    #[test]
+    fn stats_api_cors_is_limited_to_the_local_file_origin() {
+        assert!(STATS_API_CORS_HEADERS.contains("Access-Control-Allow-Origin: null"));
+        assert!(STATS_API_CORS_HEADERS.contains("X-D2RHub-Stats-Token"));
+        assert!(!STATS_API_CORS_HEADERS.contains("Access-Control-Allow-Origin: *"));
+    }
 }

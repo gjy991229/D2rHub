@@ -22,6 +22,8 @@ pub struct AppState {
     pub host_runtime_busy: AtomicBool,
     /// 账号目录及 account.json 的生命周期写操作；同一账号同一时刻只能有一个事务。
     pub account_operations: Mutex<HashSet<String>>,
+    /// 账号目录清单级写操作；用于原子维护跨账号唯一约束（如展示名）。
+    pub account_catalog: Mutex<()>,
     /// 正在运行的账号游戏 PID 映射：account_id -> d2r_pid
     pub active_games: RwLock<HashMap<String, u32>>,
     /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
@@ -48,6 +50,7 @@ impl AppState {
             cancel_generation: AtomicU64::new(0),
             host_runtime_busy: AtomicBool::new(false),
             account_operations: Mutex::new(HashSet::new()),
+            account_catalog: Mutex::new(()),
             active_games: RwLock::new(HashMap::new()),
             shortcut_map: RwLock::new(HashMap::new()),
         }
@@ -117,7 +120,7 @@ fn migrate_legacy_config_dir(source: &Path, target: &Path) -> Result<bool, Strin
         .map_err(|error| format!("创建系统配置父目录 {} 失败: {error}", parent.display()))?;
 
     match std::fs::rename(source, target) {
-        Ok(()) => return Ok(true),
+        Ok(()) => Ok(true),
         Err(rename_error) => {
             // exe 与 AppData 可能位于不同磁盘；跨卷时先完整复制到同卷暂存目录，再原子安装。
             let staging = parent.join(format!(".D2RHub.migration-{}.tmp", std::process::id()));

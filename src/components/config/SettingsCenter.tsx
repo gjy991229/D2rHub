@@ -58,6 +58,14 @@ interface Props {
   initialAccountId?: string | null;
 }
 
+async function setAuxiliaryWindowVisible(label: string, visible: boolean) {
+  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+  const target = await WebviewWindow.getByLabel(label);
+  if (!target) return;
+  if (visible) await target.show();
+  else await target.hide();
+}
+
 interface ExportAccountsSummary {
   path: string;
   account_count: number;
@@ -425,7 +433,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
       // 1. Rename if modified
       if (accountNicknameDraft.trim() && accountNicknameDraft.trim() !== (acc.display_name || acc.id)) {
-        await renameAccount(selectedAccountId, accountNicknameDraft.trim());
+        const renamed = await renameAccount(selectedAccountId, accountNicknameDraft.trim());
+        if (!renamed) return false;
       }
 
       // 2. Set Mod args if modified
@@ -1391,31 +1400,63 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">全局信息悬浮窗配置</h3>
-                  <div className="flex items-center justify-between py-1">
+                  <h3 className="text-xs font-bold text-text-primary">桌面悬浮窗口</h3>
+                  <div className="flex items-center justify-between gap-4 py-1">
                     <div>
-                      <span className="text-sm font-semibold text-text-secondary">启用桌面上方的信息悬浮窗</span>
-                      <p className="text-2xs text-text-muted">常驻显示运行账号、OCR 场景计时、符文掉落与邪恶区域预报</p>
+                      <span className="text-sm font-semibold text-text-secondary">邪恶区域播报窗口</span>
+                      <p className="text-2xs text-text-muted">独立显示当前与下一轮 TZ；支持迷你模式和贴边隐藏</p>
                     </div>
                     <Toggle
-                      checked={!!config.enable_overlay}
+                      checked={!!config.enable_tz_overlay}
+                      ariaLabel="显示邪恶区域播报悬浮窗"
                       onChange={async v => {
-                        updateConfig(c => { c.enable_overlay = v; });
+                        updateConfig(c => {
+                          c.enable_tz_overlay = v;
+                          c.enable_overlay = v || c.enable_stats_overlay;
+                        });
                         const cur = useGlobalConfig.getState().config;
-                        if (cur) await save({ ...cur, enable_overlay: v });
+                        if (cur) await save({
+                          ...cur,
+                          enable_tz_overlay: v,
+                          enable_overlay: v || cur.enable_stats_overlay,
+                        });
                         try {
-                          const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-                          const overlayWin = await WebviewWindow.getByLabel("overlay");
-                          if (overlayWin) {
-                            if (v) await overlayWin.show();
-                            else await overlayWin.hide();
-                          }
+                          await setAuxiliaryWindowVisible("overlay", v);
                         } catch (e) {
-                          console.error("切换悬浮窗显示失败", e);
+                          console.error("切换 TZ 播报窗口失败", e);
                         }
                       }}
                     />
                   </div>
+                  {import.meta.env.VITE_ENABLE_OCR !== "false" && (
+                    <div className="flex items-center justify-between gap-4 border-t border-border-default/50 py-2">
+                      <div>
+                        <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
+                        <p className="text-2xs text-text-muted">独立显示运行账号、场景计时与符文掉落；不使用迷你和贴边隐藏</p>
+                      </div>
+                      <Toggle
+                        checked={!!config.enable_stats_overlay}
+                        ariaLabel="显示场景统计悬浮窗"
+                        onChange={async v => {
+                          updateConfig(c => {
+                            c.enable_stats_overlay = v;
+                            c.enable_overlay = c.enable_tz_overlay || v;
+                          });
+                          const cur = useGlobalConfig.getState().config;
+                          if (cur) await save({
+                            ...cur,
+                            enable_stats_overlay: v,
+                            enable_overlay: cur.enable_tz_overlay || v,
+                          });
+                          try {
+                            await setAuxiliaryWindowVisible("stats-overlay", v);
+                          } catch (e) {
+                            console.error("切换统计窗口失败", e);
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
 
                 <div className="spatial-panel p-3 space-y-2">

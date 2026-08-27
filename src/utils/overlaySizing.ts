@@ -3,7 +3,6 @@ export interface OverlaySize {
   height: number;
 }
 
-export type MiniOverlayLayout = "single" | "stacked";
 export type MiniOverlayResizeEdge = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
 export interface MiniOverlayResizeBounds extends OverlaySize {
@@ -11,21 +10,15 @@ export interface MiniOverlayResizeBounds extends OverlaySize {
   offsetY: number;
 }
 
-export const MINI_OVERLAY_MIN_WIDTH = 200;
-export const MINI_OVERLAY_SINGLE_MIN_HEIGHT = 20;
-export const MINI_OVERLAY_LAYOUT_THRESHOLD = 40;
-
-// Kept as compatibility aliases for the window configuration and older callers.
-export const MINI_OVERLAY_MIN_HEIGHT = MINI_OVERLAY_SINGLE_MIN_HEIGHT;
-export const MINI_OVERLAY_STACKED_HEIGHT = MINI_OVERLAY_LAYOUT_THRESHOLD;
+export const MINI_OVERLAY_MIN_WIDTH = 220;
+export const MINI_OVERLAY_MIN_HEIGHT = 28;
 
 const MINI_OVERLAY_WIDTH_RATIO = 0.18;
-const MINI_OVERLAY_HEIGHT_RATIO = 0.08;
 
 export function calculateMiniOverlaySize(workArea: OverlaySize): OverlaySize {
   return {
-    width: Math.max(1, Math.round(workArea.width * MINI_OVERLAY_WIDTH_RATIO)),
-    height: Math.max(1, Math.round(workArea.height * MINI_OVERLAY_HEIGHT_RATIO)),
+    width: Math.max(MINI_OVERLAY_MIN_WIDTH, Math.round(workArea.width * MINI_OVERLAY_WIDTH_RATIO)),
+    height: MINI_OVERLAY_MIN_HEIGHT,
   };
 }
 
@@ -34,18 +27,6 @@ export function normalizeMiniOverlaySize(size: OverlaySize): OverlaySize {
     width: Math.max(MINI_OVERLAY_MIN_WIDTH, Math.round(size.width)),
     height: Math.max(MINI_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
   };
-}
-
-export function initialMiniOverlayLayout(
-  height: number,
-): MiniOverlayLayout {
-  return height <= MINI_OVERLAY_LAYOUT_THRESHOLD ? "single" : "stacked";
-}
-
-export function resolveMiniOverlayLayoutAfterResize(
-  nextHeight: number,
-): MiniOverlayLayout {
-  return initialMiniOverlayLayout(nextHeight);
 }
 
 export function calculateMiniOverlayResizeBounds(

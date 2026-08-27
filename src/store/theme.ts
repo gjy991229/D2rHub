@@ -65,7 +65,7 @@ export const useTheme = create<ThemeState>((set) => ({
       useGlobalConfig.setState({
         config: {
           ...configState.config,
-          [label === "overlay" ? "theme_overlay" : "theme"]: t
+          [label === "overlay" || label === "stats-overlay" ? "theme_overlay" : "theme"]: t
         }
       });
     }

@@ -19,6 +19,8 @@ export interface GlobalConfig {
   bongo_cat_skin: string;
   bongo_cat_unlocked_skins: string[];
   enable_overlay: boolean;
+  enable_tz_overlay: boolean;
+  enable_stats_overlay: boolean;
   theme: string;
   theme_overlay: string;
   auto_close_browser: boolean;

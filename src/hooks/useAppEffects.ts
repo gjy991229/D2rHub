@@ -111,19 +111,23 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
       try {
         const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         if (cancelled) return true;
-        const overlayWin = await WebviewWindow.getByLabel("overlay");
-        if (overlayWin) {
-          if (cancelled) return true;
-          if (config.enable_overlay) {
-            await overlayWin.show();
-            const visible = await overlayWin.isVisible();
-            return visible;
-          } else {
-            await overlayWin.hide();
-            const visible = await overlayWin.isVisible();
-            return !visible;
-          }
+        const windows = [
+          { label: "overlay", enabled: config.enable_tz_overlay },
+          {
+            label: "stats-overlay",
+            enabled: import.meta.env.VITE_ENABLE_OCR !== "false" && config.enable_stats_overlay,
+          },
+        ];
+        let allSettled = true;
+        for (const entry of windows) {
+          const overlayWin = await WebviewWindow.getByLabel(entry.label);
+          if (!overlayWin || cancelled) continue;
+          if (entry.enabled) await overlayWin.show();
+          else await overlayWin.hide();
+          const visible = await overlayWin.isVisible();
+          allSettled = allSettled && visible === entry.enabled;
         }
+        return allSettled;
       } catch {}
       return false;
     };
@@ -133,7 +137,7 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
     return () => {
       cancelled = true;
     };
-  }, [loading, config?.enable_overlay]);
+  }, [loading, config?.enable_tz_overlay, config?.enable_stats_overlay]);
 }
 
 export function useLaunchEvents(config: GlobalConfig | null) {

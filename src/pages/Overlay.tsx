@@ -1,9 +1,9 @@
 import React, { useEffect, useState, useRef } from "react";
-import { ChevronDown, ChevronUp, Eye } from "lucide-react";
+import { Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
-import { useStats, isHighRune } from "../store/stats";
+import { useStats, isHighRune, MANUAL_FINISH_SCENE } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
 import {
   currentMonitor,
@@ -18,12 +18,9 @@ import { translateTerrorZoneAreaName } from "../data/terrorZoneAreaNames";
 import {
   calculateMiniOverlaySize,
   calculateMiniOverlayResizeBounds,
-  initialMiniOverlayLayout,
   MINI_OVERLAY_MIN_HEIGHT,
   MINI_OVERLAY_MIN_WIDTH,
   normalizeMiniOverlaySize,
-  resolveMiniOverlayLayoutAfterResize,
-  type MiniOverlayLayout,
   type MiniOverlayResizeBounds,
   type MiniOverlayResizeEdge,
   type OverlaySize,
@@ -76,15 +73,16 @@ interface TerrorZoneSnapshot {
 }
 
 type TerrorZoneStatus = "loading" | "ready" | "empty" | "error";
-const TERROR_ZONE_COLLAPSED_MIN_HEIGHT = 150;
 type OverlayDisplayMode = "mini" | "expanded";
 
 const OVERLAY_MODE_STORAGE_KEY = "d2rhub-information-overlay-mode";
 const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
+const OVERLAY_MINI_SIZE_VERSION_STORAGE_KEY = "d2rhub-information-overlay-mini-size-version";
+const OVERLAY_MINI_SIZE_VERSION = "2";
 const OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-information-overlay-expanded-size";
 const EXPANDED_OVERLAY_MIN_WIDTH = 200;
 const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
-const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 340 };
+const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 250 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
@@ -146,7 +144,15 @@ function readStoredOverlaySize(
 }
 
 function readStoredMiniOverlaySize(): OverlaySize | null {
-  return readStoredOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, normalizeMiniOverlaySize);
+  const stored = readStoredOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, normalizeMiniOverlaySize);
+  if (!stored) return null;
+
+  try {
+    if (localStorage.getItem(OVERLAY_MINI_SIZE_VERSION_STORAGE_KEY) !== OVERLAY_MINI_SIZE_VERSION) {
+      return { ...stored, height: MINI_OVERLAY_MIN_HEIGHT };
+    }
+  } catch {}
+  return stored;
 }
 
 function readStoredExpandedOverlaySize(): OverlaySize | null {
@@ -161,6 +167,9 @@ function storeOverlaySize(storageKey: string, size: OverlaySize) {
 
 function storeMiniOverlaySize(size: OverlaySize) {
   storeOverlaySize(OVERLAY_MINI_SIZE_STORAGE_KEY, size);
+  try {
+    localStorage.setItem(OVERLAY_MINI_SIZE_VERSION_STORAGE_KEY, OVERLAY_MINI_SIZE_VERSION);
+  } catch {}
 }
 
 function storeExpandedOverlaySize(size: OverlaySize) {
@@ -189,7 +198,7 @@ async function applyMiniOverlaySize(
   const logicalSize = new LogicalSize(miniSize.width, miniSize.height);
 
   // Native Windows resizing stops an undecorated window near 39px. Mini mode
-  // uses in-app resize handles so its full 20px–40px single-row range remains reachable.
+  // uses in-app resize handles so its content-height minimum remains reachable.
   await win.setResizable(false);
   await win.setMinSize(null);
   await win.setMaxSize(null);
@@ -211,7 +220,6 @@ async function applyExpandedOverlaySize(
     new LogicalSize(EXPANDED_OVERLAY_MIN_WIDTH, EXPANDED_OVERLAY_MIN_HEIGHT),
   );
 }
-const TERROR_ZONE_DRAWER_ANIMATION_MS = 180;
 const IMMUNITY_EN_LABELS: Record<string, string> = {
   f: "F",
   c: "C",
@@ -247,6 +255,7 @@ function getImmunityTitle(immunity: TerrorZoneImmunity, useEnglish: boolean) {
 }
 
 function translateOverlaySceneName(sceneName: string, useEnglish: boolean) {
+  if (sceneName === MANUAL_FINISH_SCENE) return useEnglish ? "Run ended" : "已手动结束";
   if (!useEnglish) return sceneName;
   if (sceneName === "等待识别...") return "Waiting for detection...";
   return translateTerrorZoneAreaName(sceneName, true);
@@ -256,20 +265,23 @@ function TerrorZoneInfo({
   label,
   zone,
   useEnglish,
+  current = false,
 }: {
   label: string;
   zone: TerrorZoneForecast;
   useEnglish: boolean;
+  current?: boolean;
 }) {
   const locationName = translateTerrorZoneAreaName(zone.location_name, useEnglish);
   const locationDetail = translateTerrorZoneAreaName(zone.location_detail, useEnglish);
+  const showLocationDetail = !!locationDetail && locationDetail !== locationName;
   const expTierLabel = useEnglish ? "EXP tier" : "经验等级";
   const lootTierLabel = useEnglish ? "Loot tier" : "财富等级";
 
   return (
-    <div className="min-w-0">
+    <section className="tz-forecast-section min-w-0 py-2 first:pt-0 last:pb-0" aria-label={label}>
       <div className="flex items-center justify-between gap-2">
-        <span className="text-2xs font-semibold text-text-muted">
+        <span className={`text-xs font-semibold ${current ? "text-[var(--tz-accent)]" : "text-text-secondary"}`}>
           {label}
         </span>
         <span className="text-2xs font-mono font-semibold text-text-muted tabular-nums">
@@ -278,10 +290,10 @@ function TerrorZoneInfo({
       </div>
 
       <div
-        className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
+        className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1"
       >
         <span
-          className="max-w-full shrink-0 truncate text-sm font-semibold leading-tight text-[var(--tz-accent)]"
+          className={`max-w-full shrink-0 truncate text-md font-bold leading-tight ${current ? "text-[var(--tz-accent)]" : "text-text-primary"}`}
           title={locationDetail}
         >
           {locationName}
@@ -305,8 +317,14 @@ function TerrorZoneInfo({
         </div>
       </div>
 
+      {showLocationDetail && (
+        <p className="mt-1 truncate text-xs font-medium text-text-muted" title={locationDetail}>
+          {locationDetail}
+        </p>
+      )}
+
       <div
-        className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-2xs font-semibold text-text-secondary"
+        className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs font-semibold text-text-secondary"
       >
         <span className="whitespace-nowrap">
           {expTierLabel}:<span className="ml-0.5 text-text-primary">{zone.tier_exp}</span>
@@ -315,23 +333,24 @@ function TerrorZoneInfo({
           {lootTierLabel}:<span className="ml-0.5 text-text-primary">{zone.tier_loot}</span>
         </span>
       </div>
-    </div>
+    </section>
   );
 }
 
 export function Overlay() {
+  const overlayWindowLabel = getCurrentWindow().label;
+  const isStatsOverlay = overlayWindowLabel === "stats-overlay";
+  const supportsCompactMode = !isStatsOverlay;
   const { config, load } = useGlobalConfig();
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
   const stats = useStats();
-  const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(readStoredOverlayMode);
+  const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
+    supportsCompactMode ? readStoredOverlayMode() : "expanded",
+  );
   const [isOverlayWindowVisible, setIsOverlayWindowVisible] = useState(false);
   const displayModeRef = useRef(displayMode);
   const miniSizeRef = useRef<OverlaySize | null>(readStoredMiniOverlaySize());
-  const [miniLayout, setMiniLayout] = useState<MiniOverlayLayout>(() =>
-    initialMiniOverlayLayout(miniSizeRef.current?.height ?? Number.POSITIVE_INFINITY),
-  );
-  const miniLayoutRef = useRef(miniLayout);
   const expandedSizeRef = useRef<OverlaySize>(
     readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
   );
@@ -363,13 +382,11 @@ export function Overlay() {
   const [dockEdge, setDockEdge] = useState<OverlayDockEdge | null>(null);
   const [dockPhase, setDockPhase] = useState<OverlayDockPhase | null>(null);
 
-  const isPollerActive = !!(config?.enable_overlay || config?.ocr_enabled);
+  const isPollerActive = isStatsOverlay
+    ? !!config?.enable_stats_overlay
+    : !!config?.enable_tz_overlay;
 
   const startupCheckDoneRef = useRef(false);
-  const overlayPanelRef = useRef<HTMLDivElement | null>(null);
-  const terrorZoneDetailsRef = useRef<HTMLDivElement | null>(null);
-  const terrorZoneCollapseTimerRef = useRef<number | null>(null);
-  const terrorZoneExpandedHeightRef = useRef<number | null>(null);
 
   async function getOverlayWindowSize() {
     const win = getCurrentWindow();
@@ -423,7 +440,7 @@ export function Overlay() {
         win.outerSize(),
         win.scaleFactor(),
       ]);
-      await invoke("save_overlay_geometry", {
+      await invoke(isStatsOverlay ? "save_stats_overlay_geometry" : "save_overlay_geometry", {
         geometry: {
           x: Math.round(position.x / scale),
           y: Math.round(position.y / scale),
@@ -579,6 +596,10 @@ export function Overlay() {
   }
 
   async function evaluateOverlayDocking() {
+    if (isStatsOverlay) {
+      await persistOverlayGeometry();
+      return;
+    }
     if (
       programmaticDockMoveRef.current
       || modeTransitionRef.current
@@ -655,112 +676,11 @@ export function Overlay() {
     }
   }
 
-  function restoreMiniLayoutForHeight(height: number) {
-    const nextLayout = initialMiniOverlayLayout(height);
-    miniLayoutRef.current = nextLayout;
-    setMiniLayout(nextLayout);
-    return nextLayout;
-  }
-
-  function updateMiniLayoutForResize(height: number) {
-    const currentLayout = miniLayoutRef.current;
-    const nextLayout = resolveMiniOverlayLayoutAfterResize(height);
-    if (nextLayout !== currentLayout) {
-      miniLayoutRef.current = nextLayout;
-      setMiniLayout(nextLayout);
-    }
-    return nextLayout;
-  }
-
-  async function setWindowHeightOnce(targetHeight: number) {
-    try {
-      const { win, width } = await getOverlayWindowSize();
-      await win.setSize(new LogicalSize(width, Math.round(targetHeight)));
-    } catch (err) {
-      console.warn("[Overlay] set window height failed:", err);
-    }
-  }
-
-  function getTerrorZoneCollapsedHeight() {
-    const detailsHeight = terrorZoneDetailsRef.current?.scrollHeight ?? 0;
-    const panelHeight = getOverlayPanelHeight();
-    return Math.max(TERROR_ZONE_COLLAPSED_MIN_HEIGHT, panelHeight - detailsHeight);
-  }
-
-  function clearTerrorZonePanelTimer() {
-    if (terrorZoneCollapseTimerRef.current !== null) {
-      window.clearTimeout(terrorZoneCollapseTimerRef.current);
-      terrorZoneCollapseTimerRef.current = null;
-    }
-  }
-
-  function getOverlayPanelHeight() {
-    return Math.round(overlayPanelRef.current?.getBoundingClientRect().height ?? 0);
-  }
-
-  async function expandTerrorZoneDrawer() {
-    try {
-      const detailsHeight = terrorZoneDetailsRef.current?.scrollHeight ?? 0;
-      const currentPanelHeight = getOverlayPanelHeight();
-      const nextHeight = terrorZoneExpandedHeightRef.current ?? currentPanelHeight + detailsHeight;
-
-      if (detailsHeight > 0) {
-        await setWindowHeightOnce(nextHeight);
-      }
-
-      setOverlayPanelHeight(currentPanelHeight || null);
-      setTerrorZoneExpanded(true);
-      window.requestAnimationFrame(() => {
-        setOverlayPanelHeight(nextHeight);
-        terrorZoneCollapseTimerRef.current = window.setTimeout(() => {
-          terrorZoneCollapseTimerRef.current = null;
-          setOverlayPanelHeight(null);
-        }, TERROR_ZONE_DRAWER_ANIMATION_MS);
-      });
-    } catch (err) {
-      console.warn("[Overlay] expand terror zone drawer failed:", err);
-    }
-  }
-
-  async function collapseTerrorZoneDrawer() {
-    try {
-      const currentPanelHeight = getOverlayPanelHeight();
-      if (currentPanelHeight > 0) {
-        terrorZoneExpandedHeightRef.current = currentPanelHeight;
-        setOverlayPanelHeight(currentPanelHeight);
-      }
-      const collapsedHeight = getTerrorZoneCollapsedHeight();
-
-      window.requestAnimationFrame(() => {
-        setTerrorZoneExpanded(false);
-        setOverlayPanelHeight(collapsedHeight);
-        terrorZoneCollapseTimerRef.current = window.setTimeout(() => {
-          terrorZoneCollapseTimerRef.current = null;
-          void setWindowHeightOnce(collapsedHeight);
-          setOverlayPanelHeight(null);
-        }, TERROR_ZONE_DRAWER_ANIMATION_MS);
-      });
-    } catch (err) {
-      console.warn("[Overlay] collapse terror zone drawer failed:", err);
-    }
-  }
-
-  function toggleTerrorZoneDrawer() {
-    clearTerrorZonePanelTimer();
-
-    if (terrorZoneExpanded) {
-      void collapseTerrorZoneDrawer();
-    } else {
-      void expandTerrorZoneDrawer();
-    }
-  }
-
   async function toggleOverlayDisplayMode() {
+    if (!supportsCompactMode) return;
     if (modeTransitionRef.current) return;
     modeTransitionRef.current = true;
     const pendingMiniResize = cancelMiniOverlayResize();
-    clearTerrorZonePanelTimer();
-    setOverlayPanelHeight(null);
 
     try {
       // Let an already-issued native resize settle before applying the other
@@ -787,7 +707,6 @@ export function Overlay() {
           readStoredMiniOverlaySize() ??
           await resolveDefaultMiniOverlaySize();
         miniSizeRef.current = miniSize;
-        restoreMiniLayoutForHeight(miniSize.height);
         storeMiniOverlaySize(miniSize);
         await applyMiniOverlaySize(win, miniSize);
       } else {
@@ -814,52 +733,50 @@ export function Overlay() {
     }
   }
 
-  function handleOverlayDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+  function handleTzOverlayDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    if (!supportsCompactMode) return;
     if (performance.now() < suppressOverlayDoubleClickUntilRef.current) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
-    const target = event.target;
-    if (!(target instanceof Element)) return;
-    if (
-      target.closest(
-        'button, input, select, textarea, a, [data-overlay-interactive="true"]',
-      )
-    ) {
-      return;
-    }
-
     event.preventDefault();
     event.stopPropagation();
     void toggleOverlayDisplayMode();
   }
 
-  function handleMiniOverlayDoubleClickCapture(event: React.MouseEvent<HTMLDivElement>) {
-    if (displayModeRef.current !== "mini") return;
-    if (performance.now() < suppressOverlayDoubleClickUntilRef.current) {
+  useEffect(() => {
+    if (!supportsCompactMode) return;
+
+    const handleTzOverlayWindowKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.repeat) return;
       event.preventDefault();
       event.stopPropagation();
-      return;
-    }
-    const target = event.target;
-    if (!(target instanceof Element)) return;
+      void toggleOverlayDisplayMode();
+    };
 
-    // In mini mode the visible surface is almost entirely made of account pills
-    // and the next-terror-zone label. Capture the gesture before those children
-    // can interpret it as an account-focus action.
-    event.preventDefault();
-    event.stopPropagation();
-    void toggleOverlayDisplayMode();
+    // Listen at the native window level so Enter works immediately after the
+    // overlay is shown, even before any element inside the webview is focused.
+    window.addEventListener("keydown", handleTzOverlayWindowKeyDown, true);
+    return () => window.removeEventListener("keydown", handleTzOverlayWindowKeyDown, true);
+  }, [supportsCompactMode]);
+
+  function finishCurrentTimer() {
+    if (!useStats.getState().isTiming) return;
+    void useStats.getState().finishRunAsTown();
   }
 
-  function handleOverlayKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
-    if (event.target !== event.currentTarget) return;
+  function handleTimerDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+    event.preventDefault();
+    event.stopPropagation();
+    finishCurrentTimer();
+  }
+
+  function handleTimerKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.key !== "Enter" && event.key !== " ") return;
-
     event.preventDefault();
     event.stopPropagation();
-    void toggleOverlayDisplayMode();
+    finishCurrentTimer();
   }
 
   function handleOverlayWindowPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
@@ -1194,14 +1111,6 @@ export function Overlay() {
   const [foregroundTitle, setForegroundTitle] = useState("");
   const [terrorZones, setTerrorZones] = useState<TerrorZoneSnapshot>({ current: null, next: null });
   const [terrorZoneStatus, setTerrorZoneStatus] = useState<TerrorZoneStatus>("loading");
-  const [overlayPanelHeight, setOverlayPanelHeight] = useState<number | null>(null);
-  const [terrorZoneExpanded, setTerrorZoneExpanded] = useState(() => {
-    try {
-      return localStorage.getItem("d2rhub-terror-zone-expanded") !== "false";
-    } catch {
-      return true;
-    }
-  });
 
   // Sync theme on startup / changes
   useEffect(() => {
@@ -1268,22 +1177,13 @@ export function Overlay() {
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem("d2rhub-terror-zone-expanded", String(terrorZoneExpanded));
-    } catch {}
-  }, [terrorZoneExpanded]);
-
-  useEffect(() => {
     return () => {
       void cancelMiniOverlayResize();
-      if (terrorZoneCollapseTimerRef.current !== null) {
-        window.clearTimeout(terrorZoneCollapseTimerRef.current);
-      }
     };
   }, []);
 
   useEffect(() => {
-    if (!isPollerActive) return;
+    if (isStatsOverlay || !isPollerActive) return;
 
     let cancelled = false;
     let refreshTimer: number | undefined;
@@ -1332,7 +1232,7 @@ export function Overlay() {
 
   // Set character name from monitored account
   useEffect(() => {
-    if (!isPollerActive) return;
+    if (!isStatsOverlay || !isPollerActive) return;
     if (config?.ocr_target_account) {
       const target = accounts.find((a) => a.id === config.ocr_target_account);
       if (target) {
@@ -1348,14 +1248,28 @@ export function Overlay() {
 
     (async () => {
       try {
-        const saved = await invoke<any>("load_overlay_geometry");
+        const saved = await invoke<any>(
+          isStatsOverlay ? "load_stats_overlay_geometry" : "load_overlay_geometry",
+        );
         if (cancelled) return;
 
         const win = getCurrentWindow();
         if (saved && saved.x > -32000 && saved.y > -32000) {
           await win.setPosition(new LogicalPosition(saved.x, saved.y));
         } else {
-          await win.setPosition(new LogicalPosition(60, 60));
+          await win.setPosition(new LogicalPosition(isStatsOverlay ? 360 : 60, 60));
+        }
+
+        if (isStatsOverlay) {
+          await Promise.all([
+            win.setMinSize(new LogicalSize(220, 180)),
+            win.setMaxSize(null),
+            win.setResizable(true),
+          ]);
+          if (saved && saved.width >= 220 && saved.height >= 180) {
+            await win.setSize(new LogicalSize(saved.width, saved.height));
+          }
+          return;
         }
 
         const savedExpandedSize =
@@ -1383,7 +1297,6 @@ export function Overlay() {
         if (cancelled) return;
 
         miniSizeRef.current = miniSize;
-        restoreMiniLayoutForHeight(miniSize.height);
         expandedSizeRef.current = expandedSize;
         storeMiniOverlaySize(miniSize);
         storeExpandedOverlaySize(expandedSize);
@@ -1394,7 +1307,7 @@ export function Overlay() {
           await applyExpandedOverlaySize(win, expandedSize);
         }
         window.setTimeout(() => {
-          if (!cancelled) void evaluateOverlayDocking();
+          if (!cancelled && supportsCompactMode) void evaluateOverlayDocking();
         }, OVERLAY_DOCK_SETTLE_DELAY_MS);
       } catch (err) {
         console.warn("[Overlay] restore information overlay geometry failed:", err);
@@ -1415,17 +1328,8 @@ export function Overlay() {
     (async () => {
       try {
         const win = getCurrentWindow();
-        const stopListening = await win.onResized((event) => {
+        const stopListening = await win.onResized(() => {
           const resizedMode = displayModeRef.current;
-          if (resizedMode === "mini") {
-            void win.scaleFactor().then((scale) => {
-              const logicalHeight = Math.max(
-                MINI_OVERLAY_MIN_HEIGHT,
-                event.payload.height / scale,
-              );
-              updateMiniLayoutForResize(logicalHeight);
-            });
-          }
           if (overlaySizeSaveTimerRef.current !== null) {
             window.clearTimeout(overlaySizeSaveTimerRef.current);
           }
@@ -1433,6 +1337,10 @@ export function Overlay() {
             overlaySizeSaveTimerRef.current = null;
             if (modeTransitionRef.current || displayModeRef.current !== resizedMode) return;
             try {
+              if (isStatsOverlay) {
+                await persistOverlayGeometry();
+                return;
+              }
               const { width, height } = await getOverlayWindowSize();
               if (resizedMode === "mini") {
                 const miniSize = normalizeMiniOverlaySize({ width, height });
@@ -1513,7 +1421,7 @@ export function Overlay() {
 
   // Load accounts
   useEffect(() => {
-    if (!isPollerActive || !isOverlayWindowVisible) return;
+    if (!isStatsOverlay || !isPollerActive || !isOverlayWindowVisible) return;
     let cancelled = false;
     let timer: number | undefined;
 
@@ -1532,7 +1440,7 @@ export function Overlay() {
   // 启动时检查已运行的 D2R 窗口，立即更新悬浮窗状态（仅执行一次）
   useEffect(() => {
     if (startupCheckDoneRef.current) return;
-    if (!isPollerActive) return;
+    if (!isStatsOverlay || !isPollerActive) return;
     if (!config?.ocr_target_account) return;
     (async () => {
       try {
@@ -1567,7 +1475,7 @@ export function Overlay() {
 
   // 前台窗口标题轮询
   useEffect(() => {
-    if (!isPollerActive || !isOverlayWindowVisible) return;
+    if (!isStatsOverlay || !isPollerActive || !isOverlayWindowVisible) return;
     let cancelled = false;
     let timer: number | undefined;
 
@@ -1588,7 +1496,7 @@ export function Overlay() {
 
   // ── OCR 数据轮询（场景 + 掉落）──
   useEffect(() => {
-    if (!isPollerActive || import.meta.env.VITE_ENABLE_OCR === "false" || !config?.ocr_enabled) return;
+    if (!isStatsOverlay || !isPollerActive || import.meta.env.VITE_ENABLE_OCR === "false" || !config?.ocr_enabled) return;
 
     const pollInterval = Math.max(100, config.ocr_poll_interval_ms ?? 500);
     let cancelled = false;
@@ -1631,7 +1539,7 @@ export function Overlay() {
 
   // ── 计时器 tick (100ms → 0.1s 精度) ──
   useEffect(() => {
-    if (!isPollerActive || displayMode !== "expanded" || !isOverlayWindowVisible) return;
+    if (!isStatsOverlay || !isPollerActive || !isOverlayWindowVisible) return;
     const tick = () => useStats.getState().tick();
     tick();
     const interval = setInterval(tick, 100);
@@ -1648,6 +1556,7 @@ export function Overlay() {
   })?.id;
 
   useEffect(() => {
+    if (!isStatsOverlay) return;
     const container = accountScrollRef.current;
     if (!container) return;
 
@@ -1662,7 +1571,7 @@ export function Overlay() {
   }, [activeAccountIdsKey, displayMode]);
 
   useEffect(() => {
-    if (!focusedAccountId) return;
+    if (!isStatsOverlay || !focusedAccountId) return;
     const frame = window.requestAnimationFrame(() => {
       const container = accountScrollRef.current;
       const pill = accountButtonRefs.current.get(focusedAccountId);
@@ -1695,9 +1604,15 @@ export function Overlay() {
       : terrorZoneStatus === "empty"
         ? (useEnglish ? "Awaiting forecast" : "等待预报")
         : (useEnglish ? "Syncing" : "同步中");
-  const overlayModeToggleTitle = displayMode === "mini"
-    ? (useEnglish ? "Double-click the background or press Enter to expand" : "双击空白处或按 Enter 展开信息悬浮窗")
-    : (useEnglish ? "Double-click the background or press Enter for mini mode" : "双击空白处或按 Enter 收缩为迷你模式");
+  const overlayRegionLabel = isStatsOverlay
+    ? (useEnglish ? "Statistics overlay" : "统计悬浮窗")
+    : (useEnglish ? "Terror Zone broadcast overlay" : "TZ 播报悬浮窗");
+  const terrorZoneModeTitle = displayMode === "mini"
+    ? (useEnglish ? "Double-click anywhere or press Enter to expand" : "双击任意位置或按 Enter 展开")
+    : (useEnglish ? "Double-click anywhere or press Enter for mini mode" : "双击任意位置或按 Enter 切换迷你模式");
+  const timerActionTitle = stats.isTiming
+    ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
+    : (useEnglish ? "No active timer" : "当前没有正在进行的计时");
 
   const noActiveAccountLabel = useEnglish ? "No active accounts" : "无活动账号";
   const averageTimeLabel = useEnglish ? "Average" : "平均";
@@ -1708,17 +1623,11 @@ export function Overlay() {
   const emptyDropsLabel = useEnglish ? "None" : "暂无";
   const deleteDropTitle = useEnglish ? "Remove from overlay" : "从前端删除";
   const terrorZoneTitle = useEnglish ? "Terror Zone" : "邪恶区域";
-  const collapseTerrorZoneTitle = useEnglish ? "Collapse terror zone" : "收起邪恶区域";
-  const expandTerrorZoneTitle = useEnglish ? "Expand terror zone" : "展开邪恶区域";
-  const terrorZoneSummary = currentTerrorZone
-    ? `${currentTerrorZoneLabel} ${translateTerrorZoneAreaName(currentTerrorZone.location_name, useEnglish)}`
-    : nextTerrorZone
-      ? `${nextTerrorZoneLabel} ${translateTerrorZoneAreaName(nextTerrorZone.location_name, useEnglish)}`
-      : terrorZoneStatus === "error"
-        ? (useEnglish ? "Forecast unavailable" : "预报暂不可用")
-        : terrorZoneStatus === "empty"
-          ? (useEnglish ? "Waiting for next forecast" : "等待下一条预报")
-          : (useEnglish ? "Syncing" : "同步中");
+  const terrorZoneEmptyMessage = terrorZoneStatus === "error"
+    ? (useEnglish ? "Forecast unavailable" : "预报暂不可用")
+    : terrorZoneStatus === "empty"
+      ? (useEnglish ? "Waiting for next forecast" : "等待下一条预报")
+      : (useEnglish ? "Syncing forecast" : "正在同步预报");
 
   function handleDockPointerEnter() {
     pointerInsideDockRef.current = true;
@@ -1736,27 +1645,25 @@ export function Overlay() {
       style={{
         ...surfaceOpacityVars(config?.overlay_opacity, theme),
       }}
-      data-overlay-mode={displayMode}
-      data-mini-layout={displayMode === "mini" ? miniLayout : undefined}
-      data-dock-edge={dockEdge ?? undefined}
-      data-dock-phase={dockPhase ?? undefined}
+      data-overlay-kind={isStatsOverlay ? "stats" : "tz"}
+      data-overlay-mode={isStatsOverlay ? "stats" : displayMode}
+      data-dock-edge={!isStatsOverlay ? dockEdge ?? undefined : undefined}
+      data-dock-phase={!isStatsOverlay ? dockPhase ?? undefined : undefined}
       role="region"
-      tabIndex={0}
-      aria-label={overlayModeToggleTitle}
-      aria-keyshortcuts="Enter Space"
-      onDoubleClickCapture={handleMiniOverlayDoubleClickCapture}
-      onDoubleClick={handleOverlayDoubleClick}
-      onKeyDown={handleOverlayKeyDown}
+      tabIndex={!isStatsOverlay ? 0 : undefined}
+      aria-label={overlayRegionLabel}
+      aria-keyshortcuts={!isStatsOverlay ? "Enter" : undefined}
+      title={!isStatsOverlay ? terrorZoneModeTitle : undefined}
+      onDoubleClickCapture={!isStatsOverlay ? handleTzOverlayDoubleClick : undefined}
       onPointerDownCapture={handleOverlayWindowPointerDownCapture}
       onPointerMoveCapture={handleOverlayWindowPointerMoveCapture}
       onPointerUpCapture={finishOverlayWindowPointerGesture}
       onPointerCancelCapture={finishOverlayWindowPointerGesture}
       onPointerEnter={handleDockPointerEnter}
       onPointerLeave={handleDockPointerLeave}
-      title={overlayModeToggleTitle}
     >
-      {dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
-      {displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
+      {!isStatsOverlay && dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
+      {!isStatsOverlay && displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
         <div
           key={edge}
           className="overlay-mini-resize-handle"
@@ -1771,14 +1678,12 @@ export function Overlay() {
         />
       ))}
       <div
-        ref={overlayPanelRef}
         className={`overlay-window flex h-full w-full overflow-hidden ${
-          displayMode === "mini"
+          !isStatsOverlay && displayMode === "mini"
             ? "overlay-window-mini"
-            : "flex-col rounded-xl p-2.5 transition-[height] duration-[180ms] ease-out"
+            : "flex-col rounded-xl p-2.5"
         }`}
         style={{
-          height: displayMode === "expanded" && overlayPanelHeight !== null ? overlayPanelHeight : "100%",
           border: "1px solid var(--border-default)",
           boxShadow: "none",
         }}
@@ -1786,14 +1691,15 @@ export function Overlay() {
       {/* ═══════════════════════════════════════════
           1. 账号胶囊（现有）
           ═══════════════════════════════════════════ */}
-      <div
+      {isStatsOverlay && <div
         ref={accountScrollRef}
-        className={`overlay-account-scroll flex min-h-0 w-full flex-nowrap items-center overflow-x-auto ${
-          displayMode === "mini"
-            ? "min-w-0 flex-1 gap-1"
-            : "flex-none gap-1.5"
-        } ${accountStripScrollable ? "is-scrollable" : ""}`}
+        className={`overlay-account-scroll flex min-h-0 w-full flex-none flex-nowrap items-center gap-1.5 overflow-x-auto ${
+          accountStripScrollable ? "is-scrollable" : ""
+        }`}
         data-overlay-account-scroll="true"
+        tabIndex={0}
+        role="toolbar"
+        aria-label={useEnglish ? "Active game accounts" : "运行中的游戏账号"}
         onPointerDown={handleAccountPointerDown}
         onPointerMove={handleAccountPointerMove}
         onPointerUp={finishAccountPointerDrag}
@@ -1828,15 +1734,13 @@ export function Overlay() {
                 : "var(--success)";
             const dotShadow = "none";
 
-            let tooltip = displayMode === "mini"
-              ? (useEnglish ? "Double-click to expand the information overlay" : "双击展开信息悬浮窗")
-              : "";
-            if (displayMode !== "mini" && useEnglish) {
+            let tooltip = "";
+            if (useEnglish) {
               if (isFocused && isMonitored) tooltip = "Monitoring window · Focused · Double-click to switch";
               else if (isFocused) tooltip = "Focused · Double-click to switch";
               else if (isMonitored) tooltip = "Monitoring window · Double-click to focus";
               else tooltip = "Double-click to focus window";
-            } else if (displayMode !== "mini") {
+            } else {
               if (isFocused && isMonitored) tooltip = "正在监测窗口 · 当前聚焦 · 双击切换";
               else if (isFocused) tooltip = "当前聚焦 · 双击切换";
               else if (isMonitored) tooltip = "正在监测窗口 · 双击聚焦";
@@ -1896,10 +1800,10 @@ export function Overlay() {
         ) : (
           <div className="whitespace-nowrap text-xs italic text-text-muted">{noActiveAccountLabel}</div>
         )}
-      </div>
+      </div>}
 
 
-      {displayMode === "mini" ? (
+      {!isStatsOverlay && displayMode === "mini" ? (
           <div
             className="overlay-mini-terror-zone flex min-h-0 items-center gap-1.5"
             title={`${miniNextTerrorZoneLabel}: ${miniNextTerrorZoneName}`}
@@ -1914,10 +1818,9 @@ export function Overlay() {
             </span>
           </div>
       ) : (
-        <>
-      <div className="flex flex-col gap-2 mt-2.5 flex-1 min-h-0">
+      <div className={`flex min-h-0 flex-1 flex-col gap-2 ${isStatsOverlay ? "mt-2.5" : ""}`}>
 
-        {import.meta.env.VITE_ENABLE_OCR !== "false" && (
+        {isStatsOverlay && import.meta.env.VITE_ENABLE_OCR !== "false" && (
           <>
         {/* 场景名称 — 右上角小字 */}
         <div className="flex justify-end px-1">
@@ -1929,7 +1832,20 @@ export function Overlay() {
         </div>
 
         {/* 计时器 — 大字居中，无背景容器 */}
-        <div className="flex flex-col items-center py-1.5">
+        <div
+          className={`overlay-timer-action flex flex-col items-center rounded-lg py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 ${
+            stats.isTiming ? "cursor-pointer" : "cursor-default"
+          }`}
+          data-overlay-interactive="true"
+          role="button"
+          tabIndex={0}
+          aria-disabled={!stats.isTiming}
+          aria-label={timerActionTitle}
+          aria-keyshortcuts="Enter Space"
+          title={timerActionTitle}
+          onDoubleClick={handleTimerDoubleClick}
+          onKeyDown={handleTimerKeyDown}
+        >
           <span
             className="text-xl font-mono font-bold tabular-nums leading-none select-none"
             style={{
@@ -2025,64 +1941,45 @@ export function Overlay() {
 
           </>
         )}
-        <div
-          className="shrink-0 overflow-hidden rounded-lg px-2 py-1.5 transition-all duration-200"
-          style={{
-            background: "var(--surface-card)",
-            border: "1px solid var(--border-default)",
-          }}
-        >
-          <button
-            type="button"
-            className="flex w-full items-center justify-between gap-2 text-left"
-            onClick={(e) => {
-              e.stopPropagation();
-              toggleTerrorZoneDrawer();
-            }}
-            title={terrorZoneExpanded ? collapseTerrorZoneTitle : expandTerrorZoneTitle}
-            style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-          >
-            <span className="shrink-0 text-2xs font-semibold text-text-muted">
-              {terrorZoneTitle}
-            </span>
-            <span className="min-w-0 flex-1 truncate text-right text-2xs font-semibold text-text-secondary">
-              {terrorZoneSummary}
-            </span>
-            {terrorZoneExpanded ? (
-              <ChevronDown size={13} className="shrink-0 text-text-muted" />
-            ) : (
-              <ChevronUp size={13} className="shrink-0 text-text-muted" />
-            )}
-          </button>
+        {!isStatsOverlay && (
+          <section className="tz-expanded-layout flex min-h-0 flex-1 flex-col px-0.5" aria-labelledby="tz-overlay-heading">
+            <header className="shrink-0 pb-2">
+              <h2 id="tz-overlay-heading" className="text-sm font-bold text-text-primary">
+                {terrorZoneTitle}
+              </h2>
+            </header>
 
-          <div
-            className={`grid transition-[grid-template-rows] duration-200 ease-out ${
-              terrorZoneExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-            }`}
-          >
-            <div
-              ref={terrorZoneDetailsRef}
-              className="min-h-0 overflow-hidden"
-            >
-              {hasTerrorZoneData ? (
-                <div className="mt-1.5 flex flex-col gap-1.5">
-                  {currentTerrorZone && (
-                    <TerrorZoneInfo label={currentTerrorZoneLabel} zone={currentTerrorZone} useEnglish={useEnglish} />
-                  )}
-                  {nextTerrorZone && (
-                    <TerrorZoneInfo label={nextTerrorZoneLabel} zone={nextTerrorZone} useEnglish={useEnglish} />
-                  )}
-                </div>
-              ) : (
-                <span className="mt-1 block text-2xs font-medium text-text-muted">
-                  {terrorZoneSummary}
+            {hasTerrorZoneData ? (
+              <div className="tz-forecast-list min-h-0 flex-1 overflow-y-auto pr-1">
+                {currentTerrorZone && (
+                  <TerrorZoneInfo
+                    current
+                    label={currentTerrorZoneLabel}
+                    zone={currentTerrorZone}
+                    useEnglish={useEnglish}
+                  />
+                )}
+                {currentTerrorZone && nextTerrorZone && (
+                  <div className="tz-forecast-divider" aria-hidden="true" />
+                )}
+                {nextTerrorZone && (
+                  <TerrorZoneInfo
+                    label={nextTerrorZoneLabel}
+                    zone={nextTerrorZone}
+                    useEnglish={useEnglish}
+                  />
+                )}
+              </div>
+            ) : (
+              <div className="flex min-h-0 flex-1 items-center justify-center px-3 text-center">
+                <span className="text-xs font-medium text-text-muted">
+                  {terrorZoneEmptyMessage}
                 </span>
-              )}
-            </div>
-          </div>
-        </div>
+              </div>
+            )}
+          </section>
+        )}
       </div>
-        </>
       )}
       </div>
     </div>

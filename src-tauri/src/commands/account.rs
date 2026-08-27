@@ -425,6 +425,45 @@ impl AccountManager {
     }
 }
 
+pub(crate) fn normalized_account_display_name(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+fn validated_account_display_name(name: &str) -> Result<String, AppError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AppError::ConfigReadError("账号名称不能为空".to_string()));
+    }
+    Ok(name.to_string())
+}
+
+fn ensure_account_display_name_available(
+    accounts_dir: &str,
+    requested_name: &str,
+    excluded_account_id: Option<&str>,
+) -> Result<(), AppError> {
+    let requested_identity = normalized_account_display_name(requested_name);
+    for id in AccountManager::list_ids(accounts_dir) {
+        if excluded_account_id.is_some_and(|excluded| id.eq_ignore_ascii_case(excluded)) {
+            continue;
+        }
+        let Ok(meta) = AccountManager::load_meta(accounts_dir, &id) else {
+            continue;
+        };
+        let existing_name = if meta.display_name.trim().is_empty() {
+            meta.id.as_str()
+        } else {
+            meta.display_name.as_str()
+        };
+        if normalized_account_display_name(existing_name) == requested_identity {
+            return Err(AppError::AccountAlreadyExists(
+                requested_name.trim().to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn copy_system_settings_to_account_if_available(
     saved_games_path: &Path,
     account_dir: &Path,
@@ -694,6 +733,11 @@ pub fn create_account(
         .cloned()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
+    let nickname = validated_account_display_name(&nickname)?;
+    // 锁序固定为 Catalog -> Account。名称检查与目录提交必须处于同一临界区，
+    // 防止两个并发创建请求同时通过判重。
+    let _catalog_guard = state.account_catalog.lock();
+    ensure_account_display_name_available(&cfg.accounts_dir, &nickname, None)?;
     let id = AccountManager::next_id(&cfg.accounts_dir);
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &id)?;
     let mut meta = AccountMeta::new(&id);
@@ -813,9 +857,7 @@ pub fn update_account_meta(
     meta.region = Some(context.game_region.canonical().to_string());
     if context.auth_mode == AuthMode::Token
         && meta.token.is_none()
-        && token
-            .as_deref()
-            .map_or(true, |value| value.trim().is_empty())
+        && token.as_deref().is_none_or(|value| value.trim().is_empty())
     {
         return Err(AppError::ConfigReadError(
             "迁移为 Token 认证时必须提供 Token".to_string(),
@@ -978,7 +1020,6 @@ pub fn rename_account(
     account_id: String,
     new_name: String,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .config
         .read()
@@ -986,6 +1027,10 @@ pub fn rename_account(
         .cloned()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
+    let new_name = validated_account_display_name(&new_name)?;
+    let _catalog_guard = state.account_catalog.lock();
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    ensure_account_display_name_available(&cfg.accounts_dir, &new_name, Some(&account_id))?;
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
 
     meta.display_name = new_name;
@@ -993,28 +1038,41 @@ pub fn rename_account(
     Ok(meta.redacted_for_frontend())
 }
 
-/// 设置账号的多选 Mod 启动参数
-#[tauri::command]
-pub fn update_account_mods(
-    state: tauri::State<'_, SharedState>,
-    account_id: String,
+/// 将非空且尚不存在的 Mod 配置追加到列表；首尾空白不参与重复判断。
+fn append_unique_mod_configuration(mod_list: &mut Vec<String>, candidate: &str) -> bool {
+    let candidate = candidate.trim();
+    if candidate.is_empty() || mod_list.iter().any(|existing| existing.trim() == candidate) {
+        return false;
+    }
+
+    mod_list.push(candidate.to_string());
+    true
+}
+
+fn normalize_mod_configuration(active_mod: String, mod_list: Vec<String>) -> (String, Vec<String>) {
+    let active_mod = active_mod.trim().to_string();
+    let mut normalized = Vec::with_capacity(mod_list.len() + usize::from(!active_mod.is_empty()));
+    for configuration in mod_list {
+        append_unique_mod_configuration(&mut normalized, &configuration);
+    }
+    if !active_mod.is_empty() {
+        append_unique_mod_configuration(&mut normalized, &active_mod);
+    }
+    (active_mod, normalized)
+}
+
+fn persist_account_mod_configuration(
+    cfg: &crate::commands::global_config::GlobalConfig,
+    mut meta: AccountMeta,
     active_mod: String,
     mod_list: Vec<String>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::LaunchGame)?;
+    let context = LaunchContext::for_account(cfg, &meta, ContextPurpose::LaunchGame)?;
+    let (active_mod, mod_list) = normalize_mod_configuration(active_mod, mod_list);
     meta.mod_args = active_mod;
     meta.mod_list = mod_list;
 
-    let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
+    let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &meta.id)?;
     let pending = stage_account_directory(&account_dir)?;
     let update_result = (|| -> Result<(), AppError> {
         if context.auth_mode == AuthMode::BattleNet && meta.initialized {
@@ -1037,7 +1095,54 @@ pub fn update_account_mods(
     }
     pending.commit()?;
 
-    Ok(meta.redacted_for_frontend())
+    Ok(meta)
+}
+
+/// 新增一条 Mod 胶囊配置。完全相同的配置会被安全跳过，而不是作为错误返回。
+#[tauri::command]
+pub fn add_account_mod(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    mod_configuration: String,
+) -> Result<bool, AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    let cfg = state
+        .config
+        .read()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
+    let mut mod_list = meta.mod_list.clone();
+    if !append_unique_mod_configuration(&mut mod_list, &mod_configuration) {
+        return Ok(false);
+    }
+
+    let active_mod = mod_configuration.trim().to_string();
+    persist_account_mod_configuration(&cfg, meta, active_mod, mod_list)?;
+    Ok(true)
+}
+
+/// 设置账号的当前 Mod 及完整胶囊列表；传入的重复项会按首次出现顺序静默合并。
+#[tauri::command]
+pub fn update_account_mods(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    active_mod: String,
+    mod_list: Vec<String>,
+) -> Result<AccountMeta, AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    let cfg = state
+        .config
+        .read()
+        .as_ref()
+        .cloned()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
+    persist_account_mod_configuration(&cfg, meta, active_mod, mod_list)
+        .map(AccountMeta::redacted_for_frontend)
 }
 
 /// 确认账号独立画质开关指向一份真实、非空的配置快照。
@@ -1143,9 +1248,11 @@ fn cleanup_after_snapshot() -> Result<(), AppError> {
 #[cfg(test)]
 mod settings_json_tests {
     use super::{
-        apply_account_order, commit_account_settings_transaction, copy_account_settings_to_system,
-        copy_system_settings_to_account_if_available, ensure_unique_account_ids,
-        hydrate_meta_from_runtime_snapshot, prepare_battle_net_runtime_directory,
+        append_unique_mod_configuration, apply_account_order, commit_account_settings_transaction,
+        copy_account_settings_to_system, copy_system_settings_to_account_if_available,
+        ensure_account_display_name_available, ensure_unique_account_ids,
+        hydrate_meta_from_runtime_snapshot, normalize_mod_configuration,
+        normalized_account_display_name, prepare_battle_net_runtime_directory,
         recover_account_transactions, remove_account_directory_without_resurrection,
         replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
         resolve_account_runtime_snapshot, stage_account_directory,
@@ -1168,6 +1275,73 @@ mod settings_json_tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn account_display_names_are_unique_after_trimming_and_case_folding() {
+        let root = temp_dir("unique_display_name");
+        let accounts = root.join("accounts");
+        std::fs::create_dir_all(accounts.join("acount1")).unwrap();
+        let mut existing = AccountMeta::new("acount1");
+        existing.display_name = "Primary Account".to_string();
+        AccountManager::save_meta(accounts.to_str().unwrap(), &existing).unwrap();
+
+        assert!(ensure_account_display_name_available(
+            accounts.to_str().unwrap(),
+            "  primary account  ",
+            None,
+        )
+        .is_err());
+        assert!(ensure_account_display_name_available(
+            accounts.to_str().unwrap(),
+            "PRIMARY ACCOUNT",
+            Some("acount1"),
+        )
+        .is_ok());
+        assert!(ensure_account_display_name_available(
+            accounts.to_str().unwrap(),
+            "Secondary Account",
+            None,
+        )
+        .is_ok());
+        assert_eq!(
+            normalized_account_display_name("  Primary Account  "),
+            "primary account"
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn identical_mod_configuration_is_skipped_without_mutating_the_list() {
+        let mut configurations = vec!["-mod highres -txt".to_string()];
+
+        assert!(!append_unique_mod_configuration(
+            &mut configurations,
+            "  -mod highres -txt  "
+        ));
+        assert_eq!(configurations, ["-mod highres -txt"]);
+
+        assert!(append_unique_mod_configuration(
+            &mut configurations,
+            "-mod HighRes -txt"
+        ));
+        assert_eq!(configurations.len(), 2);
+    }
+
+    #[test]
+    fn mod_configuration_normalization_silently_merges_exact_duplicates() {
+        let (active, configurations) = normalize_mod_configuration(
+            " -mod highres -txt ".to_string(),
+            vec![
+                "-mod highres -txt".to_string(),
+                " -mod highres -txt ".to_string(),
+                "-direct -txt".to_string(),
+            ],
+        );
+
+        assert_eq!(active, "-mod highres -txt");
+        assert_eq!(configurations, ["-mod highres -txt", "-direct -txt"]);
     }
 
     #[test]

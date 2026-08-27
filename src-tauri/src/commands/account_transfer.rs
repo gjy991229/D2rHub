@@ -3,8 +3,8 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::commands::account::{
-    remove_path_if_exists, replace_path_with_backup, resolve_account_runtime_snapshot,
-    sibling_with_suffix, AccountManager, AccountMeta,
+    normalized_account_display_name, remove_path_if_exists, replace_path_with_backup,
+    resolve_account_runtime_snapshot, sibling_with_suffix, AccountManager, AccountMeta,
 };
 use crate::error::AppError;
 use crate::launch_context::{AuthMode, ContextPurpose, GameRegion, LaunchContext};
@@ -64,7 +64,37 @@ pub struct ImportAccountsSummary {
     pub reencrypted_token_count: usize,
 }
 
-fn normalized_export_destination(destination: &str) -> Result<PathBuf, AppError> {
+fn resolved_path_identity(path: &Path) -> Result<String, AppError> {
+    let resolved = std::fs::canonicalize(path).map_err(|error| {
+        AppError::FileError(format!("无法解析路径 {}: {error}", path.display()))
+    })?;
+    Ok(resolved
+        .to_string_lossy()
+        .trim_start_matches(r"\\?\")
+        .replace('/', r"\")
+        .trim_end_matches('\\')
+        .to_lowercase())
+}
+
+fn destination_is_inside_managed_root(
+    destination: &Path,
+    managed_root: &Path,
+) -> Result<bool, AppError> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| AppError::FileError("导出位置缺少父目录".to_string()))?;
+    let parent_identity = resolved_path_identity(parent)?;
+    let root_identity = resolved_path_identity(managed_root)?;
+    Ok(parent_identity == root_identity
+        || parent_identity
+            .strip_prefix(&root_identity)
+            .is_some_and(|suffix| suffix.starts_with('\\')))
+}
+
+fn normalized_export_destination(
+    destination: &str,
+    managed_root: &Path,
+) -> Result<PathBuf, AppError> {
     let mut path = PathBuf::from(destination.trim());
     if !path.is_absolute() {
         return Err(AppError::FileError("导出位置必须是绝对路径".to_string()));
@@ -88,6 +118,12 @@ fn normalized_export_destination(destination: &str) -> Result<PathBuf, AppError>
         return Err(AppError::FileError(format!(
             "导出目录不存在: {}",
             parent.display()
+        )));
+    }
+    if destination_is_inside_managed_root(&path, managed_root)? {
+        return Err(AppError::FileError(format!(
+            "账号导出文件不能保存到 D2RHub 配置目录内，以免覆盖或递归导出软件数据: {}",
+            path.display()
         )));
     }
     Ok(path)
@@ -300,7 +336,7 @@ fn existing_display_names(accounts_dir: &str) -> HashSet<String> {
             } else {
                 meta.display_name
             };
-            name.to_lowercase()
+            normalized_account_display_name(&name)
         })
         .collect()
 }
@@ -311,12 +347,12 @@ fn unique_import_name(requested: &str, used: &mut HashSet<String>) -> String {
     } else {
         requested.trim().to_string()
     };
-    if used.insert(base.to_lowercase()) {
+    if used.insert(normalized_account_display_name(&base)) {
         return base;
     }
     for index in 2..=10_000 {
         let candidate = format!("{base}（导入 {index}）");
-        if used.insert(candidate.to_lowercase()) {
+        if used.insert(normalized_account_display_name(&candidate)) {
             return candidate;
         }
     }
@@ -574,7 +610,7 @@ pub fn export_accounts(
         .map(|id| AccountLifecycleLease::try_acquire(state.inner(), id))
         .collect::<Result<_, _>>()?;
 
-    let destination = normalized_export_destination(&destination)?;
+    let destination = normalized_export_destination(&destination, Path::new(&state.app_data_dir))?;
     let mut accounts = Vec::with_capacity(account_ids.len());
     let mut file_count = 0usize;
     let mut decoded_bytes = 0u64;
@@ -665,6 +701,8 @@ pub fn import_accounts(
         .as_ref()
         .cloned()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+    // 与新建、重命名共用账号清单锁，确保导入生成名称期间唯一性不被并发绕过。
+    let _catalog_guard = state.account_catalog.lock();
     std::fs::create_dir_all(&cfg.accounts_dir)?;
     let mut used_names = existing_display_names(&cfg.accounts_dir);
     let next_order = AccountManager::list_ids(&cfg.accounts_dir)
@@ -804,11 +842,21 @@ pub fn import_accounts(
 #[cfg(test)]
 mod tests {
     use super::{
-        export_plaintext_token, prepare_imported_credentials, safe_import_relative_path,
-        unique_import_name, ExportedAccount,
+        export_plaintext_token, normalized_export_destination, prepare_imported_credentials,
+        safe_import_relative_path, unique_import_name, ExportedAccount,
     };
     use crate::commands::account::AccountMeta;
     use std::collections::HashSet;
+
+    fn temp_dir(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "d2rhub_account_transfer_{name}_{}_{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
 
     #[test]
     fn import_paths_cannot_escape_the_account_directory() {
@@ -820,10 +868,43 @@ mod tests {
     }
 
     #[test]
+    fn export_destination_cannot_overwrite_managed_configuration() {
+        let root = temp_dir("protected_destination");
+        let managed = root.join("D2RHub");
+        let external = root.join("exports");
+        std::fs::create_dir_all(managed.join("accounts").join("acount1")).unwrap();
+        std::fs::create_dir_all(&external).unwrap();
+
+        assert!(normalized_export_destination(
+            managed
+                .join("accounts")
+                .join("acount1")
+                .join("account.json")
+                .to_str()
+                .unwrap(),
+            &managed,
+        )
+        .is_err());
+        assert!(normalized_export_destination(
+            external.join("accounts.json").to_str().unwrap(),
+            &managed,
+        )
+        .is_ok());
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn imported_duplicate_names_receive_a_stable_suffix() {
         let mut used = HashSet::from(["主号".to_string(), "主号（导入 2）".to_string()]);
         assert_eq!(unique_import_name("主号", &mut used), "主号（导入 3）");
         assert_eq!(unique_import_name("副号", &mut used), "副号");
+
+        let mut case_insensitive = HashSet::from(["primary account".to_string()]);
+        assert_eq!(
+            unique_import_name("  PRIMARY ACCOUNT  ", &mut case_insensitive),
+            "PRIMARY ACCOUNT（导入 2）"
+        );
     }
 
     #[test]

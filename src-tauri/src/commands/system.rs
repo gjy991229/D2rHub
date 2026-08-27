@@ -1738,11 +1738,14 @@ pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
     }
 }
 
-/// 按可见窗口标题精确查找 D2R 进程。
-/// 与 `find_game_hwnd_by_title` 不同，此函数没有“任意 Diablo 原名窗口”兜底，
-/// 专用于启动前的同名账号实例判定，避免误跳过其他账号。
+/// 按“精确窗口标题 + 完整可执行文件路径”查找唯一的 D2R 进程。
+/// 与 `find_game_hwnd_by_title` 不同，此函数没有“任意 Diablo 原名窗口”兜底；
+/// 出现多个候选时也不会猜测归属，避免把其他账号或另一客户端版本错误标记为当前账号。
 #[cfg(target_os = "windows")]
-pub fn find_d2r_pid_by_exact_window_title(title: &str) -> Option<u32> {
+pub fn find_unique_d2r_pid_by_window_identity(
+    title: &str,
+    expected_executable: &std::path::Path,
+) -> Option<u32> {
     if title.trim().is_empty() {
         return None;
     }
@@ -1796,20 +1799,33 @@ pub fn find_d2r_pid_by_exact_window_title(title: &str) -> Option<u32> {
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     system.refresh_processes(ProcessesToUpdate::All);
-    ctx.candidate_pids.into_iter().find(|pid| {
-        system
-            .process(sysinfo::Pid::from(*pid as usize))
-            .is_some_and(|process| {
-                process
-                    .name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("D2R.exe")
-            })
-    })
+    let mut candidates = ctx
+        .candidate_pids
+        .into_iter()
+        .filter(|pid| {
+            system
+                .process(sysinfo::Pid::from(*pid as usize))
+                .is_some_and(|process| {
+                    process
+                        .name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case("D2R.exe")
+                        && process.exe().is_some_and(|actual| {
+                            executable_paths_match(actual, expected_executable)
+                        })
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.dedup();
+    (candidates.len() == 1).then(|| candidates[0])
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn find_d2r_pid_by_exact_window_title(_title: &str) -> Option<u32> {
+pub fn find_unique_d2r_pid_by_window_identity(
+    _title: &str,
+    _expected_executable: &std::path::Path,
+) -> Option<u32> {
     None
 }
 

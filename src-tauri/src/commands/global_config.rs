@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 5;
+const CURRENT_CONFIG_VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -52,9 +52,15 @@ pub struct GlobalConfig {
     pub bongo_cat_skin: String,
     #[serde(default = "default_bongo_cat_unlocked_skins")]
     pub bongo_cat_unlocked_skins: Vec<String>,
-    /// 最小化时是否显示悬浮窗
+    /// 旧版合并开关，仅作为向后兼容字段保存；运行时读取下方两个独立开关。
     #[serde(default = "default_enable_overlay")]
     pub enable_overlay: bool,
+    /// 邪恶区域播报悬浮窗。旧配置从 enable_overlay 迁移。
+    #[serde(default = "default_enable_overlay")]
+    pub enable_tz_overlay: bool,
+    /// OCR 场景计时与掉落统计悬浮窗。旧配置从 enable_overlay 迁移。
+    #[serde(default = "default_enable_overlay")]
+    pub enable_stats_overlay: bool,
     /// 主题选择: "onyx" | "light"
     #[serde(default = "default_theme")]
     pub theme: String,
@@ -467,6 +473,42 @@ mod validation_tests {
     }
 
     #[test]
+    fn legacy_overlay_switch_is_split_without_changing_user_intent() {
+        for enabled in [false, true] {
+            let root = temp_dir(if enabled {
+                "legacy_overlay_enabled"
+            } else {
+                "legacy_overlay_disabled"
+            });
+            let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+            let object = legacy.as_object_mut().unwrap();
+            object.insert("version".to_string(), serde_json::json!(5));
+            object.insert("enable_overlay".to_string(), serde_json::json!(enabled));
+            object.remove("enable_tz_overlay");
+            object.remove("enable_stats_overlay");
+            std::fs::write(
+                root.join("global_config.json"),
+                serde_json::to_vec_pretty(&legacy).unwrap(),
+            )
+            .unwrap();
+
+            let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+            assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+            assert_eq!(config.enable_tz_overlay, enabled);
+            assert_eq!(config.enable_stats_overlay, enabled);
+            assert_eq!(config.enable_overlay, enabled);
+
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(root.join("global_config.json")).unwrap())
+                    .unwrap();
+            assert_eq!(saved["enable_tz_overlay"], enabled);
+            assert_eq!(saved["enable_stats_overlay"], enabled);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
     fn legacy_paths_are_migrated_to_the_detected_edition() {
         let root = temp_dir("legacy_region_path_migration");
         let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
@@ -712,6 +754,8 @@ impl Default for GlobalConfig {
             bongo_cat_skin: "original".to_string(),
             bongo_cat_unlocked_skins: vec!["original".to_string()],
             enable_overlay: true,
+            enable_tz_overlay: true,
+            enable_stats_overlay: true,
             theme: "light".to_string(),
             theme_overlay: "light".to_string(),
             auto_close_browser: true,
@@ -788,10 +832,32 @@ impl GlobalConfig {
         let content =
             std::fs::read_to_string(&path).map_err(|e| AppError::ConfigReadError(e.to_string()))?;
         let mut value: serde_json::Value = serde_json::from_str(&content)?;
+        let legacy_overlay_enabled = value
+            .get("enable_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(default_enable_overlay);
+        let mut overlay_split_migrated = false;
+        if let Some(object) = value.as_object_mut() {
+            if !object.contains_key("enable_tz_overlay") {
+                object.insert(
+                    "enable_tz_overlay".to_string(),
+                    serde_json::Value::Bool(legacy_overlay_enabled),
+                );
+                overlay_split_migrated = true;
+            }
+            if !object.contains_key("enable_stats_overlay") {
+                object.insert(
+                    "enable_stats_overlay".to_string(),
+                    serde_json::Value::Bool(legacy_overlay_enabled),
+                );
+                overlay_split_migrated = true;
+            }
+        }
         let region_path_migration = Self::migrate_legacy_region_paths(&mut value);
         let preserve_ambiguous_legacy_paths =
             region_path_migration == LegacyRegionPathMigration::Ambiguous;
-        let mut migrated = region_path_migration == LegacyRegionPathMigration::Migrated;
+        let mut migrated =
+            overlay_split_migrated || region_path_migration == LegacyRegionPathMigration::Migrated;
         if !preserve_ambiguous_legacy_paths {
             migrated |= Self::migrate_legacy_battle_net_paths(&mut value);
         }
@@ -799,6 +865,11 @@ impl GlobalConfig {
 
         if config.version != CURRENT_CONFIG_VERSION {
             config.version = CURRENT_CONFIG_VERSION;
+            migrated = true;
+        }
+        let combined_overlay_enabled = config.enable_tz_overlay || config.enable_stats_overlay;
+        if config.enable_overlay != combined_overlay_enabled {
+            config.enable_overlay = combined_overlay_enabled;
             migrated = true;
         }
 
@@ -1077,6 +1148,10 @@ impl GlobalConfig {
         Path::new(app_data_dir).join("overlay_geometry.json")
     }
 
+    fn stats_overlay_geometry_path(app_data_dir: &str) -> PathBuf {
+        Path::new(app_data_dir).join("stats_overlay_geometry.json")
+    }
+
     /// 保存悬浮窗几何
     pub fn save_overlay_geometry_fn(
         app_data_dir: &str,
@@ -1099,6 +1174,29 @@ impl GlobalConfig {
             return None;
         }
         let content = std::fs::read_to_string(&path).ok()?;
+        serde_json::from_str::<WindowGeometry>(&content).ok()
+    }
+
+    pub fn save_stats_overlay_geometry_fn(
+        app_data_dir: &str,
+        geo: &WindowGeometry,
+    ) -> Result<(), AppError> {
+        let dir = Path::new(app_data_dir);
+        if !dir.exists() {
+            std::fs::create_dir_all(dir).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        }
+        let content = serde_json::to_string_pretty(geo)?;
+        std::fs::write(Self::stats_overlay_geometry_path(app_data_dir), content)
+            .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn load_stats_overlay_geometry_fn(app_data_dir: &str) -> Option<WindowGeometry> {
+        let path = Self::stats_overlay_geometry_path(app_data_dir);
+        if !path.exists() {
+            return None;
+        }
+        let content = std::fs::read_to_string(path).ok()?;
         serde_json::from_str::<WindowGeometry>(&content).ok()
     }
 
@@ -1156,6 +1254,8 @@ pub fn save_global_config(
     let previous = state.config.read().clone();
     let mut cfg = config.clone();
     cfg.version = CURRENT_CONFIG_VERSION;
+    // 保留旧字段作为向后兼容总状态，新代码只读取两个独立开关。
+    cfg.enable_overlay = cfg.enable_tz_overlay || cfg.enable_stats_overlay;
     cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
         .to_string_lossy()
         .to_string();
@@ -1318,6 +1418,23 @@ pub fn load_overlay_geometry(
     state: tauri::State<'_, SharedState>,
 ) -> Result<Option<WindowGeometry>, AppError> {
     Ok(GlobalConfig::load_overlay_geometry_fn(&state.app_data_dir))
+}
+
+#[tauri::command]
+pub fn save_stats_overlay_geometry(
+    state: tauri::State<'_, SharedState>,
+    geometry: WindowGeometry,
+) -> Result<(), AppError> {
+    GlobalConfig::save_stats_overlay_geometry_fn(&state.app_data_dir, &geometry)
+}
+
+#[tauri::command]
+pub fn load_stats_overlay_geometry(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Option<WindowGeometry>, AppError> {
+    Ok(GlobalConfig::load_stats_overlay_geometry_fn(
+        &state.app_data_dir,
+    ))
 }
 
 /// 保存当前选中的主题

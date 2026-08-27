@@ -4,6 +4,7 @@
   "windows": [
     "main",
     "overlay",
+    "stats-overlay",
     "bongo-cat"
   ],
   "permissions": [

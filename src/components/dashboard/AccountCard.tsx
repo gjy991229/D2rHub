@@ -24,7 +24,7 @@ const stepLabels: Record<string, string> = {
 
 interface GridItemProps {
   account: AccountMeta;
-  onRename: (id: string, name: string) => void;
+  onRename: (id: string, name: string) => Promise<boolean>;
   onDelete: (id: string) => void;
   onConfigure: (a: AccountMeta) => void;
   onLaunch: (id: string) => void;
@@ -173,7 +173,7 @@ export function AccountGridItem({
   const [reinit, setReinit] = useState(false);
   const [modEditing, setModEditing] = useState(false);
   const [modDraft, setModDraft] = useState(account.mod_args || "");
-  const { reinitializeAccount, updateAccountMods, markSettingsCustomized } = useAccounts();
+  const { addAccountMod, reinitializeAccount, updateAccountMods, markSettingsCustomized } = useAccounts();
 
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
@@ -186,9 +186,26 @@ export function AccountGridItem({
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<Record<string, unknown>>({});
+  const modRowDragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    scrollLeft: number;
+    moved: boolean;
+    captured: boolean;
+  } | null>(null);
+  const suppressModClickRef = useRef(false);
+  const suppressModClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const modCommitInFlightRef = useRef(false);
+  const nameCommitInFlightRef = useRef(false);
 
   useEffect(() => { setWinX(account.window_x); setWinY(account.window_y); }, [account.window_x, account.window_y]);
   useEffect(() => { setModDraft(account.mod_args || ""); }, [account.mod_args]);
+
+  useEffect(() => () => {
+    if (suppressModClickTimerRef.current) {
+      clearTimeout(suppressModClickTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,15 +246,20 @@ export function AccountGridItem({
     }
   }, [account.id, account.initialized]);
 
-  const commitMod = () => {
+  const commitMod = async () => {
+    if (modCommitInFlightRef.current) return;
     setModEditing(false);
     const v = modDraft.trim();
     if (!v) return;
-    const mods = account.mod_list || [];
-    if (!mods.includes(v)) {
-      updateAccountMods(account.id, v, [...mods, v]);
-    } else if (v !== account.mod_args) {
-      updateAccountMods(account.id, v, mods);
+
+    modCommitInFlightRef.current = true;
+    try {
+      const added = await addAccountMod(account.id, v);
+      if (added === false) {
+        showToast("info", "已有完全相同的 Mod 配置，已跳过添加");
+      }
+    } finally {
+      modCommitInFlightRef.current = false;
     }
   };
 
@@ -302,10 +324,19 @@ export function AccountGridItem({
     onDelete(account.id);
   };
 
-  const commitName = () => {
+  const commitName = async () => {
+    if (nameCommitInFlightRef.current) return;
     const v = nameDraft.trim() || account.id;
-    if (v !== display) onRename(account.id, v);
     setEditingName(false);
+    if (v === display) return;
+
+    nameCommitInFlightRef.current = true;
+    try {
+      const renamed = await onRename(account.id, v);
+      if (!renamed) setNameDraft(display);
+    } finally {
+      nameCommitInFlightRef.current = false;
+    }
   };
 
   const handleOpenFolder = async (e: React.MouseEvent) => {
@@ -330,6 +361,103 @@ export function AccountGridItem({
   const resOptions = ["1280x720","1600x900","1920x1080","2560x1440","3840x2160"];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+
+  const handleModWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+    const row = event.currentTarget;
+    if (row.scrollWidth <= row.clientWidth) return;
+
+    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
+    if (delta === 0) return;
+
+    const maxScrollLeft = row.scrollWidth - row.clientWidth;
+    const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, row.scrollLeft + delta));
+    if (nextScrollLeft === row.scrollLeft) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    row.scrollLeft = nextScrollLeft;
+  };
+
+  const handleModPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.stopPropagation();
+    if (event.button !== 0 || (event.target as HTMLElement).closest("input")) return;
+
+    const row = event.currentTarget;
+    if (row.scrollWidth <= row.clientWidth) return;
+
+    suppressModClickRef.current = false;
+    modRowDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      scrollLeft: row.scrollLeft,
+      moved: false,
+      captured: false,
+    };
+  };
+
+  const handleModPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = modRowDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const distance = event.clientX - drag.startX;
+    if (!drag.moved && Math.abs(distance) >= 4) {
+      drag.moved = true;
+      drag.captured = true;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.dataset.dragging = "true";
+    }
+    if (!drag.moved) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.scrollLeft = drag.scrollLeft - distance;
+  };
+
+  const finishModPointerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = modRowDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+
+    const row = event.currentTarget;
+    modRowDragRef.current = null;
+    delete row.dataset.dragging;
+    if (drag.captured && row.hasPointerCapture(event.pointerId)) {
+      row.releasePointerCapture(event.pointerId);
+    }
+    event.stopPropagation();
+
+    if (drag.moved) {
+      suppressModClickRef.current = true;
+      if (suppressModClickTimerRef.current) clearTimeout(suppressModClickTimerRef.current);
+      suppressModClickTimerRef.current = setTimeout(() => {
+        suppressModClickRef.current = false;
+        suppressModClickTimerRef.current = null;
+      }, 0);
+    }
+  };
+
+  const handleModClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!suppressModClickRef.current) return;
+    suppressModClickRef.current = false;
+    event.preventDefault();
+    event.stopPropagation();
+  };
+
+  const handleModKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    const row = event.currentTarget;
+    if (row.scrollWidth <= row.clientWidth) return;
+
+    let nextScrollLeft: number | null = null;
+    if (event.key === "ArrowLeft") nextScrollLeft = row.scrollLeft - 72;
+    if (event.key === "ArrowRight") nextScrollLeft = row.scrollLeft + 72;
+    if (event.key === "Home") nextScrollLeft = 0;
+    if (event.key === "End") nextScrollLeft = row.scrollWidth;
+    if (nextScrollLeft === null) return;
+
+    event.preventDefault();
+    event.stopPropagation();
+    row.scrollTo({ left: nextScrollLeft, behavior: "smooth" });
+  };
 
   return (
     <div
@@ -364,8 +492,8 @@ export function AccountGridItem({
                   className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
                   value={nameDraft}
                   onChange={e => setNameDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") commitName(); if (e.key === "Escape") { setNameDraft(display); setEditingName(false); } }}
-                  onBlur={commitName}
+                  onKeyDown={e => { if (e.key === "Enter") void commitName(); if (e.key === "Escape") { setNameDraft(display); setEditingName(false); } }}
+                  onBlur={() => { void commitName(); }}
                   onClick={stop}
                   autoFocus
                 />
@@ -383,7 +511,20 @@ export function AccountGridItem({
               )}
 
               {!isMultiSelectMode && (
-                <div className="mod-row inline-mod-row">
+                <div
+                  className="mod-row inline-mod-row"
+                  role="group"
+                  aria-label="Mod 配置，横向滚动查看更多"
+                  tabIndex={0}
+                  onWheel={handleModWheel}
+                  onPointerDown={handleModPointerDown}
+                  onPointerMove={handleModPointerMove}
+                  onPointerUp={finishModPointerDrag}
+                  onPointerCancel={finishModPointerDrag}
+                  onLostPointerCapture={finishModPointerDrag}
+                  onClickCapture={handleModClickCapture}
+                  onKeyDown={handleModKeyDown}
+                >
                   {(account.mod_list || []).map((mod, idx) => {
                     const isActive = account.mod_args === mod;
                     const isConfirming = modDelConfirmIdx === idx;
@@ -435,7 +576,7 @@ export function AccountGridItem({
                       onKeyDown={e => {
                         if (e.key === "Enter") {
                           e.stopPropagation();
-                          commitMod();
+                          void commitMod();
                         }
                         if (e.key === "Escape") {
                           e.stopPropagation();
@@ -443,7 +584,7 @@ export function AccountGridItem({
                           setModEditing(false);
                         }
                       }}
-                      onBlur={commitMod}
+                      onBlur={() => { void commitMod(); }}
                       onClick={e => e.stopPropagation()}
                       placeholder="-mod xxx"
                       autoFocus

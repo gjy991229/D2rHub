@@ -394,6 +394,31 @@ fn infer_legacy_region(config: &GlobalConfig) -> Result<GameRegion, AppError> {
     }
 }
 
+/// Resolve only the configured D2R executable identity for an account.
+/// This intentionally avoids validating authentication, Battle.net, saved-games, or file
+/// availability so an already-running window can still be recognized when an optional path is
+/// temporarily unavailable.
+pub(crate) fn account_game_executable_identity(
+    config: &GlobalConfig,
+    account: &AccountMeta,
+) -> Result<PathBuf, AppError> {
+    let region = match account.region.as_deref() {
+        Some(raw) if !raw.trim().is_empty() => GameRegion::parse(raw)?,
+        _ => infer_legacy_region(config)?,
+    };
+    let game_directory = match region.edition() {
+        ClientEdition::Cn => config.cn_game_path.trim(),
+        ClientEdition::Global => config.global_game_path.trim(),
+    };
+    if game_directory.is_empty() {
+        return Err(AppError::ConfigReadError(format!(
+            "{}未配置游戏安装目录",
+            region.edition().display_name()
+        )));
+    }
+    Ok(PathBuf::from(game_directory).join("D2R.exe"))
+}
+
 pub(crate) fn normalized_path_identity(path: &Path) -> Option<String> {
     let raw = path.to_string_lossy();
     let trimmed = raw.trim();
@@ -522,6 +547,22 @@ mod tests {
         let verbatim = Path::new(r"\\?\C:\Games\D2R\D2R.exe");
         let regular = Path::new("c:/games/d2r/D2R.exe");
         assert!(paths_have_same_identity(verbatim, regular));
+    }
+
+    #[test]
+    fn window_identity_only_needs_the_accounts_configured_game_directory() {
+        let config = GlobalConfig {
+            cn_game_path: r"C:\Games\D2R-CN".to_string(),
+            ..GlobalConfig::default()
+        };
+        let mut account = AccountMeta::new("account-1");
+        account.region = Some("CN".to_string());
+        account.auth_mode = Some("bnet".to_string());
+
+        assert_eq!(
+            account_game_executable_identity(&config, &account).unwrap(),
+            PathBuf::from(r"C:\Games\D2R-CN").join("D2R.exe")
+        );
     }
 
     #[test]

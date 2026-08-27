@@ -218,9 +218,13 @@ function App() {
             const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
             const mainWin = getCurrentWindow();
             await mainWin.hide();
-            if (config?.enable_overlay) {
+            if (config?.enable_tz_overlay) {
               const overlayWin = await WebviewWindow.getByLabel('overlay');
               if (overlayWin) await overlayWin.show();
+            }
+            if (import.meta.env.VITE_ENABLE_OCR !== "false" && config?.enable_stats_overlay) {
+              const statsWin = await WebviewWindow.getByLabel('stats-overlay');
+              if (statsWin) await statsWin.show();
             }
           }}
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}

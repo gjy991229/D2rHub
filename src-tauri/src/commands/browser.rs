@@ -2,7 +2,7 @@ use crate::commands::account::AccountManager;
 use crate::commands::global_config::GlobalConfig;
 use crate::commands::utils::{sanitize_folder_name, shared_system, silent_cmd};
 use crate::error::AppError;
-use crate::launch_context::paths_have_same_identity;
+use crate::launch_context::{paths_have_same_identity, AuthMode};
 use crate::state::{AccountLifecycleLease, SharedState};
 use sysinfo::ProcessesToUpdate;
 
@@ -65,26 +65,59 @@ fn browser_profile_paths(local_dir: &std::path::Path, account_id: &str) -> [std:
     ]
 }
 
+fn browser_is_edge(config: &GlobalConfig, browser_path: &str) -> bool {
+    if config.browser_type.trim().is_empty() {
+        browser_path.to_ascii_lowercase().contains("msedge")
+    } else {
+        config.browser_type.eq_ignore_ascii_case("edge")
+    }
+}
+
+fn private_browser_arguments(
+    config: &GlobalConfig,
+    browser_path: &str,
+    url: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        if browser_is_edge(config, browser_path) {
+            "--inprivate".to_string()
+        } else {
+            "--incognito".to_string()
+        },
+        "--new-window".to_string(),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+    ];
+    if let Some(url) = url {
+        args.push(url.to_string());
+    }
+    args
+}
+
+fn launch_private_browser_impl(
+    config: &GlobalConfig,
+    browser_path: &str,
+    url: Option<&str>,
+) -> Result<(), AppError> {
+    ensure_browser_path_allowed(config, browser_path)?;
+    let args = private_browser_arguments(config, browser_path, url);
+    let _ = silent_cmd(browser_path)
+        .args(&args)
+        .spawn()
+        .map_err(|e| AppError::FileError(format!("启动无痕浏览器失败: {}", e)))?;
+    Ok(())
+}
+
 fn prepare_browser_profile(
     config: &GlobalConfig,
     browser_path: &str,
     account_id: &str,
 ) -> Result<(std::path::PathBuf, String), AppError> {
     AccountManager::validate_account_id(account_id)?;
-    let browser_type = if config.browser_type.is_empty() {
-        if browser_path.to_lowercase().contains("msedge") {
-            "edge"
-        } else {
-            "chrome"
-        }
-    } else {
-        config.browser_type.as_str()
-    };
-
     let display_name = AccountManager::load_meta(&config.accounts_dir, account_id)?.display_name;
     let stable_profile_name = browser_profile_name(account_id);
     let (user_data_dir, profile_name) = if let Some(local_dir) = dirs::data_local_dir() {
-        if browser_type == "edge" {
+        if browser_is_edge(config, browser_path) {
             (
                 local_dir.join("Microsoft").join("Edge").join("User Data"),
                 stable_profile_name,
@@ -189,7 +222,7 @@ pub fn launch_browser_for_account_impl(
     Ok(())
 }
 
-/// 启动浏览器，将用户数据目录强制定向到账号专用的配置文件夹内
+/// 启动浏览器。Token 账号使用无痕窗口；Battle.net 账号使用独立 Profile。
 #[tauri::command]
 pub fn launch_browser_for_account(
     state: tauri::State<'_, SharedState>,
@@ -208,7 +241,12 @@ pub fn launch_browser_for_account(
     #[cfg(target_os = "windows")]
     let before_hwnds = crate::commands::system::collect_chrome_windows();
 
-    launch_browser_for_account_impl(&config, &browser_path, &account_id)?;
+    let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
+    if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
+        launch_private_browser_impl(&config, &browser_path, None)?;
+    } else {
+        launch_browser_for_account_impl(&config, &browser_path, &account_id)?;
+    }
 
     // 启动后台监测线程，自动将新打开的浏览器空白窗口置顶并激活
     #[cfg(target_os = "windows")]
@@ -273,7 +311,7 @@ fn open_url_for_account_impl(
     Ok(())
 }
 
-/// 启动浏览器并用账号对应的配置文件打开指定 URL
+/// 打开登录 URL。Token 账号不创建或指定用户 Profile；Battle.net 账号保持隔离 Profile。
 #[tauri::command]
 pub fn open_url_in_browser(
     state: tauri::State<'_, SharedState>,
@@ -295,7 +333,12 @@ pub fn open_url_in_browser(
     ensure_browser_path_allowed(&config, &browser_path)?;
     ensure_allowed_bnet_login_url(&url)?;
 
-    open_url_for_account_impl(&config, &config.browser_path, &account_id, &url)?;
+    let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
+    if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
+        launch_private_browser_impl(&config, &config.browser_path, Some(&url))?;
+    } else {
+        open_url_for_account_impl(&config, &config.browser_path, &account_id, &url)?;
+    }
 
     #[cfg(target_os = "windows")]
     crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
@@ -305,7 +348,8 @@ pub fn open_url_in_browser(
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_profile_name, browser_profile_paths};
+    use super::{browser_profile_name, browser_profile_paths, private_browser_arguments};
+    use crate::commands::global_config::GlobalConfig;
     use std::path::Path;
 
     #[test]
@@ -328,5 +372,39 @@ mod tests {
         assert!(paths
             .iter()
             .any(|path| path.to_string_lossy().contains("Chrome")));
+    }
+
+    #[test]
+    fn token_browser_arguments_use_private_mode_without_a_profile() {
+        for (browser_type, browser_path, private_flag) in [
+            ("edge", r"C:\Program Files\Edge\msedge.exe", "--inprivate"),
+            (
+                "chrome",
+                r"C:\Program Files\Chrome\chrome.exe",
+                "--incognito",
+            ),
+        ] {
+            let config = GlobalConfig {
+                browser_type: browser_type.to_string(),
+                ..GlobalConfig::default()
+            };
+            let args = private_browser_arguments(
+                &config,
+                browser_path,
+                Some("https://example.invalid/login"),
+            );
+
+            assert!(args.iter().any(|argument| argument == private_flag));
+            assert!(args.iter().any(|argument| argument == "--new-window"));
+            assert!(args
+                .iter()
+                .any(|argument| argument == "https://example.invalid/login"));
+            assert!(!args
+                .iter()
+                .any(|argument| argument.starts_with("--user-data-dir=")));
+            assert!(!args
+                .iter()
+                .any(|argument| argument.starts_with("--profile-directory=")));
+        }
     }
 }

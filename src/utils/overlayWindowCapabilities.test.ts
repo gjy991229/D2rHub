@@ -22,18 +22,31 @@ export function runTests() {
   };
   const tauriConfigPath = path.join(g.process.cwd(), "src-tauri", "tauri.conf.json");
   const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, "utf8")) as {
-    app?: { windows?: Array<{ label?: string; minHeight?: number }> };
+    app?: { windows?: Array<{ label?: string; url?: string; minWidth?: number; minHeight?: number }> };
   };
   const permissions = new Set(capability.permissions ?? []);
 
   assert(
     capability.windows?.includes("overlay") === true,
-    "the overlay window is covered by the default capability",
+    "the TZ overlay window is covered by the default capability",
+  );
+  assert(
+    capability.windows?.includes("stats-overlay") === true,
+    "the statistics overlay window is covered by the default capability",
   );
   assert(
     tauriConfig.app?.windows?.find((window) => window.label === "overlay")?.minHeight
-      === MINI_OVERLAY_MIN_HEIGHT,
-    "the native overlay minimum height matches the one-row layout minimum",
+      === MINI_OVERLAY_MIN_HEIGHT
+      && tauriConfig.app?.windows?.find((window) => window.label === "overlay")?.minWidth
+        === 220,
+    "the native TZ overlay minimums match its one-row content and horizontal floor",
+  );
+  const statsWindow = tauriConfig.app?.windows?.find((window) => window.label === "stats-overlay");
+  assert(
+    statsWindow?.url === "overlay.html"
+      && statsWindow.minWidth === 220
+      && statsWindow.minHeight === 180,
+    "the statistics overlay has an independent native window with practical resize limits",
   );
   for (const permission of [
     "core:window:allow-set-size",

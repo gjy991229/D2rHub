@@ -72,6 +72,8 @@ export interface DropEntry {
   screenshotPath: string | null;  // 仅 #24+ 有值
 }
 
+export const MANUAL_FINISH_SCENE = "__d2rhub_manual_finish__";
+
 interface StatsState {
   // ── 当前场景 ──
   currentScene: string;
@@ -101,6 +103,7 @@ interface StatsState {
   setCharacterName: (name: string) => void;
   startTimer: () => void;
   stopTimerAndSave: () => Promise<void>;
+  finishRunAsTown: (townScene?: string) => Promise<boolean>;
   tick: () => void;
   processOcrSceneText: (item: { text: string; is_town?: boolean }) => Promise<void>;
   /// 处理通道B 的 OCR 掉落结果（接收预匹配的符文数据）
@@ -134,11 +137,15 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   stopTimerAndSave: async () => {
-    const { timerStart, currentScene, characterName, currentRunDrops } = get();
-    if (!timerStart) return;
+    const { isTiming, timerStart, currentScene, characterName, currentRunDrops } = get();
+    if (!isTiming || !timerStart) return;
 
     const elapsed = Date.now() - timerStart;
     const seconds = Math.round(elapsed / 100) / 10;
+
+    // 先同步冻结计时状态，再异步保存快照。这样手动结束会立即反馈，保存期间
+    // 新识别到的场景也不会被迟到的旧保存流程重置。
+    set({ isTiming: false, timerStart: null, elapsedMs: 0, currentRunDrops: [] });
 
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -177,8 +184,22 @@ export const useStats = create<StatsState>((set, get) => ({
       console.error("保存场景记录失败:", e);
     }
 
-    // 重置计时器，保留累计掉落（跨场景持续显示），清空本轮掉落
-    set({ isTiming: false, timerStart: null, elapsedMs: 0, currentRunDrops: [] });
+  },
+
+  finishRunAsTown: async (townScene = MANUAL_FINISH_SCENE) => {
+    const wasTiming = get().isTiming;
+    const savePromise = wasTiming ? get().stopTimerAndSave() : Promise.resolve();
+
+    // 与 OCR 识别到主城时使用相同的场景重置。状态先落地，避免数据库写入
+    // 较慢时界面仍继续计时；stopTimerAndSave 已经持有本轮的完整保存快照。
+    set({
+      currentScene: townScene,
+      lastCombatScene: "",
+      dbAvgTime: null,
+      dbTotalRuns: null,
+    });
+    await savePromise;
+    return wasTiming;
   },
 
   tick: () => {
@@ -221,11 +242,8 @@ export const useStats = create<StatsState>((set, get) => ({
     const isTown = item.is_town || false;
 
     if (isTown) {
-      // 回城：先保存当前战斗场景的记录（此时 currentScene 仍是战斗场景名）
-      if (isTiming) {
-        await get().stopTimerAndSave();
-      }
-      set({ currentScene: normalized, lastCombatScene: "", dbAvgTime: null, dbTotalRuns: null });
+      // 回城：保存当前战斗场景，再进入统一的主城状态。
+      await get().finishRunAsTown(normalized);
     } else {
       // 战斗场景
       if (isTiming) {

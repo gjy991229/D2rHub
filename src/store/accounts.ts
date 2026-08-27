@@ -12,7 +12,8 @@ interface AccountsState {
   loadAccounts: () => Promise<void>;
   createAccount: (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => Promise<string | null>;
   deleteAccount: (id: string) => Promise<void>;
-  renameAccount: (id: string, newName: string) => Promise<void>;
+  renameAccount: (id: string, newName: string) => Promise<boolean>;
+  addAccountMod: (id: string, modConfiguration: string) => Promise<boolean | null>;
   updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<void>;
   updateAccountRegion: (id: string, region: InternationalAccountRegion) => Promise<void>;
   initializeBnetAccount: (id: string) => Promise<void>;
@@ -70,9 +71,23 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     try {
       await invoke("rename_account", { accountId: id, newName });
       await get().loadAccounts();
+      return true;
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `重命名失败: ${e}`);
+      return false;
+    }
+  },
+
+  addAccountMod: async (id: string, modConfiguration: string) => {
+    try {
+      const added = await invoke<boolean>("add_account_mod", { accountId: id, modConfiguration });
+      if (added) await get().loadAccounts();
+      return added;
+    } catch (e) {
+      set({ error: String(e) });
+      showToast("error", `保存 Mod 参数失败: ${e}`);
+      return null;
     }
   },
 

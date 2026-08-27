@@ -385,10 +385,6 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
 
       if (config?.browser_path && config?.browser_type) {
         try {
-          await invoke("launch_browser_for_account", {
-            browserPath: config!.browser_path,
-            accountId: id,
-          });
           const tokenUrl = getTokenUrl(region);
           await invoke("open_url_in_browser", {
             browserPath: config!.browser_path,
@@ -419,8 +415,17 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     if (e) e.stopPropagation();
     const tokenUrl = getTokenUrl(region);
     try {
-      const { open: openUrl } = await import("@tauri-apps/plugin-shell");
-      await openUrl(tokenUrl);
+      const id = accountIdRef.current;
+      if (id && config?.browser_path && config?.browser_type) {
+        await invoke("open_url_in_browser", {
+          browserPath: config.browser_path,
+          accountId: id,
+          url: tokenUrl,
+        });
+      } else {
+        const { open: openUrl } = await import("@tauri-apps/plugin-shell");
+        await openUrl(tokenUrl);
+      }
     } catch (err) {
       console.error("无法打开网页:", err);
       showToast("error", "打开外部浏览器失败，请手动网页打开。");
@@ -655,7 +660,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-accent">
                 <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">正在启动独立浏览器配置并打开登录页面...</span>
+                <span className="text-sm">正在以无痕模式打开登录页面...</span>
               </div>
               {tokenGuideLoading && (
                 <p className="text-xs text-text-muted">浏览器启动后，请在新打开的登录页中获取 Token，软件将自动弹出指引图</p>
