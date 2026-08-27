@@ -29,6 +29,7 @@ export interface GlobalConfig {
   rune_audio_target_account: string;
   rune_audio_detection_threshold?: number;
   rune_audio_tracked_categories: string[];
+  rune_audio_min_rune_number?: number;
   shortcut_bindings_json: string;
   overlay_opacity: number;
   main_opacity: number;

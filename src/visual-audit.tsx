@@ -199,6 +199,7 @@ const baseConfig: GlobalConfig = {
   rune_audio_target_account: "sorc-01",
   rune_audio_detection_threshold: 0.58,
   rune_audio_tracked_categories: ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"],
+  rune_audio_min_rune_number: 20,
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
   overlay_opacity: 94,
   main_opacity: 96,

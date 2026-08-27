@@ -84,6 +84,9 @@ pub struct GlobalConfig {
     /// Drop categories decoded and persisted by the audio monitor.
     #[serde(default = "default_rune_audio_tracked_categories")]
     pub rune_audio_tracked_categories: Vec<String>,
+    /// 最低记录符文编号（含）；低于该编号的有效声纹只诊断、不入库。
+    #[serde(default = "default_rune_audio_min_rune_number")]
+    pub rune_audio_min_rune_number: u32,
     /// 快捷键绑定 JSON: {"1": "Ctrl+1", "2": "Ctrl+2", ...} ，key 为账号位置序号（1-based）
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
@@ -127,6 +130,10 @@ fn default_rune_audio_detection_threshold() -> f32 {
 
 fn default_rune_audio_tracked_categories() -> Vec<String> {
     crate::rune_audio::item_catalog::default_tracked_categories()
+}
+
+fn default_rune_audio_min_rune_number() -> u32 {
+    1
 }
 
 fn default_agent_mode() -> u8 {
@@ -552,6 +559,36 @@ mod validation_tests {
     }
 
     #[test]
+    fn missing_minimum_rune_number_records_all_runes_for_backward_compatibility() {
+        let mut value = serde_json::to_value(GlobalConfig::default()).unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("rune_audio_min_rune_number");
+
+        let config: GlobalConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.rune_audio_min_rune_number, 1);
+    }
+
+    #[test]
+    fn minimum_rune_number_is_normalized_to_the_protocol_range() {
+        let mut below = GlobalConfig {
+            rune_audio_min_rune_number: 0,
+            ..GlobalConfig::default()
+        };
+        assert!(below.normalize_rune_audio_configuration());
+        assert_eq!(below.rune_audio_min_rune_number, 1);
+
+        let mut above = GlobalConfig {
+            rune_audio_min_rune_number: 99,
+            ..GlobalConfig::default()
+        };
+        assert!(above.normalize_rune_audio_configuration());
+        assert_eq!(above.rune_audio_min_rune_number, 33);
+    }
+
+    #[test]
     fn tracking_categories_are_normalized_before_use() {
         let mut config = GlobalConfig {
             rune_audio_tracked_categories: vec![
@@ -763,6 +800,7 @@ impl Default for GlobalConfig {
             rune_audio_target_account: String::new(),
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
             rune_audio_tracked_categories: default_rune_audio_tracked_categories(),
+            rune_audio_min_rune_number: default_rune_audio_min_rune_number(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
             overlay_opacity: 95,
             main_opacity: 95,
@@ -809,6 +847,11 @@ impl GlobalConfig {
         );
         let mut changed = normalized != self.rune_audio_tracked_categories;
         self.rune_audio_tracked_categories = normalized;
+        let minimum_rune = self.rune_audio_min_rune_number.clamp(1, 33);
+        if minimum_rune != self.rune_audio_min_rune_number {
+            self.rune_audio_min_rune_number = minimum_rune;
+            changed = true;
+        }
         if self.rune_audio_enabled && self.resolve_rune_audio_target_account().is_err() {
             self.rune_audio_enabled = false;
             changed = true;
@@ -1213,6 +1256,7 @@ pub fn save_global_config(
         crate::rune_audio::item_catalog::normalize_tracked_categories(
             &cfg.rune_audio_tracked_categories,
         );
+    cfg.rune_audio_min_rune_number = cfg.rune_audio_min_rune_number.clamp(1, 33);
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

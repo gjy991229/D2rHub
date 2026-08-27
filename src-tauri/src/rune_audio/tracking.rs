@@ -257,6 +257,12 @@ impl SegmentTracker {
         self.snapshot()
     }
 
+    /// Drops are recordable only after a wilderness/dungeon segment is active.
+    /// Town, frontend and the pre-location state intentionally reject them.
+    pub fn accepts_drop_observations(&self) -> bool {
+        self.active_segment.is_some()
+    }
+
     pub fn snapshot(&self) -> TrackingSnapshot {
         let location = self
             .current_location
@@ -476,13 +482,26 @@ mod tests {
     }
 
     #[test]
-    fn rune_outside_wilderness_stays_raw() {
+    fn drops_are_accepted_only_during_a_wilderness_segment() {
         let mut tracker = tracker();
+        assert!(!tracker.accepts_drop_observations());
         tracker.observe_drop(rune_drop(1, 1, "艾尔", "El"));
+
+        tracker
+            .observe_location(area(1), 500, 500, "town".to_string())
+            .unwrap();
+        assert!(!tracker.accepts_drop_observations());
+
         let started = tracker
             .observe_location(area(21), 1_000, 1_000, "start".to_string())
             .unwrap();
+        assert!(tracker.accepts_drop_observations());
         assert!(started.snapshot.current_run_drops.is_empty());
+
+        tracker
+            .observe_location(TelemetryMarker::Frontend, 2_000, 2_000, "menu".to_string())
+            .unwrap();
+        assert!(!tracker.accepts_drop_observations());
     }
 
     #[test]

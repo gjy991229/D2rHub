@@ -21,6 +21,7 @@ const defaultConfig: GlobalConfig = {
   rune_audio_enabled: false, rune_audio_target_account: "",
   rune_audio_detection_threshold: 0.56,
   rune_audio_tracked_categories: ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"],
+  rune_audio_min_rune_number: 1,
   shortcut_bindings_json: "",
   overlay_opacity: 95, main_opacity: 95, font_scale: "default",
   enable_bongo_cat: true, bongo_cat_chatterbox: true,

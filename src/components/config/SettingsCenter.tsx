@@ -1478,6 +1478,33 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         );
                       })}
                     </div>
+                    <div className="flex items-center justify-between gap-4 rounded-lg border border-border-default bg-surface-hover px-2.5 py-2">
+                      <div>
+                        <label htmlFor="rune-audio-min-rune-number" className="text-xs font-semibold text-text-secondary">
+                          最低记录符文编号（含）
+                        </label>
+                        <p className="text-2xs text-text-muted">
+                          例如设为 20，只记录 #20–#33；更低符文即使解码成功也不入库
+                        </p>
+                      </div>
+                      <input
+                        id="rune-audio-min-rune-number"
+                        type="number"
+                        min={1}
+                        max={33}
+                        step={1}
+                        disabled={!(config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES).includes("runes")}
+                        value={config.rune_audio_min_rune_number ?? 1}
+                        onChange={event => updateConfig(c => {
+                          const value = Math.round(Number(event.target.value));
+                          c.rune_audio_min_rune_number = Math.max(1, Math.min(33, Number.isFinite(value) ? value : 1));
+                        })}
+                        className="h-8 w-20 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
+                      />
+                    </div>
+                    <p className="text-2xs text-text-muted">
+                      所有掉落仅在已确认的野外或地下城场景中记录；主城、主界面和尚未识别地点时一律忽略。
+                    </p>
                     <p className="text-2xs text-warning">
                       声纹按基础物品代码识别；同一代码的暗金/套装/词缀，以及完全同步落地的两个同名物品，无法仅凭游戏音频可靠区分。
                     </p>

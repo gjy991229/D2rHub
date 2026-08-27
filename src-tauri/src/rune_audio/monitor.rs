@@ -119,7 +119,18 @@ struct MonitorConfig {
     target_pid: u32,
     threshold: f32,
     tracked_categories: HashSet<String>,
+    min_rune_number: u32,
     catalog_directory: Option<PathBuf>,
+}
+
+fn should_record_rune(config: &MonitorConfig, tracker: &SegmentTracker, rune_number: u32) -> bool {
+    tracker.accepts_drop_observations()
+        && config.tracked_categories.contains(CATEGORY_RUNES)
+        && rune_number >= config.min_rune_number
+}
+
+fn should_record_item(config: &MonitorConfig, tracker: &SegmentTracker, category: &str) -> bool {
+    tracker.accepts_drop_observations() && config.tracked_categories.contains(category)
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -308,6 +319,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         target_pid,
         threshold: config.rune_audio_detection_threshold.clamp(0.40, 0.95),
         tracked_categories: config.rune_audio_tracked_categories.into_iter().collect(),
+        min_rune_number: config.rune_audio_min_rune_number.clamp(1, 33),
         catalog_directory,
     })
 }
@@ -759,7 +771,7 @@ fn capture_loop(
         for detection in detector.push(&chunk) {
             match detection.marker {
                 marker @ TelemetryMarker::Rune { rune_number } => {
-                    let tracked = config.tracked_categories.contains(CATEGORY_RUNES);
+                    let tracked = should_record_rune(&config, &tracker, rune_number);
                     let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
                     record_decoded_packet(
                         detection.marker,
@@ -782,7 +794,7 @@ fn capture_loop(
                 marker @ TelemetryMarker::Item { item_id } => {
                     let tracked = item_catalog
                         .resolve(item_id)
-                        .is_some_and(|item| config.tracked_categories.contains(&item.category));
+                        .is_some_and(|item| should_record_item(&config, &tracker, &item.category));
                     let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
                     record_decoded_packet(
                         detection.marker,
@@ -1031,6 +1043,55 @@ pub fn get_rune_audio_status() -> RuneAudioStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_monitor_config(min_rune_number: u32) -> MonitorConfig {
+        MonitorConfig {
+            account_id: "account-1".to_string(),
+            character_name: "test".to_string(),
+            target_pid: 42,
+            threshold: 0.56,
+            tracked_categories: HashSet::from([CATEGORY_RUNES.to_string(), "gems".to_string()]),
+            min_rune_number,
+            catalog_directory: None,
+        }
+    }
+
+    #[test]
+    fn drop_filters_require_wilderness_and_apply_the_inclusive_rune_minimum() {
+        let config = test_monitor_config(20);
+        let mut tracker = SegmentTracker::new(
+            "account-1".to_string(),
+            "test".to_string(),
+            CAPTURE_SAMPLE_RATE,
+        );
+
+        assert!(!should_record_rune(&config, &tracker, 20));
+        assert!(!should_record_item(&config, &tracker, "gems"));
+        tracker
+            .observe_location(
+                TelemetryMarker::Area { area_id: 1 },
+                100,
+                100,
+                "town".to_string(),
+            )
+            .unwrap();
+        assert!(!should_record_rune(&config, &tracker, 24));
+        assert!(!should_record_item(&config, &tracker, "gems"));
+
+        tracker
+            .observe_location(
+                TelemetryMarker::Area { area_id: 6 },
+                200,
+                200,
+                "wild".to_string(),
+            )
+            .unwrap();
+        assert!(!should_record_rune(&config, &tracker, 19));
+        assert!(should_record_rune(&config, &tracker, 20));
+        assert!(should_record_rune(&config, &tracker, 24));
+        assert!(should_record_item(&config, &tracker, "gems"));
+        assert!(!should_record_item(&config, &tracker, "keys"));
+    }
 
     #[test]
     fn resolves_active_mod_name_without_accepting_paths() {
