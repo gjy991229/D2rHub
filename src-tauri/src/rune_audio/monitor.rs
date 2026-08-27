@@ -1,6 +1,8 @@
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
-use super::tracking::{SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot};
+use super::tracking::{
+    RunePresenceGate, SceneTransitionGate, SegmentTracker, TrackedRuneDrop, TrackingSnapshot,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::File;
@@ -301,10 +303,9 @@ fn record_decoded_packet(
         match marker {
             TelemetryMarker::Rune { .. } if logical_event => current.rune_events += 1,
             TelemetryMarker::Rune { .. } => {}
-            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend if logical_event => {
+            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {
                 current.scene_heartbeats += 1
             }
-            TelemetryMarker::Area { .. } | TelemetryMarker::Frontend => {}
         }
         current.last_marker = Some(marker_status_label(marker, catalog));
         current.last_confidence = Some(confidence);
@@ -504,6 +505,7 @@ fn capture_loop(
         catalog.clone(),
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
+    let mut rune_gate = RunePresenceGate::new(CAPTURE_SAMPLE_RATE);
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
@@ -569,20 +571,23 @@ fn capture_loop(
         for detection in detector.push(&chunk) {
             match detection.marker {
                 TelemetryMarker::Rune { rune_number } => {
+                    let logical_event = rune_gate.observe(rune_number, detection.start_frame);
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
                         detection.start_frame,
                         &catalog,
-                        true,
+                        logical_event,
                     );
-                    handle_rune_detection(
-                        &app,
-                        &config,
-                        &mut tracker,
-                        rune_number,
-                        detection.confidence,
-                    );
+                    if logical_event {
+                        handle_rune_detection(
+                            &app,
+                            &config,
+                            &mut tracker,
+                            rune_number,
+                            detection.confidence,
+                        );
+                    }
                 }
                 marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
                     let logical_event = scene_gate.observe(marker, detection.start_frame);
@@ -594,6 +599,7 @@ fn capture_loop(
                         logical_event,
                     );
                     if logical_event {
+                        rune_gate.clear();
                         handle_location_detection(
                             &app,
                             &config,
