@@ -41,6 +41,7 @@ import {
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
+import { AUDIO_MOD_NAME_MAX_LENGTH, validateAudioModName } from "../../utils/audioModName";
 
 // Helper for quadratic opacity mapping
 // Map slider value s (0..100) to stored percentage p (10..100)
@@ -300,8 +301,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const [audioSetupOpen, setAudioSetupOpen] = useState(false);
   const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
+  const [audioSetupName, setAudioSetupName] = useState("");
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
+  const normalizedAudioSetupName = audioSetupName.trim();
+  const audioSetupNameError = validateAudioModName(audioSetupName);
+  const showAudioSetupNameError = audioSetupName.length > 0 && !!audioSetupNameError;
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -753,6 +758,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       next.rune_audio_enabled = false;
     });
     setAudioSetupOpen(false);
+    setAudioSetupName("");
     setAudioModStateLoading(true);
     try {
       const next = await invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
@@ -806,6 +812,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       const preferred = sources.find((mod) => mod.name === next.current_mod_name) ?? sources[0];
       setAudioSetupSource(preferred?.name ?? "");
       setAudioSetupMode(preferred ? "existing" : "original");
+      setAudioSetupName("");
       updateConfig(current => {
         current.rune_audio_target_account = accountId;
         current.rune_audio_enabled = false;
@@ -825,6 +832,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       showToast("warning", "请选择要保留功能的现有 Mod");
       return;
     }
+    if (audioSetupNameError) {
+      showToast("warning", audioSetupNameError);
+      return;
+    }
 
     setAudioPreparing(true);
     setAudioPrepareProgress({
@@ -836,6 +847,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     try {
       const result = await invoke<AudioModPrepareResult>("prepare_audio_mod", {
         accountId,
+        modName: normalizedAudioSetupName,
         sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
       });
       const next = await invoke<AudioModSetupState>("apply_audio_mod_to_account", {
@@ -846,6 +858,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       setAudioModState(next);
       await persistAudioEnabledState(accountId, true);
       setAudioSetupOpen(false);
+      setAudioSetupName("");
       if (next.restart_required) {
         showToast("warning", "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别");
       } else {
@@ -1845,7 +1858,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           </div>
                           <button
                             type="button"
-                            onClick={() => setAudioSetupOpen(true)}
+                            onClick={() => {
+                              setAudioSetupName("");
+                              setAudioSetupOpen(true);
+                            }}
                             className="shrink-0 text-2xs font-medium text-text-secondary hover:text-text-primary"
                           >
                             重新准备
@@ -1858,7 +1874,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             <div>
                               <p className="text-xs font-semibold text-text-primary">准备识别 Mod</p>
                               <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
-                                只需选择是否保留现有 Mod 的功能，其他内容由 D2RHub 自动完成。
+                                选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。
                               </p>
                             </div>
                           </div>
@@ -1904,6 +1920,43 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             </label>
                           )}
 
+                          <label className="mt-3 block" htmlFor="audio-mod-name">
+                            <span className="flex items-center justify-between gap-3 text-2xs font-semibold text-text-secondary">
+                              <span>新 Mod 名称</span>
+                              <span className="font-normal text-text-muted">必填</span>
+                            </span>
+                            <input
+                              id="audio-mod-name"
+                              type="text"
+                              value={audioSetupName}
+                              maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
+                              disabled={audioPreparing}
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              aria-invalid={showAudioSetupNameError}
+                              aria-describedby="audio-mod-name-help"
+                              placeholder="例如：MyAudioMod"
+                              onChange={event => setAudioSetupName(event.target.value)}
+                              className={`mt-1 h-8 w-full rounded-lg border bg-surface-card px-2.5 text-xs text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent disabled:cursor-not-allowed disabled:opacity-60 ${
+                                showAudioSetupNameError ? "border-danger" : "border-border-default"
+                              }`}
+                            />
+                          </label>
+                          <p
+                            id="audio-mod-name-help"
+                            className={`mt-1 text-2xs leading-relaxed ${
+                              showAudioSetupNameError ? "text-danger" : "text-text-muted"
+                            }`}
+                          >
+                            {showAudioSetupNameError
+                              ? audioSetupNameError
+                              : "仅可使用英文字母、数字、短横线和下划线。"}
+                          </p>
+                          <p className="mt-1 truncate rounded-md bg-surface-card px-2 py-1 font-mono text-2xs text-text-secondary">
+                            -mod {audioSetupNameError ? "<名称>" : normalizedAudioSetupName} -txt -assettestmode 1
+                          </p>
+
                           {audioPreparing && audioPrepareProgress && (
                             <div className="mt-3" aria-live="polite">
                               <div className="mb-1.5 flex items-center justify-between gap-3 text-2xs">
@@ -1923,20 +1976,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             variant="primary"
                             size="md"
                             loading={audioPreparing}
-                            disabled={audioSetupMode === "existing" && !audioSetupSource}
+                            disabled={!!audioSetupNameError || (audioSetupMode === "existing" && !audioSetupSource)}
                             onClick={handlePrepareAudioMod}
                             className="mt-3 w-full"
                           >
                             {audioPreparing ? "正在准备，请勿关闭软件" : "一键准备并开启"}
                           </Button>
                           <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
-                            不修改源 Mod；自动生成新 Mod，并为此账号配置 -mod 与 -txt。
+                            不修改源 Mod；账号参数固定配置为 -mod 名称 -txt -assettestmode 1。
                           </p>
                         </div>
                       ) : (
                         <button
                           type="button"
-                          onClick={() => setAudioSetupOpen(true)}
+                          onClick={() => {
+                            setAudioSetupName("");
+                            setAudioSetupOpen(true);
+                          }}
                           className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-hover px-3 py-2.5 text-left hover:bg-surface-active"
                         >
                           <span className="flex min-w-0 items-start gap-2.5">

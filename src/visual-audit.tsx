@@ -306,6 +306,25 @@ function installIpcMock() {
         return accountSettings;
       case "get_scene_stats":
         return { avg_time: 73.4, total_runs: 218 };
+      case "get_audio_mod_setup_state":
+        return {
+          account_id: "sorc-01",
+          account_name: "Ladder Sorc",
+          current_mod_name: null,
+          launch_arguments: "-w",
+          has_txt: false,
+          ready: false,
+          reason_code: "missing_mod",
+          message: "当前账号还没有使用识别 Mod",
+          installed_mods: [
+            { name: "ReMoDDeD", audio_ready: false },
+            { name: "VanillaPlus", audio_ready: false },
+          ],
+          running_pid: null,
+          session_verified: false,
+          active_session_ready: null,
+          restart_required: false,
+        };
       case "get_terror_zone_snapshot":
         return {
           current: {

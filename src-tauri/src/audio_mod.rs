@@ -71,7 +71,6 @@ struct GeneratorReport {
     protocol_version: u8,
     mod_name: String,
     mod_directory: String,
-    launch_arguments: String,
 }
 
 #[derive(Debug)]
@@ -130,6 +129,31 @@ fn plain_mod_name(value: &str) -> Result<&str, String> {
     let mut components = path.components();
     if !matches!(components.next(), Some(Component::Normal(_))) || components.next().is_some() {
         return Err("Mod 名称不能包含目录路径".to_string());
+    }
+    Ok(value)
+}
+
+fn generated_audio_mod_name(value: &str) -> Result<&str, String> {
+    let value = plain_mod_name(value)?;
+    if value.len() > 128 {
+        return Err("Mod 名称不能超过 128 个字符".to_string());
+    }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err("Mod 名称仅可使用英文字母、数字、短横线和下划线".to_string());
+    }
+    let uppercase = value.to_ascii_uppercase();
+    if matches!(uppercase.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || uppercase
+            .strip_prefix("COM")
+            .or_else(|| uppercase.strip_prefix("LPT"))
+            .is_some_and(|suffix| {
+                matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9")
+            })
+    {
+        return Err("该名称是 Windows 保留名称，请换一个".to_string());
     }
     Ok(value)
 }
@@ -357,22 +381,6 @@ pub fn get_audio_mod_setup_state(
     setup_state(state.inner(), &account_id)
 }
 
-fn generated_mod_name(source_mod_name: Option<&str>) -> String {
-    let Some(source) = source_mod_name else {
-        return "D2RHubAudio".to_string();
-    };
-    let candidate = format!("{source}-D2RHubAudio");
-    if candidate.len() <= 128
-        && candidate
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
-    {
-        candidate
-    } else {
-        "D2RHubAudio".to_string()
-    }
-}
-
 fn emit_prepare_progress(
     app: &tauri::AppHandle,
     account_id: &str,
@@ -396,6 +404,7 @@ pub async fn prepare_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    mod_name: String,
     source_mod_name: Option<String>,
 ) -> Result<AudioModPrepareResult, String> {
     let shared_state = state.inner().clone();
@@ -406,9 +415,20 @@ pub async fn prepare_audio_mod(
     std::fs::create_dir_all(&mods_directory)
         .map_err(|error| format!("创建 mods 目录失败: {error}"))?;
 
+    let mod_name = generated_audio_mod_name(&mod_name)?.to_string();
+    if mods_directory.join(&mod_name).exists() {
+        return Err(format!("Mod 名称“{mod_name}”已存在，请换一个名称"));
+    }
+
     let source_mod_name = source_mod_name
         .map(|name| plain_mod_name(&name).map(str::to_string))
         .transpose()?;
+    if source_mod_name
+        .as_deref()
+        .is_some_and(|source| source.eq_ignore_ascii_case(&mod_name))
+    {
+        return Err("新 Mod 名称不能与源 Mod 相同".to_string());
+    }
     let source_directory = source_mod_name
         .as_deref()
         .map(|name| mods_directory.join(name));
@@ -439,7 +459,7 @@ pub async fn prepare_audio_mod(
         "--output".to_string(),
         mods_directory.to_string_lossy().into_owned(),
         "--name".to_string(),
-        generated_mod_name(source_mod_name.as_deref()),
+        mod_name.clone(),
         "--areas".to_string(),
         "all".to_string(),
         "--track".to_string(),
@@ -533,6 +553,9 @@ pub async fn prepare_audio_mod(
             report.protocol_version
         ));
     }
+    if report.mod_name != mod_name {
+        return Err("生成器返回的 Mod 名称与用户指定名称不一致".to_string());
+    }
     let validated_directory = validate_audio_mod(&mods_directory, &report.mod_name)?;
     let reported_directory = std::fs::canonicalize(&report.mod_directory)
         .map_err(|error| format!("无法校验生成目录: {error}"))?;
@@ -546,7 +569,7 @@ pub async fn prepare_audio_mod(
         account_id,
         mod_name: report.mod_name,
         mod_directory: report.mod_directory,
-        launch_arguments: report.launch_arguments,
+        launch_arguments: arguments_with_audio_mod("", &mod_name)?,
         source_mod_name,
     })
 }
@@ -603,12 +626,31 @@ pub(crate) fn arguments_with_audio_mod(
             index += 1;
             continue;
         }
+        if argument.eq_ignore_ascii_case("-assettestmode") {
+            index += 1;
+            if arguments
+                .get(index)
+                .is_some_and(|value| !value.starts_with('-'))
+            {
+                index += 1;
+            }
+            continue;
+        }
+        if argument
+            .get(..15)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("-assettestmode="))
+        {
+            index += 1;
+            continue;
+        }
         preserved.push(argument.clone());
         index += 1;
     }
     preserved.push("-mod".to_string());
     preserved.push(mod_name.to_string());
     preserved.push("-txt".to_string());
+    preserved.push("-assettestmode".to_string());
+    preserved.push("1".to_string());
     Ok(preserved
         .iter()
         .map(|argument| quote_windows_argument(argument))
@@ -700,7 +742,9 @@ pub(crate) fn emit_runtime_compatibility_warning(
 
 #[cfg(test)]
 mod tests {
-    use super::{active_mod_name, arguments_with_audio_mod, has_txt_argument};
+    use super::{
+        active_mod_name, arguments_with_audio_mod, generated_audio_mod_name, has_txt_argument,
+    };
 
     #[test]
     fn rewrites_only_mod_and_txt_arguments() {
@@ -723,6 +767,27 @@ mod tests {
     #[test]
     fn adds_audio_arguments_to_an_original_profile() {
         let result = arguments_with_audio_mod("-w", "D2RHubAudio").unwrap();
-        assert_eq!(result, "-w -mod D2RHubAudio -txt");
+        assert_eq!(result, "-w -mod D2RHubAudio -txt -assettestmode 1");
+    }
+
+    #[test]
+    fn normalizes_existing_asset_test_mode_arguments() {
+        let result =
+            arguments_with_audio_mod("-assettestmode 0 -w -assettestmode=1 -txt", "FreshAudio")
+                .unwrap();
+        assert_eq!(result, "-w -mod FreshAudio -txt -assettestmode 1");
+    }
+
+    #[test]
+    fn validates_user_supplied_generated_mod_names() {
+        assert_eq!(
+            generated_audio_mod_name("  My-Audio_2  ").unwrap(),
+            "My-Audio_2"
+        );
+        assert!(generated_audio_mod_name("").is_err());
+        assert!(generated_audio_mod_name("My Audio").is_err());
+        assert!(generated_audio_mod_name("我的Mod").is_err());
+        assert!(generated_audio_mod_name("CON").is_err());
+        assert!(generated_audio_mod_name("lpt9").is_err());
     }
 }
