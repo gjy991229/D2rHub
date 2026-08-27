@@ -53,10 +53,17 @@ export function runTests() {
     "mini TZ stays in one row without a height-based layout threshold",
   );
   assert(
-    overlaySource.includes("if (isStatsOverlay) {")
-      && overlaySource.includes('isStatsOverlay ? "load_stats_overlay_geometry" : "load_overlay_geometry"')
-      && overlaySource.includes("await persistOverlayGeometry();\n      return;"),
-    "statistics overlay has independent geometry and bypasses mini and edge-docking behavior",
+    overlaySource.includes('isStatsOverlay ? "load_stats_overlay_geometry" : "load_overlay_geometry"')
+      && overlaySource.includes('data-dock-edge={dockEdge ?? undefined}')
+      && overlaySource.includes('{dockEdge && <div className="overlay-dock-handle"')
+      && !overlaySource.includes("async function evaluateOverlayDocking() {\n    if (isStatsOverlay)"),
+    "statistics overlay keeps independent geometry while sharing edge docking and its reveal handle",
+  );
+  assert(
+    overlaySource.includes("if (isStatsOverlay) {\n          await Promise.all([")
+      && overlaySource.includes("if (!cancelled) void evaluateOverlayDocking();")
+      && overlaySource.includes("if (dockStateRef.current) {\n                  await refreshDockPlacementAfterResize();"),
+    "statistics overlay restores edge docking after startup and refreshes it after resize",
   );
   assert(
     overlaySource.includes("onDoubleClick={handleTimerDoubleClick}")

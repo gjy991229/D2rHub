@@ -1729,7 +1729,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <div className="flex items-center justify-between gap-4 border-t border-border-default/50 py-2">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
-                      <p className="text-2xs text-text-muted">独立显示运行账号、场景计时与符文掉落；不使用迷你和贴边隐藏</p>
+                      <p className="text-2xs text-text-muted">独立显示运行账号、场景计时与符文掉落；支持贴边自动隐藏，不使用迷你模式</p>
                     </div>
                     <Toggle
                       checked={!!config.enable_stats_overlay}

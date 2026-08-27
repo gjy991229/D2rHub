@@ -609,10 +609,6 @@ export function Overlay() {
   }
 
   async function evaluateOverlayDocking() {
-    if (isStatsOverlay) {
-      await persistOverlayGeometry();
-      return;
-    }
     if (
       programmaticDockMoveRef.current
       || modeTransitionRef.current
@@ -1282,6 +1278,9 @@ export function Overlay() {
           if (saved && saved.width >= 220 && saved.height >= 180) {
             await win.setSize(new LogicalSize(saved.width, saved.height));
           }
+          window.setTimeout(() => {
+            if (!cancelled) void evaluateOverlayDocking();
+          }, OVERLAY_DOCK_SETTLE_DELAY_MS);
           return;
         }
 
@@ -1351,7 +1350,11 @@ export function Overlay() {
             if (modeTransitionRef.current || displayModeRef.current !== resizedMode) return;
             try {
               if (isStatsOverlay) {
-                await persistOverlayGeometry();
+                if (dockStateRef.current) {
+                  await refreshDockPlacementAfterResize();
+                } else {
+                  await persistOverlayGeometry();
+                }
                 return;
               }
               const { width, height } = await getOverlayWindowSize();
@@ -1746,8 +1749,8 @@ export function Overlay() {
       }}
       data-overlay-kind={isStatsOverlay ? "stats" : "tz"}
       data-overlay-mode={isStatsOverlay ? "stats" : displayMode}
-      data-dock-edge={!isStatsOverlay ? dockEdge ?? undefined : undefined}
-      data-dock-phase={!isStatsOverlay ? dockPhase ?? undefined : undefined}
+      data-dock-edge={dockEdge ?? undefined}
+      data-dock-phase={dockPhase ?? undefined}
       role="region"
       tabIndex={!isStatsOverlay ? 0 : undefined}
       aria-label={overlayRegionLabel}
@@ -1761,7 +1764,7 @@ export function Overlay() {
       onPointerEnter={handleDockPointerEnter}
       onPointerLeave={handleDockPointerLeave}
     >
-      {!isStatsOverlay && dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
+      {dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
       {!isStatsOverlay && displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
         <div
           key={edge}
