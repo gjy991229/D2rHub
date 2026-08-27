@@ -57,6 +57,11 @@ mod tests {
         assert!(rendered.contains("apiFetch(\"/api/records\")"));
         assert!(rendered.contains("id=\"batch-toggle\""));
         assert!(rendered.contains("/api/records/batch"));
+        assert!(rendered.contains("id=\"filter-outliers\""));
+        assert!(rendered.contains("function optimizeOutlierRecords"));
+        assert!(rendered.contains("durations.length<10"));
+        assert!(rendered.contains("seconds>average*10||seconds<average*.1"));
+        assert!(rendered.contains("_stats_timer_seconds"));
     }
 
     #[test]
