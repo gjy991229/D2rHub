@@ -16,11 +16,11 @@
 
 设计依据是 [D2R Data Guide](https://locbones.github.io/D2R_DataGuide/) 的数据表语义，并参考 [jcy](https://github.com/jcymeow/jcy) 的完整 Mod 结构。原始重制版资源通过 [casc-modern](https://github.com/TrayHard/casc-modern) 读取；读取的是安装包资源，不是游戏进程内存。
 
-### 符文：只标记真实 Ground 入口
+### 符文：只标记 Flippy 状态
 
 - 直接依据游戏原始掉落物状态机，为 33 个符文各生成一份专用状态机。
-- `Flippy`（`modeId=5`、`stateId=1`）不再携带标记。实机证明该模式会随飞落动画约每 0.333 秒重入，即使删除反向转换也会重复发声。
-- 标记声音只写入静止地面 `Ground`（`modeId=3`、`stateId=2`）的 `audioId`，并删除状态机内的人工转换，只让游戏自身的物品模式切换触发一次。
+- 标记声音只写入 `Flippy`（`modeId=5`、`stateId=1`）的 `audioId`；静止地面 `Ground`（`modeId=3`、`stateId=2`）保持为空。
+- 状态转换只保留 `Flippy → Ground`。v4.2 保留的反向转换会让地面符文循环重进 Flippy，现已删除。
 - 符文实体只改为引用这份状态机；不再添加通用音频组件，也不修改 `misc.txt:dropsound` 或 `usesound`。
 - 不同符文使用 250ms 的编号时隙错峰发送隐藏数据包，解决多个不同符文完全同步爆落时的 FSK 碰撞。可听见的原版播报不延迟。
 - 同号符文在完全相同时间爆落时使用同一资源和同一时隙，单一混音仍只能判断“该符文发生了掉落”，不能推断数量。
@@ -28,7 +28,7 @@
 ### 地点：标记持续 Ambience
 
 - `SoundEnviron` 的 Day/Night Ambience 是区域持续场景音；v4.3 为女伯爵路线八个 Area 分别生成带 AreaId 的原始环境音。
-- 原始环境音 PCM 从游戏 CASC 资源提取并保留，场景标记只嵌入音轨文件开头；同一音轨自然循环时即使再次解出，也由场景转换门保持幂等。
+- 原始环境音 PCM 从游戏 CASC 资源提取并保留，标记每 5 秒重复一次，避免只在音轨开头出现一次。
 - 两个区域使用独立的 `SoundEnv` 克隆，所以即使原本共用环境配置也能发出不同 AreaId。
 - 全部 137 个 Area 会复制大量重复环境音，正式全地图生成前先用女伯爵连续刷图录音验证长期切图、错峰和误报率。
 

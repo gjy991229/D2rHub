@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MOD_NAME: &str = "D2RHubAudioCountessV48";
+const MOD_NAME: &str = "D2RHubAudioCountessV47";
 const SOUND_ENVIRON_FALLBACK_URL: &str = "https://raw.githubusercontent.com/pinkufairy/D2R-Excel/1f16064e09b97e3e65abd6943662207cff00b07f/soundenviron.txt";
 const COUNTESS_AREA_IDS: [u32; 8] = [1, 6, 20, 21, 22, 23, 24, 25];
 
@@ -352,7 +352,7 @@ fn rune_unit_definition_candidates(mpq_directory: &Path, rune_number: u32) -> Ve
         .collect()
 }
 
-fn ground_entry_state_machine_document(
+fn ground_once_state_machine_document(
     original_state_machine: &str,
     rune_number: u32,
 ) -> Result<serde_json::Value, String> {
@@ -372,7 +372,7 @@ fn ground_entry_state_machine_document(
         })
         .ok_or_else(|| format!("无法解析物品落地状态机路径: {original_state_machine}"))?;
     let animation = format!("data/hd/items/dropped_items/animation/{file_name}.animation");
-    let machine_name = format!("d2rhub_r{rune_number:02}_ground_entry");
+    let machine_name = format!("d2rhub_r{rune_number:02}_ground_once");
     Ok(serde_json::json!({
         "dependencies": {
             "particles": [],
@@ -398,7 +398,7 @@ fn ground_entry_state_machine_document(
             "type": "AnimationState",
             "name": "AnimationState",
             "_name": "Flippy",
-            "audioId": "",
+            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
             "loopCount": 1,
             "stateId": 1,
             "enableVfxAttributes": false,
@@ -413,7 +413,7 @@ fn ground_entry_state_machine_document(
             "type": "AnimationState",
             "name": "AnimationState001",
             "_name": "Ground",
-            "audioId": format!("d2rhub_audio_r{rune_number:02}"),
+            "audioId": "",
             "loopCount": 1,
             "stateId": 2,
             "enableVfxAttributes": false,
@@ -425,7 +425,17 @@ fn ground_entry_state_machine_document(
             "exitEvents": [],
             "exitBlendType": 0
         }],
-        "transitions": []
+        "transitions": [{
+            "type": "AnimationTransitionGroup",
+            "name": "AnimationState_transitiongroup",
+            "from": 1,
+            "settings": [{
+                "type": "AnimationTransitionItem",
+                "name": "AnimationState_transitiongroup_transition",
+                "crossfadeSeconds": 0.2,
+                "to": 2
+            }]
+        }]
     }))
 }
 
@@ -478,7 +488,7 @@ fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
             .ok_or_else(|| format!("HD 符文缺少落地状态机路径: {}", path.display()))?
             .to_string();
         let telemetry_state_machine =
-            format!("data/hd/items/d2rhub_audio/runes/r{rune_number:02}_ground_entry.json");
+            format!("data/hd/items/d2rhub_audio/runes/r{rune_number:02}_ground_once.json");
         unit_root["state_machine_filename"] =
             serde_json::Value::String(telemetry_state_machine.clone());
 
@@ -497,7 +507,7 @@ fn patch_rune_unit_definitions(mpq_directory: &Path) -> Result<usize, String> {
         }
 
         let state_machine =
-            ground_entry_state_machine_document(&original_state_machine, rune_number)?;
+            ground_once_state_machine_document(&original_state_machine, rune_number)?;
         write_file(
             &mpq_directory.join(telemetry_state_machine.replace('/', "\\")),
             serde_json::to_vec_pretty(&state_machine)
@@ -1036,7 +1046,7 @@ fn build(
         area_catalog: areas,
         notes: vec![
             format!(
-                "已给 {patched_rune_units} 个符文建立世界实体真实落地 Ground 入口标记；背包/仓库实体不进入该状态。"
+                "已给 {patched_rune_units} 个符文建立世界实体首次 Flippy 标记；背包/仓库实体不进入该状态。"
             ),
             "misc.txt 的 dropsound 与 usesound 均保持源 Mod 原值；符文仅首次落地发送纯声纹短突发，不循环播放。"
                 .to_string(),
@@ -1066,7 +1076,7 @@ fn build(
     write_file(
         &staging_mod_directory.join("README-安装与测试.txt"),
         format!(
-            "D2RHub 女伯爵音频实机版 v4.8\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文只在世界实体由飞落模式切到真实 Ground 模式时发送短突发；Flippy 动画周期不再携带标记，背包和仓库不触发。\r\n6. 场景环境音只在文件开头嵌入一次标记，不再每 5 秒发送心跳。\r\n7. v6 使用独立地点/符文同步码和 33 个低相关 Gold 码；不同符文可同步解码，完全同步的同号符文仍无法可靠计数。\r\n8. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
+            "D2RHub 女伯爵音频实机版 v4.7\r\n\r\n启动参数：{}\r\n\r\n1. 把整个 {} 文件夹放入 D2R 的 mods 目录。\r\n2. 账号启动参数启用上面的 -mod/-txt。\r\n3. 在 D2RHub 设置 → 自动化中选择目标账号并启动音频监控。\r\n4. 地点覆盖罗格营地、黑色荒地、遗忘之塔与高塔地牢 1–5 层。\r\n5. 符文仅在世界实体首次进入 Flippy 时发送一次短突发；背包和仓库不触发。\r\n6. 场景环境音只在文件开头嵌入一次标记，不再每 5 秒发送心跳。\r\n7. v6 使用独立地点/符文同步码和 33 个低相关 Gold 码；不同符文可同步解码，完全同步的同号符文仍无法可靠计数。\r\n8. 游戏的“音效”通道必须非静音；D2RHub 捕获目标进程，不读取游戏内存、不注入 DLL。\r\n",
             report.launch_arguments, MOD_NAME
         ),
     )?;
@@ -1370,16 +1380,16 @@ mod tests {
             .unwrap();
         assert_eq!(
             unit_root["state_machine_filename"],
-            "data/hd/items/d2rhub_audio/runes/r01_ground_entry.json"
+            "data/hd/items/d2rhub_audio/runes/r01_ground_once.json"
         );
         let one_shot: serde_json::Value = serde_json::from_str(
-            &read_utf8(&output_mpq.join("data/hd/items/d2rhub_audio/runes/r01_ground_entry.json"))
+            &read_utf8(&output_mpq.join("data/hd/items/d2rhub_audio/runes/r01_ground_once.json"))
                 .unwrap(),
         )
         .unwrap();
-        assert_eq!(one_shot["states"][0]["audioId"], "");
-        assert_eq!(one_shot["states"][1]["audioId"], "d2rhub_audio_r01");
-        assert!(one_shot["transitions"].as_array().unwrap().is_empty());
+        assert_eq!(one_shot["states"][0]["audioId"], "d2rhub_audio_r01");
+        assert_eq!(one_shot["states"][1]["audioId"], "");
+        assert_eq!(one_shot["transitions"].as_array().unwrap().len(), 1);
         assert!(app_data.join(AREA_CATALOG_FILE_NAME).is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
