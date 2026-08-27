@@ -1,6 +1,8 @@
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::{Error as IoError, ErrorKind, Read};
+use std::net::TcpStream;
 use std::path::Path;
 use std::sync::Mutex;
 use tauri::Manager;
@@ -99,6 +101,13 @@ pub struct StatsData {
     pub observations: Vec<DropObservation>,
     pub strategies: Vec<MergeStrategy>,
 }
+
+#[derive(Debug, Deserialize)]
+struct BatchDeleteRecordsRequest {
+    ids: Vec<i64>,
+}
+
+const MAX_STATS_API_REQUEST_BYTES: usize = 1024 * 1024;
 
 /// 懒初始化数据库连接
 static DB: std::sync::OnceLock<Mutex<Connection>> = std::sync::OnceLock::new();
@@ -740,6 +749,100 @@ pub fn delete_scene_record(state: tauri::State<'_, SharedState>, id: i64) -> Res
     Ok(())
 }
 
+fn delete_scene_records_by_ids(conn: &mut Connection, ids: &[i64]) -> Result<usize, String> {
+    let mut seen = HashSet::new();
+    let ids = ids
+        .iter()
+        .copied()
+        .filter(|id| *id > 0 && seen.insert(*id))
+        .collect::<Vec<_>>();
+    if ids.is_empty() {
+        return Err("至少选择一条有效记录".to_string());
+    }
+    if ids.len() > 10_000 {
+        return Err("单次最多删除 10000 条记录".to_string());
+    }
+
+    let transaction = conn
+        .transaction()
+        .map_err(|error| format!("开始批量删除事务失败: {error}"))?;
+    let deleted = {
+        let mut statement = transaction
+            .prepare("DELETE FROM scene_records WHERE id = ?1")
+            .map_err(|error| format!("准备批量删除失败: {error}"))?;
+        let mut deleted = 0usize;
+        for id in ids {
+            deleted += statement
+                .execute(rusqlite::params![id])
+                .map_err(|error| format!("删除记录 ID={id} 失败: {error}"))?;
+        }
+        deleted
+    };
+    transaction
+        .commit()
+        .map_err(|error| format!("提交批量删除失败: {error}"))?;
+    Ok(deleted)
+}
+
+fn request_content_length(headers: &[u8]) -> usize {
+    String::from_utf8_lossy(headers)
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0)
+}
+
+fn request_header_value<'a>(headers: &'a str, expected_name: &str) -> Option<&'a str> {
+    headers.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.eq_ignore_ascii_case(expected_name)
+            .then(|| value.trim())
+    })
+}
+
+fn stats_api_token_is_valid(headers: &str, expected_token: &str) -> bool {
+    request_header_value(headers, "x-d2rhub-stats-token")
+        .is_some_and(|provided| provided.as_bytes() == expected_token.as_bytes())
+}
+
+fn read_stats_http_request(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
+    let mut request = Vec::with_capacity(4096);
+    let mut header_end = None;
+    let mut expected_length = None;
+    loop {
+        let mut chunk = [0u8; 4096];
+        let read = stream.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&chunk[..read]);
+        if request.len() > MAX_STATS_API_REQUEST_BYTES {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "统计 API 请求超过 1 MiB",
+            ));
+        }
+
+        if header_end.is_none() {
+            header_end = request
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+                .map(|position| position + 4);
+            if let Some(end) = header_end {
+                expected_length = Some(end + request_content_length(&request[..end]));
+            }
+        }
+        if expected_length.is_some_and(|length| request.len() >= length) {
+            break;
+        }
+    }
+    Ok(request)
+}
+
 /// URL 解码辅助函数
 fn url_decode(s: &str) -> String {
     let mut bytes = Vec::new();
@@ -777,15 +880,21 @@ fn parse_query(query_str: &str) -> HashMap<String, String> {
 
 /// 统计 API 服务端口
 static STATS_API_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+static STATS_API_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
-fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
+fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
     if STATS_API_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return STATS_API_PORT
+        let port = STATS_API_PORT
             .get()
             .copied()
-            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string());
+            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
+        let token = STATS_API_TOKEN
+            .get()
+            .cloned()
+            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
+        return Ok((port, token));
     }
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| {
@@ -799,6 +908,12 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
             format!("读取统计 API 端口失败: {error}")
         })?
         .port();
+    let api_token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let expected_api_token = api_token.clone();
 
     let api_thread = std::thread::Builder::new().name("stats-api".into()).spawn(move || {
         for stream in listener.incoming() {
@@ -806,39 +921,82 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
                 break;
             }
             if let Ok(mut stream) = stream {
-                use std::io::{Read, Write};
+                use std::io::Write;
                 let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(3)));
                 let _ = stream.set_write_timeout(Some(std::time::Duration::from_secs(3)));
 
-                // 读取请求头
-                let mut buf = [0u8; 16 * 1024];
-                let n = match stream.read(&mut buf) {
-                    Ok(n) if n > 0 => n,
+                // 读取完整请求（批量删除使用 JSON body）。
+                let request = match read_stats_http_request(&mut stream) {
+                    Ok(request) if !request.is_empty() => request,
                     _ => continue,
                 };
-                let raw = String::from_utf8_lossy(&buf[..n]);
-                let first_line = raw.lines().next().unwrap_or("");
+                let raw = String::from_utf8_lossy(&request);
+                let (request_headers, request_body) =
+                    raw.split_once("\r\n\r\n").unwrap_or((&raw, ""));
+                let first_line = request_headers.lines().next().unwrap_or("");
                 let parts: Vec<&str> = first_line.split_whitespace().collect();
                 if parts.len() < 2 { continue; }
                 let method = parts[0];
                 let full_path = parts[1];
 
                 // CORS 相关
-                let cors_headers = "Access-Control-Allow-Origin: *\r\n\
+                let cors_headers = "Access-Control-Allow-Origin: null\r\n\
+                                    Vary: Origin\r\n\
                                     Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
-                                    Access-Control-Allow-Headers: Content-Type\r\n";
+                                    Access-Control-Allow-Headers: Content-Type, X-D2RHub-Stats-Token\r\n";
 
                 let resp_body: String;
 
                 if method == "OPTIONS" {
                     resp_body = format!("HTTP/1.1 204 No Content\r\n{}\r\n", cors_headers);
+                } else if !stats_api_token_is_valid(request_headers, &expected_api_token) {
+                    resp_body = format!(
+                        "HTTP/1.1 401 Unauthorized\r\nContent-Type: application/json\r\n{}\r\n\r\n{}",
+                        cors_headers,
+                        r#"{"ok":false,"error":"Unauthorized"}"#
+                    );
                 } else {
                     let mut path_parts_split = full_path.split('?');
                     let path = path_parts_split.next().unwrap_or("");
                     let query_str = path_parts_split.next().unwrap_or("");
                     let query_params = parse_query(query_str);
 
-                    if method == "POST" && path == "/api/strategies" {
+                    if method == "DELETE" && path == "/api/records/batch" {
+                        match serde_json::from_str::<BatchDeleteRecordsRequest>(request_body) {
+                            Ok(request) => match get_db(&app_data_dir) {
+                                Ok(db) => match db.lock() {
+                                    Ok(mut conn) => {
+                                        match delete_scene_records_by_ids(&mut conn, &request.ids) {
+                                            Ok(deleted) => {
+                                                let body = serde_json::json!({
+                                                    "ok": true,
+                                                    "requested": request.ids.len(),
+                                                    "deleted": deleted
+                                                });
+                                                resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                            }
+                                            Err(error) => {
+                                                let body = serde_json::json!({"ok": false, "error": error});
+                                                resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                            }
+                                        }
+                                    }
+                                    Err(error) => {
+                                        let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                        resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                    }
+                                },
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            },
+                            Err(error) => {
+                                let body = serde_json::json!({"ok": false, "error": format!("批量删除请求无效: {error}")});
+                                resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                        }
+                    } else if method == "POST" && path == "/api/strategies" {
                         let name = query_params.get("name").cloned().unwrap_or_default();
                         let scenes_json = query_params.get("scenes").cloned().unwrap_or_default();
                         let scene_names = serde_json::from_str::<Vec<String>>(&scenes_json)
@@ -1124,7 +1282,8 @@ fn start_stats_api(app_data_dir: String) -> Result<u16, String> {
     }
 
     let _ = STATS_API_PORT.set(port);
-    Ok(port)
+    let _ = STATS_API_TOKEN.set(api_token.clone());
+    Ok((port, api_token))
 }
 
 /// 转义 JSON 字符串以安全地嵌入 HTML `<script>` 标签中
@@ -1179,7 +1338,7 @@ pub fn open_stats_page(
     })?;
 
     // 3. 启动统计 API 服务并注入端口号
-    let api_port = start_stats_api(state.app_data_dir.clone())?;
+    let (api_port, api_token) = start_stats_api(state.app_data_dir.clone())?;
     let stats_json = escape_json_for_html_script(&stats_json);
     let stats_theme = state
         .config
@@ -1188,7 +1347,7 @@ pub fn open_stats_page(
         .map(|config| config.theme.as_str())
         .unwrap_or("light")
         .to_string();
-    let html = render_stats_template(&template, &stats_json, api_port, &stats_theme);
+    let html = render_stats_template(&template, &stats_json, api_port, &api_token, &stats_theme);
 
     // 4. 写入 stateData/stats.html（使相对路径 img/ 可用）
     let state_data_dir = Path::new(&state.app_data_dir).join("stateData");
@@ -1222,8 +1381,9 @@ fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ensure_drop_observation_schema, ensure_scene_segment_columns, migrate_legacy_drops,
-        normalize_strategy, DropKind,
+        delete_scene_records_by_ids, ensure_drop_observation_schema, ensure_scene_segment_columns,
+        migrate_legacy_drops, normalize_strategy, request_content_length, stats_api_token_is_valid,
+        DropKind,
     };
     use rusqlite::Connection;
 
@@ -1390,5 +1550,51 @@ mod tests {
     fn strategy_requires_a_name_and_at_least_one_scene() {
         assert!(normalize_strategy("", vec!["黑色荒地".to_string()]).is_err());
         assert!(normalize_strategy("女伯爵", vec![" ".to_string()]).is_err());
+    }
+
+    #[test]
+    fn batch_delete_is_atomic_and_deduplicates_record_ids() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute(
+                "CREATE TABLE scene_records (id INTEGER PRIMARY KEY, scene_name TEXT NOT NULL)",
+                [],
+            )
+            .unwrap();
+        for id in 1..=4 {
+            connection
+                .execute(
+                    "INSERT INTO scene_records (id, scene_name) VALUES (?1, 'test')",
+                    rusqlite::params![id],
+                )
+                .unwrap();
+        }
+
+        let deleted = delete_scene_records_by_ids(&mut connection, &[2, 3, 3, -1]).unwrap();
+        assert_eq!(deleted, 2);
+        let remaining: i64 = connection
+            .query_row("SELECT COUNT(*) FROM scene_records", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 2);
+    }
+
+    #[test]
+    fn request_content_length_is_case_insensitive() {
+        assert_eq!(
+            request_content_length(b"DELETE / HTTP/1.1\r\ncontent-Length: 42\r\n\r\n"),
+            42
+        );
+        assert_eq!(request_content_length(b"GET / HTTP/1.1\r\n\r\n"), 0);
+    }
+
+    #[test]
+    fn stats_api_requires_the_exact_session_token() {
+        let headers = "GET /api/records HTTP/1.1\r\nX-D2RHub-Stats-Token: secret\r\n\r\n";
+        assert!(stats_api_token_is_valid(headers, "secret"));
+        assert!(!stats_api_token_is_valid(headers, "other"));
+        assert!(!stats_api_token_is_valid(
+            "GET /api/records HTTP/1.1\r\n\r\n",
+            "secret"
+        ));
     }
 }

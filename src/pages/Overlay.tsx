@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp, Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
-import { useStats, isHighRune } from "../store/stats";
+import { useStats, isHighRune, type DropEntry } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
@@ -42,6 +42,11 @@ import {
   type PhysicalRect,
   type PhysicalSize,
 } from "../utils/overlayDocking";
+import {
+  aggregateOverlayDrops,
+  getAppendedOverlayDrops,
+  getOverlayDropLabel,
+} from "../utils/overlayDrops";
 
 interface TerrorZoneImmunity {
   code: string;
@@ -79,6 +84,9 @@ const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 340 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
+const COLLAPSED_DROP_GROUP_LIMIT = 5;
+const RECENT_DROP_NOTICE_LIMIT = 3;
+const RECENT_DROP_NOTICE_DURATION_MS = 6000;
 
 type OverlayDockPhase = "shown" | "hidden" | "moving";
 
@@ -86,6 +94,12 @@ interface OverlayDockState {
   placement: OverlayDockPlacement;
   workArea: PhysicalRect;
   phase: OverlayDockPhase;
+}
+
+interface RecentDropNotice {
+  id: number;
+  drop: DropEntry;
+  expiresAt: number;
 }
 
 function readStoredOverlayMode(): OverlayDisplayMode {
@@ -312,6 +326,10 @@ export function Overlay() {
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
   const stats = useStats();
+  const [recentDropNotices, setRecentDropNotices] = useState<RecentDropNotice[]>([]);
+  const [showAllDropGroups, setShowAllDropGroups] = useState(false);
+  const observedDropsRef = useRef(stats.currentDrops);
+  const dropNoticeSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(readStoredOverlayMode);
   const [isOverlayWindowVisible, setIsOverlayWindowVisible] = useState(false);
   const displayModeRef = useRef(displayMode);
@@ -1494,26 +1512,47 @@ export function Overlay() {
     return () => clearInterval(interval);
   }, [displayMode, isOverlayWindowVisible, isPollerActive]);
 
+  // 新增掉落只影响短暂确认区；累计数据仍由 stats.currentDrops 作为唯一来源。
+  useEffect(() => {
+    const previousDrops = observedDropsRef.current;
+    const currentDrops = stats.currentDrops;
+    observedDropsRef.current = currentDrops;
+
+    const now = Date.now();
+    const addedDrops = getAppendedOverlayDrops(previousDrops, currentDrops);
+    if (addedDrops.length === 0) return;
+    const addedNotices = [...addedDrops].reverse().map((drop) => ({
+      id: ++dropNoticeSequenceRef.current,
+      drop,
+      expiresAt: now + RECENT_DROP_NOTICE_DURATION_MS,
+    }));
+
+    setRecentDropNotices((current) => [
+      ...addedNotices,
+      ...current.filter((notice) => notice.expiresAt > now),
+    ].slice(0, RECENT_DROP_NOTICE_LIMIT));
+  }, [stats.currentDrops]);
+
+  useEffect(() => {
+    if (recentDropNotices.length === 0) return;
+    const nextExpiration = Math.min(...recentDropNotices.map((notice) => notice.expiresAt));
+    const timeout = window.setTimeout(() => {
+      const now = Date.now();
+      setRecentDropNotices((current) => current.filter((notice) => notice.expiresAt > now));
+    }, Math.max(0, nextExpiration - Date.now()) + 20);
+    return () => window.clearTimeout(timeout);
+  }, [recentDropNotices]);
+
   // ── 派生数据 ──
   const activeAccounts = accounts.filter((a) => a.is_running);
-  const aggregatedDrops = React.useMemo(() => {
-    const groups = new Map<string, {
-      drop: (typeof stats.currentDrops)[number];
-      count: number;
-      latestIndex: number;
-    }>();
-    stats.currentDrops.forEach((drop, index) => {
-      const key = `${drop.kind}:${drop.itemCode || drop.telemetryId}`;
-      const current = groups.get(key);
-      if (current) {
-        current.count += 1;
-        current.latestIndex = index;
-      } else {
-        groups.set(key, { drop, count: 1, latestIndex: index });
-      }
-    });
-    return [...groups.values()].sort((left, right) => right.latestIndex - left.latestIndex);
-  }, [stats.currentDrops]);
+  const aggregatedDrops = React.useMemo(
+    () => aggregateOverlayDrops(stats.currentDrops),
+    [stats.currentDrops],
+  );
+  const displayedDropGroups = showAllDropGroups
+    ? aggregatedDrops
+    : aggregatedDrops.slice(0, COLLAPSED_DROP_GROUP_LIMIT);
+  const hiddenDropGroupCount = Math.max(0, aggregatedDrops.length - COLLAPSED_DROP_GROUP_LIMIT);
   const activeAccountIdsKey = activeAccounts.map((account) => account.id).join("|");
   const foregroundTitleLower = foregroundTitle.toLowerCase();
   const focusedAccountId = activeAccounts.find((account) => {
@@ -1580,6 +1619,14 @@ export function Overlay() {
   const runUnitLabel = useEnglish ? "runs" : "场";
   const dropsLabel = useEnglish ? "Drops" : "掉落";
   const emptyDropsLabel = useEnglish ? "None" : "暂无";
+  const justDroppedLabel = useEnglish ? "Just dropped" : "刚刚掉落";
+  const uniqueDropCountLabel = useEnglish
+    ? `${aggregatedDrops.length} types`
+    : `${aggregatedDrops.length} 种`;
+  const showMoreDropsLabel = useEnglish
+    ? `Show ${hiddenDropGroupCount} more`
+    : `展开其余 ${hiddenDropGroupCount} 种`;
+  const collapseDropsLabel = useEnglish ? "Show latest 5" : "收起至最近 5 种";
   const deleteDropTitle = useEnglish ? "Remove from overlay" : "从前端删除";
   const terrorZoneTitle = useEnglish ? "Terror Zone" : "邪恶区域";
   const collapseTerrorZoneTitle = useEnglish ? "Collapse terror zone" : "收起邪恶区域";
@@ -1829,29 +1876,67 @@ export function Overlay() {
           style={{ height: 1, background: "var(--border-default)" }}
         />
 
-        {/* 所选掉落 — 同类聚合 + 滚动 */}
+        {/* 掉落确认与累计汇总 */}
         <div className="flex flex-col gap-1 flex-1 min-h-0">
-          <span className="text-2xs font-medium text-text-muted px-1">
-            {dropsLabel}
-            {stats.currentDrops.length > 0 && (
-              <span className="text-accent ml-0.5">({stats.currentDrops.length})</span>
+          <div className="flex items-center justify-between gap-2 px-1">
+            <span className="text-2xs font-medium text-text-muted">
+              {dropsLabel}
+              {stats.currentDrops.length > 0 && (
+                <span className="text-accent ml-0.5">({stats.currentDrops.length})</span>
+              )}
+            </span>
+            {aggregatedDrops.length > 0 && (
+              <span className="text-2xs text-text-muted tabular-nums">
+                {uniqueDropCountLabel}
+              </span>
             )}
-          </span>
+          </div>
+
+          {recentDropNotices.length > 0 && (
+            <div
+              className="shrink-0 rounded-md px-1.5 py-1"
+              style={{
+                background: "var(--surface-active)",
+                border: "1px solid var(--border-default)",
+              }}
+              role="status"
+              aria-live="polite"
+              aria-atomic="false"
+            >
+              <span className="block text-2xs font-medium text-text-muted leading-none mb-0.5">
+                {justDroppedLabel}
+              </span>
+              <div className="flex flex-col gap-0.5">
+                {recentDropNotices.map((notice) => {
+                  const high = notice.drop.runeNumber !== null && isHighRune(notice.drop.runeNumber);
+                  return (
+                    <div
+                      key={notice.id}
+                      className="overlay-drop-notice-row flex min-w-0 items-center gap-1 text-2xs font-semibold leading-tight"
+                      style={{ color: high ? "#ffaa00" : "var(--text-primary)" }}
+                    >
+                      <span className="min-w-0 flex-1 truncate">
+                        {getOverlayDropLabel(notice.drop, useEnglish)}
+                      </span>
+                      <span className="shrink-0 text-accent tabular-nums">+1</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div
             className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
             style={{ flex: 1, scrollbarWidth: "thin" }}
           >
-            {aggregatedDrops.length > 0 ? (
-              aggregatedDrops.map(({ drop, count, latestIndex }) => {
+            {displayedDropGroups.length > 0 ? (
+              <>
+              {displayedDropGroups.map(({ key, drop, count, latestIndex }) => {
                 const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
-                const localizedName = useEnglish && drop.nameEn ? drop.nameEn : drop.name;
-                const label = drop.kind === "rune" && drop.runeNumber !== null
-                  ? `#${drop.runeNumber} ${localizedName}`
-                  : localizedName;
                 return (
                   <span
-                    key={`${drop.kind}:${drop.itemCode || drop.telemetryId}`}
+                    key={key}
                     className="relative inline-flex items-center pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
                       transition-all duration-200 hover:brightness-110 group"
                     style={{
@@ -1863,7 +1948,7 @@ export function Overlay() {
                       WebkitAppRegion: "no-drag",
                     } as React.CSSProperties}
                   >
-                    <span>{label}{count > 1 ? ` ×${count}` : ""}</span>
+                    <span>{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
                     <button
                       className="absolute right-0.5 top-0 bottom-0 flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                       onClick={(e) => {
@@ -1876,7 +1961,27 @@ export function Overlay() {
                     </button>
                   </span>
                 );
-              })
+              })}
+              {hiddenDropGroupCount > 0 && (
+                <button
+                  type="button"
+                  className="inline-flex items-center rounded-md px-1.5 py-0.5 text-2xs font-medium text-text-secondary hover:text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                  style={{
+                    background: "var(--surface-hover)",
+                    border: "1px solid var(--border-default)",
+                    WebkitAppRegion: "no-drag",
+                  } as React.CSSProperties}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setShowAllDropGroups((current) => !current);
+                  }}
+                  aria-expanded={showAllDropGroups}
+                  title={showAllDropGroups ? collapseDropsLabel : showMoreDropsLabel}
+                >
+                  {showAllDropGroups ? collapseDropsLabel : showMoreDropsLabel}
+                </button>
+              )}
+              </>
             ) : (
               <span className="text-2xs text-text-muted italic px-1">
                 {emptyDropsLabel}
