@@ -1555,19 +1555,64 @@ html, body, #root {
   overscroll-behavior: contain;
 }
 
-@keyframes overlay-drop-notice-in {
-  from {
-    opacity: 0.35;
-    transform: translateY(-3px);
+@keyframes overlay-drop-pill-emphasis {
+  0% {
+    background: transparent;
+    box-shadow: inset 0 0 0 0 color-mix(in srgb, currentColor 42%, transparent);
+    opacity: 0;
+    transform: scale(0.96);
   }
-  to {
+  18% {
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 24%, transparent);
     opacity: 1;
-    transform: translateY(0);
+    transform: scale(1);
+  }
+  55% {
+    background: color-mix(in srgb, currentColor 7%, transparent);
+    box-shadow: inset 0 0 7px 1px color-mix(in srgb, currentColor 20%, transparent);
+    opacity: 0.8;
+  }
+  100% {
+    background: transparent;
+    box-shadow: 0 0 0 0 transparent;
+    opacity: 0;
+    transform: scale(1);
   }
 }
 
-.overlay-drop-notice-row {
-  animation: overlay-drop-notice-in 200ms var(--ease-out-expo) both;
+@keyframes overlay-drop-pill-sheen {
+  0%, 12% { transform: translateX(-170%) skewX(-18deg); }
+  58%, 100% { transform: translateX(260%) skewX(-18deg); }
+}
+
+.overlay-drop-pill-flash {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  animation: overlay-drop-pill-emphasis 1600ms var(--ease-out-expo) both;
+  color: inherit;
+  pointer-events: none;
+}
+
+.overlay-drop-pill-flash::after {
+  position: absolute;
+  z-index: 0;
+  top: -30%;
+  bottom: -30%;
+  left: 0;
+  width: 42%;
+  background: linear-gradient(
+    105deg,
+    transparent 8%,
+    color-mix(in srgb, currentColor 34%, transparent) 50%,
+    transparent 92%
+  );
+  content: "";
+  pointer-events: none;
+  animation: overlay-drop-pill-sheen 1250ms var(--ease-out-expo) both;
 }
 
 .tz-forecast-divider {
@@ -1584,5 +1629,17 @@ html, body, #root {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .overlay-drop-pill-flash {
+    animation: none !important;
+    background: color-mix(in srgb, currentColor 12%, transparent);
+    box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 22%, transparent);
+    opacity: 1;
+    transform: none;
+  }
+
+  .overlay-drop-pill-flash::after {
+    display: none;
   }
 }

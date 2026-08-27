@@ -79,9 +79,10 @@ export function runTests() {
   );
   assert(
     overlaySource.includes('aria-live="polite"')
-      && overlaySource.includes("RECENT_DROP_NOTICE_LIMIT = 3")
-      && overlaySource.includes("RECENT_DROP_NOTICE_DURATION_MS = 6000"),
-    "drop feedback announces at most three recent detections and expires them promptly",
+      && overlaySource.includes("RECENT_DROP_HIGHLIGHT_DURATION_MS = 1600")
+      && overlaySource.includes('overlay-drop-pill-flash')
+      && !overlaySource.includes("recentDropNotices"),
+    "new drops reorder the existing pills and receive brief accessible emphasis",
   );
   assert(
     overlaySource.includes("const isAudioTrackingActive = isStatsOverlay && !!config?.rune_audio_enabled")

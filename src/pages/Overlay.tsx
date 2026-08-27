@@ -3,7 +3,7 @@ import { Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
-import { useStats, isHighRune, MANUAL_FINISH_SCENE, type DropEntry } from "../store/stats";
+import { useStats, isHighRune, MANUAL_FINISH_SCENE } from "../store/stats";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
@@ -84,8 +84,7 @@ const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
 const COLLAPSED_DROP_GROUP_LIMIT = 5;
-const RECENT_DROP_NOTICE_LIMIT = 3;
-const RECENT_DROP_NOTICE_DURATION_MS = 6000;
+const RECENT_DROP_HIGHLIGHT_DURATION_MS = 1600;
 
 type OverlayDockPhase = "shown" | "hidden" | "moving";
 
@@ -95,11 +94,9 @@ interface OverlayDockState {
   phase: OverlayDockPhase;
 }
 
-interface RecentDropNotice {
+interface RecentDropHighlight {
   id: number;
   key: string;
-  drop: DropEntry;
-  count: number;
   expiresAt: number;
 }
 
@@ -353,10 +350,12 @@ export function Overlay() {
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
   const stats = useStats();
-  const [recentDropNotices, setRecentDropNotices] = useState<RecentDropNotice[]>([]);
+  const useEnglish = isEnglishLanguage(config?.app_language);
+  const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
+  const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
   const [showAllDropGroups, setShowAllDropGroups] = useState(false);
   const observedDropsRef = useRef(stats.currentDrops);
-  const dropNoticeSequenceRef = useRef(0);
+  const dropHighlightSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
     supportsCompactMode ? readStoredOverlayMode() : "expanded",
   );
@@ -1599,32 +1598,39 @@ export function Overlay() {
     const now = Date.now();
     const addedGroups = aggregateOverlayDrops(addedDrops);
     const addedKeys = new Set(addedGroups.map((group) => group.key));
+    const currentGroups = new Map(
+      aggregateOverlayDrops(currentDrops).map((group) => [group.key, group]),
+    );
 
-    setRecentDropNotices((current) => {
-      const active = current.filter((notice) => notice.expiresAt > now);
-      const addedNotices = addedGroups.map(({ key, drop, count }) => ({
-        id: ++dropNoticeSequenceRef.current,
+    setRecentDropAnnouncement(addedGroups.map(({ key, drop }) => {
+      const total = currentGroups.get(key)?.count ?? 1;
+      const label = getOverlayDropLabel(drop, useEnglish);
+      return useEnglish ? `${label}, ${total} total` : `${label}，共 ${total} 个`;
+    }).join(useEnglish ? "; " : "；"));
+
+    setRecentDropHighlights((current) => {
+      const active = current.filter((highlight) => highlight.expiresAt > now);
+      const addedHighlights = addedGroups.map(({ key }) => ({
+        id: ++dropHighlightSequenceRef.current,
         key,
-        drop,
-        count: count + (active.find((notice) => notice.key === key)?.count ?? 0),
-        expiresAt: now + RECENT_DROP_NOTICE_DURATION_MS,
+        expiresAt: now + RECENT_DROP_HIGHLIGHT_DURATION_MS,
       }));
       return [
-        ...addedNotices,
-        ...active.filter((notice) => !addedKeys.has(notice.key)),
-      ].slice(0, RECENT_DROP_NOTICE_LIMIT);
+        ...addedHighlights,
+        ...active.filter((highlight) => !addedKeys.has(highlight.key)),
+      ];
     });
-  }, [isStatsOverlay, stats.currentDrops]);
+  }, [isStatsOverlay, stats.currentDrops, useEnglish]);
 
   useEffect(() => {
-    if (recentDropNotices.length === 0) return;
-    const nextExpiration = Math.min(...recentDropNotices.map((notice) => notice.expiresAt));
+    if (recentDropHighlights.length === 0) return;
+    const nextExpiration = Math.min(...recentDropHighlights.map((highlight) => highlight.expiresAt));
     const timeout = window.setTimeout(() => {
       const now = Date.now();
-      setRecentDropNotices((current) => current.filter((notice) => notice.expiresAt > now));
+      setRecentDropHighlights((current) => current.filter((highlight) => highlight.expiresAt > now));
     }, Math.max(0, nextExpiration - Date.now()) + 20);
     return () => window.clearTimeout(timeout);
-  }, [recentDropNotices]);
+  }, [recentDropHighlights]);
 
   // ── 派生数据 ──
   const activeAccounts = accounts.filter((a) => a.is_running);
@@ -1636,6 +1642,10 @@ export function Overlay() {
     ? aggregatedDrops
     : aggregatedDrops.slice(0, COLLAPSED_DROP_GROUP_LIMIT);
   const hiddenDropGroupCount = Math.max(0, aggregatedDrops.length - COLLAPSED_DROP_GROUP_LIMIT);
+  const recentDropHighlightIds = React.useMemo(
+    () => new Map(recentDropHighlights.map((highlight) => [highlight.key, highlight.id])),
+    [recentDropHighlights],
+  );
 
   useEffect(() => {
     if (aggregatedDrops.length <= COLLAPSED_DROP_GROUP_LIMIT) {
@@ -1687,7 +1697,6 @@ export function Overlay() {
   const currentTerrorZone = terrorZones.current;
   const nextTerrorZone = terrorZones.next;
   const hasTerrorZoneData = !!(currentTerrorZone || nextTerrorZone);
-  const useEnglish = isEnglishLanguage(config?.app_language);
   const currentTerrorZoneLabel = useEnglish ? "Current" : "当前";
   const nextTerrorZoneLabel = useEnglish ? "Next" : "下一个";
   const miniNextTerrorZoneLabel = useEnglish ? "Next TZ" : "下一个 TZ";
@@ -1715,7 +1724,6 @@ export function Overlay() {
   const runUnitLabel = useEnglish ? "runs" : "场";
   const dropsLabel = useEnglish ? "Drops" : "掉落";
   const emptyDropsLabel = useEnglish ? "None" : "暂无";
-  const justDroppedLabel = useEnglish ? "Just dropped" : "刚刚掉落";
   const uniqueDropCountLabel = useEnglish
     ? `${aggregatedDrops.length} types`
     : `${aggregatedDrops.length} 种`;
@@ -1989,7 +1997,7 @@ export function Overlay() {
           style={{ height: 1, background: "var(--border-default)" }}
         />
 
-        {/* 掉落分组与短时反馈 */}
+        {/* 掉落分组；新识别结果在原胶囊上短时强调 */}
         <div className="flex flex-col gap-1 flex-1 min-h-0">
           <div className="flex items-center justify-between gap-2 px-1">
             <span className="text-2xs font-medium text-text-muted">
@@ -2005,39 +2013,9 @@ export function Overlay() {
             )}
           </div>
 
-          {recentDropNotices.length > 0 && (
-            <div
-              className="shrink-0 rounded-md px-1.5 py-1"
-              style={{
-                background: "var(--surface-active)",
-                border: "1px solid var(--border-default)",
-              }}
-              role="status"
-              aria-live="polite"
-              aria-atomic="false"
-            >
-              <span className="mb-0.5 block text-2xs font-medium leading-none text-text-muted">
-                {justDroppedLabel}
-              </span>
-              <div className="flex flex-col gap-0.5">
-                {recentDropNotices.map((notice) => {
-                  const high = notice.drop.runeNumber !== null && isHighRune(notice.drop.runeNumber);
-                  return (
-                    <div
-                      key={notice.id}
-                      className="overlay-drop-notice-row flex min-w-0 items-center gap-1 text-2xs font-semibold leading-tight"
-                      style={{ color: high ? "#ffaa00" : "var(--text-primary)" }}
-                    >
-                      <span className="min-w-0 flex-1 truncate">
-                        {getOverlayDropLabel(notice.drop, useEnglish)}
-                      </span>
-                      <span className="shrink-0 text-accent tabular-nums">+{notice.count}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+          <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">
+            {recentDropAnnouncement}
+          </span>
 
           <div
             className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
@@ -2047,10 +2025,11 @@ export function Overlay() {
               <>
                 {displayedDropGroups.map(({ key, drop, count, latestIndex }) => {
                   const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
+                  const highlightId = recentDropHighlightIds.get(key);
                   return (
                     <span
                       key={key}
-                      className="relative inline-flex items-center pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
+                      className="overlay-drop-pill relative inline-flex items-center overflow-hidden pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
                         transition-all duration-200 hover:brightness-110 group"
                       style={{
                         background: high ? "rgba(255,119,0,0.18)" : "var(--accent-glow)",
@@ -2061,9 +2040,12 @@ export function Overlay() {
                         WebkitAppRegion: "no-drag",
                       } as React.CSSProperties}
                     >
-                      <span>{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
+                      {highlightId && (
+                        <span key={highlightId} className="overlay-drop-pill-flash" aria-hidden="true" />
+                      )}
+                      <span className="relative z-[1]">{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
                       <button
-                        className="absolute right-0.5 top-0 bottom-0 flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                        className="absolute right-0.5 top-0 bottom-0 z-[1] flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                         onClick={(e) => {
                           e.stopPropagation();
                           stats.removeCurrentDrop(latestIndex);
