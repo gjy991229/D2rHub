@@ -48,6 +48,9 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
       set({ results, launching: false });
 
       const hasFailed = results.some((r) => !r.success);
+      results
+        .filter((result) => result.success && result.error)
+        .forEach((result) => showToast("warning", result.error as string));
       emit("launch-ended", { success: !hasFailed });
     } catch (e) {
       set({ error: String(e), launching: false });

@@ -10,7 +10,7 @@ import {
 
 function config(overrides: Partial<GlobalConfig>): GlobalConfig {
   return {
-    version: 4,
+    version: 5,
     cn_battle_net_path: "",
     cn_game_path: "",
     cn_saved_games_path: "",
@@ -79,7 +79,7 @@ export function runTests() {
   assert(!hasConfiguredPathsForRegion(globalOnly, undefined, "bnet"), "missing regions never silently default to an installation");
 
   const partial = config({ global_game_path: "D:/D2R-Global" });
-  assert(!hasConfiguredPathsForRegion(partial, "EU", "token"), "a game path without a save path never enables Token account creation");
+  assert(hasConfiguredPathsForRegion(partial, "EU", "token"), "a game path without a save path still enables Token account creation");
 
   const tokenOnly = config({
     global_game_path: "D:/D2R-Global",
@@ -87,7 +87,7 @@ export function runTests() {
   });
   assert(hasConfiguredPathsForRegion(tokenOnly, "NA", "token"), "Token accounts do not require Battle.net.exe");
   assert(!hasConfiguredPathsForRegion(tokenOnly, "NA", "bnet"), "Battle.net accounts still require Battle.net.exe");
-  assert(firstConfiguredRegion(tokenOnly, "token") === "KR", "Token account defaults use game and save path availability");
+  assert(firstConfiguredRegion(tokenOnly, "token") === "KR", "Token account defaults use game path availability");
   assert(requiresTokenMigration("bnet", "EU"), "legacy global Battle.net accounts require Token migration");
   assert(requiresTokenMigration("bnet", undefined, globalOnly), "region-less legacy accounts infer global migration when only global paths are complete");
   assert(!requiresTokenMigration("bnet", undefined, cnOnly), "region-less legacy accounts remain CN-compatible when only CN paths are complete");

@@ -345,6 +345,8 @@ pub fn run() {
             commands::account::get_account_dir_path,
             commands::account::open_account_dir,
             commands::account::move_game_window,
+            commands::account_transfer::export_accounts,
+            commands::account_transfer::import_accounts,
             // ── 启动引擎 ──
             commands::launch::launch_accounts,
             commands::launch::launch_battle_net_only,

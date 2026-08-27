@@ -744,14 +744,24 @@ pub fn create_account(
     let backup = sibling_with_suffix(&dir, ".bak")?;
     remove_path_if_exists(&staged)?;
     std::fs::create_dir_all(&staged)?;
-    if let Err(error) = copy_system_settings_to_account_if_available(
-        &context.installation.saved_games_directory,
-        &staged,
-    ) {
+    if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
+        if let Err(error) =
+            copy_system_settings_to_account_if_available(saved_games_directory, &staged)
+        {
+            crate::logger::log_msg(
+                "WARN",
+                "Account",
+                &format!("创建账号时跳过可选 Settings.json 快照: {}", error),
+            );
+        }
+    } else {
         crate::logger::log_msg(
             "WARN",
             "Account",
-            &format!("创建账号时跳过可选 Settings.json 快照: {}", error),
+            &format!(
+                "创建账号 {} 时未配置可用的存档目录；核心账号已创建，画质快照暂不可用",
+                id
+            ),
         );
     }
     if let Err(error) = write_account_meta_to_directory(&staged, &meta) {

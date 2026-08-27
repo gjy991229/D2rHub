@@ -9,7 +9,7 @@ import type { GlobalConfig } from "../store/types";
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 4, cn_battle_net_path: "",
+  version: 5, cn_battle_net_path: "",
   cn_game_path: "", cn_saved_games_path: "",
   global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
@@ -82,20 +82,14 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   }, []);
 
   const allStepsFilled = () => {
-    const cnPaths = [config.cn_game_path.trim(), config.cn_saved_games_path.trim()];
-    const globalPaths = [config.global_game_path.trim(), config.global_saved_games_path.trim()];
-    const cnComplete = cnPaths.every(Boolean);
-    const globalComplete = globalPaths.every(Boolean);
-    return cnComplete || globalComplete;
+    return Boolean(config.cn_game_path.trim() || config.global_game_path.trim());
   };
 
   const getMissingSteps = () => {
     const missing: string[] = [];
-    const cnPaths = [config.cn_game_path.trim(), config.cn_saved_games_path.trim()];
-    const globalPaths = [config.global_game_path.trim(), config.global_saved_games_path.trim()];
-    const cnComplete = cnPaths.every(Boolean);
-    const globalComplete = globalPaths.every(Boolean);
-    if (!cnComplete && !globalComplete) missing.push("至少完整配置一组国服或国际服的游戏与存档路径");
+    if (!config.cn_game_path.trim() && !config.global_game_path.trim()) {
+      missing.push("至少配置一组国服或国际服的游戏安装目录");
+    }
     return missing;
   };
 
@@ -125,7 +119,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       icon: <FolderOpen size={20} />,
       placeholder: "浏览选择国服游戏安装目录", isFile: false, required: false,
       value: config.cn_game_path, setValue: (v:string)=>setConfig(c=>({...c,cn_game_path:v})), detected: null },
-    { key: "cn_saved_games_path" as const, title: "国服存档目录", desc: "通常为 Diablo II Resurrected (CN)",
+    { key: "cn_saved_games_path" as const, title: "国服存档目录（可选）", desc: "仅用于独立画质配置，通常为 Diablo II Resurrected (CN)",
       icon: <Save size={20} />,
       placeholder: "浏览选择国服存档目录", isFile: false, required: false,
       value: config.cn_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,cn_saved_games_path:v})), detected: detected.cnSavedGames },
@@ -133,7 +127,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       icon: <FolderOpen size={20} />,
       placeholder: "浏览选择国际服游戏安装目录", isFile: false, required: false,
       value: config.global_game_path, setValue: (v:string)=>setConfig(c=>({...c,global_game_path:v})), detected: null },
-    { key: "global_saved_games_path" as const, title: "国际服存档目录", desc: "通常为不带 (CN) 后缀的 Diablo II Resurrected",
+    { key: "global_saved_games_path" as const, title: "国际服存档目录（可选）", desc: "仅用于独立画质配置，通常不带 (CN) 后缀",
       icon: <Save size={20} />,
       placeholder: "浏览选择国际服存档目录", isFile: false, required: false,
       value: config.global_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,global_saved_games_path:v})), detected: detected.globalSavedGames },
@@ -342,8 +336,8 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
             || current.key === "global_game_path" || current.key === "global_saved_games_path") && (
             <p className="text-xs text-text-muted mt-3">
               {current.key.startsWith("global_")
-                ? "国际服仅支持 Token 直启；游戏安装目录和存档目录需成组配置。"
-                : "国服可留空跳过；游戏安装目录和存档目录需成组配置，Battle.net 仅在战网认证时需要。"}
+                ? "国际服仅支持 Token 直启；核心启动只要求正确的游戏安装目录。"
+                : "国服可留空跳过；核心启动只要求游戏安装目录，Battle.net 仅在战网认证时需要。"}
             </p>
           )}
 

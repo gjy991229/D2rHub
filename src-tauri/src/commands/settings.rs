@@ -82,8 +82,7 @@ pub fn get_account_settings(
         let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
         let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
         let system_settings_path = context
-            .installation
-            .saved_games_directory
+            .required_saved_games_directory()?
             .join("Settings.json");
         read_required_settings_file(&system_settings_path, "系统 Settings.json")
     }
@@ -125,8 +124,7 @@ pub fn snapshot_system_settings_to_account(
     let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
     let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
     let src = context
-        .installation
-        .saved_games_directory
+        .required_saved_games_directory()?
         .join("Settings.json");
     let settings = read_required_settings_file(&src, "系统 Settings.json")?;
     meta.has_customized_settings = true;
@@ -154,8 +152,7 @@ pub fn get_game_settings(
     let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
     let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
     let path = context
-        .installation
-        .saved_games_directory
+        .required_saved_games_directory()?
         .join("Settings.json");
     read_optional_settings_file(&path)
 }

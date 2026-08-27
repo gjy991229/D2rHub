@@ -7,7 +7,7 @@ import {
 
 function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
   return {
-    version: 4,
+    version: 5,
     cn_battle_net_path: "",
     cn_game_path: "C:/D2R-CN",
     cn_saved_games_path: "C:/Saves-CN",
@@ -86,8 +86,14 @@ export function runTests() {
     "editing a game path is detected as an installation change",
   );
   assert(
-    installationPathEditsAreInvalid(unavailableInstall, partialPathEdit),
-    "a partial edition is rejected when no complete edition remains",
+    !installationPathEditsAreInvalid(unavailableInstall, partialPathEdit),
+    "a valid game path remains launchable without an optional save path",
+  );
+
+  const noGamePath = config({ cn_game_path: "", cn_saved_games_path: "D:/Saves-CN" });
+  assert(
+    installationPathEditsAreInvalid(unavailableInstall, noGamePath),
+    "save paths alone cannot satisfy the minimum launch configuration",
   );
 
   const completeCnWithPartialGlobal = config({
@@ -96,11 +102,11 @@ export function runTests() {
   });
   assert(
     hasValidEditionPathPairs(completeCnWithPartialGlobal),
-    "a complete CN edition keeps global settings valid when Global is partial",
+    "a configured CN game keeps global settings valid when Global has no save path",
   );
   assert(
     !installationPathEditsAreInvalid(unavailableInstall, completeCnWithPartialGlobal),
-    "a partial Global edition does not block saving a complete CN edition",
+    "an optional Global save path does not block saving a configured CN edition",
   );
 
   const completeGlobalWithPartialCn = config({
@@ -111,7 +117,7 @@ export function runTests() {
   });
   assert(
     hasValidEditionPathPairs(completeGlobalWithPartialCn),
-    "a complete Global edition keeps global settings valid when CN is partial",
+    "a configured Global game keeps global settings valid when CN has no save path",
   );
 }
 

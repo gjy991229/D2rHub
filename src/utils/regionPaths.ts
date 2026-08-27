@@ -60,10 +60,8 @@ export function requiresTokenMigration(
   if (isInternationalRegion(region)) return true;
   if (region?.trim() || !config) return false;
 
-  const cnComplete = Boolean(config.cn_game_path?.trim() && config.cn_saved_games_path?.trim());
-  const globalComplete = Boolean(
-    config.global_game_path?.trim() && config.global_saved_games_path?.trim(),
-  );
+  const cnComplete = Boolean(config.cn_game_path?.trim());
+  const globalComplete = Boolean(config.global_game_path?.trim());
   return globalComplete && !cnComplete;
 }
 
@@ -80,13 +78,10 @@ export function hasConfiguredPathsForRegion(
   if (!knownRegion) return false;
 
   const gamePath = isCnRegion(region) ? config.cn_game_path : config.global_game_path;
-  const savedGamesPath = isCnRegion(region)
-    ? config.cn_saved_games_path
-    : config.global_saved_games_path;
-  const hasGameAndSaves = Boolean(gamePath?.trim() && savedGamesPath?.trim());
+  const hasGame = Boolean(gamePath?.trim());
   return authMode === "token"
-    ? hasGameAndSaves
-    : Boolean(isCnRegion(region) && config.cn_battle_net_path?.trim() && hasGameAndSaves);
+    ? hasGame
+    : Boolean(isCnRegion(region) && config.cn_battle_net_path?.trim() && hasGame);
 }
 
 export function firstConfiguredRegion(

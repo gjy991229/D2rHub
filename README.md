@@ -39,7 +39,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 ### 快速开始
 
 1. 从 [Releases](https://github.com/gjy991229/D2RHub/releases) 下载 Full 或 Lite 的 MSI / NSIS 安装包。
-2. 首次运行时至少完整配置一套“游戏目录 + 存档目录”。Battle.net.exe 只在战网客户端认证时必需；游戏和战网路径需要手动确认，存档、Agent、Roaming 和 Edge/Chrome 支持自动探测。
+2. 首次运行时至少配置一套包含 `D2R.exe` 的游戏目录。存档目录是账号独立画质设置所需的可选项；Battle.net.exe 只在战网客户端认证时必需。游戏和战网路径需要手动确认，存档、Agent、Roaming 和 Edge/Chrome 支持自动探测。
 3. 点击“添加账号”，按向导设置昵称、区服、界面/配音语言和认证模式。网页 Token 按指引获取并粘贴；战网认证按提示完成客户端登录与初始化。
 4. 从账号卡片启动单个账号，或使用“启动全部 / 多选启动”。Full 版可在“设置中心 → 自动化”选择已初始化账号并开启 OCR。
 
@@ -49,16 +49,18 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 
 D2RHub 通过 Windows 进程、句柄、注册表、文件和窗口 API 管理本机环境，**不修改游戏文件、不写入游戏内存、不注入 DLL**。任何第三方工具仍可能受到游戏服务条款、反作弊策略、安全软件、系统权限和账号风控影响，请自行评估风险。
 
-运行数据保存在程序同级目录：
+运行数据固定保存在 `%APPDATA%\D2RHub`。从旧版本升级时，如果该系统目录尚不存在而程序同级存在 `config`，D2RHub 会在首次启动时把整个旧目录搬迁到这里；一旦系统目录存在，后续始终以系统目录为准。
 
-- `config/global_config.json`：全局配置；
-- `config/accounts/`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
-- `config/stateData/data.db`：OCR 场景和掉落数据库；
-- `config/stateData/img/`：高级符文截图；
-- `config/test/`：启用 OCR 调试后产生的图片和识别日志；
+- `%APPDATA%\D2RHub\global_config.json`：全局配置；
+- `%APPDATA%\D2RHub\accounts\`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
+- `%APPDATA%\D2RHub\stateData\data.db`：OCR 场景和掉落数据库；
+- `%APPDATA%\D2RHub\stateData\img\`：高级符文截图；
+- `%APPDATA%\D2RHub\test\`：启用 OCR 调试后产生的图片和识别日志；
 - `logs/`：运行日志，最多自动保留 16 个。
 
 程序不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口。请勿在公开 Issue 中提交 Token、账号目录、个人路径、包含隐私的日志或截图；安全问题请按 [安全政策](SECURITY.md) 私下报告。
+
+“设置中心 → 维护 → 账号迁移”生成的 JSON 是跨设备迁移文件：Token 会在导出设备上解密并以**明文**写入，导入后再使用目标设备的 Windows DPAPI 加密。任何获得该文件的人都可以使用其中的 Token 登录对应账号；不要发送给他人，只保存到可信位置，并在确认导入成功后立即安全删除。
 
 ### 从源码开发
 
@@ -102,7 +104,7 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 ### Quick start
 
 1. Download a Full or Lite MSI / NSIS installer from [Releases](https://github.com/gjy991229/D2RHub/releases).
-2. On first run, configure at least one complete **game directory + save directory** pair. Battle.net.exe is only required for Battle.net authentication. Game and Battle.net paths must be confirmed manually; save, Agent, Roaming, and Edge/Chrome paths can be detected.
+2. On first run, configure at least one game directory containing `D2R.exe`. A save directory is optional and only required for per-account graphics settings. Battle.net.exe is only required for Battle.net authentication. Game and Battle.net paths must be confirmed manually; save, Agent, Roaming, and Edge/Chrome paths can be detected.
 3. Click **Add Account** and follow the nickname, region, UI/voice language, and authentication steps. Acquire and paste a Web Token, or complete Battle.net login and initialization.
 4. Launch a profile from its card, or use **Launch All / Multi-select**. In the Full edition, select an initialized OCR target under **Settings → Automation**.
 
@@ -112,7 +114,9 @@ See the [v0.8 User Manual](docs/user-guide.html) for complete workflows, metric 
 
 D2RHub uses Windows process, handle, registry, filesystem, and window APIs. It does **not** modify game files, write to game memory, or inject DLLs. Any third-party utility may still be affected by game terms, anti-cheat policy, antivirus software, system permissions, and account risk controls; evaluate those risks yourself.
 
-Runtime data is stored beside the executable in `config/` and `logs/`. This includes global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account game settings, OCR debug images, high-rune screenshots, and the SQLite stats database. D2RHub does not intentionally upload account configuration or tokens. Network access is used for Battle.net Token login, GitHub Releases update checks, and Terror Zone information.
+Runtime configuration is stored under `%APPDATA%\D2RHub`; executable-side `config` data from older releases is migrated there when the system directory does not yet exist. This includes global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account game settings, OCR debug images, high-rune screenshots, and the SQLite stats database. Logs remain under `logs/` beside the application. D2RHub does not intentionally upload account configuration or tokens. Network access is used for Battle.net Token login, GitHub Releases update checks, and Terror Zone information.
+
+Account-transfer JSON files are intentionally portable: D2RHub decrypts Tokens on the source device and writes them as **plaintext**, then re-encrypts them with Windows DPAPI on the destination device during import. Anyone who obtains such a file may be able to sign in to the exported accounts. Never share it, store it only in a trusted location, and securely delete it after a successful import.
 
 Never post tokens, account directories, personal paths, or sensitive logs/screenshots in a public Issue. Report vulnerabilities privately through the [Security Policy](SECURITY.md).
 

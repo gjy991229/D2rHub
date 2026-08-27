@@ -88,10 +88,7 @@ impl MutexRemovalState {
     }
 }
 
-fn acquire_account_leases(
-    state: &SharedState,
-    account_ids: &[String],
-) -> Result<Vec<AccountLifecycleLease>, AppError> {
+fn validate_launch_account_ids(account_ids: &[String]) -> Result<(), AppError> {
     let mut canonical_ids: Vec<String> = account_ids
         .iter()
         .map(|account_id| account_id.to_ascii_lowercase())
@@ -103,11 +100,10 @@ fn acquire_account_leases(
             "启动列表包含重复账号，已拒绝执行".to_string(),
         ));
     }
-    let mut ids = account_ids.to_vec();
-    ids.sort_by_key(|account_id| account_id.to_ascii_lowercase());
-    ids.iter()
-        .map(|account_id| AccountLifecycleLease::try_acquire(state, account_id))
-        .collect()
+    for account_id in account_ids {
+        AccountManager::validate_account_id(account_id)?;
+    }
+    Ok(())
 }
 
 fn persist_window_position(
@@ -150,6 +146,75 @@ fn account_path_error(account_id: &str, err: AppError) -> LaunchResult {
         error: Some(err.to_string()),
         mutex_killed: false,
     }
+}
+
+fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String {
+    if meta.display_name.trim().is_empty() {
+        meta.id.clone()
+    } else {
+        meta.display_name.clone()
+    }
+}
+
+fn already_running_result(
+    app: &tauri::AppHandle,
+    state: &SharedState,
+    account_id: &str,
+    window_title: &str,
+    pid: u32,
+) -> LaunchResult {
+    let message = format!("已检测到同名游戏窗口“{window_title}”(PID: {pid})，已跳过重复启动");
+    crate::logger::log_msg(
+        "WARN",
+        "Launch",
+        &format!("[Account {account_id}] {message}"),
+    );
+    state
+        .active_games
+        .write()
+        .insert(account_id.to_string(), pid);
+    let _ = app.emit(
+        "launch-progress",
+        LaunchProgress::new(account_id, "done", "warning", &message),
+    );
+    LaunchResult {
+        account_id: account_id.to_string(),
+        success: true,
+        d2r_pid: Some(pid),
+        // 保留在响应中，前端据此给出非阻断提示；success=true 表明不是启动失败。
+        error: Some(message),
+        // 已存在的实例不会进入后续队列安全判断，视为无需处理互斥句柄。
+        mutex_killed: true,
+    }
+}
+
+fn skip_existing_account_window(
+    app: &tauri::AppHandle,
+    state: &SharedState,
+    config: &crate::commands::global_config::GlobalConfig,
+    account_id: &str,
+    meta: &crate::commands::account::AccountMeta,
+) -> Option<LaunchResult> {
+    let window_title = account_window_title(meta);
+    let pid = crate::commands::system::find_d2r_pid_by_exact_window_title(&window_title)?;
+    if config.separate_game_taskbar_icons {
+        let app_id = format!("D2RHub.Account.{account_id}");
+        if let Err(error) = crate::commands::system::set_game_window_app_user_model_id(pid, &app_id)
+        {
+            crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
+            let _ = app.emit(
+                "launch-progress",
+                LaunchProgress::new(account_id, "window", "warning", &error),
+            );
+        }
+    }
+    Some(already_running_result(
+        app,
+        state,
+        account_id,
+        &window_title,
+        pid,
+    ))
 }
 
 fn checked_account_dir(
@@ -274,29 +339,8 @@ fn preflight_accounts(
         }
 
         let context = LaunchContext::for_account(config, &meta, purpose)?;
-        if purpose == ContextPurpose::LaunchGame && meta.has_customized_settings {
-            let settings_path =
-                AccountManager::account_dir_checked(&config.accounts_dir, account_id)?
-                    .join("Settings.json");
-            if !settings_path.is_file() {
-                return Err(AppError::ConfigReadError(format!(
-                    "账号 {account_id} 已启用独立画质配置，但 Settings.json 不存在"
-                )));
-            }
-            let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
-                &settings_path,
-            )?)
-            .map_err(|error| {
-                AppError::ConfigReadError(format!(
-                    "账号 {account_id} 的 Settings.json 无效: {error}"
-                ))
-            })?;
-            if settings.as_object().is_none_or(|object| object.is_empty()) {
-                return Err(AppError::ConfigReadError(format!(
-                    "账号 {account_id} 的 Settings.json 为空或根节点不是对象"
-                )));
-            }
-        }
+        // Settings.json 是可选能力。缺失、损坏或存档目录不可用时，具体启动流程
+        // 会跳过画质覆盖并发出 warning，不能在这里阻断核心认证和 D2R.exe 启动。
         match auth_mode {
             AuthMode::Token => {
                 let token = meta
@@ -474,7 +518,7 @@ pub async fn launch_battle_net_only(
     if account_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let _account_leases = acquire_account_leases(state.inner(), &account_ids)?;
+    validate_launch_account_ids(&account_ids)?;
     let config = {
         let cfg = state.config.read();
         cfg.clone()
@@ -647,9 +691,10 @@ async fn prepare_bnet_environment(
     let snapshot_meta = meta.clone();
     let snapshot_edition = context.installation.edition;
 
-    let copy_res = tokio::task::spawn_blocking(move || -> Result<(), String> {
+    let copy_res = tokio::task::spawn_blocking(move || -> Result<Option<String>, String> {
         let account_dir = AccountManager::account_dir_checked(&accounts_dir, &account_id_str)
             .map_err(|e| e.to_string())?;
+        let mut optional_warning = None;
 
         let snapshot =
             resolve_account_runtime_snapshot(&account_dir, &snapshot_meta, snapshot_edition)
@@ -699,8 +744,21 @@ async fn prepare_bnet_environment(
 
         // 2.3 覆盖 Settings.json
         if has_customized_settings {
-            copy_account_settings_to_system(&account_dir, &saved_games_path)
-                .map_err(|e| e.to_string())?;
+            match saved_games_path.as_deref() {
+                Some(saved_games_path) => {
+                    if let Err(error) =
+                        copy_account_settings_to_system(&account_dir, saved_games_path)
+                    {
+                        optional_warning = Some(format!(
+                            "独立 Settings.json 覆盖失败，已继续使用系统配置: {error}"
+                        ));
+                    }
+                }
+                None => {
+                    optional_warning =
+                        Some("未配置可用的存档目录，已跳过独立 Settings.json 覆盖".to_string());
+                }
+            }
         } else {
             crate::logger::log_msg(
                 "INFO",
@@ -732,12 +790,15 @@ async fn prepare_bnet_environment(
             );
         }
 
-        Ok(())
+        Ok(optional_warning)
     })
     .await;
 
     match copy_res {
-        Ok(Ok(())) => {
+        Ok(Ok(optional_warning)) => {
+            if let Some(warning) = optional_warning {
+                emit("copy", "warning", &warning);
+            }
             emit("copy", "ok", "配置文件覆盖完成");
         }
         Ok(Err(e)) => {
@@ -952,24 +1013,113 @@ pub async fn launch_accounts(
     if account_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let _account_leases = acquire_account_leases(state.inner(), &account_ids)?;
+    // 此处只校验批次，不提前占用账号租约。每个账号会在同名窗口检查之后单独
+    // 获取租约；提前持有再逐项获取会让启动流程被自己的租约误判为并发操作。
+    validate_launch_account_ids(&account_ids)?;
     let config = {
         let cfg = state.config.read();
         cfg.clone()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
     };
-    preflight_accounts(&config, &account_ids, ContextPurpose::LaunchGame)?;
-    // Token 启动同样会覆盖机器级 Launch Options\OSI 与存档目录中的 Settings.json。
-    // 因此所有启动批次都必须持有宿主租约，避免 Token/战网流程并发串号或串配置。
-    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
-    // Reset only after the lease is held, so a rejected concurrent request cannot alter the active flow.
-    state.cancel_launch.store(false, Ordering::SeqCst);
-
     let mut results = Vec::new();
     let total = account_ids.len();
+    // 同名窗口检查不修改共享状态，因此不应被宿主运行时租约阻断。直到确实有账号
+    // 要启动时才取得租约，并一直持有到本批次结束。
+    let mut host_runtime_lease: Option<HostRuntimeLease> = None;
 
     for (i, account_id) in account_ids.iter().enumerate() {
-        // 每个账号启动前检查取消标志
+        // 先按精确窗口标题检查。命中后不执行注册表、Settings、Battle.net 或 D2R
+        // 的任何启动步骤，且不会阻断同一批次中的其他账号。
+        let meta = match AccountManager::load_meta(&config.accounts_dir, account_id) {
+            Ok(meta) => meta,
+            Err(error) => {
+                let result = account_path_error(account_id, error);
+                let message = result
+                    .error
+                    .clone()
+                    .unwrap_or_else(|| "账号配置无效".to_string());
+                let _ = app.emit(
+                    "launch-progress",
+                    LaunchProgress::new(account_id, "done", "error", &message),
+                );
+                results.push(result);
+                continue;
+            }
+        };
+        if let Some(result) =
+            skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
+        {
+            results.push(result);
+            continue;
+        }
+
+        // 同名窗口检查是只读的，优先执行；只有确实需要启动时才取得该账号的生命周期
+        // 租约。账号编辑/导入占用只影响当前账号，不阻断同批次的其他账号。
+        let _account_lease = match AccountLifecycleLease::try_acquire(state.inner(), account_id) {
+            Ok(lease) => lease,
+            Err(error) => {
+                let message = error.to_string();
+                let _ = app.emit(
+                    "launch-progress",
+                    LaunchProgress::new(account_id, "done", "error", &message),
+                );
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
+        };
+        // 关闭首次只读检查与取得租约之间的竞态窗口，租约内重新读取一次元数据。
+        let meta = match AccountManager::load_meta(&config.accounts_dir, account_id) {
+            Ok(meta) => meta,
+            Err(error) => {
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
+        };
+        if let Some(result) =
+            skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
+        {
+            results.push(result);
+            continue;
+        }
+
+        // 单个账号的只读预检失败只影响该账号；未触碰共享宿主状态，可以继续下一项。
+        if let Err(error) = preflight_accounts(
+            &config,
+            std::slice::from_ref(account_id),
+            ContextPurpose::LaunchGame,
+        ) {
+            let message = error.to_string();
+            let _ = app.emit(
+                "launch-progress",
+                LaunchProgress::new(account_id, "done", "error", &message),
+            );
+            results.push(account_path_error(account_id, error));
+            continue;
+        }
+
+        if host_runtime_lease.is_none() {
+            // Token 启动同样会覆盖机器级 Launch Options\OSI 与 Settings.json；只在
+            // 真正启动前取得宿主租约，避免并发流程串号或串配置。
+            match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
+                Ok(lease) => {
+                    host_runtime_lease = Some(lease);
+                    // 只有成功持有租约的请求才能清除上一批次遗留的取消标记。
+                    state.cancel_launch.store(false, Ordering::SeqCst);
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    let _ = app.emit(
+                        "launch-progress",
+                        LaunchProgress::new(account_id, "done", "error", &message),
+                    );
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            }
+        }
+
+        // 每个真正需要启动的账号开始前检查取消标志；已存在的同名窗口仍按上方
+        // 逻辑直接跳过并提示，不会被取消状态误报为失败。
         if is_cancelled(&state) {
             emit_cancelled(&app, account_id);
             results.push(LaunchResult {
@@ -1004,8 +1154,7 @@ pub async fn launch_accounts(
             LaunchProgress::new(account_id, "queue", "running", &msg),
         );
 
-        // Account lifecycle leases acquired above keep this metadata stable for the batch.
-        let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
+        // 当前账号的生命周期租约保证本次启动期间元数据稳定。
         let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
         let result = launch_single(&app, &config, &state, account_id).await;
         let killed = result.mutex_killed;
@@ -1372,14 +1521,47 @@ async fn launch_single(
                 let accounts_dir = config.accounts_dir.clone();
                 let account_id_owned = account_id.to_string();
                 let state_for_position = state.clone();
+                let separate_taskbar_icon = config.separate_game_taskbar_icons;
+                let app_user_model_id = format!("D2RHub.Account.{account_id}");
+                let app_for_window = app.clone();
+                let account_id_for_window = account_id.to_string();
                 tokio::task::spawn_blocking(move || {
                     // Phase 1: 10 次重试重命名 + 初始定位
+                    let mut taskbar_configured = !separate_taskbar_icon;
+                    let mut taskbar_error = None;
                     for _ in 0..10 {
                         std::thread::sleep(std::time::Duration::from_millis(800));
                         crate::commands::system::rename_game_window(pid_copy, &title_copy);
+                        if !taskbar_configured {
+                            match crate::commands::system::set_game_window_app_user_model_id(
+                                pid_copy,
+                                &app_user_model_id,
+                            ) {
+                                Ok(()) => taskbar_configured = true,
+                                Err(error) => taskbar_error = Some(error),
+                            }
+                        }
                         if let (Some(x), Some(y)) = (win_x, win_y) {
                             crate::commands::system::set_game_window_position(pid_copy, x, y);
                         }
+                    }
+                    if !taskbar_configured {
+                        let message = taskbar_error
+                            .unwrap_or_else(|| "游戏窗口任务栏独立分组设置失败".to_string());
+                        crate::logger::log_msg(
+                            "WARN",
+                            "Launch",
+                            &format!("[Account {account_id_for_window}] {message}"),
+                        );
+                        let _ = app_for_window.emit(
+                            "launch-progress",
+                            LaunchProgress::new(
+                                &account_id_for_window,
+                                "window",
+                                "warning",
+                                &message,
+                            ),
+                        );
                     }
                     // Phase 2: 窗口位置轮询，拖动停止后反向写入账号配置
                     let mut sys = sysinfo::System::new();
@@ -1636,17 +1818,23 @@ async fn launch_single_token(
 
     // 1. 覆盖 Settings.json
     if meta.has_customized_settings {
-        if let Err(e) = copy_account_settings_to_system(
-            &account_dir,
-            &context.installation.saved_games_directory,
-        ) {
-            return LaunchResult {
-                account_id: account_id.to_string(),
-                success: false,
-                d2r_pid: None,
-                error: Some(e.to_string()),
-                mutex_killed: false,
-            };
+        match context.installation.saved_games_directory.as_deref() {
+            Some(saved_games_directory) => {
+                if let Err(error) =
+                    copy_account_settings_to_system(&account_dir, saved_games_directory)
+                {
+                    emit(
+                        "copy",
+                        "warning",
+                        &format!("独立 Settings.json 覆盖失败，已继续使用系统配置: {error}"),
+                    );
+                }
+            }
+            None => emit(
+                "copy",
+                "warning",
+                "未配置可用的存档目录，已跳过独立 Settings.json 覆盖",
+            ),
         }
     } else {
         crate::logger::log_msg(
@@ -1852,13 +2040,41 @@ async fn launch_single_token(
             let win_x = meta.window_x;
             let win_y = meta.window_y;
             let pid_copy = pid;
+            let separate_taskbar_icon = config.separate_game_taskbar_icons;
+            let app_user_model_id = format!("D2RHub.Account.{account_id}");
+            let app_for_window = app.clone();
+            let account_id_for_window = account_id.to_string();
             tokio::task::spawn_blocking(move || {
+                let mut taskbar_configured = !separate_taskbar_icon;
+                let mut taskbar_error = None;
                 for _ in 0..10 {
                     std::thread::sleep(std::time::Duration::from_millis(800));
                     crate::commands::system::rename_game_window(pid_copy, &win_title);
+                    if !taskbar_configured {
+                        match crate::commands::system::set_game_window_app_user_model_id(
+                            pid_copy,
+                            &app_user_model_id,
+                        ) {
+                            Ok(()) => taskbar_configured = true,
+                            Err(error) => taskbar_error = Some(error),
+                        }
+                    }
                     if let (Some(x), Some(y)) = (win_x, win_y) {
                         crate::commands::system::set_game_window_position(pid_copy, x, y);
                     }
+                }
+                if !taskbar_configured {
+                    let message = taskbar_error
+                        .unwrap_or_else(|| "游戏窗口任务栏独立分组设置失败".to_string());
+                    crate::logger::log_msg(
+                        "WARN",
+                        "Launch",
+                        &format!("[Account {account_id_for_window}] {message}"),
+                    );
+                    let _ = app_for_window.emit(
+                        "launch-progress",
+                        LaunchProgress::new(&account_id_for_window, "window", "warning", &message),
+                    );
                 }
             });
             pid
@@ -2112,9 +2328,9 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        acquire_account_leases, launch_queue_can_continue, parse_windows_command_line,
-        persist_window_position, preflight_accounts, replace_bnet_roaming_snapshot,
-        token_launch_is_ready, validate_legacy_reg_sections,
+        launch_queue_can_continue, parse_windows_command_line, persist_window_position,
+        preflight_accounts, replace_bnet_roaming_snapshot, token_launch_is_ready,
+        validate_launch_account_ids, validate_legacy_reg_sections,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
     use crate::commands::global_config::GlobalConfig;
@@ -2154,7 +2370,26 @@ mod tests {
             "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
         ];
 
-        assert!(acquire_account_leases(&state, &account_ids).is_err());
+        assert!(validate_launch_account_ids(&account_ids).is_err());
+        assert!(state.account_operations.lock().is_empty());
+    }
+
+    #[test]
+    fn launch_batch_validation_does_not_reserve_account_lifecycle() {
+        let state = std::sync::Arc::new(AppState::new());
+        let account_ids = vec!["acount1".to_string(), "acount2".to_string()];
+
+        validate_launch_account_ids(&account_ids).unwrap();
+        assert!(state.account_operations.lock().is_empty());
+
+        for account_id in account_ids {
+            let lease = AccountLifecycleLease::try_acquire(&state, &account_id).unwrap();
+            assert!(state
+                .account_operations
+                .lock()
+                .contains(&account_id.to_ascii_lowercase()));
+            drop(lease);
+        }
         assert!(state.account_operations.lock().is_empty());
     }
 
@@ -2361,7 +2596,7 @@ mod tests {
     }
 
     #[test]
-    fn batch_preflight_rejects_missing_customized_settings() {
+    fn batch_preflight_allows_missing_customized_settings() {
         let root = temp_dir("missing_custom_settings");
         let config = configure_global_install(&root, false);
         save_account(&config, "acount1", "token", Some("00"));
@@ -2369,14 +2604,13 @@ mod tests {
         meta.has_customized_settings = true;
         AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
 
-        let error = preflight_accounts(
+        let result = preflight_accounts(
             &config,
             &["acount1".to_string()],
             ContextPurpose::LaunchGame,
-        )
-        .unwrap_err();
+        );
 
-        assert!(error.to_string().contains("Settings.json 不存在"));
+        assert!(result.is_ok());
         let _ = std::fs::remove_dir_all(root);
     }
 

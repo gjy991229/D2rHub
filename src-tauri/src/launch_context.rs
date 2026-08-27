@@ -154,7 +154,8 @@ pub(crate) struct InstallationProfile {
     pub battle_net_executable: Option<PathBuf>,
     pub game_directory: PathBuf,
     pub game_executable: PathBuf,
-    pub saved_games_directory: PathBuf,
+    /// 可选的存档目录。核心启动只需要游戏可执行文件；仅画质读取/覆盖需要此目录。
+    pub saved_games_directory: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -225,13 +226,25 @@ impl LaunchContext {
             ),
         };
 
-        if saved_games_path.is_empty() {
-            return Err(AppError::ConfigReadError(format!(
-                "账号属于{edition_name}，请先配置该版本的存档目录"
-            )));
-        }
-        let saved_games_directory =
-            validated_directory(saved_games_path, edition_name, "存档目录")?;
+        let saved_games_directory = if purpose == ContextPurpose::Settings {
+            if saved_games_path.is_empty() {
+                return Err(AppError::ConfigReadError(format!(
+                    "账号属于{edition_name}，画质配置需要先设置该版本的存档目录"
+                )));
+            }
+            Some(validated_directory(
+                saved_games_path,
+                edition_name,
+                "存档目录",
+            )?)
+        } else if saved_games_path.is_empty() {
+            None
+        } else {
+            // 启动路径中存档目录仅用于可选的 Settings.json 覆盖；无效时由启动流程
+            // 降级并告警，不能影响 D2R.exe、认证与互斥句柄这些核心步骤。
+            let path = PathBuf::from(saved_games_path);
+            path.is_dir().then_some(path)
+        };
 
         let requires_game_installation = purpose != ContextPurpose::Settings;
         let (game_directory, game_executable) = if requires_game_installation {
@@ -313,6 +326,18 @@ impl LaunchContext {
             self.edition.token_registry_game_key
         )
     }
+
+    pub(crate) fn required_saved_games_directory(&self) -> Result<&Path, AppError> {
+        self.installation
+            .saved_games_directory
+            .as_deref()
+            .ok_or_else(|| {
+                AppError::ConfigReadError(format!(
+                    "{}未配置可用的存档目录",
+                    self.installation.edition.display_name()
+                ))
+            })
+    }
 }
 
 fn validated_directory(raw: &str, edition: &str, role: &str) -> Result<PathBuf, AppError> {
@@ -346,11 +371,11 @@ fn validated_file(raw: &str, edition: &str, role: &str) -> Result<PathBuf, AppEr
 }
 
 fn profile_declared(config: &GlobalConfig, edition: ClientEdition) -> bool {
-    let (game, saves) = match edition {
-        ClientEdition::Cn => (&config.cn_game_path, &config.cn_saved_games_path),
-        ClientEdition::Global => (&config.global_game_path, &config.global_saved_games_path),
+    let game = match edition {
+        ClientEdition::Cn => &config.cn_game_path,
+        ClientEdition::Global => &config.global_game_path,
     };
-    !game.trim().is_empty() && !saves.trim().is_empty()
+    !game.trim().is_empty()
 }
 
 fn infer_legacy_region(config: &GlobalConfig) -> Result<GameRegion, AppError> {
@@ -398,6 +423,7 @@ pub(crate) fn paths_have_same_identity(actual: &Path, expected: &Path) -> bool {
     }
 }
 
+#[cfg(test)]
 pub(crate) fn validate_distinct_installation_profiles(
     config: &GlobalConfig,
 ) -> Result<(), AppError> {
@@ -632,7 +658,7 @@ mod tests {
             LaunchContext::for_draft(&config, Some("NA"), Some("token"), ContextPurpose::Settings)
                 .unwrap();
 
-        assert_eq!(context.installation.saved_games_directory, saves);
+        assert_eq!(context.installation.saved_games_directory, Some(saves));
         assert!(context.installation.battle_net_executable.is_none());
         assert!(LaunchContext::for_draft(
             &config,
@@ -670,14 +696,36 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_paths_in_an_incomplete_edition_do_not_block_the_complete_edition() {
+    fn duplicate_game_paths_are_rejected_even_when_save_paths_are_optional() {
         let config = GlobalConfig {
             cn_game_path: r"C:\Games\D2R".to_string(),
             cn_saved_games_path: r"C:\Saves\D2R-CN".to_string(),
             global_game_path: r"c:/games/d2r/".to_string(),
             ..GlobalConfig::default()
         };
-        assert!(validate_distinct_installation_profiles(&config).is_ok());
+        assert!(validate_distinct_installation_profiles(&config).is_err());
+    }
+
+    #[test]
+    fn launch_context_allows_missing_optional_saved_games_directory() {
+        let root = temp_dir("launch_without_saves");
+        let (_, game, _) = install(&root, "global");
+        let config = GlobalConfig {
+            global_game_path: game,
+            global_saved_games_path: String::new(),
+            ..GlobalConfig::default()
+        };
+
+        let context = LaunchContext::for_draft(
+            &config,
+            Some("NA"),
+            Some("token"),
+            ContextPurpose::LaunchGame,
+        )
+        .unwrap();
+
+        assert!(context.installation.saved_games_directory.is_none());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

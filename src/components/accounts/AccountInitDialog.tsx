@@ -334,7 +334,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
 
   const tokenStepSettingsNext = () => {
     if (!hasConfiguredPathsForRegion(config, region, "token")) {
-      setError(`${region === "CN" ? "国服" : "国际服"}游戏与存档路径尚未完整配置，请先前往设置补全`);
+      setError(`${region === "CN" ? "国服" : "国际服"}游戏安装目录尚未配置，请先前往设置补全`);
       return;
     }
     if (region !== "CN") setAuthMode("token");
@@ -517,7 +517,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                         type="button"
                         disabled={!hasConfiguredPathsForRegion(config, r, "token")}
                         title={!hasConfiguredPathsForRegion(config, r, "token")
-                          ? `${r === "CN" ? "国服" : "国际服"}游戏与存档路径尚未完整配置`
+                          ? `${r === "CN" ? "国服" : "国际服"}游戏安装目录尚未配置`
                           : undefined}
                         onClick={() => {
                           setRegion(r);
@@ -547,7 +547,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                     ))}
                   </div>
                   {!firstConfiguredRegion(config, "token") && (
-                    <p className="text-xs text-error mt-2">尚未完整配置任何版本的游戏与存档路径，暂时无法创建账号。</p>
+                    <p className="text-xs text-error mt-2">尚未配置任何版本的游戏安装目录，暂时无法创建账号。</p>
                   )}
                 </div>
 

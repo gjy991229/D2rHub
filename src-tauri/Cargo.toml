@@ -47,7 +47,13 @@ sysinfo = "0.31"
 dirs = "5"
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["time"] }
-windows = { version = "0.58", features = ["Foundation", "Win32_Security_Cryptography"] }
+windows = { version = "0.58", features = [
+    "Foundation",
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+    "Win32_System_Com",
+    "Win32_UI_Shell_PropertiesSystem"
+] }
 winreg = "0.52"
 # OCR 截图与图像处理
 windows-capture = { version = "1.2", optional = true }

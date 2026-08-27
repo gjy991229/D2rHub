@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 4;
+const CURRENT_CONFIG_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -97,6 +97,9 @@ pub struct GlobalConfig {
     /// 界面字体缩放 ("small" / "default" / "large")
     #[serde(default = "default_font_scale")]
     pub font_scale: String,
+    /// 是否为每个游戏账号窗口设置独立的任务栏 AppUserModelID。
+    #[serde(default)]
+    pub separate_game_taskbar_icons: bool,
     /// 应用界面语言 ("zh-CN" / "en-US")
     #[serde(default = "default_app_language")]
     pub app_language: String,
@@ -174,92 +177,29 @@ fn app_accounts_dir(app_data_dir: &str) -> PathBuf {
     Path::new(app_data_dir).join("accounts")
 }
 
-fn file_name_eq(path: &Path, expected: &str) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case(expected))
-        .unwrap_or(false)
-}
-
 fn saved_games_settings_exists(path: &Path) -> bool {
     path.join("Settings.json").is_file()
 }
 
 fn validate_installation_paths(config: &GlobalConfig) -> Result<(), AppError> {
-    let cn_configured =
-        !config.cn_game_path.trim().is_empty() && !config.cn_saved_games_path.trim().is_empty();
-    let global_configured = !config.global_game_path.trim().is_empty()
-        && !config.global_saved_games_path.trim().is_empty();
-
-    if !cn_configured && !global_configured {
-        return Err(AppError::ConfigWriteError(
-            "请至少完整配置一组国服或国际服的游戏安装目录和存档目录".to_string(),
-        ));
-    }
-
-    crate::launch_context::validate_distinct_installation_profiles(config)?;
-
-    if cn_configured && !config.cn_battle_net_path.trim().is_empty() {
-        let path = Path::new(&config.cn_battle_net_path);
-        if !path.is_file() || !file_name_eq(path, "Battle.net.exe") {
-            return Err(AppError::InvalidBnetPath(config.cn_battle_net_path.clone()));
-        }
-    }
-
-    let mut configured_game_paths = Vec::with_capacity(2);
-    if cn_configured {
-        configured_game_paths.push(&config.cn_game_path);
-    }
-    if global_configured {
-        configured_game_paths.push(&config.global_game_path);
-    }
-    for game_path in configured_game_paths {
-        let game_directory = Path::new(game_path);
-        if !game_directory.is_dir() || !game_directory.join("D2R.exe").is_file() {
-            return Err(AppError::InvalidGamePath(format!(
-                "{}（目录中必须存在 D2R.exe）",
-                game_path
-            )));
-        }
-    }
-
-    Ok(())
-}
-
-fn validate_browser_path(config: &GlobalConfig) -> Result<(), AppError> {
-    if config.browser_path.trim().is_empty() {
+    // 核心启动只依赖 D2R.exe。存档目录与 Settings.json 属于可选的画质覆盖能力，
+    // Battle.net、另一客户端版本及重复安装档案都在真正使用对应账号时精确校验，
+    // 不能因为一项备用配置失效而阻断已经可用的最小启动路径。
+    let game_paths = [&config.cn_game_path, &config.global_game_path];
+    if game_paths.iter().any(|game_path| {
+        let directory = Path::new(game_path.trim());
+        directory.is_dir() && directory.join("D2R.exe").is_file()
+    }) {
         return Ok(());
     }
 
-    let browser_path = Path::new(&config.browser_path);
-    if !browser_path.is_file() {
-        return Err(AppError::ConfigWriteError(format!(
-            "浏览器路径无效: {}",
-            config.browser_path
-        )));
-    }
-
-    match config.browser_type.as_str() {
-        "chrome" if !file_name_eq(browser_path, "chrome.exe") => {
-            return Err(AppError::ConfigWriteError(format!(
-                "浏览器类型为 chrome，但路径不是 chrome.exe: {}",
-                config.browser_path
-            )));
-        }
-        "edge" if !file_name_eq(browser_path, "msedge.exe") => {
-            return Err(AppError::ConfigWriteError(format!(
-                "浏览器类型为 edge，但路径不是 msedge.exe: {}",
-                config.browser_path
-            )));
-        }
-        _ => {}
-    }
-
-    Ok(())
+    Err(AppError::ConfigWriteError(
+        "请至少配置一组有效的国服或国际服游戏安装目录（目录中必须存在 D2R.exe）".to_string(),
+    ))
 }
 
-/// Game installation validation is intentionally limited to setup completion
-/// and edition-path edits. Other app paths have their own independent checks.
+/// 全局保存只验证核心游戏安装路径；浏览器、Battle.net 与存档目录在实际使用
+/// 对应功能时校验，避免可选能力阻断账号创建或启动所需的最小路径。
 fn should_validate_installation_paths(
     previous: Option<&GlobalConfig>,
     next: &GlobalConfig,
@@ -282,27 +222,11 @@ fn should_validate_installation_paths(
         || previous.global_saved_games_path != next.global_saved_games_path
 }
 
-fn should_validate_browser_path(previous: Option<&GlobalConfig>, next: &GlobalConfig) -> bool {
-    if !next.first_run_complete {
-        return false;
-    }
-
-    let Some(previous) = previous else {
-        return true;
-    };
-    if !previous.first_run_complete {
-        return true;
-    }
-
-    previous.browser_path != next.browser_path || previous.browser_type != next.browser_type
-}
-
 #[cfg(test)]
 mod validation_tests {
     use super::{
-        saved_games_settings_exists, should_validate_browser_path,
-        should_validate_installation_paths, validate_installation_paths, GlobalConfig,
-        CURRENT_CONFIG_VERSION,
+        saved_games_settings_exists, should_validate_installation_paths,
+        validate_installation_paths, GlobalConfig, CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -341,7 +265,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn token_only_game_and_save_paths_are_a_valid_configuration() {
+    fn game_path_without_saved_games_is_a_valid_configuration() {
         let root = temp_dir("token_only_config");
         let game_dir = root.join("game");
         std::fs::create_dir_all(&game_dir).unwrap();
@@ -349,7 +273,6 @@ mod validation_tests {
 
         let config = GlobalConfig {
             global_game_path: game_dir.to_string_lossy().to_string(),
-            global_saved_games_path: root.join("saves").to_string_lossy().to_string(),
             ..GlobalConfig::default()
         };
 
@@ -358,7 +281,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn at_least_one_complete_edition_is_required() {
+    fn at_least_one_existing_d2r_executable_is_required() {
         let root = temp_dir("partial_token_config");
         let game_dir = root.join("game");
         std::fs::create_dir_all(&game_dir).unwrap();
@@ -450,7 +373,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn browser_changes_do_not_revalidate_offline_game_installations() {
+    fn optional_browser_changes_do_not_revalidate_offline_game_installations() {
         let previous = GlobalConfig {
             first_run_complete: true,
             cn_game_path: r"Z:\offline\D2R-CN".to_string(),
@@ -464,7 +387,6 @@ mod validation_tests {
         };
 
         assert!(!should_validate_installation_paths(Some(&previous), &next));
-        assert!(should_validate_browser_path(Some(&previous), &next));
     }
 
     #[test]
@@ -805,6 +727,7 @@ impl Default for GlobalConfig {
             overlay_opacity: 95,
             main_opacity: 95,
             font_scale: "default".to_string(),
+            separate_game_taskbar_icons: false,
             app_language: "zh-CN".to_string(),
             agent_mode: 1,
             agent_delay_secs: 1.0,
@@ -1239,9 +1162,6 @@ pub fn save_global_config(
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;
-    }
-    if should_validate_browser_path(previous.as_ref(), &cfg) {
-        validate_browser_path(&cfg)?;
     }
     cfg.resolve_ocr_target_account()?;
 

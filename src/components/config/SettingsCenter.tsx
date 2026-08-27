@@ -10,9 +10,11 @@ import {
   FolderOpen,
   RotateCw,
   X,
-  Play
+  Play,
+  Download,
+  Upload
 } from "lucide-react";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import { useGlobalConfig } from "../../store/globalConfig";
@@ -56,6 +58,18 @@ interface Props {
   initialAccountId?: string | null;
 }
 
+interface ExportAccountsSummary {
+  path: string;
+  account_count: number;
+  plaintext_token_count: number;
+}
+
+interface ImportAccountsSummary {
+  imported: { id: string; display_name: string; initialized: boolean }[];
+  warnings: string[];
+  reencrypted_token_count: number;
+}
+
 type InstallationPathField =
   | "cn_battle_net_path"
   | "cn_game_path"
@@ -97,9 +111,7 @@ function InstallationProfileFields({
       };
   const hasConfiguration = Object.values(fields).some((field) => config[field])
     || (isCn && Boolean(config.cn_battle_net_path));
-  const profileComplete = Boolean(
-    config[fields.game].trim() && config[fields.savedGames].trim(),
-  );
+  const profileComplete = Boolean(config[fields.game].trim());
 
   const clearProfile = () => {
     updateConfig((next) => {
@@ -116,8 +128,8 @@ function InstallationProfileFields({
           <p className="text-xs font-semibold text-text-secondary">{label}</p>
           <p className="text-2xs text-text-muted mt-0.5">
             {isCn
-              ? "游戏与存档成组配置即可使用 Token；战网认证还需客户端路径。"
-              : "亚/美/欧服共用，仅支持 Token 直启。"}
+              ? "游戏目录可支撑核心启动；战网认证还需客户端路径，存档目录仅供画质覆盖。"
+              : "亚/美/欧服共用，仅支持 Token 直启；存档目录仅供画质覆盖。"}
           </p>
         </div>
         {hasConfiguration && <Button size="sm" onClick={clearProfile}>清除此版本</Button>}
@@ -125,7 +137,7 @@ function InstallationProfileFields({
 
       {hasConfiguration && !profileComplete && (
         <p className="text-xs text-text-muted leading-relaxed">
-          当前版本配置尚不完整，不影响保存；创建账号时不会开放该版本。
+          当前版本尚未配置游戏安装目录；不会开放该版本的账号创建与启动。
         </p>
       )}
 
@@ -156,7 +168,7 @@ function InstallationProfileFields({
       </div>
 
       <label className="text-xs text-text-muted block">
-        存档目录 · Diablo II Resurrected{isCn ? " (CN)" : ""}
+        存档目录（可选） · Diablo II Resurrected{isCn ? " (CN)" : ""}
       </label>
       <div className="flex gap-2">
         <input
@@ -251,12 +263,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
 
   // Local detected paths
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
+  const [exportPickerOpen, setExportPickerOpen] = useState(false);
+  const [exportAccountIds, setExportAccountIds] = useState<string[]>([]);
+  const [exportPlaintextRiskAcknowledged, setExportPlaintextRiskAcknowledged] = useState(false);
+  const [accountTransferBusy, setAccountTransferBusy] = useState<"export" | "import" | null>(null);
 
   // Auto initialize selected account and active tab
   // Backup config for rollback when modal opens
   useEffect(() => {
     if (open && config) {
       setOriginalConfig(JSON.parse(JSON.stringify(config)));
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      setExportPickerOpen(false);
+      setExportPlaintextRiskAcknowledged(false);
     }
   }, [open]);
 
@@ -353,7 +376,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const handleClose = () => {
     if (config && installationPathEditsAreInvalid(originalConfig, config)) {
       setActiveTab("paths");
-      showToast("error", "请至少完整保留一组国服或国际服的游戏与存档路径；Battle.net 仅供国服兼容模式使用");
+      showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
       return;
     }
     if (autoSaveTimerRef.current) {
@@ -378,7 +401,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const handleSaveGlobal = async (quiet = false) => {
     if (!config) return true;
     if (installationPathEditsAreInvalid(originalConfig, config)) {
-      if (!quiet) showToast("error", "游戏目录与存档目录必须按国服/国际服成组配置；Battle.net 仅供国服兼容模式使用");
+      if (!quiet) showToast("error", "请至少配置一组国服或国际服的游戏安装目录；存档目录仅影响画质覆盖");
       return false;
     }
     try {
@@ -536,6 +559,79 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       showToast("success", "成功自动应用检测到的路径");
     } else {
       showToast("warning", "未能检测到默认路径，请手动选择");
+    }
+  };
+
+  const toggleExportAccount = (accountId: string) => {
+    setExportAccountIds(current => current.includes(accountId)
+      ? current.filter(id => id !== accountId)
+      : [...current, accountId]);
+  };
+
+  const handleExportAccounts = async () => {
+    if (exportAccountIds.length === 0) {
+      showToast("warning", "请至少选择一个要导出的账号");
+      return;
+    }
+    if (!exportPlaintextRiskAcknowledged) {
+      showToast("warning", "请先确认已理解明文 Token 的账号安全风险");
+      return;
+    }
+    const date = new Date().toISOString().slice(0, 10);
+    const destination = await saveDialog({
+      title: "导出 D2RHub 账号",
+      defaultPath: `D2RHub-accounts-${date}.json`,
+      filters: [{ name: "D2RHub 账号包", extensions: ["json"] }],
+    });
+    if (!destination) return;
+
+    setAccountTransferBusy("export");
+    try {
+      const summary = await invoke<ExportAccountsSummary>("export_accounts", {
+        accountIds: exportAccountIds,
+        destination,
+        acknowledgePlaintextRisk: true,
+      });
+      showToast("success", `已导出 ${summary.account_count} 个账号`);
+      showToast(
+        "warning",
+        summary.plaintext_token_count > 0
+          ? `导出文件包含 ${summary.plaintext_token_count} 个明文 Token；任何获得文件的人都可以登录对应账号，请妥善保管并在迁移后删除`
+          : "导出文件仍包含账号认证快照，请妥善保管并在迁移后删除",
+      );
+      setExportPickerOpen(false);
+      setExportPlaintextRiskAcknowledged(false);
+    } catch (error) {
+      showToast("error", `导出账号失败: ${error}`);
+    } finally {
+      setAccountTransferBusy(null);
+    }
+  };
+
+  const handleImportAccounts = async () => {
+    const source = await openDialog({
+      title: "选择 D2RHub 账号导出文件",
+      multiple: false,
+      filters: [{ name: "D2RHub 账号包", extensions: ["json"] }],
+    });
+    if (!source || Array.isArray(source)) return;
+
+    setAccountTransferBusy("import");
+    try {
+      const summary = await invoke<ImportAccountsSummary>("import_accounts", { source });
+      await loadAccounts();
+      showToast(
+        "success",
+        `已导入 ${summary.imported.length} 个账号，本机重新加密 ${summary.reencrypted_token_count} 个 Token`,
+      );
+      if (summary.warnings.length > 0) {
+        const extra = summary.warnings.length > 1 ? `（另有 ${summary.warnings.length - 1} 项提示）` : "";
+        showToast("warning", `${summary.warnings[0]}${extra}`);
+      }
+    } catch (error) {
+      showToast("error", `导入账号失败: ${error}`);
+    } finally {
+      setAccountTransferBusy(null);
     }
   };
 
@@ -1321,6 +1417,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     />
                   </div>
                 </div>
+
+                <div className="spatial-panel p-3 space-y-2">
+                  <h3 className="text-xs font-bold text-text-primary">游戏窗口与任务栏</h3>
+                  <div className="flex items-center justify-between gap-4 py-1">
+                    <div>
+                      <span className="text-sm font-semibold text-text-secondary">游戏实例任务栏独立</span>
+                      <p className="text-2xs text-text-muted leading-relaxed">
+                        为每个账号窗口设置独立任务栏标识，可分别拖曳排序。默认关闭，仅对之后启动或重新识别的游戏窗口生效。
+                      </p>
+                    </div>
+                    <Toggle
+                      checked={!!config.separate_game_taskbar_icons}
+                      ariaLabel="让每个游戏账号使用独立任务栏图标"
+                      onChange={value => updateConfig(current => { current.separate_game_taskbar_icons = value; })}
+                    />
+                  </div>
+                </div>
               </div>
             )}
 
@@ -1652,6 +1765,129 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       运行向导
                     </Button>
                   </div>
+                </div>
+
+                <div className="spatial-panel p-3 space-y-3 settings-span-full">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="max-w-[68ch]">
+                      <h3 className="text-xs font-bold text-text-primary">账号迁移</h3>
+                      <p className="text-2xs text-text-muted mt-1 leading-relaxed">
+                        导出账号元数据、独立画质配置与认证快照，不包含浏览器缓存。Token 会解密后以明文写入 JSON，导入时再使用目标设备的 Windows DPAPI 加密。
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        disabled={accounts.length === 0 || accountTransferBusy !== null}
+                        onClick={() => {
+                          setExportAccountIds(accounts.map(account => account.id));
+                          setExportPlaintextRiskAcknowledged(false);
+                          setExportPickerOpen(current => !current);
+                        }}
+                      >
+                        <Download size={11} className="mr-1" />
+                        导出账号
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={accountTransferBusy !== null}
+                        onClick={handleImportAccounts}
+                      >
+                        <Upload size={11} className="mr-1" />
+                        {accountTransferBusy === "import" ? "导入中" : "导入账号"}
+                      </Button>
+                    </div>
+                  </div>
+
+                  {exportPickerOpen && (
+                    <div className="border-t border-border-default/50 pt-3 space-y-3">
+                      <div
+                        role="alert"
+                        className="flex items-start gap-2 rounded-lg px-3 py-2.5"
+                        style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}
+                      >
+                        <ShieldAlert size={14} className="text-warning shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-text-primary">导出文件包含明文登录凭据</p>
+                          <p className="text-2xs text-text-secondary mt-1 leading-relaxed max-w-[72ch]">
+                            任何获得这份 JSON 的人都可以使用其中的 Token 登录你的账号。请只保存到可信位置，不要发送给其他人；迁移完成后应立即安全删除。
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-xs font-semibold text-text-secondary">
+                          选择要写入导出文件的账号 · 已选 {exportAccountIds.length}/{accounts.length}
+                        </p>
+                        <button
+                          type="button"
+                          className="text-xs text-accent hover:underline"
+                          onClick={() => setExportAccountIds(
+                            exportAccountIds.length === accounts.length ? [] : accounts.map(account => account.id),
+                          )}
+                        >
+                          {exportAccountIds.length === accounts.length ? "取消全选" : "全选"}
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 max-[720px]:grid-cols-1">
+                        {accounts.map(account => {
+                          const selected = exportAccountIds.includes(account.id);
+                          return (
+                            <label
+                              key={account.id}
+                              className="option-line min-w-0 cursor-pointer rounded-lg px-2.5 py-2"
+                              style={{ background: selected ? "var(--surface-hover)" : "transparent" }}
+                            >
+                              <input
+                                type="checkbox"
+                                className="sr-only"
+                                checked={selected}
+                                onChange={() => toggleExportAccount(account.id)}
+                              />
+                              <span className={selected ? "check-box checked" : "check-box"} />
+                              <span className="truncate text-xs text-text-secondary">
+                                {account.display_name || account.id}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                      <label className="option-line min-h-7 h-auto cursor-pointer rounded-lg px-2.5 py-2 bg-surface-hover">
+                        <input
+                          type="checkbox"
+                          className="sr-only"
+                          checked={exportPlaintextRiskAcknowledged}
+                          onChange={(event) => setExportPlaintextRiskAcknowledged(event.target.checked)}
+                        />
+                        <span className={exportPlaintextRiskAcknowledged ? "check-box checked" : "check-box"} />
+                        <span className="text-xs text-text-secondary leading-relaxed">
+                          我已理解导出文件包含可直接使用的登录凭据，并会妥善保管
+                        </span>
+                      </label>
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setExportPickerOpen(false);
+                            setExportPlaintextRiskAcknowledged(false);
+                          }}
+                        >
+                          取消
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          disabled={
+                            exportAccountIds.length === 0
+                            || !exportPlaintextRiskAcknowledged
+                            || accountTransferBusy !== null
+                          }
+                          onClick={handleExportAccounts}
+                        >
+                          {accountTransferBusy === "export" ? "导出中" : `导出 ${exportAccountIds.length} 个账号（含明文）`}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

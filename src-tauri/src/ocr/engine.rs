@@ -32,7 +32,7 @@ fn lock_recover<'a, T>(mutex: &'a Mutex<T>, label: &str) -> MutexGuard<'a, T> {
 }
 
 /// 初始化 OCR 引擎。
-/// @param app_data_dir 主数据目录（如 &lt;exe&gt;/config），引擎优先从此加载
+/// @param app_data_dir 主数据目录（Windows 默认为 %APPDATA%/D2RHub），引擎优先从此加载
 /// @param resource_dir Tauri 资源目录（NSIS 安装时位于 &lt;exe&gt; 同级），
 ///                    若 app_data_dir 下无模型则回退到 resource_dir/_up_/assets/models
 pub fn init_engine(

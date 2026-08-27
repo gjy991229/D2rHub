@@ -964,7 +964,7 @@ pub fn refresh_account_running_state(
             let Ok(meta) = AccountManager::load_meta(&cfg.accounts_dir, &account_id) else {
                 continue;
             };
-            let Ok(context) = LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
+            let Ok(context) = LaunchContext::for_account(cfg, &meta, ContextPurpose::LaunchGame)
             else {
                 continue;
             };
@@ -1736,6 +1736,130 @@ pub fn find_game_hwnd_by_title(title: &str) -> Option<isize> {
     } else {
         None
     }
+}
+
+/// 按可见窗口标题精确查找 D2R 进程。
+/// 与 `find_game_hwnd_by_title` 不同，此函数没有“任意 Diablo 原名窗口”兜底，
+/// 专用于启动前的同名账号实例判定，避免误跳过其他账号。
+#[cfg(target_os = "windows")]
+pub fn find_d2r_pid_by_exact_window_title(title: &str) -> Option<u32> {
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    extern "system" {
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
+        fn IsWindowVisible(hWnd: isize) -> i32;
+        fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
+        fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+    }
+
+    struct Ctx {
+        target_title: String,
+        candidate_pids: Vec<u32>,
+    }
+
+    unsafe extern "system" fn callback(hwnd: isize, lparam: isize) -> i32 {
+        let ctx = &mut *(lparam as *mut Ctx);
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut buffer = [0u16; 512];
+        let length = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+        if length <= 0 {
+            return 1;
+        }
+        let window_title = String::from_utf16_lossy(&buffer[..length as usize]);
+        if !window_title.eq_ignore_ascii_case(&ctx.target_title) {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != 0 {
+            ctx.candidate_pids.push(pid);
+        }
+        1
+    }
+
+    let mut ctx = Ctx {
+        target_title: title.to_string(),
+        candidate_pids: Vec::new(),
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut Ctx as isize);
+    }
+
+    let mut system = shared_system()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    system.refresh_processes(ProcessesToUpdate::All);
+    ctx.candidate_pids.into_iter().find(|pid| {
+        system
+            .process(sysinfo::Pid::from(*pid as usize))
+            .is_some_and(|process| {
+                process
+                    .name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("D2R.exe")
+            })
+    })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn find_d2r_pid_by_exact_window_title(_title: &str) -> Option<u32> {
+    None
+}
+
+/// 为一个已出现的游戏窗口设置账号级 AppUserModelID，使其获得独立任务栏分组。
+#[cfg(target_os = "windows")]
+pub fn set_game_window_app_user_model_id(pid: u32, app_id: &str) -> Result<(), String> {
+    use windows::core::{GUID, PROPVARIANT};
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Com::{CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED};
+    use windows::Win32::UI::Shell::PropertiesSystem::{
+        IPropertyStore, SHGetPropertyStoreForWindow, PROPERTYKEY,
+    };
+
+    if app_id.trim().is_empty() || app_id.len() > 128 {
+        return Err("AppUserModelID 为空或超过 128 个字符".to_string());
+    }
+    let hwnd = find_game_hwnd(pid).ok_or_else(|| format!("尚未找到游戏窗口 (PID: {pid})"))?;
+    const PKEY_APP_USER_MODEL_ID: PROPERTYKEY = PROPERTYKEY {
+        fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3),
+        pid: 5,
+    };
+
+    unsafe {
+        // Tauri/Tokio 线程的 COM 状态不固定；成功初始化时与本次调用成对释放。
+        // RPC_E_CHANGED_MODE 表示线程已用另一 apartment 模式初始化，COM 本身仍可用。
+        let init_status = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let initialized_here = if init_status.is_ok() {
+            true
+        } else if init_status.0 == 0x80010106u32 as i32 {
+            false
+        } else {
+            return Err(format!("初始化窗口任务栏 COM 环境失败: {init_status:?}"));
+        };
+        let result = (|| -> windows::core::Result<()> {
+            let store: IPropertyStore =
+                SHGetPropertyStoreForWindow(HWND(hwnd as *mut std::ffi::c_void))?;
+            let value = PROPVARIANT::from(app_id);
+            // SHGetPropertyStoreForWindow 返回的窗口属性存储不要求也不支持 Commit。
+            store.SetValue(&PKEY_APP_USER_MODEL_ID, &value)
+        })();
+        if initialized_here {
+            CoUninitialize();
+        }
+        result.map_err(|error| format!("设置游戏窗口任务栏标识失败: {error}"))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_game_window_app_user_model_id(_pid: u32, _app_id: &str) -> Result<(), String> {
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]

@@ -34,6 +34,7 @@ export interface GlobalConfig {
   overlay_opacity: number;
   main_opacity: number;
   font_scale: string;
+  separate_game_taskbar_icons?: boolean;
   app_language?: string;
   agent_mode?: number;
   agent_delay_secs?: number;

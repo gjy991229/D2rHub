@@ -16,11 +16,7 @@ export function installationPathsChanged(
 }
 
 export function hasValidEditionPathPairs(config: GlobalConfig): boolean {
-  const cnPaths = [config.cn_game_path, config.cn_saved_games_path].map((path) => path.trim());
-  const globalPaths = [config.global_game_path, config.global_saved_games_path].map((path) => path.trim());
-  const cnComplete = cnPaths.every(Boolean);
-  const globalComplete = globalPaths.every(Boolean);
-  return cnComplete || globalComplete;
+  return Boolean(config.cn_game_path.trim() || config.global_game_path.trim());
 }
 
 export function installationPathEditsAreInvalid(

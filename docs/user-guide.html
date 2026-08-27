@@ -283,7 +283,7 @@
       <h2>快速开始</h2>
       <div class="steps">
         <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 Full 或 Lite 的 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
-        <div class="step"><strong>至少配置一套游戏版本</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。使用战网认证时，再填写该版本的 Battle.net.exe。</p></div>
+        <div class="step"><strong>至少配置一套游戏版本</strong><p>在首次向导中填写国服或国际服的游戏目录。存档目录用于账号独立画质设置，可稍后补充；使用战网认证时，再填写该版本的 Battle.net.exe。</p></div>
         <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
         <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，或使用“启动全部 / 多选启动”。启动进度和错误会显示在卡片及运行日志中。</p></div>
         <div class="step"><strong>按需开启辅助功能</strong><p>在“设置中心”开启悬浮窗、桌宠；Full 版还可在“自动化”选择已初始化账号并启用 OCR。</p></div>
@@ -302,7 +302,7 @@
       <h3>每套档案需要什么</h3>
       <ul>
         <li><strong>游戏安装目录：</strong>包含 <code>D2R.exe</code>，任何认证方式都需要。</li>
-        <li><strong>存档目录：</strong>包含或将包含 <code>Settings.json</code>，任何认证方式都需要。</li>
+        <li><strong>存档目录（可选）：</strong>包含或将包含 <code>Settings.json</code>，仅在画质编辑、账号独立游戏配置或系统配置快照时需要。</li>
         <li><strong>Battle.net.exe：</strong>仅战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
       </ul>
       <p>如果存档目录暂时没有 <code>Settings.json</code>，账号创建、登录和多开仍可用，但画质编辑、账号独立游戏配置和系统配置快照不可用。先用对应版本正常进入一次游戏，通常会生成该文件。</p>
@@ -318,7 +318,7 @@
         <table>
           <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
           <tbody>
-            <tr><td>所需路径</td><td>游戏 + 存档；获取时需 Edge/Chrome</td><td>游戏 + 存档 + 对应版本 Battle.net.exe</td></tr>
+            <tr><td>所需路径</td><td>游戏；内置获取流程另需 Edge/Chrome</td><td>游戏 + 对应版本 Battle.net.exe</td></tr>
             <tr><td>启动路径</td><td>使用本机 DPAPI 加密保存的 Token 直启</td><td>恢复账号的 Battle.net / UnifiedAuth 本地快照后启动</td></tr>
             <tr><td>特点</td><td>启动快，不依赖战网客户端常驻</td><td>适合无法使用网页 Token 的账号，流程更长</td></tr>
             <tr><td>失效处理</td><td>服务端判定失效时，在账号操作中更新 Token</td><td>界面按 30 天提示有效状态；过期或登录失败时重新初始化</td></tr>
@@ -358,13 +358,16 @@
         <div class="metric"><strong>账号</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
         <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；隔离浏览器和每日更新</span></div>
         <div class="metric"><strong>快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
-        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体和悬浮窗开关</span></div>
+        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体、悬浮窗与游戏任务栏独立开关</span></div>
         <div class="metric"><strong>自动化（Full）</strong><span>OCR 目标账号、轮询频率、调试输出、重启与统计页</span></div>
         <div class="metric"><strong>伴随</strong><span>Bongo Cat 开关、对话框、缩放和已解锁皮肤</span></div>
-        <div class="metric"><strong>维护</strong><span>打开日志目录、重新运行首次配置向导</span></div>
+        <div class="metric"><strong>维护</strong><span>按所选账号导出/导入 JSON、打开日志目录、重新运行首次配置向导</span></div>
       </div>
       <h3>账号独立游戏设置</h3>
       <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。修改会自动保存。选择“系统配置”时跟随当前存档目录的 <code>Settings.json</code>；选择独立配置后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置到当前账号”。</p>
+      <h3>账号导入导出</h3>
+      <p>在“维护 → 账号迁移”中可选择一个或多个账号导出。为实现跨设备迁移，网页 Token 会在原设备通过 Windows DPAPI 解密，并以明文写入导出的 JSON；目标设备导入时会立即使用当前 Windows 用户的 DPAPI 重新加密。隔离浏览器缓存不会导出，Battle.net 认证快照跨设备时仍可能需要重新初始化。</p>
+      <div class="callout danger"><strong>导出文件等同于登录凭据：</strong>任何获得该 JSON 的人都可以使用其中的明文 Token 登录你的账号。不要发送给其他人或上传到公开网盘；只保存到可信位置，并在确认导入成功后立即安全删除。</div>
     </section>
 
     <section id="overlay">
@@ -398,7 +401,7 @@
         <li><strong>高级符文：</strong>#24 及以上会额外保存完整游戏窗口截图，并在统计页提供画廊。</li>
         <li><strong>轮询频率：</strong>200–2000ms；间隔越短响应越快，也越消耗 CPU，默认 500ms。</li>
       </ul>
-      <div class="callout"><strong>调试输出会占用磁盘：</strong>开启后会把处理图和 <code>ocr_debug.txt</code> 写到程序同级 <code>config\test</code>。仅在排查识别失败时开启，问题解决后关闭并按需清理。</div>
+      <div class="callout"><strong>调试输出会占用磁盘：</strong>开启后会把处理图和 <code>ocr_debug.txt</code> 写到 <code>%APPDATA%\D2RHub\test</code>。仅在排查识别失败时开启，问题解决后关闭并按需清理。</div>
       <p>场景记录在离开当前战斗场景、切换到另一场景或回城时写入数据库。尚未结束的当前场景不会提前计入历史统计。</p>
     </section>
 
@@ -429,7 +432,7 @@
           </tbody>
         </table>
       </div>
-      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>config\stateData</code> 或导出 JSON。</div>
+      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>%APPDATA%\D2RHub\stateData</code> 或导出 JSON。</div>
     </section>
 
     <section id="pet">
@@ -446,21 +449,21 @@
     <section id="data">
       <p class="eyebrow">10 · DATA & PRIVACY</p>
       <h2>数据位置、备份与更新</h2>
-      <p>D2RHub 当前使用<strong>程序可执行文件同级目录</strong>保存运行数据，而不是 Windows AppData：</p>
+      <p>D2RHub 使用固定的 <code>%APPDATA%\D2RHub</code> 保存运行数据。旧版程序同级 <code>config</code> 仅在系统目录尚不存在时自动整体搬迁；系统目录一旦存在，后续始终以它为准：</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>位置</th><th>内容</th></tr></thead>
           <tbody>
-            <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、OCR 与桌宠设置</td></tr>
-            <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
-            <tr><td><code>config\stateData\data.db</code></td><td>OCR 场景与符文掉落数据库</td></tr>
-            <tr><td><code>config\stateData\img\</code></td><td>#24 及以上符文截图</td></tr>
-            <tr><td><code>config\test\</code></td><td>启用 OCR 调试输出后产生的处理图与日志</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、OCR 与桌宠设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\stateData\data.db</code></td><td>OCR 场景与符文掉落数据库</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\stateData\img\</code></td><td>#24 及以上符文截图</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\test\</code></td><td>启用 OCR 调试输出后产生的处理图与日志</td></tr>
             <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
           </tbody>
         </table>
       </div>
-      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>config</code> 目录；排障需要时也可一并备份 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
+      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>%APPDATA%\D2RHub</code> 目录；排障需要时也可一并备份程序日志。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
       <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
       <p>D2RHub 不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；OCR 调试图片与统计数据留在本机。</p>
     </section>
@@ -469,7 +472,7 @@
       <p class="eyebrow">11 · TROUBLESHOOTING</p>
       <h2>疑难解答</h2>
       <h3>账号无法创建或对应区服不可选</h3>
-      <p>检查该版本的游戏目录和存档目录是否成组配置。战网认证还需对应版本 Battle.net.exe；亚/美/欧服统一检查国际服档案。</p>
+      <p>检查该版本的游戏目录是否包含 <code>D2R.exe</code>。战网认证还需对应版本 Battle.net.exe；亚/美/欧服统一检查国际服档案。存档目录缺失只会停用账号独立画质设置，不会阻止账号创建或启动。</p>
       <h3>战网初始化超时或快照失效</h3>
       <p>确认 Battle.net 已实际登录完成、路径对应正确版本，并避免同时执行另一个战网认证操作。账号卡片显示过期或启动失败时，执行重新初始化。</p>
       <h3>网页 Token 获取页打不开</h3>
