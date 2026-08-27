@@ -1291,10 +1291,15 @@ async fn launch_single(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            {
-                let mut active = state.active_games.write();
-                active.insert(account_id.to_string(), pid);
-            }
+            state.record_active_game(account_id, pid, &meta.mod_args);
+            crate::audio_mod::emit_runtime_compatibility_warning(
+                app,
+                state,
+                config,
+                &meta,
+                pid,
+                &meta.mod_args,
+            );
             // 将游戏窗口标题改为账号昵称，并调整窗口位置（如已配置）
             if let Ok(meta) = AccountManager::load_meta(&config.accounts_dir, account_id) {
                 let win_title = if meta.display_name.is_empty() {
@@ -1764,8 +1769,15 @@ async fn launch_single_token(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            let mut active = state.active_games.write();
-            active.insert(account_id.to_string(), pid);
+            state.record_active_game(account_id, pid, &meta.mod_args);
+            crate::audio_mod::emit_runtime_compatibility_warning(
+                app,
+                state,
+                config,
+                meta,
+                pid,
+                &meta.mod_args,
+            );
 
             let win_title = if meta.display_name.is_empty() {
                 account_id.to_string()

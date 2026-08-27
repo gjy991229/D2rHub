@@ -881,6 +881,7 @@ pub fn refresh_account_running_state(
         };
         if d2r_processes.is_empty() {
             state.active_games.write().clear();
+            state.active_game_launches.write().clear();
             return Ok(Vec::new());
         }
         let d2r_pids: std::collections::HashSet<u32> = d2r_processes.keys().copied().collect();
@@ -996,11 +997,20 @@ pub fn refresh_account_running_state(
             }
         }
 
-        Ok(account_identities
+        let active_snapshot = active.clone();
+        let running_accounts = account_identities
             .iter()
             .filter(|identity| active.contains_key(&identity.account_id))
             .map(|identity| identity.account_id.clone())
-            .collect())
+            .collect();
+        drop(active);
+        state
+            .active_game_launches
+            .write()
+            .retain(|account_id, launch| {
+                active_snapshot.get(account_id).copied() == Some(launch.pid)
+            });
+        Ok(running_accounts)
     }
     #[cfg(not(target_os = "windows"))]
     {

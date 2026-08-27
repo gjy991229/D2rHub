@@ -16,6 +16,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "sync:audio-mod": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-audio-mod.ps1",
     "build:desktop": "tauri build",
     "build:nsis": "tauri build --bundles nsis",
     "test": "node scripts/run-tests.cjs",

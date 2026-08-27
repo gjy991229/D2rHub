@@ -532,8 +532,7 @@ pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<Account
                 }
             }
             if !running && pid.is_some() {
-                let mut active = state.active_games.write();
-                active.remove(id);
+                state.remove_active_game(id);
             }
             meta.is_running = running;
             meta.running_pid = if running { pid } else { None };
@@ -864,7 +863,7 @@ pub fn delete_account(
             error
         );
     }
-    state.active_games.write().remove(&account_id);
+    state.remove_active_game(&account_id);
 
     let updated_config = {
         let mut config = state.config.write();
@@ -919,7 +918,16 @@ pub fn update_account_mods(
     active_mod: String,
     mod_list: Vec<String>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    update_account_mods_inner(state.inner(), account_id, active_mod, mod_list)
+}
+
+pub(crate) fn update_account_mods_inner(
+    state: &SharedState,
+    account_id: String,
+    active_mod: String,
+    mod_list: Vec<String>,
+) -> Result<AccountMeta, AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state, &account_id)?;
     let cfg = state
         .config
         .read()

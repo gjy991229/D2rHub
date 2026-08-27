@@ -23,7 +23,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置。
 - **音频数据包**：按 v7 协议识别 33 个符文、50 个扩展物品、全部游戏 Area 与主界面，并按目标 D2R PID 捕获实际混音输出；可设置最低记录符文编号，且掉落仅在已确认的野外/地下城场景入库。
-- **独立 Mod 工具**：无界面的 `d2r-audio-mod.exe` 可从游戏创建最小 Mod 或加工既有 Mod；它不读取 D2RHub 配置/数据库，也不修改账号或启用状态。
+- **一键准备识别 Mod**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器。用户只需选择“原版”或一个现有 Mod；软件自动生成新 Mod、复核清单并安全配置账号启动参数。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可用自定义策略把同一次连续行程中的黑色荒地、高塔 1–5 层等分段合并展示，原始数据不变。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
@@ -32,8 +32,8 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 1. 从 [Releases](https://github.com/gjy991229/D2RHub/releases) 下载 MSI / NSIS 安装包。
 2. 首次运行时至少完整配置一套“游戏目录 + 存档目录”。
 3. 添加并初始化账号，然后从账号卡片启动单个账号或批量启动。
-4. 如需声纹统计，单独运行 `d2r-audio-mod.exe minimal --game "<游戏目录>"`，或用 `augment --source "<源 Mod/.mpq>" --game "<游戏目录>"` 加工现有 Mod；按工具输出的 `-mod ... -txt` 自行启用结果。
-5. 在 D2RHub 选择已初始化账号并开启音频声纹识别；目标 D2R 启动后会按 PID 自动监听，并从该账号当前 Mod 根目录读取 v7 地图/物品清单。
+4. 在 D2RHub 选择已初始化账号并开启音频声纹识别。首次开启时选择“我玩原版”或要保留功能的现有 Mod，然后点击“一键准备并开启”。
+5. 软件自动生成新的识别 Mod，并在保留其他启动参数的前提下补齐 `-mod <名称> -txt`。若游戏已经运行，重启该账号后生效。
 
 默认 v7 协议使用相互隔离的地点/掉落同步码、127 chip 掉落 Gold 签名、双份数据包和 CRC-6；10 位 ID 可覆盖 Area 1–1023，默认声纹增益为 `-30dBFS`。D2RHub 内的实现与测试见 [音频遥测 v7](docs/AUDIO_TELEMETRY_V7.md)，生产端的正式协议文档随独立 Mod 工具仓库维护。
 
@@ -75,15 +75,15 @@ D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected a
 - Single, batch, and multi-select launch controls, mod arguments, window positions, and per-account game settings.
 - One complete build with v7 audio-signature decoding, statistics, overlay, and all account-management features included.
 - Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates.
-- A separate headless `d2r-audio-mod.exe` repository for creating a minimal Mod or augmenting an unpacked existing Mod without coupling to D2RHub configuration or data.
+- A bundled but independently maintained `d2r-audio-mod.exe` generator for creating a minimal Mod or augmenting an existing unpacked Mod without coupling either codebase or data model.
 - Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
 
 ### Quick start
 
 1. Download an MSI / NSIS installer from [Releases](https://github.com/gjy991229/D2RHub/releases).
 2. Configure at least one complete game-directory and save-directory pair, then initialize an account.
-3. Use the separate `d2r-audio-mod.exe` tool to create a minimal Mod or augment an existing unpacked Mod, then enable the generated result with the printed `-mod ... -txt` arguments.
-4. Select an initialized monitoring account and enable audio-signature detection. Monitoring starts automatically after its D2R process launches and exposes live capture diagnostics.
+3. Select an initialized monitoring account and enable audio-signature detection. On first use, choose original gameplay or an existing Mod and click the single prepare action.
+4. D2RHub generates and validates a new Mod, preserves unrelated launch flags, and applies `-mod <name> -txt`. Restart an already-running game once for the change to take effect.
 
 The v7 protocol uses isolated area/drop synchronization, a 127-chip Gold signature for drop IDs, redundant packets, and CRC-6. Its 10-bit ID covers Area 1–1023; the default marker level is `-30dBFS`.
 

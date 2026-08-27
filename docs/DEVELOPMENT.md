@@ -43,6 +43,9 @@ Set-Location src-tauri
 cargo test --lib
 Set-Location ..
 
+# 从相邻的独立仓库构建并更新随安装包分发的生成器 sidecar
+npm run sync:audio-mod
+
 # 构建桌面安装包
 npm run build:desktop
 
@@ -58,6 +61,7 @@ npm run build:nsis
 - `src/`：React 页面、组件、状态和前端工具。
 - `src-tauri/src/`：Tauri 命令、Windows 集成、启动流程、符文声纹和统计逻辑。
 - `src-tauri/src/rune_audio/`：v7 协议解码、WASAPI 实时识别和掉落生命周期跟踪。
+- `src-tauri/binaries/`：随安装包分发的独立生成器编译产物；其源码不在本仓库。
 - `public/`：Vite 直接复制的运行时图片和 SVG。
 - `docs/`：用户文档、开发文档及应用内离线页面。
 - `.github/workflows/`：公开仓库的 Pull Request 验证 CI。
@@ -73,7 +77,8 @@ npm run build:nsis
 - `.env`、私钥、Token 或其他凭据；
 - `node_modules/`、`dist/`、`src-tauri/target/`；
 - 本地日志、注册表导出、声纹处理清单和统计数据库；
-- 安装包、可执行文件或个人发布配置。
+- 安装包、个人发布配置或其他临时可执行文件。`src-tauri/binaries/` 中由
+  `npm run sync:audio-mod` 更新的固定 sidecar 是发布所需的例外。
 
 ## CI 与发布
 
@@ -94,4 +99,5 @@ Tauri、SQLite 和 Windows API 依赖量较大，冷编译可能需要数分钟�
 ### 符文声纹监控无法启动
 
 确认使用 64 位 MSVC Rust 工具链和较新的 Windows 11，目标账号的 D2R 进程已经运行，
-并在“设置中心 → 自动化”选择了相同账号。Mod 的创建与加工由独立的无界面工具负责。
+并在“设置中心 → 自动化”选择了相同账号。首次开启时按界面提示一键准备识别 Mod；
+若游戏已经运行，需要重启该账号一次。

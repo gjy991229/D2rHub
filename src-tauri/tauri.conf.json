@@ -66,6 +66,9 @@
     },
     "bundle": {
         "active": true,
+        "externalBin": [
+            "binaries/d2r-audio-mod"
+        ],
         "targets": [
             "msi",
             "nsis"

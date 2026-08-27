@@ -10,7 +10,11 @@ import {
   FolderOpen,
   RotateCw,
   X,
-  Play
+  Play,
+  CheckCircle2,
+  AlertTriangle,
+  Package,
+  ChevronDown,
 } from "lucide-react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -72,6 +76,42 @@ interface RuneAudioStatus {
   last_detected_at: string | null;
   diagnostic_recording: boolean;
   diagnostic_recording_path: string | null;
+}
+
+interface InstalledAudioMod {
+  name: string;
+  audio_ready: boolean;
+}
+
+interface AudioModSetupState {
+  account_id: string;
+  account_name: string;
+  current_mod_name: string | null;
+  launch_arguments: string;
+  has_txt: boolean;
+  ready: boolean;
+  reason_code: string;
+  message: string;
+  installed_mods: InstalledAudioMod[];
+  running_pid: number | null;
+  session_verified: boolean;
+  active_session_ready: boolean | null;
+  restart_required: boolean;
+}
+
+interface AudioModPrepareProgress {
+  account_id: string;
+  phase: string;
+  percent: number;
+  message: string;
+}
+
+interface AudioModPrepareResult {
+  account_id: string;
+  mod_name: string;
+  mod_directory: string;
+  launch_arguments: string;
+  source_mod_name: string | null;
 }
 
 const TRACKING_CATEGORIES = [
@@ -219,11 +259,19 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const { theme, setTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
+  const trackingTargetId = trackingTarget.valid ? trackingTarget.account.id : "";
 
   // Tab and search state
   const [activeTab, setActiveTab] = useState<TabType>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
+  const [audioModState, setAudioModState] = useState<AudioModSetupState | null>(null);
+  const [audioModStateLoading, setAudioModStateLoading] = useState(false);
+  const [audioSetupOpen, setAudioSetupOpen] = useState(false);
+  const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
+  const [audioSetupSource, setAudioSetupSource] = useState("");
+  const [audioPreparing, setAudioPreparing] = useState(false);
+  const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -267,6 +315,57 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     return () => {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [open, activeTab]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "automation" || !trackingTargetId) {
+      setAudioModState(null);
+      return;
+    }
+    let cancelled = false;
+    setAudioModStateLoading(true);
+    void invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId: trackingTargetId })
+      .then((next) => {
+        if (cancelled) return;
+        setAudioModState(next);
+        const availableSources = next.installed_mods.filter((mod) => !mod.audio_ready);
+        const preferred = availableSources.find((mod) => mod.name === next.current_mod_name)
+          ?? availableSources[0];
+        setAudioSetupSource((current) => (
+          current && availableSources.some((mod) => mod.name === current)
+            ? current
+            : preferred?.name ?? ""
+        ));
+        if (!next.ready && config?.rune_audio_enabled) setAudioSetupOpen(true);
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setAudioModState(null);
+          console.warn("读取识别 Mod 状态失败", error);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setAudioModStateLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, activeTab, trackingTargetId, config?.rune_audio_enabled]);
+
+  useEffect(() => {
+    if (!open || activeTab !== "automation") return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AudioModPrepareProgress>("audio-mod-prepare-progress", (event) => {
+      if (!cancelled) setAudioPrepareProgress(event.payload);
+    }).then((stopListening) => {
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, [open, activeTab]);
 
@@ -589,6 +688,131 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       }
     } catch (error) {
       showToast("error", `切换诊断录音失败: ${error}`);
+    }
+  };
+
+  const persistAudioEnabledState = async (accountId: string, enabled: boolean) => {
+    const current = useGlobalConfig.getState().config;
+    if (!current) return;
+    const next = {
+      ...current,
+      rune_audio_target_account: accountId,
+      rune_audio_enabled: enabled,
+    };
+    useGlobalConfig.setState({ config: next });
+    await save(next);
+    setOriginalConfig(JSON.parse(JSON.stringify(next)));
+  };
+
+  const handleAudioTargetChange = async (accountId: string) => {
+    const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
+    updateConfig(next => {
+      next.rune_audio_target_account = accountId;
+      next.rune_audio_enabled = false;
+    });
+    setAudioSetupOpen(false);
+    setAudioModStateLoading(true);
+    try {
+      const next = await invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      setAudioModState(next);
+      const sources = next.installed_mods.filter((mod) => !mod.audio_ready);
+      const preferred = sources.find((mod) => mod.name === next.current_mod_name) ?? sources[0];
+      setAudioSetupSource(preferred?.name ?? "");
+      setAudioSetupMode(preferred ? "existing" : "original");
+      if (wasEnabled && next.ready) {
+        await persistAudioEnabledState(accountId, true);
+      } else if (wasEnabled) {
+        setAudioSetupOpen(true);
+      }
+    } catch (error) {
+      showToast("error", `无法检查账号的识别 Mod：${error}`);
+    } finally {
+      setAudioModStateLoading(false);
+    }
+  };
+
+  const handleAudioToggle = async (enabled: boolean) => {
+    if (!enabled) {
+      if (trackingTargetId) await persistAudioEnabledState(trackingTargetId, false);
+      else updateConfig(next => { next.rune_audio_enabled = false; });
+      setAudioSetupOpen(false);
+      await invoke("stop_rune_audio_monitor").catch(() => {});
+      return;
+    }
+
+    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
+    if (!accountId) {
+      showToast("warning", "请先初始化一个账号");
+      return;
+    }
+    setAudioModStateLoading(true);
+    try {
+      const next = await invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      setAudioModState(next);
+      if (next.ready) {
+        await persistAudioEnabledState(accountId, true);
+        setAudioSetupOpen(false);
+        if (next.running_pid && next.active_session_ready === true) {
+          await invoke("start_rune_audio_monitor").catch(() => {});
+        } else if (next.restart_required) {
+          showToast("warning", "设置已生效，请重启该账号的游戏后开始识别");
+        }
+        return;
+      }
+
+      const sources = next.installed_mods.filter((mod) => !mod.audio_ready);
+      const preferred = sources.find((mod) => mod.name === next.current_mod_name) ?? sources[0];
+      setAudioSetupSource(preferred?.name ?? "");
+      setAudioSetupMode(preferred ? "existing" : "original");
+      updateConfig(current => {
+        current.rune_audio_target_account = accountId;
+        current.rune_audio_enabled = false;
+      });
+      setAudioSetupOpen(true);
+    } catch (error) {
+      showToast("error", `无法开启声纹识别：${error}`);
+    } finally {
+      setAudioModStateLoading(false);
+    }
+  };
+
+  const handlePrepareAudioMod = async () => {
+    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
+    if (!accountId) return;
+    if (audioSetupMode === "existing" && !audioSetupSource) {
+      showToast("warning", "请选择要保留功能的现有 Mod");
+      return;
+    }
+
+    setAudioPreparing(true);
+    setAudioPrepareProgress({
+      account_id: accountId,
+      phase: "starting",
+      percent: 1,
+      message: "正在开始准备…",
+    });
+    try {
+      const result = await invoke<AudioModPrepareResult>("prepare_audio_mod", {
+        accountId,
+        sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+      });
+      const next = await invoke<AudioModSetupState>("apply_audio_mod_to_account", {
+        accountId,
+        modName: result.mod_name,
+      });
+      await loadAccounts();
+      setAudioModState(next);
+      await persistAudioEnabledState(accountId, true);
+      setAudioSetupOpen(false);
+      if (next.restart_required) {
+        showToast("warning", "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别");
+      } else {
+        showToast("success", "声纹识别已准备完成，下次启动会自动生效");
+      }
+    } catch (error) {
+      showToast("error", `准备识别 Mod 失败：${error}`);
+    } finally {
+      setAudioPreparing(false);
     }
   };
 
@@ -1398,11 +1622,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       <p className="text-2xs text-text-muted">按 D2R 进程捕获 Mod 音频；自动识别所选掉落、场景切换并完成刷图计时统计</p>
                     </div>
                     <Toggle
-                      checked={!!config.rune_audio_enabled && trackingTarget.valid}
-                      disabled={!trackingTarget.valid}
+                      checked={!!config.rune_audio_enabled}
+                      disabled={initializedTrackingAccounts.length === 0 || audioPreparing}
                       ariaLabel="启用音频声纹自动识别"
                       descriptionId="rune-audio-target-help"
-                      onChange={v => updateConfig(c => { c.rune_audio_enabled = v; })}
+                      onChange={handleAudioToggle}
                     />
                   </div>
 
@@ -1419,7 +1643,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         value={trackingTarget.valid ? trackingTarget.account.id : ""}
                         disabled={initializedTrackingAccounts.length === 0}
                         aria-describedby="rune-audio-target-help"
-                        onChange={e => updateConfig(c => { c.rune_audio_target_account = e.target.value; })}
+                        onChange={e => void handleAudioTargetChange(e.target.value)}
                         className="h-8 min-w-36 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         <option value="" disabled>
@@ -1434,10 +1658,137 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       {initializedTrackingAccounts.length === 0
                         ? "请先初始化至少一个账号，才能启用声纹识别。"
                         : trackingTarget.valid
-                          ? `将固定监听“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的 D2R 进程。`
-                          : "请先选择目标账号，才能启用声纹识别。"}
+                          ? `只识别“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的游戏声音。`
+                          : "开启时会自动使用第一个可用账号，也可以先在这里选择。"}
                     </p>
                   </div>
+
+                  {trackingTarget.valid && (
+                    <div className="border-t border-border-default/50 pt-3">
+                      {audioModStateLoading && !audioModState ? (
+                        <div className="h-16 rounded-xl bg-surface-hover skeleton" aria-label="正在检查识别 Mod" />
+                      ) : audioModState?.ready && !audioSetupOpen ? (
+                        <div className="flex items-start justify-between gap-3 rounded-xl bg-success/10 px-3 py-2.5">
+                          <div className="flex min-w-0 items-start gap-2.5">
+                            <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-semibold text-text-primary">识别 Mod 已就绪</p>
+                              <p className="mt-0.5 truncate text-2xs text-text-secondary">
+                                {audioModState.current_mod_name} · 启动参数已自动配置
+                              </p>
+                              {audioModState.restart_required && (
+                                <p className="mt-1 text-2xs text-warning">当前游戏仍是旧配置，重启该账号后生效</p>
+                              )}
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setAudioSetupOpen(true)}
+                            className="shrink-0 text-2xs font-medium text-text-secondary hover:text-text-primary"
+                          >
+                            重新准备
+                          </button>
+                        </div>
+                      ) : audioSetupOpen ? (
+                        <div className="audio-mod-setup rounded-xl bg-surface-hover p-3">
+                          <div className="flex items-start gap-2.5">
+                            <Package size={16} className="mt-0.5 shrink-0 text-accent" />
+                            <div>
+                              <p className="text-xs font-semibold text-text-primary">准备识别 Mod</p>
+                              <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
+                                只需选择是否保留现有 Mod 的功能，其他内容由 D2RHub 自动完成。
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 flex gap-2" role="radiogroup" aria-label="识别 Mod 类型">
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={audioSetupMode === "original"}
+                              disabled={audioPreparing}
+                              onClick={() => setAudioSetupMode("original")}
+                              className={`audio-mod-choice flex-1 ${audioSetupMode === "original" ? "is-selected" : ""}`}
+                            >
+                              <span className="block text-xs font-semibold">我玩原版</span>
+                              <span className="mt-0.5 block text-2xs text-text-muted">只加入识别能力</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="radio"
+                              aria-checked={audioSetupMode === "existing"}
+                              disabled={audioPreparing || !audioModState?.installed_mods.some((mod) => !mod.audio_ready)}
+                              onClick={() => setAudioSetupMode("existing")}
+                              className={`audio-mod-choice flex-1 ${audioSetupMode === "existing" ? "is-selected" : ""}`}
+                            >
+                              <span className="block text-xs font-semibold">我使用 Mod</span>
+                              <span className="mt-0.5 block text-2xs text-text-muted">保留原 Mod 功能</span>
+                            </button>
+                          </div>
+
+                          {audioSetupMode === "existing" && (
+                            <label className="mt-2 block">
+                              <span className="sr-only">选择现有 Mod</span>
+                              <select
+                                value={audioSetupSource}
+                                disabled={audioPreparing}
+                                onChange={event => setAudioSetupSource(event.target.value)}
+                                className="h-8 w-full rounded-lg border border-border-default bg-surface-card px-2.5 text-xs text-text-primary"
+                              >
+                                {audioModState?.installed_mods
+                                  .filter((mod) => !mod.audio_ready)
+                                  .map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
+                              </select>
+                            </label>
+                          )}
+
+                          {audioPreparing && audioPrepareProgress && (
+                            <div className="mt-3" aria-live="polite">
+                              <div className="mb-1.5 flex items-center justify-between gap-3 text-2xs">
+                                <span className="truncate text-text-secondary">{audioPrepareProgress.message}</span>
+                                <span className="shrink-0 font-mono text-text-muted">{Math.round(audioPrepareProgress.percent)}%</span>
+                              </div>
+                              <div className="h-1.5 overflow-hidden rounded-full bg-surface-active">
+                                <div
+                                  className="h-full rounded-full bg-accent transition-[width] duration-200 ease-out"
+                                  style={{ width: `${Math.max(2, audioPrepareProgress.percent)}%` }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          <Button
+                            variant="primary"
+                            size="md"
+                            loading={audioPreparing}
+                            disabled={audioSetupMode === "existing" && !audioSetupSource}
+                            onClick={handlePrepareAudioMod}
+                            className="mt-3 w-full"
+                          >
+                            {audioPreparing ? "正在准备，请勿关闭软件" : "一键准备并开启"}
+                          </Button>
+                          <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
+                            不修改源 Mod；自动生成新 Mod，并为此账号配置 -mod 与 -txt。
+                          </p>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setAudioSetupOpen(true)}
+                          className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-hover px-3 py-2.5 text-left hover:bg-surface-active"
+                        >
+                          <span className="flex min-w-0 items-start gap-2.5">
+                            <AlertTriangle size={15} className="mt-0.5 shrink-0 text-warning" />
+                            <span>
+                              <span className="block text-xs font-semibold text-text-primary">需要先准备识别 Mod</span>
+                              <span className="mt-0.5 block text-2xs text-text-secondary">{audioModState?.message ?? "点击开始，约一分钟完成"}</span>
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-2xs font-medium text-accent">开始</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-2 border-t border-border-default/50 pt-3">
                     <div>
@@ -1548,26 +1899,30 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   </div>
 
                   {config.rune_audio_enabled && trackingTarget.valid && (
-                    <div className="space-y-3 border-t border-border-default/50 pt-3">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <span className="text-sm font-semibold text-text-secondary">识别阈值</span>
-                          <p className="text-2xs text-text-muted">v7 默认 0.56；独立同步码会隔离地点与掉落，通常无需调整</p>
+                    <details className="group border-t border-border-default/50 pt-3">
+                      <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-text-secondary">
+                        诊断工具
+                        <ChevronDown size={14} className="transition-transform duration-200 group-open:rotate-180" />
+                      </summary>
+                      <div className="mt-3 space-y-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <span className="text-xs font-semibold text-text-secondary">识别阈值</span>
+                            <p className="text-2xs text-text-muted">默认 0.56；没有误识别时无需调整</p>
+                          </div>
+                          <input
+                            type="number"
+                            min={0.4}
+                            max={0.95}
+                            step={0.01}
+                            value={config.rune_audio_detection_threshold ?? 0.56}
+                            onChange={event => updateConfig(c => {
+                              c.rune_audio_detection_threshold = Number(event.target.value);
+                            })}
+                            className="h-8 w-24 rounded-lg border border-border-default bg-surface-hover px-2.5 text-xs text-text-primary"
+                          />
                         </div>
-                        <input
-                          type="number"
-                          min={0.4}
-                          max={0.95}
-                          step={0.01}
-                          value={config.rune_audio_detection_threshold ?? 0.56}
-                          onChange={event => updateConfig(c => {
-                            c.rune_audio_detection_threshold = Number(event.target.value);
-                          })}
-                          className="h-8 w-24 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-                        />
-                      </div>
 
-                      <div className="border-t border-border-default/50 pt-3">
                         <Button
                           variant="secondary"
                           size="md"
@@ -1584,45 +1939,44 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           className="w-full"
                         >
                           <RotateCw size={13} className="shrink-0" />
-                          应用配置并重启声纹监控
+                          应用并重启识别
                         </Button>
-                        <p className="text-2xs text-text-muted text-center mt-1">目标 D2R 必须已运行</p>
-                      </div>
 
-                      <div className="border-t border-border-default/50 pt-3 space-y-1.5">
-                        <Button
-                          variant={audioStatus?.diagnostic_recording ? "danger" : "secondary"}
-                          size="md"
-                          disabled={!audioStatus?.running}
-                          onClick={toggleAudioDiagnosticRecording}
-                          className="w-full"
-                        >
-                          {audioStatus?.diagnostic_recording ? "停止并保存诊断录音" : "开始声纹诊断录音"}
-                        </Button>
-                        <p className="text-2xs text-text-muted text-center break-all">
-                          {audioStatus?.diagnostic_recording
-                            ? "正在录制目标 D2R 进程的单声道音频，并同步保存识别事件"
-                            : audioStatus?.diagnostic_recording_path
-                              ? `最近保存：${audioStatus.diagnostic_recording_path}`
-                              : "生成 WAV 与同名 events.json；不录制麦克风或其他应用"}
-                        </p>
+                        <div className="border-t border-border-default/50 pt-3">
+                          <Button
+                            variant={audioStatus?.diagnostic_recording ? "danger" : "secondary"}
+                            size="md"
+                            disabled={!audioStatus?.running}
+                            onClick={toggleAudioDiagnosticRecording}
+                            className="w-full"
+                          >
+                            {audioStatus?.diagnostic_recording ? "停止并保存诊断录音" : "开始诊断录音"}
+                          </Button>
+                          <p className="mt-1 text-center text-2xs text-text-muted break-all">
+                            {audioStatus?.diagnostic_recording
+                              ? "正在录制目标游戏的声音并保存识别事件"
+                              : audioStatus?.diagnostic_recording_path
+                                ? `最近保存：${audioStatus.diagnostic_recording_path}`
+                                : "仅录制目标游戏，不录制麦克风或其他应用"}
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    </details>
                   )}
                 </div>
 
                 <div className="spatial-panel p-4 space-y-3">
                   <div>
-                    <span className="text-xs font-bold text-text-primary block mb-1">独立协议接收器 · v7</span>
+                    <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
                     <p className="text-2xs text-text-muted">
-                      D2RHub 只监听并统计当前账号的音频协议事件；会按该账号的 -mod 参数，从当前 Mod 根目录读取地图与物品清单。
+                      D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。
                     </p>
                   </div>
                   <p className="text-2xs text-text-secondary">
-                    Mod 由独立的 d2r-audio-mod 命令行工具生成。两个程序不共享配置、数据库或进程，只约定声纹编码和 JSON 清单。
+                    内置的生成器仍是独立组件：它只生成新的 Mod 文件，不修改源 Mod；账号切换与识别由 D2RHub 管理。
                   </p>
                   <p className="text-2xs text-warning">
-                    这里勾选的是接收端记录范围；独立工具的 --track 决定 Mod 实际发出哪些掉落标记。
+                    当前账号必须使用软件生成的新 Mod。若游戏已经打开，修改会在重启该账号后生效。
                   </p>
                   <div className="border-t border-border-default/50 pt-3">
                     <Button

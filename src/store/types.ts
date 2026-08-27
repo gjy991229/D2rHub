@@ -180,3 +180,11 @@ export interface LaunchResult {
   error: string | null;
   mutex_killed: boolean;
 }
+
+export interface AudioModRuntimeWarning {
+  account_id: string;
+  account_name: string;
+  target_pid: number;
+  reason_code: string;
+  message: string;
+}

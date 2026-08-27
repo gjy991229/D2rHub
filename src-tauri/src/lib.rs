@@ -1,3 +1,4 @@
+mod audio_mod;
 mod battle_net_config;
 mod commands;
 mod error;
@@ -371,6 +372,10 @@ pub fn run() {
             commands::system::open_user_guide,
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
+            // ── 声纹 Mod 一键准备 ──
+            audio_mod::get_audio_mod_setup_state,
+            audio_mod::prepare_audio_mod,
+            audio_mod::apply_audio_mod_to_account,
             // ── 符文音频声纹 ──
             rune_audio::monitor::start_rune_audio_monitor,
             rune_audio::monitor::restart_rune_audio_monitor,

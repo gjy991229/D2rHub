@@ -6,7 +6,7 @@ import { useLaunch } from "../store/launch";
 import { useAccounts } from "../store/accounts";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
-import type { GlobalConfig, LaunchProgress } from "../store/types";
+import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
 import { validateTrackingTarget } from "../utils/trackingTarget";
 
 async function retryWindowAction(
@@ -161,6 +161,21 @@ export function useLaunchEvents(config: GlobalConfig | null) {
     return () => {
       cancelled = true;
       if (unlisten) unlisten();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void listen<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
+      showToast("warning", event.payload.message);
+    }).then((stopListening) => {
+      if (cancelled) stopListening();
+      else unlisten = stopListening;
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
     };
   }, []);
 

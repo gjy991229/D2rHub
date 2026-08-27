@@ -5,8 +5,8 @@ use super::tracking::{
     DropPresenceGate, SceneTransitionGate, SegmentTracker, TrackedDrop, TrackedDropKind,
     TrackingSnapshot,
 };
+#[cfg(test)]
 use crate::commands::launch::parse_windows_command_line;
-use crate::launch_context::{ContextPurpose, LaunchContext};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashSet, VecDeque};
 use std::fs::File;
@@ -287,28 +287,18 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         .copied()
         .or(account.running_pid)
         .ok_or_else(|| format!("目标账号“{}”的 D2R 尚未运行", account.display_name))?;
-    let catalog_directory = match active_mod_name(&account.mod_args)? {
-        Some(mod_name) => {
-            match LaunchContext::for_account(&config, &account, ContextPurpose::Settings) {
-                Ok(context) => Some(
-                    context
-                        .installation
-                        .game_directory
-                        .join("mods")
-                        .join(mod_name),
-                ),
-                Err(error) => {
-                    crate::logger::log_msg(
-                        "WARN",
-                        "RuneAudio",
-                        &format!("无法定位当前 Mod 的协议清单目录: {error}"),
-                    );
-                    None
-                }
-            }
-        }
-        None => None,
-    };
+    let launch_arguments = state
+        .active_game_launches
+        .read()
+        .get(&account.id)
+        .filter(|snapshot| snapshot.pid == target_pid)
+        .map(|snapshot| snapshot.mod_args.clone())
+        .unwrap_or_else(|| account.mod_args.clone());
+    let catalog_directory = Some(crate::audio_mod::validate_runtime_audio_mod(
+        &config,
+        &account,
+        &launch_arguments,
+    )?);
     Ok(MonitorConfig {
         character_name: if account.display_name.trim().is_empty() {
             account.id.clone()
@@ -324,6 +314,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
     })
 }
 
+#[cfg(test)]
 fn active_mod_name(mod_args: &str) -> Result<Option<String>, String> {
     if mod_args.trim().is_empty() {
         return Ok(None);

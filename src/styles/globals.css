@@ -98,6 +98,33 @@ html, body, #root {
 
 .border-subtle { border: 1px solid var(--border-default); }
 
+.audio-mod-choice {
+  min-height: 54px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  background: var(--surface-card);
+  text-align: left;
+  transition: border-color 180ms ease-out, background-color 180ms ease-out, color 180ms ease-out;
+}
+
+.audio-mod-choice:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.audio-mod-choice.is-selected {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border-default));
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-card));
+}
+
+.audio-mod-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
+
 /* ── Tauri drag region ── */
 [data-tauri-drag-region] { -webkit-app-region: drag; cursor: default; }
 [data-tauri-drag-region] button,
@@ -1287,6 +1314,21 @@ html, body, #root {
 
 .overlay-mini-terror-zone-text {
   line-height: 1;
+}
+
+@keyframes overlay-drop-notice-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.overlay-drop-notice-row {
+  animation: overlay-drop-notice-in 200ms var(--ease-out-expo) both;
 }
 
 [data-mini-layout="single"] .overlay-window-mini {
