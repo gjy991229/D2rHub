@@ -1,9 +1,9 @@
 <div align="center">
   <img src="logo.png" alt="D2RHub Logo" width="112" />
   <h1>D2RHub</h1>
-  <p><strong>Diablo II: Resurrected 多账号、多版本与音频遥测刷图助手</strong></p>
+  <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.8.0-d5a85a" alt="Version 0.8.0" />
+    <img src="https://img.shields.io/badge/version-0.8.2-d5a85a" alt="Version 0.8.2" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
@@ -16,15 +16,18 @@
 
 D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重制版》的多个账号、国服/国际服客户端配置和多开流程，并通过 mod 音频声纹记录符文掉落和本地统计数据。
 
+当前只维护一个功能完整的桌面版本，账号管理、音频声纹、统计、悬浮窗和桌宠均默认包含。MSI 与 NSIS 只是安装格式不同，不是两个功能版本。
+
 ### 当前能力
 
-- **国服 / 国际服双版本隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
+- **国服 / 国际服双客户端隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
 - **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置。
-- **音频数据包**：按 v7 协议识别 33 个符文、50 个扩展物品、全部游戏 Area 与主界面，并按目标 D2R PID 捕获实际混音输出；可设置最低记录符文编号，且掉落仅在已确认的野外/地下城场景入库。
+- **音频数据包**：按 v7 协议识别 33 个符文、50 个扩展物品、全部游戏 Area 与主界面，并按目标 D2R PID 捕获实际混音输出；可设置最低记录符文编号，且掉落仅在已确认的野外/地下城场景入库。隐藏场景统计悬浮窗不会停止已开启的声纹监控。
 - **一键准备识别 Mod**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器。用户只需选择“原版”或一个现有 Mod；软件自动生成新 Mod、复核清单并安全配置账号启动参数。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可用自定义策略把同一次连续行程中的黑色荒地、高塔 1–5 层等分段合并展示，原始数据不变。
+- **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
 ### 快速开始
@@ -68,14 +71,17 @@ npm run build:desktop
 
 D2RHub is a local Windows utility for managing multiple Diablo II: Resurrected accounts, separate CN/Global client profiles, and multi-client launch workflows. It uses mod audio IDs for rune-drop tracking without reading game memory.
 
+D2RHub is maintained as one complete desktop edition. Account management, audio telemetry, statistics, overlays, and Bongo Cat are included in the same build; MSI and NSIS are installation formats, not separate feature editions.
+
 ### Current features
 
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
 - Single, batch, and multi-select launch controls, mod arguments, window positions, and per-account game settings.
-- One complete build with v7 audio-signature decoding, statistics, overlay, and all account-management features included.
-- Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates.
+- V7 audio-signature decoding, statistics, overlays, and all account-management features in the standard build.
+- Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates. Hiding the statistics overlay does not stop enabled audio tracking.
 - A bundled but independently maintained `d2r-audio-mod.exe` generator for creating a minimal Mod or augmenting an existing unpacked Mod without coupling either codebase or data model.
+- Grouped overlay drops with counts, short-lived new-drop notices, and a compact latest-five view that can expand on demand.
 - Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
 
 ### Quick start
@@ -89,7 +95,7 @@ The v7 protocol uses isolated area/drop synchronization, a 127-chip Gold signatu
 
 ### Security and local data
 
-D2RHub uses Windows process, handle, registry, filesystem, window, and WASAPI interfaces. It does **not** write to game memory or inject DLLs. The FLAC processor writes tagged copies to a separate output folder.
+D2RHub uses Windows process, handle, registry, filesystem, window, and WASAPI interfaces. It does **not** write to game memory or inject DLLs. The Mod generator writes to a new output Mod and never overwrites the selected source Mod.
 
 Runtime data is stored beside the executable in `config/` and `logs/`, including global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data.
 
