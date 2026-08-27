@@ -222,7 +222,7 @@ function App() {
               const overlayWin = await WebviewWindow.getByLabel('overlay');
               if (overlayWin) await overlayWin.show();
             }
-            if (import.meta.env.VITE_ENABLE_OCR !== "false" && config?.enable_stats_overlay) {
+            if (config?.enable_stats_overlay) {
               const statsWin = await WebviewWindow.getByLabel('stats-overlay');
               if (statsWin) await statsWin.show();
             }

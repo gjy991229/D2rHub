@@ -387,7 +387,7 @@ async function primeStores() {
   });
   useAccounts.setState({ accounts, loading: false, error: null });
   useTheme.setState({ theme: requestedTheme });
-  if (surface === "overlay" && seedSampleDrops) {
+  if (surface === "stats-overlay" && seedSampleDrops) {
     useStats.setState({
       currentScene: "混沌魔殿",
       currentRunName: "混沌魔殿",
@@ -409,6 +409,7 @@ async function primeStores() {
     });
   }
   document.documentElement.setAttribute("data-theme", requestedTheme);
+  return useStats;
 }
 
 function AuditRuntime() {
@@ -421,11 +422,20 @@ function AuditRuntime() {
 
     async function loadSurface() {
       try {
-        await primeStores();
+        const statsStore = await primeStores();
 
         if (surface === "overlay" || surface === "stats-overlay") {
           const { Overlay } = await import("./pages/Overlay");
-          if (!cancelled) setContent(<Overlay />);
+          if (!cancelled) {
+            setContent(<Overlay />);
+            if (surface === "stats-overlay" && seedSampleDrops) {
+              const sampleDrops = statsStore.getState().currentDrops;
+              window.requestAnimationFrame(() => {
+                statsStore.setState({ currentDrops: [] });
+                window.setTimeout(() => statsStore.setState({ currentDrops: sampleDrops }), 80);
+              });
+            }
+          }
           return;
         }
 

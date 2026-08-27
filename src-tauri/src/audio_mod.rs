@@ -298,7 +298,7 @@ fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             Some(InstalledMod { name, audio_ready })
         })
         .collect::<Vec<_>>();
-    mods.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    mods.sort_by_key(|entry| entry.name.to_lowercase());
     mods
 }
 

@@ -62,7 +62,35 @@ export function runTests() {
     overlaySource.includes("onDoubleClick={handleTimerDoubleClick}")
       && overlaySource.includes("useStats.getState().finishRunAsTown()")
       && statsSource.includes("await get().finishRunAsTown(normalized)"),
-    "timer double-click and OCR town detection share the same run-finishing transition",
+    "timer double-click and audio-tracked town detection share the same run-finishing transition",
+  );
+  assert(
+    overlaySource.includes("aggregateOverlayDrops(stats.currentDrops)")
+      && overlaySource.includes("displayedDropGroups.map(({ key, drop, count, latestIndex })")
+      && overlaySource.includes("stats.removeCurrentDrop(latestIndex)"),
+    "statistics overlay groups repeated drops and removes the latest occurrence from a group",
+  );
+  assert(
+    overlaySource.includes('aria-live="polite"')
+      && overlaySource.includes("RECENT_DROP_NOTICE_LIMIT = 3")
+      && overlaySource.includes("RECENT_DROP_NOTICE_DURATION_MS = 6000"),
+    "drop feedback announces at most three recent detections and expires them promptly",
+  );
+  assert(
+    overlaySource.includes("const isAudioTrackingActive = isStatsOverlay && !!config?.rune_audio_enabled")
+      && overlaySource.includes("if (!isAudioTrackingActive) return;")
+      && overlaySource.includes("(!isPollerActive && !isAudioTrackingActive)"),
+    "audio tracking remains active when the statistics window is hidden",
+  );
+  assert(
+    overlaySource.includes("stats.sessionRuns[stats.currentRunKey || stats.currentRunName || stats.currentScene]"),
+    "session run totals use the stable audio-tracking run key before display-name fallbacks",
+  );
+  assert(
+    overlaySource.includes("COLLAPSED_DROP_GROUP_LIMIT = 5")
+      && overlaySource.includes("setShowAllDropGroups((current) => !current)")
+      && overlaySource.includes("aria-expanded={showAllDropGroups}"),
+    "drop groups stay compact by default and expose an accessible expansion control",
   );
   assert(
     overlaySource.includes('OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size"'),

@@ -115,7 +115,7 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
           { label: "overlay", enabled: config.enable_tz_overlay },
           {
             label: "stats-overlay",
-            enabled: import.meta.env.VITE_ENABLE_OCR !== "false" && config.enable_stats_overlay,
+            enabled: config.enable_stats_overlay,
           },
         ];
         let allSettled = true;

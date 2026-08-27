@@ -58,7 +58,7 @@ pub struct GlobalConfig {
     /// 邪恶区域播报悬浮窗。旧配置从 enable_overlay 迁移。
     #[serde(default = "default_enable_overlay")]
     pub enable_tz_overlay: bool,
-    /// OCR 场景计时与掉落统计悬浮窗。旧配置从 enable_overlay 迁移。
+    /// 音频遥测场景计时与掉落统计悬浮窗。旧配置从 enable_overlay 迁移。
     #[serde(default = "default_enable_overlay")]
     pub enable_stats_overlay: bool,
     /// 主题选择: "onyx" | "light"

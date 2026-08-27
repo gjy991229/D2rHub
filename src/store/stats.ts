@@ -10,7 +10,7 @@ const RUNE_NAMES: string[] = [
   "瑟", "贝", "乔", "查姆", "萨德",
 ];
 
-/// 方言别名 → 标准名（兼容旧数据库中的文字识别结果）
+/// 方言别名 → 标准名（兼容旧数据库中的历史掉落名称）
 const RUNE_ALIASES: Record<string, string> = {
   "提尔": "特尔",
   "奈夫": "那夫",
@@ -210,7 +210,7 @@ export const useStats = create<StatsState>((set, get) => ({
     const wasTiming = get().isTiming;
     const savePromise = wasTiming ? get().stopTimerAndSave() : Promise.resolve();
 
-    // 与 OCR 识别到主城时使用相同的场景重置。状态先落地，避免数据库写入
+    // 与音频遥测识别到主城时使用相同的场景重置。状态先落地，避免数据库写入
     // 较慢时界面仍继续计时；stopTimerAndSave 已经持有本轮的完整保存快照。
     set({
       currentScene: townScene,
