@@ -416,7 +416,7 @@ async function primeStores() {
       elapsedMs: 73_400,
       dbAvgTime: 81.2,
       dbTotalRuns: 218,
-      sessionRuns: { "area:108": 6 },
+      sessionRuns: { "混沌魔殿": 6 },
       currentDrops: [
         { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
         { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },

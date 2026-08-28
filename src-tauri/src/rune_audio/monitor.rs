@@ -3,7 +3,7 @@ use super::item_catalog::{ItemCatalog, CATEGORY_RUNES};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
     DropPresenceGate, SceneTransitionGate, SegmentTracker, TerrorZonePresenceGate, TrackedDrop,
-    TrackedDropKind, TrackingSnapshot,
+    TrackedDropKind, TrackingSnapshot, GENERIC_TERROR_ZONE_NAME,
 };
 #[cfg(test)]
 use crate::commands::launch::parse_windows_command_line;
@@ -632,7 +632,12 @@ fn handle_terror_zone_detection(
     let current_zone = crate::commands::terror_zone::cached_current_terror_zone();
     let (scene_name, scene_name_en) = current_zone
         .map(|zone| (zone.location_name, "Terror Zone".to_string()))
-        .unwrap_or_else(|| ("恐怖区域".to_string(), "Terror Zone".to_string()));
+        .unwrap_or_else(|| {
+            (
+                GENERIC_TERROR_ZONE_NAME.to_string(),
+                "Terror Zone".to_string(),
+            )
+        });
     let now = chrono::Local::now();
     let outcome = tracker.observe_terror_zone(
         scene_name,
@@ -654,23 +659,31 @@ fn handle_terror_zone_detection(
             );
         }
     }
+    emit_terror_zone_tracking_update(app, config, &outcome.snapshot, confidence);
+}
+
+fn emit_terror_zone_tracking_update(
+    app: &tauri::AppHandle,
+    config: &MonitorConfig,
+    snapshot: &TrackingSnapshot,
+    confidence: f32,
+) {
     let event = LocationAudioEvent {
         source: "terror_zone_audio".to_string(),
         account_id: config.account_id.clone(),
         area_id: None,
-        scene_key: outcome
-            .snapshot
+        scene_key: snapshot
             .current_run_key
             .clone()
             .unwrap_or_else(|| "terror_zone:unknown".to_string()),
-        scene_name: outcome.snapshot.current_scene.clone(),
-        scene_name_en: outcome.snapshot.current_scene_en.clone(),
+        scene_name: snapshot.current_scene.clone(),
+        scene_name_en: snapshot.current_scene_en.clone(),
         tz: true,
         location_kind: LocationKind::Wilderness,
         is_town: false,
         is_frontend: false,
         confidence,
-        timestamp: now.to_rfc3339(),
+        timestamp: chrono::Local::now().to_rfc3339(),
     };
     if let Err(error) = app.emit("location-audio-detected", &event) {
         crate::logger::log_msg(
@@ -679,7 +692,24 @@ fn handle_terror_zone_detection(
             &format!("推送 TZ 场景声纹事件失败: {error}"),
         );
     }
-    emit_tracking_snapshot(app, &outcome.snapshot);
+    emit_tracking_snapshot(app, snapshot);
+}
+
+fn upgrade_cached_terror_zone_name(
+    app: &tauri::AppHandle,
+    config: &MonitorConfig,
+    tracker: &mut SegmentTracker,
+    confidence: f32,
+) {
+    let Some(zone) = crate::commands::terror_zone::cached_current_terror_zone() else {
+        return;
+    };
+    let Some(snapshot) =
+        tracker.upgrade_current_terror_zone(zone.location_name, "Terror Zone".to_string())
+    else {
+        return;
+    };
+    emit_terror_zone_tracking_update(app, config, &snapshot, confidence);
 }
 
 #[cfg(target_os = "windows")]
@@ -866,6 +896,13 @@ fn capture_loop(
                         &config,
                         &mut tracker,
                         detection.start_frame,
+                        detection.confidence,
+                    );
+                } else {
+                    upgrade_cached_terror_zone_name(
+                        &app,
+                        &config,
+                        &mut tracker,
                         detection.confidence,
                     );
                 }

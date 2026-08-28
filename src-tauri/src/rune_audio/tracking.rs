@@ -5,6 +5,8 @@ use super::catalog::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub const GENERIC_TERROR_ZONE_NAME: &str = "恐怖区域";
+
 /// Deduplicates location markers while accepting a different location immediately.
 #[derive(Debug, Clone)]
 pub struct SceneTransitionGate {
@@ -223,7 +225,7 @@ impl TrackedLocation {
 
     fn terror_zone(scene_name: String, scene_name_en: String) -> Self {
         let scene_name = if scene_name.trim().is_empty() {
-            "恐怖区域".to_string()
+            GENERIC_TERROR_ZONE_NAME.to_string()
         } else {
             scene_name.trim().to_string()
         };
@@ -324,6 +326,36 @@ impl SegmentTracker {
             observed_at_ms,
             absolute_time,
         )
+    }
+
+    /// Replaces the fallback TZ label after the forecast cache becomes ready.
+    /// This is metadata-only: the active timer, journey, segment index and drops
+    /// remain untouched, so a late network response cannot create a fake split.
+    pub fn upgrade_current_terror_zone(
+        &mut self,
+        scene_name: String,
+        scene_name_en: String,
+    ) -> Option<TrackingSnapshot> {
+        let upgraded = TrackedLocation::terror_zone(scene_name, scene_name_en);
+        if upgraded.scene_name == GENERIC_TERROR_ZONE_NAME
+            || !self.current_location.as_ref().is_some_and(|location| {
+                location.tz && location.scene_name == GENERIC_TERROR_ZONE_NAME
+            })
+            || !self
+                .active_segment
+                .as_ref()
+                .is_some_and(|segment| segment.tz && segment.scene_name == GENERIC_TERROR_ZONE_NAME)
+        {
+            return None;
+        }
+
+        let active_segment = self.active_segment.as_mut()?;
+        active_segment.scene_key = upgraded.scene_key.clone();
+        active_segment.scene_name = upgraded.scene_name.clone();
+        active_segment.scene_name_en = upgraded.scene_name_en.clone();
+        self.current_location = Some(upgraded);
+        self.revision += 1;
+        Some(self.snapshot())
     }
 
     fn observe_tracked_location(
@@ -469,7 +501,7 @@ impl SegmentTracker {
             .unwrap_or_else(|| (observed_at_ms - active.started_at_ms).max(0) as f64 / 1000.0);
         *self
             .session_runs
-            .entry(active.scene_key.clone())
+            .entry(active.scene_name.clone())
             .or_default() += 1;
         Some(CompletedSegment {
             absolute_time: active.absolute_time,
@@ -637,6 +669,73 @@ mod tests {
         assert!(completed.tz);
         assert_eq!(completed.scene_name, "营房");
         assert_eq!(completed.timer_seconds, 1.0);
+        assert!(tracker
+            .upgrade_current_terror_zone("营房".to_string(), "Terror Zone".to_string())
+            .is_none());
+        assert_eq!(tracker.snapshot().current_scene, "黑色荒地");
+    }
+
+    #[test]
+    fn late_terror_zone_name_upgrade_preserves_the_active_segment() {
+        let mut tracker = tracker();
+        let generic = tracker.observe_terror_zone(
+            GENERIC_TERROR_ZONE_NAME.to_string(),
+            "Terror Zone".to_string(),
+            0,
+            0,
+            "2026/08/29/00:30:00".to_string(),
+        );
+        assert!(generic.changed);
+        let journey_id = tracker.journey_id.clone();
+        let segment_index = tracker.next_segment_index;
+        tracker.observe_drop(rune_drop(1, 30, "贝", "Ber"));
+
+        let upgraded = tracker
+            .upgrade_current_terror_zone("黑色沼泽".to_string(), "Terror Zone".to_string())
+            .expect("a generic TZ should accept a later concrete name");
+        assert_eq!(upgraded.current_scene, "黑色沼泽");
+        assert_eq!(upgraded.current_run_name.as_deref(), Some("黑色沼泽"));
+        assert_eq!(
+            upgraded.current_run_key.as_deref(),
+            Some("terror_zone:黑色沼泽")
+        );
+        assert_eq!(upgraded.timer_started_at_ms, Some(0));
+        assert_eq!(upgraded.current_run_drops.len(), 1);
+        assert_eq!(tracker.journey_id, journey_id);
+        assert_eq!(tracker.next_segment_index, segment_index);
+        assert!(tracker.session_runs.is_empty());
+
+        let town = tracker
+            .observe_location(area(1), 96_000, 2_000, "town".to_string())
+            .unwrap();
+        let completed = town.completed_segment.unwrap();
+        assert_eq!(completed.scene_name, "黑色沼泽");
+        assert_eq!(completed.timer_seconds, 2.0);
+        assert_eq!(completed.drops.len(), 1);
+    }
+
+    #[test]
+    fn session_runs_combine_normal_and_terror_zone_records_by_scene_name() {
+        let mut tracker = tracker();
+        tracker
+            .observe_location(area(6), 0, 0, "normal".to_string())
+            .unwrap();
+        tracker
+            .observe_location(area(1), 48_000, 1_000, "town".to_string())
+            .unwrap();
+        tracker.observe_terror_zone(
+            "黑色荒地".to_string(),
+            "Terror Zone".to_string(),
+            96_000,
+            2_000,
+            "tz".to_string(),
+        );
+        let town = tracker
+            .observe_location(area(1), 144_000, 3_000, "town".to_string())
+            .unwrap();
+
+        assert_eq!(town.snapshot.session_runs.get("黑色荒地"), Some(&2));
+        assert_eq!(town.snapshot.session_runs.len(), 1);
     }
 
     #[test]

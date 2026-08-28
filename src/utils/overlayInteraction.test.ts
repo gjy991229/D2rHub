@@ -92,8 +92,8 @@ export function runTests() {
     "audio tracking remains active when the statistics window is hidden",
   );
   assert(
-    overlaySource.includes("stats.sessionRuns[stats.currentRunKey || stats.currentRunName || stats.currentScene]"),
-    "session run totals use the stable audio-tracking run key before display-name fallbacks",
+    overlaySource.includes("stats.sessionRuns[stats.currentRunName || stats.currentScene]"),
+    "session run totals combine normal and terror-zone runs with the same display name",
   );
   assert(
     overlaySource.includes("COLLAPSED_DROP_GROUP_LIMIT = 5")

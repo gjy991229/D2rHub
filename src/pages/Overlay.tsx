@@ -2008,7 +2008,7 @@ export function Overlay() {
                 className="text-2xs font-medium select-none"
                 style={{ color: "var(--text-secondary)", opacity: 0.8 }}
               >
-                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[stats.currentRunKey || stats.currentRunName || stats.currentScene] || 0} {runUnitLabel}
+                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[stats.currentRunName || stats.currentScene] || 0} {runUnitLabel}
               </span>
             </div>
           )}

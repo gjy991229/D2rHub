@@ -156,7 +156,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   stopTimerAndSave: async () => {
-    const { isTiming, timerStart, currentScene, currentTz, currentRunName, currentRunKey, characterName, currentRunDrops } = get();
+    const { isTiming, timerStart, currentScene, currentTz, currentRunName, characterName, currentRunDrops } = get();
     if (!isTiming || !timerStart) return;
 
     const elapsed = Date.now() - timerStart;
@@ -195,7 +195,7 @@ export const useStats = create<StatsState>((set, get) => ({
       });
 
       // 记录保存成功后，增加当前场景的本次启动场次
-      const sessionKey = currentRunKey || currentRunName || currentScene;
+      const sessionKey = currentRunName || currentScene;
       const currentSessionRuns = get().sessionRuns[sessionKey] || 0;
       set({
         sessionRuns: {
