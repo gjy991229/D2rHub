@@ -1,4 +1,4 @@
-use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker};
+use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_AREA_ID};
 use super::item_catalog::{ItemCatalog, CATEGORY_RUNES};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
@@ -19,6 +19,50 @@ use tauri::{Emitter, Manager};
 const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 const CAPTURE_CHANNELS: usize = 2;
 const SCAN_INTERVAL_FRAMES: usize = 4_800;
+const TERROR_PROBE_REFLECTION_BASE_MS: u32 = 160;
+const TERROR_PROBE_MAX_REFLECTION_MS: u32 = 300;
+
+#[derive(Debug, Default)]
+struct TerrorProbePairer {
+    pending: Option<(u64, f32)>,
+}
+
+impl TerrorProbePairer {
+    fn observe(
+        &mut self,
+        start_frame: u64,
+        confidence: f32,
+        sample_rate: u32,
+        catalog: &LocationCatalog,
+    ) -> Option<(u32, u64, f32)> {
+        let Some((direct_frame, direct_confidence)) = self.pending else {
+            self.pending = Some((start_frame, confidence));
+            return None;
+        };
+        let delta_frames = start_frame.saturating_sub(direct_frame);
+        let delay_ms =
+            ((delta_frames * 1_000 + sample_rate as u64 / 2) / sample_rate as u64) as u32;
+        let area_id = delay_ms.checked_sub(TERROR_PROBE_REFLECTION_BASE_MS);
+        if delay_ms <= TERROR_PROBE_MAX_REFLECTION_MS
+            && area_id.is_some_and(|area_id| {
+                (1..MAX_AREA_ID).contains(&area_id) && catalog.contains_area(area_id)
+            })
+        {
+            self.pending = None;
+            return Some((
+                area_id.unwrap_or_default(),
+                direct_frame,
+                direct_confidence.min(confidence),
+            ));
+        }
+
+        // The matching reflection was lost (or this is the first packet of a
+        // later probe event). Treat the newest, stronger packet as the next
+        // direct candidate instead of carrying stale timing across events.
+        self.pending = Some((start_frame, confidence));
+        None
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuneAudioEvent {
@@ -697,6 +741,7 @@ fn capture_loop(
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
     let mut drop_gate = DropPresenceGate::new(CAPTURE_SAMPLE_RATE);
+    let mut terror_probe_pairer = TerrorProbePairer::default();
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
@@ -760,6 +805,48 @@ fn capture_loop(
         }
         write_diagnostic_samples(&chunk);
         for detection in detector.push(&chunk) {
+            if detection.marker
+                == (TelemetryMarker::Area {
+                    area_id: MAX_AREA_ID,
+                })
+            {
+                append_diagnostic_detection(
+                    detection.marker,
+                    detection.confidence,
+                    detection.start_frame,
+                    false,
+                );
+                if let Some((area_id, start_frame, confidence)) = terror_probe_pairer.observe(
+                    detection.start_frame,
+                    detection.confidence,
+                    CAPTURE_SAMPLE_RATE,
+                    &catalog,
+                ) {
+                    let marker = TelemetryMarker::Area { area_id };
+                    let logical_event = scene_gate.observe(marker, start_frame);
+                    record_decoded_packet(
+                        marker,
+                        confidence,
+                        start_frame,
+                        &catalog,
+                        &item_catalog,
+                        logical_event,
+                    );
+                    if logical_event {
+                        drop_gate.clear();
+                        handle_location_detection(
+                            &app,
+                            &config,
+                            &mut tracker,
+                            &catalog,
+                            marker,
+                            start_frame,
+                            confidence,
+                        );
+                    }
+                }
+                continue;
+            }
             match detection.marker {
                 marker @ TelemetryMarker::Rune { rune_number } => {
                     let tracked = should_record_rune(&config, &tracker, rune_number);
@@ -1096,6 +1183,22 @@ mod tests {
         );
         assert_eq!(active_mod_name("-txt").unwrap(), None);
         assert!(active_mod_name(r#"-mod "..\\outside" -txt"#).is_err());
+    }
+
+    #[test]
+    fn terror_probe_pair_decodes_the_inherited_reflection_delay() {
+        let catalog = LocationCatalog::default();
+        let mut pairer = TerrorProbePairer::default();
+        let direct_frame = 10_000;
+        assert!(pairer
+            .observe(direct_frame, 0.93, CAPTURE_SAMPLE_RATE, &catalog)
+            .is_none());
+        let reflection_frame = direct_frame
+            + (TERROR_PROBE_REFLECTION_BASE_MS as u64 + 6) * CAPTURE_SAMPLE_RATE as u64 / 1_000;
+        assert_eq!(
+            pairer.observe(reflection_frame, 0.79, CAPTURE_SAMPLE_RATE, &catalog),
+            Some((6, direct_frame, 0.79))
+        );
     }
 
     #[test]

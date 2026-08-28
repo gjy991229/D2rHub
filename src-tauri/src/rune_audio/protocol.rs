@@ -1,4 +1,4 @@
-use super::catalog::{validate_marker, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT};
+use super::catalog::{validate_marker, TelemetryMarker, MAX_AREA_ID, MAX_ITEM_ID, RUNE_COUNT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::f32::consts::PI;
@@ -645,9 +645,9 @@ fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) ->
             .partial_cmp(&left.confidence)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
-    let suppression_radius = plan.marker_len as u64;
     let mut selected: Vec<Detection> = Vec::new();
     for detection in raw {
+        let suppression_radius = suppression_radius(plan, detection.marker);
         let duplicate = selected.iter().any(|existing| {
             existing.marker == detection.marker
                 && existing.start_frame.abs_diff(detection.start_frame) < suppression_radius
@@ -658,6 +658,22 @@ fn detect_ready_samples(samples: &[f32], plan: &DetectorPlan, threshold: f32) ->
     }
     selected.sort_by_key(|detection| detection.start_frame);
     selected
+}
+
+fn suppression_radius(plan: &DetectorPlan, marker: TelemetryMarker) -> u64 {
+    if marker
+        == (TelemetryMarker::Area {
+            area_id: MAX_AREA_ID,
+        })
+    {
+        // Area 1023 is reserved by the generated Mod as a one-packet Terror
+        // Zone probe. Its EAX reflection is the second physical detection, so
+        // retain packets separated by more than one packet length. Ordinary
+        // markers keep the full two-packet v7 de-duplication window.
+        plan.packet_len as u64
+    } else {
+        plan.marker_len as u64
+    }
 }
 
 /// Incremental detector. CRC validation and packet-level NMS prevent ordinary
@@ -707,7 +723,8 @@ impl StreamingDetector {
                 .last_detections
                 .get(&detection.marker)
                 .is_some_and(|last| {
-                    detection.start_frame.abs_diff(*last) < self.plan.marker_len as u64
+                    detection.start_frame.abs_diff(*last)
+                        < suppression_radius(&self.plan, detection.marker)
                 });
             if !duplicate {
                 self.last_detections
@@ -972,6 +989,32 @@ mod tests {
                 .iter()
                 .any(|detection| detection.marker == marker));
         }
+    }
+
+    #[test]
+    fn reserved_terror_probe_keeps_its_delayed_reflection() {
+        let sample_rate = 48_000;
+        let marker = area(MAX_AREA_ID);
+        let mut direct = tagged(marker, sample_rate, -18.0);
+        direct.truncate(marker_offset_frames(sample_rate) + packet_frames(sample_rate));
+        let delay_frames = sample_rate as usize * 166 / 1_000;
+        let mut mixed = vec![0.0f32; direct.len() + delay_frames];
+        for (index, sample) in direct.iter().enumerate() {
+            mixed[index] += *sample;
+            mixed[index + delay_frames] += *sample * 0.12;
+        }
+        let detections = detect_markers(&mixed, sample_rate, 0.50)
+            .into_iter()
+            .filter(|detection| detection.marker == marker)
+            .collect::<Vec<_>>();
+        assert_eq!(detections.len(), 2);
+        assert!(
+            detections[1]
+                .start_frame
+                .abs_diff(detections[0].start_frame)
+                .abs_diff(delay_frames as u64)
+                <= chip_frames(sample_rate) as u64 / 2
+        );
     }
 
     #[test]
