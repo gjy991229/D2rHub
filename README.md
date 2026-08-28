@@ -3,7 +3,7 @@
   <h1>D2RHub</h1>
   <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.9.1-d5a85a" alt="Version 0.9.1" />
+    <img src="https://img.shields.io/badge/version-0.9.2-d5a85a" alt="Version 0.9.2" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
@@ -25,7 +25,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **多账号启动控制**：单账号、启动全部、多选启动、取消队列、运行状态与启动日志；支持账号排序、mod 参数和窗口位置。
 - **账号独立游戏配置**：图形化编辑显示、图形、音频、玩法和地图设置。
 - **音频数据包**：按 v7 协议识别 33 个符文、50 个扩展物品、全部游戏 Area 与主界面，并按目标 D2R PID 捕获实际混音输出；可设置最低记录符文编号，且掉落仅在已确认的野外/地下城场景入库。隐藏场景统计悬浮窗不会停止已开启的声纹监控。
-- **一键准备识别 Mod**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器。无论从原版还是现有 Mod 准备，用户都需要为新 Mod 命名；软件随后生成新 Mod、复核清单并安全配置账号启动参数。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
+- **一键准备识别 Mod**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器。无论从原版还是现有 Mod 准备，用户都需要为新 Mod 命名；软件随后生成新 Mod、复核清单并安全配置账号启动参数。现有 Mod 只需包含自己改动过的数据表，缺失表会逐个从本机游戏数据补齐。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可用自定义策略把同一次连续行程中的黑色荒地、高塔 1–5 层等分段合并展示，原始数据不变。
 - **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部，并支持贴边自动隐藏。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
@@ -80,7 +80,7 @@ D2RHub is maintained as one complete desktop edition. Account management, audio 
 - Single, batch, and multi-select launch controls, mod arguments, window positions, and per-account game settings.
 - V7 audio-signature decoding, statistics, overlays, and all account-management features in the standard build.
 - Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates. Hiding the statistics overlay does not stop enabled audio tracking.
-- A bundled but independently maintained `d2r-audio-mod.exe` generator for creating a minimal Mod or augmenting an existing unpacked Mod without coupling either codebase or data model.
+- A bundled but independently maintained `d2r-audio-mod.exe` generator for creating a minimal Mod or augmenting an existing unpacked Mod without coupling either codebase or data model. Existing Mods may provide only the tables they override; each missing table is filled from the matching local game data.
 - Grouped overlay drops with counts, short-lived new-drop notices, a compact latest-five view, and edge-docked auto-hide.
 - Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
 
