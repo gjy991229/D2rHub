@@ -3,7 +3,7 @@
   <h1>D2RHub</h1>
   <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.9.1-d5a85a" alt="Version 0.9.1" />
+    <img src="https://img.shields.io/badge/version-0.9.2-d5a85a" alt="Version 0.9.2" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
