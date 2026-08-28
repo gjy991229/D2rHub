@@ -1,9 +1,16 @@
 use crate::error::AppError;
 use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
+use std::sync::{OnceLock, RwLock};
 use std::time::Duration;
 
 const API_URL: &str = "https://api.d2-trade.com.cn/api/query/tz_online/zh-cn";
+
+static CURRENT_TERROR_ZONE: OnceLock<RwLock<Option<TerrorZoneForecast>>> = OnceLock::new();
+
+fn current_terror_zone_cache() -> &'static RwLock<Option<TerrorZoneForecast>> {
+    CURRENT_TERROR_ZONE.get_or_init(|| RwLock::new(None))
+}
 
 #[derive(Debug, Deserialize)]
 struct TerrorZoneApiResponse {
@@ -66,6 +73,25 @@ pub struct TerrorZoneImmunity {
     pub code: String,
     pub label: String,
     pub color: String,
+}
+
+/// Returns the last successfully fetched current TZ while it is still valid.
+/// The audio capture thread uses this synchronous snapshot so network latency
+/// can never interrupt process-loopback capture.
+pub(crate) fn cached_current_terror_zone() -> Option<TerrorZoneForecast> {
+    let now = Utc::now().timestamp();
+    current_terror_zone_cache()
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()
+        .filter(|zone| zone.start_time <= now && zone.end_time > now)
+        .cloned()
+}
+
+fn cache_current_terror_zone(current: Option<TerrorZoneForecast>) {
+    *current_terror_zone_cache()
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = current;
 }
 
 fn immunity_meta(code: &str) -> TerrorZoneImmunity {
@@ -170,9 +196,11 @@ async fn fetch_terror_zone_items() -> Result<Vec<TerrorZoneApiItem>, AppError> {
 pub async fn get_terror_zone_snapshot() -> Result<TerrorZoneSnapshot, AppError> {
     let items = fetch_terror_zone_items().await?;
     let now = Utc::now().timestamp();
+    let current = select_current_zone(&items, now).and_then(build_forecast);
+    cache_current_terror_zone(current.clone());
 
     Ok(TerrorZoneSnapshot {
-        current: select_current_zone(&items, now).and_then(build_forecast),
+        current,
         next: select_next_zone(&items, now).and_then(build_forecast),
     })
 }

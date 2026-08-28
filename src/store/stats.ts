@@ -81,6 +81,7 @@ export const MANUAL_FINISH_SCENE = "__d2rhub_manual_finish__";
 interface StatsState {
   // ── 当前场景 ──
   currentScene: string;
+  currentTz: boolean;
   lastCombatScene: string;
   currentRunKey: string;
   currentRunName: string;
@@ -127,12 +128,13 @@ interface StatsState {
     item_name_en?: string | null;
   }) => void;
   applyTrackingSnapshot: (snapshot: TrackingSnapshot) => void;
-  fetchDbStats: (sceneName: string) => Promise<void>;
+  fetchDbStats: (sceneName: string, tz?: boolean) => Promise<void>;
   removeCurrentDrop: (index: number) => void;
 }
 
 export const useStats = create<StatsState>((set, get) => ({
   currentScene: "等待识别...",
+  currentTz: false,
   lastCombatScene: "",
   currentRunKey: "",
   currentRunName: "",
@@ -154,7 +156,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   stopTimerAndSave: async () => {
-    const { isTiming, timerStart, currentScene, currentRunName, currentRunKey, characterName, currentRunDrops } = get();
+    const { isTiming, timerStart, currentScene, currentTz, currentRunName, currentRunKey, characterName, currentRunDrops } = get();
     if (!isTiming || !timerStart) return;
 
     const elapsed = Date.now() - timerStart;
@@ -186,6 +188,7 @@ export const useStats = create<StatsState>((set, get) => ({
           absolute_time: absoluteTime,
           character_name: characterName || "未知角色",
           scene_name: currentRunName || currentScene,
+          tz: currentTz,
           timer_seconds: seconds,
           drops: dropsPayload,
         },
@@ -214,6 +217,7 @@ export const useStats = create<StatsState>((set, get) => ({
     // 较慢时界面仍继续计时；stopTimerAndSave 已经持有本轮的完整保存快照。
     set({
       currentScene: townScene,
+      currentTz: false,
       lastCombatScene: "",
       dbAvgTime: null,
       dbTotalRuns: null,
@@ -228,12 +232,15 @@ export const useStats = create<StatsState>((set, get) => ({
     set({ elapsedMs: Date.now() - timerStart });
   },
 
-  fetchDbStats: async (sceneName: string) => {
+  fetchDbStats: async (sceneName: string, tz = false) => {
     if (!sceneName || sceneName === "等待识别...") return;
     try {
-      const stats: { avg_time: number, total_runs: number } | null = await invoke("get_scene_stats", { sceneName });
+      const stats: { avg_time: number, total_runs: number } | null = await invoke("get_scene_stats", { sceneName, tz });
       // 竞态校验：如果当前场景已变（如已回城），丢弃迟到的历史数据
-      if (get().currentRunName !== sceneName && get().currentScene !== sceneName) return;
+      if (
+        (get().currentRunName !== sceneName && get().currentScene !== sceneName)
+        || get().currentTz !== tz
+      ) return;
       if (stats) {
         set({
           dbAvgTime: Math.round(stats.avg_time * 10) / 10,
@@ -243,7 +250,10 @@ export const useStats = create<StatsState>((set, get) => ({
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     } catch {
-      if (get().currentRunName === sceneName || get().currentScene === sceneName) {
+      if (
+        (get().currentRunName === sceneName || get().currentScene === sceneName)
+        && get().currentTz === tz
+      ) {
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     }
@@ -269,14 +279,14 @@ export const useStats = create<StatsState>((set, get) => ({
         if (normalized !== currentScene) {
           // 场景切换：保存旧场景 → 开始新场景
           await get().stopTimerAndSave();
-          set({ currentScene: normalized, lastCombatScene: normalized });
+          set({ currentScene: normalized, currentTz: false, lastCombatScene: normalized });
           get().startTimer();
           get().fetchDbStats(normalized);
         }
         // 场景没变，继续计时
       } else {
         // 从城镇/初始进入战斗
-        set({ currentScene: normalized, lastCombatScene: normalized });
+        set({ currentScene: normalized, currentTz: false, lastCombatScene: normalized });
         get().startTimer();
         get().fetchDbStats(normalized);
       }
@@ -334,6 +344,7 @@ export const useStats = create<StatsState>((set, get) => ({
 
   applyTrackingSnapshot: (snapshot) => {
     const previousRunName = get().currentRunName;
+    const previousTz = get().currentTz;
     const currentRunDrops: DropEntry[] = snapshot.current_run_drops.map((drop) => ({
       kind: drop.kind,
       telemetryId: drop.telemetry_id,
@@ -346,6 +357,7 @@ export const useStats = create<StatsState>((set, get) => ({
     }));
     set({
       currentScene: snapshot.current_scene || "等待识别...",
+      currentTz: Boolean(snapshot.tz),
       lastCombatScene: snapshot.location_kind === "wilderness" ? snapshot.current_scene : "",
       currentRunKey: snapshot.current_run_key || "",
       currentRunName: snapshot.current_run_name || "",
@@ -359,8 +371,11 @@ export const useStats = create<StatsState>((set, get) => ({
       sessionRuns: snapshot.session_runs,
       ...(snapshot.is_timing ? {} : { dbAvgTime: null, dbTotalRuns: null }),
     });
-    if (snapshot.current_run_name && snapshot.current_run_name !== previousRunName) {
-      void get().fetchDbStats(snapshot.current_run_name);
+    if (
+      snapshot.current_run_name
+      && (snapshot.current_run_name !== previousRunName || Boolean(snapshot.tz) !== previousTz)
+    ) {
+      void get().fetchDbStats(snapshot.current_run_name, Boolean(snapshot.tz));
     }
   },
 

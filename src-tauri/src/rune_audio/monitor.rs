@@ -2,8 +2,8 @@ use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_AREA_ID
 use super::item_catalog::{ItemCatalog, CATEGORY_RUNES};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
-    DropPresenceGate, SceneTransitionGate, SegmentTracker, TrackedDrop, TrackedDropKind,
-    TrackingSnapshot,
+    DropPresenceGate, SceneTransitionGate, SegmentTracker, TerrorZonePresenceGate, TrackedDrop,
+    TrackedDropKind, TrackingSnapshot,
 };
 #[cfg(test)]
 use crate::commands::launch::parse_windows_command_line;
@@ -19,50 +19,6 @@ use tauri::{Emitter, Manager};
 const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 const CAPTURE_CHANNELS: usize = 2;
 const SCAN_INTERVAL_FRAMES: usize = 4_800;
-const TERROR_PROBE_REFLECTION_BASE_MS: u32 = 160;
-const TERROR_PROBE_MAX_REFLECTION_MS: u32 = 300;
-
-#[derive(Debug, Default)]
-struct TerrorProbePairer {
-    pending: Option<(u64, f32)>,
-}
-
-impl TerrorProbePairer {
-    fn observe(
-        &mut self,
-        start_frame: u64,
-        confidence: f32,
-        sample_rate: u32,
-        catalog: &LocationCatalog,
-    ) -> Option<(u32, u64, f32)> {
-        let Some((direct_frame, direct_confidence)) = self.pending else {
-            self.pending = Some((start_frame, confidence));
-            return None;
-        };
-        let delta_frames = start_frame.saturating_sub(direct_frame);
-        let delay_ms =
-            ((delta_frames * 1_000 + sample_rate as u64 / 2) / sample_rate as u64) as u32;
-        let area_id = delay_ms.checked_sub(TERROR_PROBE_REFLECTION_BASE_MS);
-        if delay_ms <= TERROR_PROBE_MAX_REFLECTION_MS
-            && area_id.is_some_and(|area_id| {
-                (1..MAX_AREA_ID).contains(&area_id) && catalog.contains_area(area_id)
-            })
-        {
-            self.pending = None;
-            return Some((
-                area_id.unwrap_or_default(),
-                direct_frame,
-                direct_confidence.min(confidence),
-            ));
-        }
-
-        // The matching reflection was lost (or this is the first packet of a
-        // later probe event). Treat the newest, stronger packet as the next
-        // direct candidate instead of carrying stale timing across events.
-        self.pending = Some((start_frame, confidence));
-        None
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuneAudioEvent {
@@ -96,6 +52,7 @@ pub struct LocationAudioEvent {
     pub scene_key: String,
     pub scene_name: String,
     pub scene_name_en: String,
+    pub tz: bool,
     pub location_kind: LocationKind,
     pub is_town: bool,
     pub is_frontend: bool,
@@ -411,6 +368,9 @@ fn marker_status_label(
             .resolve(item_id)
             .map(|item| format!("物品 {} ({})", item.name, item.code))
             .unwrap_or_else(|| format!("物品 #{item_id}")),
+        TelemetryMarker::Area {
+            area_id: MAX_AREA_ID,
+        } => "恐怖区域信号".to_string(),
         marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => catalog
             .resolve(marker)
             .map(|location| location.scene_name)
@@ -645,6 +605,7 @@ fn handle_location_detection(
         scene_key: location.scene_key,
         scene_name: location.scene_name,
         scene_name_en: location.scene_name_en,
+        tz: false,
         location_kind: location.kind,
         is_town: location.kind == LocationKind::Town,
         is_frontend: location.kind == LocationKind::Frontend,
@@ -656,6 +617,66 @@ fn handle_location_detection(
             "WARN",
             "RuneAudio",
             &format!("推送场景声纹事件失败: {error}"),
+        );
+    }
+    emit_tracking_snapshot(app, &outcome.snapshot);
+}
+
+fn handle_terror_zone_detection(
+    app: &tauri::AppHandle,
+    config: &MonitorConfig,
+    tracker: &mut SegmentTracker,
+    observed_at_frame: u64,
+    confidence: f32,
+) {
+    let current_zone = crate::commands::terror_zone::cached_current_terror_zone();
+    let (scene_name, scene_name_en) = current_zone
+        .map(|zone| (zone.location_name, "Terror Zone".to_string()))
+        .unwrap_or_else(|| ("恐怖区域".to_string(), "Terror Zone".to_string()));
+    let now = chrono::Local::now();
+    let outcome = tracker.observe_terror_zone(
+        scene_name,
+        scene_name_en,
+        observed_at_frame,
+        now.timestamp_millis(),
+        now.format("%Y/%m/%d/%H:%M:%S").to_string(),
+    );
+    if !outcome.changed {
+        return;
+    }
+    if let Some(completed_segment) = &outcome.completed_segment {
+        let state = app.state::<crate::state::SharedState>();
+        if let Err(error) = crate::stats::save_completed_segment(&state, completed_segment) {
+            crate::logger::log_msg(
+                "ERROR",
+                "RuneAudio",
+                &format!("保存 TZ 自动野外分段失败: {error}"),
+            );
+        }
+    }
+    let event = LocationAudioEvent {
+        source: "terror_zone_audio".to_string(),
+        account_id: config.account_id.clone(),
+        area_id: None,
+        scene_key: outcome
+            .snapshot
+            .current_run_key
+            .clone()
+            .unwrap_or_else(|| "terror_zone:unknown".to_string()),
+        scene_name: outcome.snapshot.current_scene.clone(),
+        scene_name_en: outcome.snapshot.current_scene_en.clone(),
+        tz: true,
+        location_kind: LocationKind::Wilderness,
+        is_town: false,
+        is_frontend: false,
+        confidence,
+        timestamp: now.to_rfc3339(),
+    };
+    if let Err(error) = app.emit("location-audio-detected", &event) {
+        crate::logger::log_msg(
+            "WARN",
+            "RuneAudio",
+            &format!("推送 TZ 场景声纹事件失败: {error}"),
         );
     }
     emit_tracking_snapshot(app, &outcome.snapshot);
@@ -741,7 +762,25 @@ fn capture_loop(
     );
     let mut scene_gate = SceneTransitionGate::new(CAPTURE_SAMPLE_RATE);
     let mut drop_gate = DropPresenceGate::new(CAPTURE_SAMPLE_RATE);
-    let mut terror_probe_pairer = TerrorProbePairer::default();
+    let mut terror_zone_gate = TerrorZonePresenceGate::new(CAPTURE_SAMPLE_RATE);
+    let tz_refresh_generation = generation;
+    tauri::async_runtime::spawn(async move {
+        loop {
+            if let Err(error) = crate::commands::terror_zone::get_terror_zone_snapshot().await {
+                crate::logger::log_msg(
+                    "WARN",
+                    "RuneAudio",
+                    &format!("刷新当前 TZ 名称失败，将在声纹触发时使用通用名称: {error}"),
+                );
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+            if !RUNNING.load(Ordering::SeqCst)
+                || GENERATION.load(Ordering::SeqCst) != tz_refresh_generation
+            {
+                break;
+            }
+        }
+    });
     let mut process_system = sysinfo::System::new();
     let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
@@ -810,40 +849,25 @@ fn capture_loop(
                     area_id: MAX_AREA_ID,
                 })
             {
-                append_diagnostic_detection(
+                let logical_event = terror_zone_gate.observe(detection.start_frame);
+                record_decoded_packet(
                     detection.marker,
                     detection.confidence,
                     detection.start_frame,
-                    false,
-                );
-                if let Some((area_id, start_frame, confidence)) = terror_probe_pairer.observe(
-                    detection.start_frame,
-                    detection.confidence,
-                    CAPTURE_SAMPLE_RATE,
                     &catalog,
-                ) {
-                    let marker = TelemetryMarker::Area { area_id };
-                    let logical_event = scene_gate.observe(marker, start_frame);
-                    record_decoded_packet(
-                        marker,
-                        confidence,
-                        start_frame,
-                        &catalog,
-                        &item_catalog,
-                        logical_event,
+                    &item_catalog,
+                    logical_event,
+                );
+                if logical_event {
+                    drop_gate.clear();
+                    scene_gate.clear();
+                    handle_terror_zone_detection(
+                        &app,
+                        &config,
+                        &mut tracker,
+                        detection.start_frame,
+                        detection.confidence,
                     );
-                    if logical_event {
-                        drop_gate.clear();
-                        handle_location_detection(
-                            &app,
-                            &config,
-                            &mut tracker,
-                            &catalog,
-                            marker,
-                            start_frame,
-                            confidence,
-                        );
-                    }
                 }
                 continue;
             }
@@ -1186,19 +1210,12 @@ mod tests {
     }
 
     #[test]
-    fn terror_probe_pair_decodes_the_inherited_reflection_delay() {
-        let catalog = LocationCatalog::default();
-        let mut pairer = TerrorProbePairer::default();
-        let direct_frame = 10_000;
-        assert!(pairer
-            .observe(direct_frame, 0.93, CAPTURE_SAMPLE_RATE, &catalog)
-            .is_none());
-        let reflection_frame = direct_frame
-            + (TERROR_PROBE_REFLECTION_BASE_MS as u64 + 6) * CAPTURE_SAMPLE_RATE as u64 / 1_000;
-        assert_eq!(
-            pairer.observe(reflection_frame, 0.79, CAPTURE_SAMPLE_RATE, &catalog),
-            Some((6, direct_frame, 0.79))
-        );
+    fn terror_zone_probe_rearms_only_after_a_real_absence() {
+        let mut gate = TerrorZonePresenceGate::new(CAPTURE_SAMPLE_RATE);
+        assert!(gate.observe(10_000));
+        assert!(!gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64));
+        assert!(!gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64 * 3));
+        assert!(gate.observe(10_000 + CAPTURE_SAMPLE_RATE as u64 * 8));
     }
 
     #[test]

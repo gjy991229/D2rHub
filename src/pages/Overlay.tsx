@@ -1956,7 +1956,9 @@ export function Overlay() {
         {/* 场景名称 — 右上角小字 */}
         <div className="flex justify-end px-1">
           <span
-            className="text-sm font-medium text-text-secondary truncate max-w-[180px] text-right"
+            className={`text-sm font-medium truncate max-w-[180px] text-right ${
+              stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-secondary"
+            }`}
           >
             {translateOverlaySceneName(stats.currentScene, useEnglish)}
           </span>

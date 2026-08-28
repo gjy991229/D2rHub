@@ -70,6 +70,7 @@ export interface SceneRecord {
   absolute_time: string;
   character_name: string;
   scene_name: string;
+  tz?: boolean;
   timer_seconds: number;
   journey_id?: string | null;
   segment_index?: number | null;
@@ -133,6 +134,7 @@ export interface TrackingSnapshot {
   current_area_id: number | null;
   current_scene: string;
   current_scene_en: string;
+  tz?: boolean;
   location_kind: "town" | "wilderness" | "frontend" | null;
   is_town: boolean;
   is_frontend: boolean;

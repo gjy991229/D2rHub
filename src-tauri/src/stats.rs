@@ -57,6 +57,9 @@ pub struct SceneRecord {
     pub absolute_time: String,
     pub character_name: String,
     pub scene_name: String,
+    /// 恐怖区域记录。旧数据库与缺失字段一律按普通区域处理。
+    #[serde(default)]
+    pub tz: bool,
     pub timer_seconds: f64,
     /// 连续离开主城/主界面后的同一次野外行程。旧记录为 None，不做猜测合并。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -134,6 +137,13 @@ fn ensure_scene_segment_columns(conn: &Connection) -> Result<(), String> {
             [],
         )
         .map_err(|e| format!("迁移分段序号字段失败: {e}"))?;
+    }
+    if !scene_columns.iter().any(|column| column == "tz") {
+        conn.execute(
+            "ALTER TABLE scene_records ADD COLUMN tz INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| format!("迁移恐怖区域标记字段失败: {e}"))?;
     }
     Ok(())
 }
@@ -228,6 +238,7 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
             absolute_time TEXT NOT NULL,
             character_name TEXT NOT NULL,
             scene_name TEXT NOT NULL,
+            tz INTEGER NOT NULL DEFAULT 0,
             timer_seconds REAL NOT NULL,
             journey_id TEXT,
             segment_index INTEGER,
@@ -409,12 +420,13 @@ pub(crate) fn save_scene_record_inner(
 
     conn.execute(
         "INSERT INTO scene_records
-         (absolute_time, character_name, scene_name, timer_seconds, journey_id, segment_index, drops_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+         (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         rusqlite::params![
             &record.absolute_time,
             &record.character_name,
             &record.scene_name,
+            record.tz,
             record.timer_seconds,
             &record.journey_id,
             record.segment_index,
@@ -435,6 +447,7 @@ pub(crate) fn save_completed_segment(
         absolute_time: segment.absolute_time.clone(),
         character_name: segment.character_name.clone(),
         scene_name: segment.scene_name.clone(),
+        tz: segment.tz,
         timer_seconds: segment.timer_seconds,
         journey_id: Some(segment.journey_id.clone()),
         segment_index: Some(segment.segment_index),
@@ -468,12 +481,13 @@ pub(crate) fn save_completed_segment(
     transaction
         .execute(
             "INSERT INTO scene_records
-             (absolute_time, character_name, scene_name, timer_seconds, journey_id, segment_index, drops_json)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 &record.absolute_time,
                 &record.character_name,
                 &record.scene_name,
+                record.tz,
                 record.timer_seconds,
                 &record.journey_id,
                 record.segment_index,
@@ -505,21 +519,22 @@ fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, absolute_time, character_name, scene_name, timer_seconds,
-                    journey_id, segment_index, drops_json
+                    tz, journey_id, segment_index, drops_json
              FROM scene_records ORDER BY id ASC",
         )
         .map_err(|e| format!("查询准备失败: {e}"))?;
     let records = stmt
         .query_map([], |row| {
-            let drops_json: String = row.get(7)?;
+            let drops_json: String = row.get(8)?;
             Ok(SceneRecord {
                 id: Some(row.get(0)?),
                 absolute_time: row.get(1)?,
                 character_name: row.get(2)?,
                 scene_name: row.get(3)?,
                 timer_seconds: row.get(4)?,
-                journey_id: row.get(5)?,
-                segment_index: row.get(6)?,
+                tz: row.get(5)?,
+                journey_id: row.get(6)?,
+                segment_index: row.get(7)?,
                 drops: migrate_legacy_drops(&drops_json),
             })
         })
@@ -672,16 +687,19 @@ pub fn get_stats_json(state: tauri::State<'_, SharedState>) -> Result<String, St
 pub fn get_scene_avg_time(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
+    tz: Option<bool>,
 ) -> Result<Option<f64>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
     let mut stmt = conn
-        .prepare("SELECT AVG(timer_seconds) FROM scene_records WHERE scene_name = ?1")
+        .prepare("SELECT AVG(timer_seconds) FROM scene_records WHERE scene_name = ?1 AND tz = ?2")
         .map_err(|e| format!("查询准备失败: {}", e))?;
 
     let result: Option<f64> = stmt
-        .query_row(rusqlite::params![scene_name], |row| row.get(0))
+        .query_row(rusqlite::params![scene_name, tz.unwrap_or(false)], |row| {
+            row.get(0)
+        })
         .optional()
         .map_err(|e| format!("查询平均耗时失败: {}", e))?
         .flatten();
@@ -701,16 +719,19 @@ pub struct SceneStats {
 pub fn get_scene_stats(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
+    tz: Option<bool>,
 ) -> Result<Option<SceneStats>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
     let mut stmt = conn
-        .prepare("SELECT AVG(timer_seconds), COUNT(*) FROM scene_records WHERE scene_name = ?1")
+        .prepare(
+            "SELECT AVG(timer_seconds), COUNT(*) FROM scene_records WHERE scene_name = ?1 AND tz = ?2",
+        )
         .map_err(|e| format!("查询准备失败: {}", e))?;
 
     let result: Option<SceneStats> = stmt
-        .query_row(rusqlite::params![scene_name], |row| {
+        .query_row(rusqlite::params![scene_name, tz.unwrap_or(false)], |row| {
             let avg: Option<f64> = row.get(0)?;
             let count: i64 = row.get(1)?;
             if let Some(a) = avg {
@@ -1065,6 +1086,9 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                     } else if method == "POST" && path == "/api/scenes/rename" {
                         let from_name = query_params.get("from").cloned().unwrap_or_default();
                         let to_name = query_params.get("to").cloned().unwrap_or_default();
+                        let tz = query_params
+                            .get("tz")
+                            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
                         if from_name.is_empty() || to_name.is_empty() {
                             let body = serde_json::json!({"ok": false, "error": "参数 from 和 to 不能为空"});
                             resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
@@ -1073,8 +1097,8 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                                 Ok(db) => match db.lock() {
                                     Ok(conn) => {
                                         match conn.execute(
-                                            "UPDATE scene_records SET scene_name = ?2 WHERE scene_name = ?1",
-                                            rusqlite::params![from_name, to_name],
+                                            "UPDATE scene_records SET scene_name = ?2 WHERE scene_name = ?1 AND tz = ?3",
+                                            rusqlite::params![from_name, to_name, tz],
                                         ) {
                                             Ok(affected) => {
                                                 let body = serde_json::json!({"ok": true, "affected": affected});
@@ -1389,7 +1413,7 @@ mod tests {
     use rusqlite::Connection;
 
     #[test]
-    fn legacy_scene_table_gains_journey_and_segment_columns_without_losing_rows() {
+    fn legacy_scene_table_gains_tracking_columns_without_losing_rows() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
             "CREATE TABLE scene_records (
@@ -1417,6 +1441,12 @@ mod tests {
             .unwrap();
         assert!(columns.contains(&"journey_id".to_string()));
         assert!(columns.contains(&"segment_index".to_string()));
+        assert!(columns.contains(&"tz".to_string()));
+        assert!(!conn
+            .query_row("SELECT tz FROM scene_records LIMIT 1", [], |row| {
+                row.get::<_, bool>(0)
+            })
+            .unwrap());
         assert_eq!(
             conn.query_row("SELECT COUNT(*) FROM scene_records", [], |row| {
                 row.get::<_, i64>(0)
