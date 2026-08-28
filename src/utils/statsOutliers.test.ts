@@ -41,6 +41,13 @@ const groupedSceneStats = new Function(`
   items: RecordFixture[];
   summary: { runs: number };
 }>;
+const areaTypeFilterSource = template
+  .split("// AREA_TYPE_FILTER_START")[1]
+  .split("// AREA_TYPE_FILTER_END")[0];
+const matchesAreaType = new Function(`
+  ${areaTypeFilterSource}
+  return matchesAreaType;
+`)() as (record: RecordFixture, areaType: "all" | "normal" | "tz") => boolean;
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -112,6 +119,14 @@ function makeRecords(scene: string, count: number, seconds = 100): RecordFixture
   const tz = groups.find(group => group.tz);
   assert(groups.length === 2, "同名普通区域与 TZ 区域应拆分为两组");
   assert(normal?.summary.runs === 2 && tz?.summary.runs === 1, "普通与 TZ 场次应分别汇总");
+}
+
+{
+  const normal: RecordFixture = { id: 1, scene_name: "营房", timer_seconds: 30, drops: [] };
+  const tz: RecordFixture = { id: 2, scene_name: "营房", timer_seconds: 40, drops: [], tz: true };
+  assert(matchesAreaType(normal, "all") && matchesAreaType(tz, "all"), "全部区域应保留普通与 TZ 记录");
+  assert(matchesAreaType(normal, "normal") && !matchesAreaType(tz, "normal"), "普通区域筛选应排除 TZ 记录");
+  assert(matchesAreaType(tz, "tz") && !matchesAreaType(normal, "tz"), "TZ 区域筛选应排除普通及缺失 tz 字段的旧记录");
 }
 
 console.log("stats outlier optimizer tests passed");
