@@ -683,23 +683,22 @@ pub fn get_stats_json(state: tauri::State<'_, SharedState>) -> Result<String, St
 }
 
 /// 查询指定场景的历史平均耗时
+/// `tz` 只控制显示颜色；同名普通/TZ 记录始终共享统计。
 #[tauri::command]
 pub fn get_scene_avg_time(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
-    tz: Option<bool>,
+    _tz: Option<bool>,
 ) -> Result<Option<f64>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
     let mut stmt = conn
-        .prepare("SELECT AVG(timer_seconds) FROM scene_records WHERE scene_name = ?1 AND tz = ?2")
+        .prepare("SELECT AVG(timer_seconds) FROM scene_records WHERE scene_name = ?1")
         .map_err(|e| format!("查询准备失败: {}", e))?;
 
     let result: Option<f64> = stmt
-        .query_row(rusqlite::params![scene_name, tz.unwrap_or(false)], |row| {
-            row.get(0)
-        })
+        .query_row(rusqlite::params![scene_name], |row| row.get(0))
         .optional()
         .map_err(|e| format!("查询平均耗时失败: {}", e))?
         .flatten();
@@ -715,23 +714,22 @@ pub struct SceneStats {
 }
 
 /// 查询指定场景的统计信息（平均耗时，总场次）
+/// `tz` 只控制显示颜色；同名普通/TZ 记录始终共享统计。
 #[tauri::command]
 pub fn get_scene_stats(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
-    tz: Option<bool>,
+    _tz: Option<bool>,
 ) -> Result<Option<SceneStats>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
     let mut stmt = conn
-        .prepare(
-            "SELECT AVG(timer_seconds), COUNT(*) FROM scene_records WHERE scene_name = ?1 AND tz = ?2",
-        )
+        .prepare("SELECT AVG(timer_seconds), COUNT(*) FROM scene_records WHERE scene_name = ?1")
         .map_err(|e| format!("查询准备失败: {}", e))?;
 
     let result: Option<SceneStats> = stmt
-        .query_row(rusqlite::params![scene_name, tz.unwrap_or(false)], |row| {
+        .query_row(rusqlite::params![scene_name], |row| {
             let avg: Option<f64> = row.get(0)?;
             let count: i64 = row.get(1)?;
             if let Some(a) = avg {
@@ -1086,9 +1084,6 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                     } else if method == "POST" && path == "/api/scenes/rename" {
                         let from_name = query_params.get("from").cloned().unwrap_or_default();
                         let to_name = query_params.get("to").cloned().unwrap_or_default();
-                        let tz = query_params
-                            .get("tz")
-                            .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
                         if from_name.is_empty() || to_name.is_empty() {
                             let body = serde_json::json!({"ok": false, "error": "参数 from 和 to 不能为空"});
                             resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
@@ -1097,8 +1092,8 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                                 Ok(db) => match db.lock() {
                                     Ok(conn) => {
                                         match conn.execute(
-                                            "UPDATE scene_records SET scene_name = ?2 WHERE scene_name = ?1 AND tz = ?3",
-                                            rusqlite::params![from_name, to_name, tz],
+                                            "UPDATE scene_records SET scene_name = ?2 WHERE scene_name = ?1",
+                                            rusqlite::params![from_name, to_name],
                                         ) {
                                             Ok(affected) => {
                                                 let body = serde_json::json!({"ok": true, "affected": affected});
