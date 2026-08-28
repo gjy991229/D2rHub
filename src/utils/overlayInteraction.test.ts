@@ -92,8 +92,9 @@ export function runTests() {
     "audio tracking remains active when the statistics window is hidden",
   );
   assert(
-    overlaySource.includes("stats.sessionRuns[stats.currentRunName || stats.currentScene]"),
-    "session run totals combine normal and terror-zone runs with the same display name",
+    overlaySource.includes("stats.sessionRuns[getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)]")
+      && statsSource.includes("const sessionKey = getSessionRunKey(currentRunName || currentScene, currentTz)"),
+    "session run totals separate normal and terror-zone runs for automatic and manual finishes",
   );
   assert(
     overlaySource.includes("COLLAPSED_DROP_GROUP_LIMIT = 5")

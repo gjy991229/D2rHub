@@ -43,6 +43,10 @@ export function isHighRune(runeNumber: number): boolean {
   return runeNumber >= 24;
 }
 
+export function getSessionRunKey(sceneName: string, tz: boolean): string {
+  return `${tz ? "tz" : "normal"}:${sceneName}`;
+}
+
 
 
 function matchRune(text: string): string | null {
@@ -195,7 +199,7 @@ export const useStats = create<StatsState>((set, get) => ({
       });
 
       // 记录保存成功后，增加当前场景的本次启动场次
-      const sessionKey = currentRunName || currentScene;
+      const sessionKey = getSessionRunKey(currentRunName || currentScene, currentTz);
       const currentSessionRuns = get().sessionRuns[sessionKey] || 0;
       set({
         sessionRuns: {

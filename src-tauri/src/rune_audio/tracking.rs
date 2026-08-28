@@ -7,6 +7,10 @@ use std::collections::HashMap;
 
 pub const GENERIC_TERROR_ZONE_NAME: &str = "恐怖区域";
 
+fn session_run_key(scene_name: &str, tz: bool) -> String {
+    format!("{}:{}", if tz { "tz" } else { "normal" }, scene_name)
+}
+
 /// Deduplicates location markers while accepting a different location immediately.
 #[derive(Debug, Clone)]
 pub struct SceneTransitionGate {
@@ -501,7 +505,7 @@ impl SegmentTracker {
             .unwrap_or_else(|| (observed_at_ms - active.started_at_ms).max(0) as f64 / 1000.0);
         *self
             .session_runs
-            .entry(active.scene_name.clone())
+            .entry(session_run_key(&active.scene_name, active.tz))
             .or_default() += 1;
         Some(CompletedSegment {
             absolute_time: active.absolute_time,
@@ -715,7 +719,7 @@ mod tests {
     }
 
     #[test]
-    fn session_runs_combine_normal_and_terror_zone_records_by_scene_name() {
+    fn session_runs_separate_normal_and_terror_zone_records_by_scene_name() {
         let mut tracker = tracker();
         tracker
             .observe_location(area(6), 0, 0, "normal".to_string())
@@ -734,8 +738,9 @@ mod tests {
             .observe_location(area(1), 144_000, 3_000, "town".to_string())
             .unwrap();
 
-        assert_eq!(town.snapshot.session_runs.get("黑色荒地"), Some(&2));
-        assert_eq!(town.snapshot.session_runs.len(), 1);
+        assert_eq!(town.snapshot.session_runs.get("normal:黑色荒地"), Some(&1));
+        assert_eq!(town.snapshot.session_runs.get("tz:黑色荒地"), Some(&1));
+        assert_eq!(town.snapshot.session_runs.len(), 2);
     }
 
     #[test]

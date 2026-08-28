@@ -682,28 +682,42 @@ pub fn get_stats_json(state: tauri::State<'_, SharedState>) -> Result<String, St
     serde_json::to_string(&data).map_err(|e| format!("JSON 序列化失败: {}", e))
 }
 
-/// 查询指定场景的历史平均耗时
-/// `tz` 只控制显示颜色；同名普通/TZ 记录始终共享统计。
+fn query_scene_stats(
+    conn: &Connection,
+    scene_name: &str,
+    tz: bool,
+) -> Result<Option<SceneStats>, String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT AVG(timer_seconds), COUNT(*)
+             FROM scene_records
+             WHERE scene_name = ?1 AND tz = ?2",
+        )
+        .map_err(|e| format!("查询准备失败: {}", e))?;
+
+    stmt.query_row(rusqlite::params![scene_name, tz], |row| {
+        let avg: Option<f64> = row.get(0)?;
+        let count: i64 = row.get(1)?;
+        Ok(avg.map(|avg_time| SceneStats {
+            avg_time,
+            total_runs: count,
+        }))
+    })
+    .optional()
+    .map_err(|e| format!("查询场景统计失败: {}", e))
+    .map(Option::flatten)
+}
+
+/// 查询指定场景及 TZ 状态的历史平均耗时。
 #[tauri::command]
 pub fn get_scene_avg_time(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
-    _tz: Option<bool>,
+    tz: Option<bool>,
 ) -> Result<Option<f64>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
-
-    let mut stmt = conn
-        .prepare("SELECT AVG(timer_seconds) FROM scene_records WHERE scene_name = ?1")
-        .map_err(|e| format!("查询准备失败: {}", e))?;
-
-    let result: Option<f64> = stmt
-        .query_row(rusqlite::params![scene_name], |row| row.get(0))
-        .optional()
-        .map_err(|e| format!("查询平均耗时失败: {}", e))?
-        .flatten();
-
-    Ok(result)
+    Ok(query_scene_stats(&conn, &scene_name, tz.unwrap_or(false))?.map(|stats| stats.avg_time))
 }
 
 /// 场景统计信息
@@ -713,39 +727,16 @@ pub struct SceneStats {
     pub total_runs: i64,
 }
 
-/// 查询指定场景的统计信息（平均耗时，总场次）
-/// `tz` 只控制显示颜色；同名普通/TZ 记录始终共享统计。
+/// 查询指定场景及 TZ 状态的统计信息（平均耗时，总场次）。
 #[tauri::command]
 pub fn get_scene_stats(
     state: tauri::State<'_, SharedState>,
     scene_name: String,
-    _tz: Option<bool>,
+    tz: Option<bool>,
 ) -> Result<Option<SceneStats>, String> {
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
-
-    let mut stmt = conn
-        .prepare("SELECT AVG(timer_seconds), COUNT(*) FROM scene_records WHERE scene_name = ?1")
-        .map_err(|e| format!("查询准备失败: {}", e))?;
-
-    let result: Option<SceneStats> = stmt
-        .query_row(rusqlite::params![scene_name], |row| {
-            let avg: Option<f64> = row.get(0)?;
-            let count: i64 = row.get(1)?;
-            if let Some(a) = avg {
-                Ok(Some(SceneStats {
-                    avg_time: a,
-                    total_runs: count,
-                }))
-            } else {
-                Ok(None)
-            }
-        })
-        .optional()
-        .map_err(|e| format!("查询场景统计失败: {}", e))?
-        .flatten();
-
-    Ok(result)
+    query_scene_stats(&conn, &scene_name, tz.unwrap_or(false))
 }
 
 /// 删除一条场景记录（不可恢复）
@@ -1402,10 +1393,35 @@ fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
 mod tests {
     use super::{
         delete_scene_records_by_ids, ensure_drop_observation_schema, ensure_scene_segment_columns,
-        migrate_legacy_drops, normalize_strategy, request_content_length, stats_api_token_is_valid,
-        DropKind, STATS_API_CORS_HEADERS,
+        migrate_legacy_drops, normalize_strategy, query_scene_stats, request_content_length,
+        stats_api_token_is_valid, DropKind, STATS_API_CORS_HEADERS,
     };
     use rusqlite::Connection;
+
+    #[test]
+    fn scene_stats_separate_normal_and_terror_zone_records() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE scene_records (
+                scene_name TEXT NOT NULL,
+                tz INTEGER NOT NULL DEFAULT 0,
+                timer_seconds REAL NOT NULL
+            );
+            INSERT INTO scene_records (scene_name, tz, timer_seconds) VALUES
+                ('营房', 0, 20.0),
+                ('营房', 0, 40.0),
+                ('营房', 1, 120.0);",
+        )
+        .unwrap();
+
+        let normal = query_scene_stats(&conn, "营房", false).unwrap().unwrap();
+        let terror_zone = query_scene_stats(&conn, "营房", true).unwrap().unwrap();
+        assert_eq!(normal.total_runs, 2);
+        assert_eq!(normal.avg_time, 30.0);
+        assert_eq!(terror_zone.total_runs, 1);
+        assert_eq!(terror_zone.avg_time, 120.0);
+        assert!(query_scene_stats(&conn, "不存在", false).unwrap().is_none());
+    }
 
     #[test]
     fn legacy_scene_table_gains_tracking_columns_without_losing_rows() {
