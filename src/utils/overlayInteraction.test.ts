@@ -61,8 +61,9 @@ export function runTests() {
   );
   assert(
     overlaySource.includes("if (isStatsOverlay) {\n          await Promise.all([")
+      && overlaySource.includes('await restoreWindowPlacement("stats-overlay", saved);')
       && overlaySource.includes("if (!cancelled) void evaluateOverlayDocking();")
-      && overlaySource.includes("if (dockStateRef.current) {\n                  await refreshDockPlacementAfterResize();"),
+      && overlaySource.includes("if (dockStateRef.current) {\n                  await refreshDockPlacementAfterResize(true);"),
     "statistics overlay restores edge docking after startup and refreshes it after resize",
   );
   assert(

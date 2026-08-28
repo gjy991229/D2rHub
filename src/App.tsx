@@ -38,6 +38,7 @@ import { requiresTokenMigration } from "./utils/regionPaths";
 import { Modal } from "./components/ui/Modal";
 import { Button } from "./components/ui/Button";
 import type { GlobalConfig, AccountMeta } from "./store/types";
+import { setAuxiliaryWindowVisible } from "./utils/windowPlacement";
 
 type View =
   | { type: "loading" }
@@ -215,16 +216,13 @@ function App() {
         <Dashboard
           onAbout={() => setShowAbout(true)}
           onExit={async () => {
-            const { WebviewWindow } = await import('@tauri-apps/api/webviewWindow');
             const mainWin = getCurrentWindow();
             await mainWin.hide();
             if (config?.enable_tz_overlay) {
-              const overlayWin = await WebviewWindow.getByLabel('overlay');
-              if (overlayWin) await overlayWin.show();
+              await setAuxiliaryWindowVisible('overlay', true);
             }
             if (config?.enable_stats_overlay) {
-              const statsWin = await WebviewWindow.getByLabel('stats-overlay');
-              if (statsWin) await statsWin.show();
+              await setAuxiliaryWindowVisible('stats-overlay', true);
             }
           }}
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}

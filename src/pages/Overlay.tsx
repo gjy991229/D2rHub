@@ -16,7 +16,6 @@ import {
   currentMonitor,
   getCurrentWindow,
   PhysicalPosition,
-  LogicalPosition,
   LogicalSize,
 } from "@tauri-apps/api/window";
 import { surfaceOpacityVars } from "../styles/surfaceOpacity";
@@ -46,6 +45,7 @@ import {
   type PhysicalRect,
   type PhysicalSize,
 } from "../utils/overlayDocking";
+import { restoreWindowPlacement } from "../utils/windowPlacement";
 
 interface TerrorZoneImmunity {
   code: string;
@@ -380,6 +380,7 @@ export function Overlay() {
     startX: number;
     startY: number;
   } | null>(null);
+  const userWindowMovePendingRef = useRef(false);
   const miniResizeInitTokenRef = useRef(0);
   const miniResizeSessionRef = useRef<MiniOverlayResizeSession | null>(null);
   const suppressOverlayDoubleClickUntilRef = useRef(0);
@@ -444,7 +445,11 @@ export function Overlay() {
     updateDockState(null);
   }
 
-  async function persistOverlayGeometry(positionOverride?: PhysicalPoint) {
+  async function persistOverlayGeometry(
+    positionOverride?: PhysicalPoint,
+    userInitiated = false,
+    dockEdgeOverride?: OverlayDockEdge | null,
+  ) {
     try {
       const win = getCurrentWindow();
       const [position, size, scale] = await Promise.all([
@@ -452,14 +457,23 @@ export function Overlay() {
         win.outerSize(),
         win.scaleFactor(),
       ]);
-      await invoke(isStatsOverlay ? "save_stats_overlay_geometry" : "save_overlay_geometry", {
-        geometry: {
-          x: Math.round(position.x / scale),
-          y: Math.round(position.y / scale),
-          width: Math.round(size.width / scale),
-          height: Math.round(size.height / scale),
-        },
-      });
+      const legacyGeometry = {
+        x: Math.round(position.x / scale),
+        y: Math.round(position.y / scale),
+        width: Math.round(size.width / scale),
+        height: Math.round(size.height / scale),
+      };
+      await Promise.all([
+        invoke("save_window_placement", {
+          label: isStatsOverlay ? "stats-overlay" : "overlay",
+          positionOverride: position,
+          dockEdge: dockEdgeOverride ?? dockStateRef.current?.placement.edge ?? null,
+          userInitiated,
+        }),
+        invoke(isStatsOverlay ? "save_stats_overlay_geometry" : "save_overlay_geometry", {
+          geometry: legacyGeometry,
+        }),
+      ]);
     } catch (err) {
       console.warn("[Overlay] persist geometry failed:", err);
     }
@@ -607,7 +621,7 @@ export function Overlay() {
     await animateOverlayPosition(state.placement.visible, "shown");
   }
 
-  async function evaluateOverlayDocking() {
+  async function evaluateOverlayDocking(userInitiated = false) {
     if (
       programmaticDockMoveRef.current
       || modeTransitionRef.current
@@ -624,7 +638,6 @@ export function Overlay() {
         win.scaleFactor(),
       ]);
       if (!monitor) {
-        await persistOverlayGeometry({ x: position.x, y: position.y });
         return;
       }
       const workArea: PhysicalRect = {
@@ -642,7 +655,7 @@ export function Overlay() {
       );
       if (!edge) {
         updateDockState(null);
-        await persistOverlayGeometry({ x: position.x, y: position.y });
+        await persistOverlayGeometry({ x: position.x, y: position.y }, userInitiated, null);
         return;
       }
 
@@ -654,7 +667,7 @@ export function Overlay() {
         OVERLAY_DOCK_REVEAL_SIZE * scale,
       );
       updateDockState({ placement, workArea, phase: "moving" });
-      await persistOverlayGeometry(placement.visible);
+      await persistOverlayGeometry(placement.visible, userInitiated, edge);
       await animateOverlayPosition(placement.visible, "shown");
       scheduleDockHide();
     } catch (err) {
@@ -662,7 +675,7 @@ export function Overlay() {
     }
   }
 
-  async function refreshDockPlacementAfterResize() {
+  async function refreshDockPlacementAfterResize(userInitiated = false) {
     const state = dockStateRef.current;
     if (!state) return;
     try {
@@ -677,7 +690,11 @@ export function Overlay() {
       );
       const next = { ...state, placement, phase: "shown" as const };
       updateDockState(next);
-      await persistOverlayGeometry(placement.visible);
+      await persistOverlayGeometry(
+        placement.visible,
+        userInitiated,
+        state.placement.edge,
+      );
       await animateOverlayPosition(placement.visible, "shown");
     } catch (err) {
       console.warn("[Overlay] refresh dock placement failed:", err);
@@ -822,7 +839,9 @@ export function Overlay() {
     event.preventDefault();
     event.stopPropagation();
     clearDocking();
+    userWindowMovePendingRef.current = true;
     void getCurrentWindow().startDragging().catch((err) => {
+      userWindowMovePendingRef.current = false;
       console.warn("[Overlay] start window dragging failed:", err);
     });
   }
@@ -1262,11 +1281,6 @@ export function Overlay() {
         if (cancelled) return;
 
         const win = getCurrentWindow();
-        if (saved && saved.x > -32000 && saved.y > -32000) {
-          await win.setPosition(new LogicalPosition(saved.x, saved.y));
-        } else {
-          await win.setPosition(new LogicalPosition(isStatsOverlay ? 360 : 60, 60));
-        }
 
         if (isStatsOverlay) {
           await Promise.all([
@@ -1277,6 +1291,7 @@ export function Overlay() {
           if (saved && saved.width >= 220 && saved.height >= 180) {
             await win.setSize(new LogicalSize(saved.width, saved.height));
           }
+          await restoreWindowPlacement("stats-overlay", saved);
           window.setTimeout(() => {
             if (!cancelled) void evaluateOverlayDocking();
           }, OVERLAY_DOCK_SETTLE_DELAY_MS);
@@ -1317,6 +1332,7 @@ export function Overlay() {
         } else {
           await applyExpandedOverlaySize(win, expandedSize);
         }
+        await restoreWindowPlacement("overlay", saved);
         window.setTimeout(() => {
           if (!cancelled && supportsCompactMode) void evaluateOverlayDocking();
         }, OVERLAY_DOCK_SETTLE_DELAY_MS);
@@ -1350,9 +1366,9 @@ export function Overlay() {
             try {
               if (isStatsOverlay) {
                 if (dockStateRef.current) {
-                  await refreshDockPlacementAfterResize();
+                  await refreshDockPlacementAfterResize(true);
                 } else {
-                  await persistOverlayGeometry();
+                  await persistOverlayGeometry(undefined, true);
                 }
                 return;
               }
@@ -1367,9 +1383,9 @@ export function Overlay() {
                 storeExpandedOverlaySize(expandedSize);
               }
               if (dockStateRef.current) {
-                await refreshDockPlacementAfterResize();
+                await refreshDockPlacementAfterResize(true);
               } else {
-                await persistOverlayGeometry();
+                await persistOverlayGeometry(undefined, true);
               }
             } catch (err) {
               console.warn(`[Overlay] persist ${resizedMode} size failed:`, err);
@@ -1411,9 +1427,14 @@ export function Overlay() {
             return;
           }
           clearDockMoveTimer();
+          const userInitiated = userWindowMovePendingRef.current;
           dockMoveTimerRef.current = window.setTimeout(() => {
             dockMoveTimerRef.current = null;
-            if (!cancelled) void evaluateOverlayDocking();
+            if (!cancelled) {
+              void evaluateOverlayDocking(userInitiated).finally(() => {
+                if (userInitiated) userWindowMovePendingRef.current = false;
+              });
+            }
           }, OVERLAY_DOCK_SETTLE_DELAY_MS);
         });
         if (cancelled) stopListening();

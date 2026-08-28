@@ -8,6 +8,7 @@ import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
 import { validateTrackingTarget } from "../utils/trackingTarget";
+import { setAuxiliaryWindowVisible } from "../utils/windowPlacement";
 
 async function retryWindowAction(
   action: () => Promise<boolean>,
@@ -36,29 +37,17 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
 
     const showCat = async () => {
       try {
-        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         if (cancelled) return true;
-        const catWin = await WebviewWindow.getByLabel("bongo-cat");
-        if (catWin) {
-          if (cancelled) return true;
-          await catWin.show();
-          await invoke("set_bongo_cat_input_visible", { visible: true }).catch(() => {});
-          return true;
-        }
+        await setAuxiliaryWindowVisible("bongo-cat", true);
+        return true;
       } catch {}
       return false;
     };
 
     const hideCat = async () => {
       try {
-        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         if (cancelled) return;
-        const catWin = await WebviewWindow.getByLabel("bongo-cat");
-        if (catWin) {
-          if (cancelled) return;
-          await catWin.hide();
-          await invoke("set_bongo_cat_input_visible", { visible: false }).catch(() => {});
-        }
+        await setAuxiliaryWindowVisible("bongo-cat", false);
       } catch {}
     };
 
@@ -109,25 +98,19 @@ export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) 
 
     const manageOverlay = async () => {
       try {
-        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
         if (cancelled) return true;
         const windows = [
-          { label: "overlay", enabled: config.enable_tz_overlay },
+          { label: "overlay" as const, enabled: config.enable_tz_overlay },
           {
-            label: "stats-overlay",
+            label: "stats-overlay" as const,
             enabled: config.enable_stats_overlay,
           },
         ];
-        let allSettled = true;
         for (const entry of windows) {
-          const overlayWin = await WebviewWindow.getByLabel(entry.label);
-          if (!overlayWin || cancelled) continue;
-          if (entry.enabled) await overlayWin.show();
-          else await overlayWin.hide();
-          const visible = await overlayWin.isVisible();
-          allSettled = allSettled && visible === entry.enabled;
+          if (cancelled) continue;
+          await setAuxiliaryWindowVisible(entry.label, entry.enabled);
         }
-        return allSettled;
+        return true;
       } catch {}
       return false;
     };

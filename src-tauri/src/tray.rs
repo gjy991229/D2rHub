@@ -6,8 +6,15 @@ use tauri::{
 
 pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let show_i = MenuItem::with_id(app, "show", "显示面板", true, None::<&str>)?;
+    let recover_i = MenuItem::with_id(
+        app,
+        "recover-overlays",
+        "找回所有悬浮窗",
+        true,
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", "退出 D2RHub", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&show_i, &recover_i, &quit_i])?;
 
     let icon = app
         .default_window_icon()
@@ -20,9 +27,17 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "show" => {
-                if let Some(main_win) = app.get_webview_window("main") {
-                    let _ = main_win.show();
-                    let _ = main_win.set_focus();
+                crate::window_placement::show_main_window_safely(app);
+            }
+            "recover-overlays" => {
+                if let Err(error) =
+                    crate::window_placement::recover_auxiliary_windows_for_app(app, "cursor")
+                {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "WindowPlacement",
+                        &format!("从托盘找回悬浮窗失败: {error}"),
+                    );
                 }
             }
             "quit" => {
@@ -43,8 +58,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                     if is_visible {
                         let _ = main_win.hide();
                     } else {
-                        let _ = main_win.show();
-                        let _ = main_win.set_focus();
+                        crate::window_placement::show_main_window_safely(app);
                     }
                 }
             }

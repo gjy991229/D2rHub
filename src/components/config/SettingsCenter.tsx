@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   Package,
   ChevronDown,
+  LocateFixed,
+  MonitorUp,
 } from "lucide-react";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -42,6 +44,12 @@ import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
 import { AUDIO_MOD_NAME_MAX_LENGTH, validateAudioModName } from "../../utils/audioModName";
+import {
+  locateAuxiliaryWindow,
+  recoverAuxiliaryWindows,
+  setAuxiliaryWindowVisible,
+  type AuxiliaryWindowLabel,
+} from "../../utils/windowPlacement";
 
 // Helper for quadratic opacity mapping
 // Map slider value s (0..100) to stored percentage p (10..100)
@@ -61,14 +69,6 @@ interface Props {
   onReconfigure: () => void;
   initialTab?: string | null;
   initialAccountId?: string | null;
-}
-
-async function setAuxiliaryWindowVisible(label: string, visible: boolean) {
-  const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-  const target = await WebviewWindow.getByLabel(label);
-  if (!target) return;
-  if (visible) await target.show();
-  else await target.hide();
 }
 
 interface ExportAccountsSummary {
@@ -304,10 +304,63 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const [audioSetupName, setAudioSetupName] = useState("");
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
+  const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
   const normalizedAudioSetupName = audioSetupName.trim();
   const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
   const audioSetupNameError = validateAudioModName(audioSetupName, installedAudioModNames);
   const showAudioSetupNameError = audioSetupName.length > 0 && !!audioSetupNameError;
+
+  const locateWindow = async (label: AuxiliaryWindowLabel) => {
+    const names = config?.app_language === "en-US"
+      ? { overlay: "Terror Zone Broadcast", "stats-overlay": "Run Statistics", "bongo-cat": "Cat Overlay" }
+      : { overlay: "邪恶区域播报窗口", "stats-overlay": "场景统计窗口", "bongo-cat": "猫咪悬浮窗" };
+    const name = names[label];
+    setWindowPlacementBusy(label);
+    try {
+      await locateAuxiliaryWindow(label);
+      showToast(
+        "success",
+        config?.app_language === "en-US"
+          ? `${name} was moved to this display`
+          : `${name}已移到当前屏幕`,
+      );
+    } catch (error) {
+      showToast(
+        "error",
+        config?.app_language === "en-US"
+          ? `Failed to locate ${name}: ${error}`
+          : `定位${name}失败: ${error}`,
+      );
+    } finally {
+      setWindowPlacementBusy(null);
+    }
+  };
+
+  const recoverAllWindows = async () => {
+    setWindowPlacementBusy("all");
+    try {
+      const recovered = await recoverAuxiliaryWindows("main");
+      if (recovered.length === 0) {
+        showToast("info", "当前没有已启用的悬浮窗");
+      } else {
+        showToast(
+          "success",
+          config?.app_language === "en-US"
+            ? `Moved ${recovered.length} overlay windows to this display`
+            : `已将 ${recovered.length} 个悬浮窗移到当前屏幕`,
+        );
+      }
+    } catch (error) {
+      showToast(
+        "error",
+        config?.app_language === "en-US"
+          ? `Failed to recover overlay windows: ${error}`
+          : `找回悬浮窗失败: ${error}`,
+      );
+    } finally {
+      setWindowPlacementBusy(null);
+    }
+  };
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -1718,54 +1771,96 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       <span className="text-sm font-semibold text-text-secondary">邪恶区域播报窗口</span>
                       <p className="text-2xs text-text-muted">独立显示当前与下一轮 TZ；支持迷你模式和贴边隐藏</p>
                     </div>
-                    <Toggle
-                      checked={!!config.enable_tz_overlay}
-                      ariaLabel="显示邪恶区域播报悬浮窗"
-                      onChange={async v => {
-                        updateConfig(c => {
-                          c.enable_tz_overlay = v;
-                          c.enable_overlay = v || c.enable_stats_overlay;
-                        });
-                        const cur = useGlobalConfig.getState().config;
-                        if (cur) await save({
-                          ...cur,
-                          enable_tz_overlay: v,
-                          enable_overlay: v || cur.enable_stats_overlay,
-                        });
-                        try {
-                          await setAuxiliaryWindowVisible("overlay", v);
-                        } catch (e) {
-                          console.error("切换 TZ 播报窗口失败", e);
-                        }
-                      }}
-                    />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={windowPlacementBusy === "overlay"}
+                        disabled={!config.enable_tz_overlay || windowPlacementBusy !== null}
+                        onClick={() => locateWindow("overlay")}
+                        title="将窗口移到主界面所在屏幕"
+                      >
+                        <LocateFixed size={12} />
+                        定位
+                      </Button>
+                      <Toggle
+                        checked={!!config.enable_tz_overlay}
+                        ariaLabel="显示邪恶区域播报悬浮窗"
+                        onChange={async v => {
+                          updateConfig(c => {
+                            c.enable_tz_overlay = v;
+                            c.enable_overlay = v || c.enable_stats_overlay;
+                          });
+                          const cur = useGlobalConfig.getState().config;
+                          if (cur) await save({
+                            ...cur,
+                            enable_tz_overlay: v,
+                            enable_overlay: v || cur.enable_stats_overlay,
+                          });
+                          try {
+                            await setAuxiliaryWindowVisible("overlay", v);
+                          } catch (e) {
+                            console.error("切换 TZ 播报窗口失败", e);
+                          }
+                        }}
+                      />
+                    </div>
                   </div>
                   <div className="flex items-center justify-between gap-4 border-t border-border-default/50 py-2">
                     <div>
                       <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
                       <p className="text-2xs text-text-muted">独立显示运行账号、场景计时与符文掉落；支持贴边自动隐藏，不使用迷你模式</p>
                     </div>
-                    <Toggle
-                      checked={!!config.enable_stats_overlay}
-                      ariaLabel="显示场景统计悬浮窗"
-                      onChange={async v => {
-                        updateConfig(c => {
-                          c.enable_stats_overlay = v;
-                          c.enable_overlay = c.enable_tz_overlay || v;
-                        });
-                        const cur = useGlobalConfig.getState().config;
-                        if (cur) await save({
-                          ...cur,
-                          enable_stats_overlay: v,
-                          enable_overlay: cur.enable_tz_overlay || v,
-                        });
-                        try {
-                          await setAuxiliaryWindowVisible("stats-overlay", v);
-                        } catch (e) {
-                          console.error("切换统计窗口失败", e);
-                        }
-                      }}
-                    />
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={windowPlacementBusy === "stats-overlay"}
+                        disabled={!config.enable_stats_overlay || windowPlacementBusy !== null}
+                        onClick={() => locateWindow("stats-overlay")}
+                        title="将窗口移到主界面所在屏幕"
+                      >
+                        <LocateFixed size={12} />
+                        定位
+                      </Button>
+                      <Toggle
+                        checked={!!config.enable_stats_overlay}
+                        ariaLabel="显示场景统计悬浮窗"
+                        onChange={async v => {
+                          updateConfig(c => {
+                            c.enable_stats_overlay = v;
+                            c.enable_overlay = c.enable_tz_overlay || v;
+                          });
+                          const cur = useGlobalConfig.getState().config;
+                          if (cur) await save({
+                            ...cur,
+                            enable_stats_overlay: v,
+                            enable_overlay: cur.enable_tz_overlay || v,
+                          });
+                          try {
+                            await setAuxiliaryWindowVisible("stats-overlay", v);
+                          } catch (e) {
+                            console.error("切换统计窗口失败", e);
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-between gap-4 border-t border-border-default/50 pt-2">
+                    <p className="min-w-0 text-2xs leading-relaxed text-text-muted">
+                      显示器布局变化时会自动保证窗口可见；也可以将已启用的悬浮窗统一移回当前屏幕。
+                    </p>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="shrink-0"
+                      loading={windowPlacementBusy === "all"}
+                      disabled={windowPlacementBusy !== null || (!config.enable_tz_overlay && !config.enable_stats_overlay && !config.enable_bongo_cat)}
+                      onClick={recoverAllWindows}
+                    >
+                      <MonitorUp size={12} />
+                      全部移回
+                    </Button>
                   </div>
                 </div>
 
@@ -2225,24 +2320,32 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       <span className="text-sm font-bold text-text-secondary">开启桌面交互桌宠 (BongoCat)</span>
                       <p className="text-2xs text-text-muted">启用后会在桌面上方生成一只呆萌的猫咪，能实时同步你的鼠标划过与按键敲击</p>
                     </div>
-                    <Toggle
-                      checked={!!config.enable_bongo_cat}
-                      onChange={async v => {
-                        updateConfig(c => { c.enable_bongo_cat = v; });
-                        const cur = useGlobalConfig.getState().config;
-                        if (cur) await save({ ...cur, enable_bongo_cat: v });
-                        try {
-                          const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
-                          const catWin = await WebviewWindow.getByLabel("bongo-cat");
-                          if (catWin) {
-                            if (v) await catWin.show();
-                            else await catWin.hide();
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        loading={windowPlacementBusy === "bongo-cat"}
+                        disabled={!config.enable_bongo_cat || windowPlacementBusy !== null}
+                        onClick={() => locateWindow("bongo-cat")}
+                        title="将窗口移到主界面所在屏幕"
+                      >
+                        <LocateFixed size={12} />
+                        定位
+                      </Button>
+                      <Toggle
+                        checked={!!config.enable_bongo_cat}
+                        onChange={async v => {
+                          updateConfig(c => { c.enable_bongo_cat = v; });
+                          const cur = useGlobalConfig.getState().config;
+                          if (cur) await save({ ...cur, enable_bongo_cat: v });
+                          try {
+                            await setAuxiliaryWindowVisible("bongo-cat", v);
+                          } catch (e) {
+                            console.error("切换桌宠窗口显示失败", e);
                           }
-                        } catch (e) {
-                          console.error("切换桌宠窗口显示失败", e);
-                        }
-                      }}
-                    />
+                        }}
+                      />
+                    </div>
                   </div>
 
                   {config.enable_bongo_cat && (

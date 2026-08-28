@@ -13,6 +13,7 @@ mod stats_page;
 #[cfg(target_os = "windows")]
 mod token_registry_trace;
 mod tray;
+mod window_placement;
 
 use crate::commands::global_config::GlobalConfig;
 use state::AppState;
@@ -125,32 +126,7 @@ pub fn run() {
                     }
                 }
             }
-
-            // 加载悬浮窗几何并应用
-            let overlay_geo = GlobalConfig::load_overlay_geometry_fn(&app_state.app_data_dir);
-            if let Some(g) = &overlay_geo {
-                if g.x > -32000 && g.y > -32000 && g.width > 50 && g.height > 50 {
-                    if let Some(win) = app.get_webview_window("overlay") {
-                        use tauri::LogicalPosition;
-                        use tauri::LogicalSize;
-                        let _ = win.set_position(LogicalPosition::new(g.x as f64, g.y as f64));
-                        let _ = win.set_size(LogicalSize::new(g.width as f64, g.height as f64));
-                    }
-                }
-            }
-
-            let stats_overlay_geo =
-                GlobalConfig::load_stats_overlay_geometry_fn(&app_state.app_data_dir);
-            if let Some(g) = &stats_overlay_geo {
-                if g.x > -32000 && g.y > -32000 && g.width >= 220 && g.height >= 180 {
-                    if let Some(win) = app.get_webview_window("stats-overlay") {
-                        use tauri::LogicalPosition;
-                        use tauri::LogicalSize;
-                        let _ = win.set_position(LogicalPosition::new(g.x as f64, g.y as f64));
-                        let _ = win.set_size(LogicalSize::new(g.width as f64, g.height as f64));
-                    }
-                }
-            }
+            window_placement::ensure_main_window_visible(app.handle());
 
             // 拦截主窗口关闭事件
             if let Some(main_win) = app.get_webview_window("main") {
@@ -170,23 +146,24 @@ pub fn run() {
                             .map(|config| config.enable_tz_overlay)
                             .unwrap_or(true)
                         {
-                            if let Some(overlay_win) =
-                                main_win_clone.app_handle().get_webview_window("overlay")
-                            {
-                                let _ = overlay_win.show();
-                            }
+                            let _ = window_placement::set_auxiliary_window_visible_for_app(
+                                main_win_clone.app_handle(),
+                                "overlay",
+                                true,
+                                Some("preserve"),
+                            );
                         }
                         if overlay_config
                             .as_ref()
                             .map(|config| config.enable_stats_overlay)
                             .unwrap_or(true)
                         {
-                            if let Some(stats_win) = main_win_clone
-                                .app_handle()
-                                .get_webview_window("stats-overlay")
-                            {
-                                let _ = stats_win.show();
-                            }
+                            let _ = window_placement::set_auxiliary_window_visible_for_app(
+                                main_win_clone.app_handle(),
+                                "stats-overlay",
+                                true,
+                                Some("preserve"),
+                            );
                         }
                     }
                 });
@@ -345,6 +322,10 @@ pub fn run() {
             commands::global_config::load_overlay_geometry,
             commands::global_config::save_stats_overlay_geometry,
             commands::global_config::load_stats_overlay_geometry,
+            window_placement::restore_window_placement,
+            window_placement::save_window_placement,
+            window_placement::set_auxiliary_window_visible,
+            window_placement::recover_auxiliary_windows,
             commands::global_config::save_theme,
             commands::global_config::detect_saved_games_path,
             commands::global_config::detect_global_saved_games_path,

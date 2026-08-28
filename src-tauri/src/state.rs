@@ -39,6 +39,8 @@ pub struct AppState {
     pub audio_mod_build_busy: AtomicBool,
     /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
     pub shortcut_map: RwLock<HashMap<String, usize>>,
+    /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
+    pub window_placement_io: Mutex<()>,
 }
 
 impl AppState {
@@ -66,6 +68,7 @@ impl AppState {
             active_game_launches: RwLock::new(HashMap::new()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
+            window_placement_io: Mutex::new(()),
         }
     }
 

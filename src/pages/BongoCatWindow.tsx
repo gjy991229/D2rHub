@@ -1,12 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWindow, LogicalPosition, LogicalSize, primaryMonitor } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { Lock, Check } from "lucide-react";
 import { DROPS, WHITE_DROPS_COMMON, WHITE_DROPS_THEMED } from "./catDropsData";
-import { useWindowGeometrySave } from "../hooks/useWindowGeometrySave";
+import { useWindowPlacementSave } from "../hooks/useWindowPlacementSave";
 import { usePreventDragRegionDoubleClick } from "../hooks/useAppEffects";
+import {
+  restoreWindowPlacement,
+  setAuxiliaryWindowVisible,
+  type LegacyWindowGeometry,
+} from "../utils/windowPlacement";
 
 type Quality = "none" | "white" | "blue" | "yellow" | "green" | "gold" | "divine";
 
@@ -20,6 +24,11 @@ interface ActiveDrop {
 export function BongoCatWindow() {
   const { config, save, load } = useGlobalConfig();
   const [clickCount, setClickCount] = useState(0);
+  const placementRestoredRef = useRef(false);
+  const markPlacementInteraction = useWindowPlacementSave({
+    label: "bongo-cat",
+    legacyStorageKey: "d2rhub-cat-position",
+  });
 
   // Load config on mount
   useEffect(() => {
@@ -57,48 +66,38 @@ export function BongoCatWindow() {
     }
   }, [config?.font_scale]);
 
-  // Restore cat window position on startup
-  useEffect(() => {
-    (async () => {
-      try {
-        const savedPos = localStorage.getItem("d2rhub-cat-position");
-        const win = getCurrentWindow();
-        if (savedPos) {
-          const parsed = JSON.parse(savedPos);
-          if (parsed && typeof parsed.x === "number" && typeof parsed.y === "number") {
-            await win.setPosition(new LogicalPosition(parsed.x, parsed.y));
-          }
-        } else {
-          const monitor = await primaryMonitor();
-          if (monitor) {
-            const scaleFactor = monitor.scaleFactor || 1.0;
-            const screenW = monitor.size.width / scaleFactor;
-            const screenH = monitor.size.height / scaleFactor;
-            const winW = 240 * (config?.bongo_cat_scale || 1.0);
-            const winH = 400 * (config?.bongo_cat_scale || 1.0);
-            const defaultX = screenW - winW - 60;
-            const defaultY = screenH - winH - 80;
-            await win.setPosition(new LogicalPosition(defaultX, defaultY));
-          }
-        }
-      } catch (err) {
-        console.error("Failed to restore cat position:", err);
-      }
-    })();
-  }, []);
-
-  useWindowGeometrySave("localStorage:d2rhub-cat-position", 50, 50);
   usePreventDragRegionDoubleClick();
 
-  // Resize window on scale changes
+  // Apply the final size first, then let the native placement service restore
+  // physical coordinates. This avoids restoring against the wrong DPI/size.
   useEffect(() => {
+    if (!config) return;
     (async () => {
       try {
         const win = getCurrentWindow();
-        const currentScale = config?.bongo_cat_scale || 1.0;
+        const currentScale = config.bongo_cat_scale || 1.0;
         await win.setSize(new LogicalSize(Math.round(240 * currentScale), Math.round(400 * currentScale)));
+        if (!placementRestoredRef.current) {
+          let legacyGeometry: LegacyWindowGeometry | null = null;
+          try {
+            const parsed = JSON.parse(localStorage.getItem("d2rhub-cat-position") || "null");
+            if (
+              parsed
+              && Number.isFinite(parsed.x)
+              && Number.isFinite(parsed.y)
+              && Number.isFinite(parsed.width)
+              && Number.isFinite(parsed.height)
+            ) {
+              legacyGeometry = parsed;
+            }
+          } catch {}
+          await restoreWindowPlacement("bongo-cat", legacyGeometry);
+          placementRestoredRef.current = true;
+        } else {
+          await restoreWindowPlacement("bongo-cat");
+        }
       } catch (err) {
-        console.error("Failed to resize window:", err);
+        console.error("Failed to size and restore cat window:", err);
       }
     })();
   }, [config?.bongo_cat_scale]);
@@ -264,9 +263,7 @@ export function BongoCatWindow() {
 
   const hideWindow = async () => {
     try {
-      const win = getCurrentWindow();
-      await win.hide();
-      await invoke("set_bongo_cat_input_visible", { visible: false }).catch(() => {});
+      await setAuxiliaryWindowVisible("bongo-cat", false);
     } catch {}
   };
 
@@ -279,6 +276,15 @@ export function BongoCatWindow() {
       className="select-none relative overflow-visible"
       onContextMenu={handleContextMenu}
       onClick={closeMenu}
+      onPointerDownCapture={(event) => {
+        if (
+          event.button === 0
+          && event.target instanceof Element
+          && event.target.closest("[data-tauri-drag-region]")
+        ) {
+          markPlacementInteraction();
+        }
+      }}
     >
       <div
         className="relative pointer-events-auto"
