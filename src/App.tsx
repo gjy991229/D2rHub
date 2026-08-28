@@ -149,7 +149,9 @@ function App() {
   // Update view state
   useEffect(() => {
     if (initialLoading) return;
-    if (!config || !config.first_run_complete) setView({ type: "setup" });
+    if (!config || !config.first_run_complete) {
+      setView({ type: "setup", existingConfig: config ?? undefined });
+    }
     else setView({ type: "main" });
     // Sync theme from config (config as source of truth)
     if (config?.theme) syncThemeFromConfig(config.theme);

@@ -37,9 +37,9 @@ export const useGlobalConfig = create<GlobalConfigState>((set) => ({
   save: async (config: GlobalConfig) => {
     set({ saving: true, error: null });
     try {
-      await invoke("save_global_config", { config });
-      set({ config, saving: false });
-      await emit("global-config-updated", config);
+      const saved = await invoke<GlobalConfig>("save_global_config", { config });
+      set({ config: saved, saving: false });
+      await emit("global-config-updated", saved);
     } catch (e) {
       set({ error: String(e), saving: false });
       throw e;

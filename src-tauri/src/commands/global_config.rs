@@ -7,11 +7,29 @@ use crate::state::SharedState;
 
 const CURRENT_CONFIG_VERSION: u32 = 6;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
     NotNeeded,
     Migrated,
-    Ambiguous,
+    Pending(LegacyPathMigration),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LegacyBattleNetPathMigration {
+    changed: bool,
+    pending_path: Option<String>,
+}
+
+/// 无法自动判断归属的旧版单客户端路径。仅用于把迁移候选交给设置向导；
+/// 用户明确选择国服或国际服之前，不得写回并覆盖旧配置文件。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyPathMigration {
+    #[serde(default)]
+    pub game_path: String,
+    #[serde(default)]
+    pub saved_games_path: String,
+    #[serde(default)]
+    pub battle_net_path: String,
 }
 
 /// 全局配置
@@ -32,6 +50,9 @@ pub struct GlobalConfig {
     /// 国际服存档目录（亚服、美服、欧服共用）。
     #[serde(default)]
     pub global_saved_games_path: String,
+    /// 待用户确认归属的旧版路径。该状态存在时禁止持久化配置。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_path_migration: Option<LegacyPathMigration>,
     pub program_data_agent_path: String,
     pub app_data_roaming_bnet_path: String,
     pub accounts_dir: String,
@@ -241,7 +262,7 @@ fn should_validate_installation_paths(
 mod validation_tests {
     use super::{
         saved_games_settings_exists, should_validate_installation_paths,
-        validate_installation_paths, GlobalConfig, CURRENT_CONFIG_VERSION,
+        validate_installation_paths, GlobalConfig, LegacyPathMigration, CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -665,6 +686,8 @@ mod validation_tests {
         let config_path = root.join("global_config.json");
         let mut legacy = serde_json::to_value(GlobalConfig {
             first_run_complete: true,
+            theme: "onyx".to_string(),
+            auto_close_browser: false,
             ..GlobalConfig::default()
         })
         .unwrap();
@@ -695,6 +718,17 @@ mod validation_tests {
         assert!(!config.first_run_complete);
         assert!(config.cn_game_path.is_empty());
         assert!(config.global_game_path.is_empty());
+        assert_eq!(config.theme, "onyx");
+        assert!(!config.auto_close_browser);
+        assert_eq!(
+            config.legacy_path_migration,
+            Some(LegacyPathMigration {
+                game_path: r"D:\Games\D2R".to_string(),
+                saved_games_path: r"D:\Saves\D2R".to_string(),
+                battle_net_path: r"D:\Battle.net\Battle.net.exe".to_string(),
+            })
+        );
+        assert!(config.save(root.to_str().unwrap()).is_err());
         let preserved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
         assert_eq!(preserved["version"], 1);
@@ -736,7 +770,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn ambiguous_legacy_battle_net_path_is_not_copied_to_two_editions() {
+    fn ambiguous_legacy_battle_net_path_is_returned_for_confirmation() {
         let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
         let object = legacy.as_object_mut().unwrap();
         object.remove("cn_battle_net_path");
@@ -761,10 +795,84 @@ mod validation_tests {
             serde_json::json!(r"D:\Saves\D2R-Global"),
         );
 
-        assert!(GlobalConfig::migrate_legacy_battle_net_paths(&mut legacy));
+        let migration = GlobalConfig::migrate_legacy_battle_net_paths(&mut legacy);
+        assert!(legacy.get("battle_net_path").is_some());
         let config: GlobalConfig = serde_json::from_value(legacy).unwrap();
 
         assert!(config.cn_battle_net_path.is_empty());
+        assert_eq!(
+            migration.pending_path.as_deref(),
+            Some(r"C:\Battle.net\Battle.net.exe")
+        );
+    }
+
+    #[test]
+    fn mixed_legacy_and_empty_new_keys_fill_the_new_profile() {
+        let root = temp_dir("mixed_empty_new_keys");
+        let config_path = root.join("global_config.json");
+        let mut mixed = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = mixed.as_object_mut().unwrap();
+        object.insert("version".to_string(), serde_json::json!(1));
+        object.insert(
+            "game_path".to_string(),
+            serde_json::json!(r"D:\Games\D2R-CN"),
+        );
+        object.insert(
+            "saved_games_path".to_string(),
+            serde_json::json!(r"C:\Users\Tester\Saved Games\Diablo II Resurrected (CN)"),
+        );
+        object.insert(
+            "battle_net_path".to_string(),
+            serde_json::json!(r"C:\Battle.net\Battle.net.exe"),
+        );
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&mixed).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(config.cn_game_path, r"D:\Games\D2R-CN");
+        assert_eq!(config.cn_battle_net_path, r"C:\Battle.net\Battle.net.exe");
+        assert!(config.legacy_path_migration.is_none());
+        assert!(persisted.get("game_path").is_none());
+        assert!(persisted.get("battle_net_path").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conflicting_mixed_paths_stay_pending_instead_of_dropping_the_legacy_value() {
+        let root = temp_dir("mixed_conflicting_keys");
+        let config_path = root.join("global_config.json");
+        let mut mixed = serde_json::to_value(GlobalConfig {
+            global_game_path: r"E:\Current\D2R".to_string(),
+            global_saved_games_path: r"C:\Users\Tester\Saved Games\Diablo II Resurrected"
+                .to_string(),
+            ..GlobalConfig::default()
+        })
+        .unwrap();
+        let object = mixed.as_object_mut().unwrap();
+        object.insert("version".to_string(), serde_json::json!(1));
+        object.insert("game_path".to_string(), serde_json::json!(r"D:\Legacy\D2R"));
+        object.insert(
+            "saved_games_path".to_string(),
+            serde_json::json!(r"C:\Users\Tester\Saved Games\Diablo II Resurrected"),
+        );
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&mixed).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let preserved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(config.global_game_path, r"E:\Current\D2R");
+        assert_eq!(
+            config
+                .legacy_path_migration
+                .as_ref()
+                .map(|candidate| candidate.game_path.as_str()),
+            Some(r"D:\Legacy\D2R")
+        );
+        assert_eq!(preserved["game_path"], r"D:\Legacy\D2R");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -816,6 +924,7 @@ impl Default for GlobalConfig {
             cn_saved_games_path: String::new(),
             global_game_path: String::new(),
             global_saved_games_path: String::new(),
+            legacy_path_migration: None,
             program_data_agent_path: String::new(),
             app_data_roaming_bnet_path: String::new(),
             accounts_dir: String::new(),
@@ -938,14 +1047,24 @@ impl GlobalConfig {
             }
         }
         let region_path_migration = Self::migrate_legacy_region_paths(&mut value);
-        let preserve_ambiguous_legacy_paths =
-            region_path_migration == LegacyRegionPathMigration::Ambiguous;
-        let mut migrated =
-            overlay_split_migrated || region_path_migration == LegacyRegionPathMigration::Migrated;
-        if !preserve_ambiguous_legacy_paths {
-            migrated |= Self::migrate_legacy_battle_net_paths(&mut value);
+        let mut pending_legacy_paths = match &region_path_migration {
+            LegacyRegionPathMigration::Pending(candidate) => Some(candidate.clone()),
+            _ => None,
+        };
+        let mut migrated = overlay_split_migrated
+            || matches!(region_path_migration, LegacyRegionPathMigration::Migrated);
+        if pending_legacy_paths.is_none() {
+            let battle_net_migration = Self::migrate_legacy_battle_net_paths(&mut value);
+            migrated |= battle_net_migration.changed;
+            if let Some(battle_net_path) = battle_net_migration.pending_path {
+                pending_legacy_paths = Some(LegacyPathMigration {
+                    battle_net_path,
+                    ..LegacyPathMigration::default()
+                });
+            }
         }
         let mut config: GlobalConfig = serde_json::from_value(value)?;
+        config.legacy_path_migration = pending_legacy_paths;
 
         if config.version != CURRENT_CONFIG_VERSION {
             config.version = CURRENT_CONFIG_VERSION;
@@ -980,9 +1099,9 @@ impl GlobalConfig {
             migrated = true;
         }
 
-        if preserve_ambiguous_legacy_paths {
+        if config.legacy_path_migration.is_some() {
             config.first_run_complete = false;
-            log::warn!("旧版游戏与存档路径无法无歧义判断国服或国际服，保留原始配置并要求重新确认");
+            log::warn!("旧版路径无法无歧义迁移，保留原始配置并等待用户确认归属");
         } else if migrated {
             config.save(app_data_dir)?;
         }
@@ -993,37 +1112,71 @@ impl GlobalConfig {
         let Some(object) = value.as_object_mut() else {
             return LegacyRegionPathMigration::NotNeeded;
         };
-        if object.contains_key("cn_game_path")
-            || object.contains_key("global_game_path")
-            || (!object.contains_key("game_path") && !object.contains_key("saved_games_path"))
-        {
+        if !object.contains_key("game_path") && !object.contains_key("saved_games_path") {
             return LegacyRegionPathMigration::NotNeeded;
         }
 
-        let game_path = object
-            .get("game_path")
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
-        let saved_games_path = object
-            .get("saved_games_path")
-            .and_then(|value| value.as_str().map(str::to_string))
-            .unwrap_or_default();
-        let Some(edition) = Self::infer_legacy_saved_games_edition(&saved_games_path) else {
-            return LegacyRegionPathMigration::Ambiguous;
+        let legacy_string = |key: &str| {
+            object
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .to_string()
         };
-        object.remove("game_path");
-        object.remove("saved_games_path");
+        let game_path = legacy_string("game_path");
+        let saved_games_path = legacy_string("saved_games_path");
+        let battle_net_path = legacy_string("battle_net_path");
+
+        if game_path.trim().is_empty() && saved_games_path.trim().is_empty() {
+            object.remove("game_path");
+            object.remove("saved_games_path");
+            return LegacyRegionPathMigration::Migrated;
+        }
+
+        let Some(edition) = Self::infer_legacy_saved_games_edition(&saved_games_path) else {
+            return LegacyRegionPathMigration::Pending(LegacyPathMigration {
+                game_path,
+                saved_games_path,
+                battle_net_path,
+            });
+        };
         let is_cn = edition == crate::launch_context::ClientEdition::Cn;
         let (game_key, saves_key) = if is_cn {
             ("cn_game_path", "cn_saved_games_path")
         } else {
             ("global_game_path", "global_saved_games_path")
         };
-        object.insert(game_key.to_string(), serde_json::Value::String(game_path));
-        object.insert(
-            saves_key.to_string(),
-            serde_json::Value::String(saved_games_path),
-        );
+
+        let conflicts_with_new_value = |key: &str, legacy: &str| {
+            !legacy.trim().is_empty()
+                && object
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|current| {
+                        !current.trim().is_empty() && !current.eq_ignore_ascii_case(legacy)
+                    })
+        };
+        if conflicts_with_new_value(game_key, &game_path)
+            || conflicts_with_new_value(saves_key, &saved_games_path)
+        {
+            return LegacyRegionPathMigration::Pending(LegacyPathMigration {
+                game_path,
+                saved_games_path,
+                battle_net_path,
+            });
+        }
+
+        object.remove("game_path");
+        object.remove("saved_games_path");
+        for (key, legacy) in [(game_key, game_path), (saves_key, saved_games_path)] {
+            let current_is_empty = object
+                .get(key)
+                .and_then(serde_json::Value::as_str)
+                .is_none_or(|current| current.trim().is_empty());
+            if current_is_empty {
+                object.insert(key.to_string(), serde_json::Value::String(legacy));
+            }
+        }
         object
             .entry(
                 if is_cn {
@@ -1063,23 +1216,34 @@ impl GlobalConfig {
         }
     }
 
-    fn migrate_legacy_battle_net_paths(value: &mut serde_json::Value) -> bool {
+    fn migrate_legacy_battle_net_paths(
+        value: &mut serde_json::Value,
+    ) -> LegacyBattleNetPathMigration {
         let Some(object) = value.as_object_mut() else {
-            return false;
+            return LegacyBattleNetPathMigration {
+                changed: false,
+                pending_path: None,
+            };
         };
-        let mut changed = object.remove("global_battle_net_path").is_some();
-        if object.contains_key("cn_battle_net_path") {
-            changed |= object.remove("battle_net_path").is_some();
-            return changed;
-        }
+        let changed = object.remove("global_battle_net_path").is_some();
         if !object.contains_key("battle_net_path") {
-            return changed;
+            return LegacyBattleNetPathMigration {
+                changed,
+                pending_path: None,
+            };
         }
 
         let battle_net_path = object
-            .remove("battle_net_path")
+            .get("battle_net_path")
             .and_then(|value| value.as_str().map(str::to_string))
             .unwrap_or_default();
+        if battle_net_path.trim().is_empty() {
+            object.remove("battle_net_path");
+            return LegacyBattleNetPathMigration {
+                changed: true,
+                pending_path: None,
+            };
+        }
         let cn_configured = ["cn_game_path", "cn_saved_games_path"].iter().any(|key| {
             object
                 .get(*key)
@@ -1095,19 +1259,53 @@ impl GlobalConfig {
                     .is_some_and(|path| !path.trim().is_empty())
             });
 
-        object.insert(
-            "cn_battle_net_path".to_string(),
-            serde_json::Value::String(if cn_configured && !global_configured {
-                battle_net_path
-            } else {
-                String::new()
-            }),
-        );
-        true
+        let current_cn_battle_net = object
+            .get("cn_battle_net_path")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+
+        if !current_cn_battle_net.trim().is_empty() {
+            object.remove("battle_net_path");
+            return LegacyBattleNetPathMigration {
+                changed: true,
+                pending_path: None,
+            };
+        }
+
+        if cn_configured && !global_configured {
+            object.remove("battle_net_path");
+            object.insert(
+                "cn_battle_net_path".to_string(),
+                serde_json::Value::String(battle_net_path),
+            );
+            return LegacyBattleNetPathMigration {
+                changed: true,
+                pending_path: None,
+            };
+        }
+
+        if global_configured && !cn_configured {
+            // 国际服从 v4 起仅支持 Token，旧 Battle.net 路径不再参与启动。
+            object.remove("battle_net_path");
+            return LegacyBattleNetPathMigration {
+                changed: true,
+                pending_path: None,
+            };
+        }
+
+        LegacyBattleNetPathMigration {
+            changed,
+            pending_path: Some(battle_net_path),
+        }
     }
 
     /// 保存配置到磁盘
     pub fn save(&self, app_data_dir: &str) -> Result<(), AppError> {
+        if self.legacy_path_migration.is_some() {
+            return Err(AppError::ConfigWriteError(
+                "旧版路径尚未确认归属，已阻止覆盖原配置".to_string(),
+            ));
+        }
         let dir = Path::new(app_data_dir);
         if !dir.exists() {
             std::fs::create_dir_all(dir).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
@@ -1334,7 +1532,12 @@ pub fn get_global_config(state: tauri::State<'_, SharedState>) -> Result<GlobalC
 pub fn save_global_config(
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
-) -> Result<(), AppError> {
+) -> Result<GlobalConfig, AppError> {
+    if config.legacy_path_migration.is_some() {
+        return Err(AppError::ConfigWriteError(
+            "请先确认旧版路径属于国服还是国际服".to_string(),
+        ));
+    }
     let previous = state.config.read().clone();
     let mut cfg = config.clone();
     cfg.version = CURRENT_CONFIG_VERSION;
@@ -1360,7 +1563,7 @@ pub fn save_global_config(
     *stored = Some(cfg.clone());
     update_shortcut_map(&state, &cfg);
     crate::input_listener::set_bongo_cat_input_enabled(cfg.enable_bongo_cat);
-    Ok(())
+    Ok(cfg)
 }
 
 #[tauri::command]

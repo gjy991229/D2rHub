@@ -1,5 +1,11 @@
 // ── 数据模型 ──
 
+export interface LegacyPathMigration {
+  game_path: string;
+  saved_games_path: string;
+  battle_net_path: string;
+}
+
 export interface GlobalConfig {
   version: number;
   cn_battle_net_path: string;
@@ -7,6 +13,7 @@ export interface GlobalConfig {
   cn_saved_games_path: string;
   global_game_path: string;
   global_saved_games_path: string;
+  legacy_path_migration?: LegacyPathMigration | null;
   program_data_agent_path: string;
   app_data_roaming_bnet_path: string;
   accounts_dir: string;
