@@ -398,7 +398,6 @@ pub fn run() {
             commands::system::get_foreground_window_title,
             commands::system::get_d2r_window_titles,
             commands::system::refresh_account_running_state,
-            commands::system::check_game_connected,
             commands::system::send_keys_to_window,
             commands::system::snapshot_processes,
             commands::system::wait_for_new_process,
