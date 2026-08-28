@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { UserPlus, Zap } from "lucide-react";
+import { AlertTriangle, UserPlus, Zap } from "lucide-react";
 import { useGlobalConfig, initConfigListener } from "./store/globalConfig";
 import { useAccounts } from "./store/accounts";
 import { syncThemeFromConfig } from "./store/theme";
@@ -46,7 +46,7 @@ type View =
   | { type: "main"; };
 
 function App() {
-  const { config, initialLoading, load, save } = useGlobalConfig();
+  const { config, initialLoading, error: configError, load, save } = useGlobalConfig();
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const { launching, startLaunch, startBattleNetOnly, cancelLaunch, logs, clearLogs } = useLaunch();
 
@@ -180,6 +180,31 @@ function App() {
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
   };
+
+  if (!initialLoading && configError && !config) return (
+    <AppShell>
+      <div className="flex-1 flex items-center justify-center px-6">
+        <div className="w-[560px] account-line px-6 py-5">
+          <div className="flex items-start gap-3">
+            <div className="swiss-mark shrink-0">
+              <AlertTriangle size={16} className="text-error" strokeWidth={1.8} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-text-primary">配置文件无法安全读取</p>
+              <p className="text-sm text-text-secondary mt-2 leading-relaxed">
+                为避免默认值覆盖现有数据，D2RHub 已停止配置初始化。原文件仍保留；如果存在可用备份，程序会在启动时自动恢复。
+              </p>
+              <p className="text-xs font-mono text-error mt-3 break-all leading-relaxed">{configError}</p>
+              <button type="button" onClick={() => void invoke("open_logs_dir")}
+                className="control-btn h-9 mt-4">
+                打开日志目录
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </AppShell>
+  );
 
   // ── loading ──
   if (view.type === "loading") return (

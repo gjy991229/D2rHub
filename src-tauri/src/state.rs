@@ -41,6 +41,8 @@ pub struct AppState {
     pub shortcut_map: RwLock<HashMap<String, usize>>,
     /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
     pub window_placement_io: Mutex<()>,
+    /// 串行化全局配置的加载迁移与原子写入，避免多个窗口争用同一暂存文件。
+    pub config_io: Mutex<()>,
 }
 
 impl AppState {
@@ -69,6 +71,7 @@ impl AppState {
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
             window_placement_io: Mutex::new(()),
+            config_io: Mutex::new(()),
         }
     }
 
@@ -153,8 +156,8 @@ fn directory_has_account_data(path: &Path) -> bool {
     })
 }
 
-fn directory_global_config_has_user_data(path: &Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(path.join("global_config.json")) else {
+fn config_file_has_user_data(path: &Path) -> bool {
+    let Ok(content) = std::fs::read_to_string(path) else {
         return false;
     };
     let Ok(serde_json::Value::Object(object)) = serde_json::from_str(&content) else {
@@ -185,6 +188,16 @@ fn directory_global_config_has_user_data(path: &Path) -> bool {
             .and_then(serde_json::Value::as_str)
             .is_some_and(|value| !value.trim().is_empty())
     })
+}
+
+fn directory_global_config_has_user_data(path: &Path) -> bool {
+    [
+        "global_config.json",
+        "global_config.json.bak",
+        "global_config.json.tmp",
+    ]
+    .iter()
+    .any(|name| config_file_has_user_data(&path.join(name)))
 }
 
 fn directory_has_user_config(path: &Path) -> bool {
@@ -570,6 +583,38 @@ mod tests {
             "recoverable"
         );
         assert!(target.join("global_config.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn valid_system_backup_prevents_an_older_portable_config_from_taking_over() {
+        let root = temp_dir("system_backup_is_user_data");
+        let source = root.join("portable").join("config");
+        let target = root.join("AppData").join("D2RHub");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(
+            source.join("global_config.json"),
+            r#"{"version":1,"first_run_complete":true,"game_path":"D:\\Old"}"#,
+        )
+        .unwrap();
+        std::fs::write(target.join("global_config.json"), "{broken").unwrap();
+        std::fs::write(
+            target.join("global_config.json.bak"),
+            r#"{"version":6,"first_run_complete":true,"cn_game_path":"C:\\Current"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            migrate_legacy_config_dir(&source, &target).unwrap(),
+            LegacyConfigMigrationOutcome::Conflict
+        );
+        assert_eq!(
+            std::fs::read_to_string(target.join("global_config.json")).unwrap(),
+            "{broken"
+        );
+        assert!(target.join("global_config.json.bak").is_file());
+        assert!(source.join("global_config.json").is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 }

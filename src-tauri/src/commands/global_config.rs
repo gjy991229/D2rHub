@@ -904,6 +904,405 @@ mod validation_tests {
         assert!(persisted.get("global_battle_net_path").is_none());
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn config_save_rotates_the_previous_primary_into_a_backup() {
+        let root = temp_dir("global_config_backup_rotation");
+        let first = GlobalConfig {
+            theme: "light".to_string(),
+            ..GlobalConfig::default()
+        };
+        first.save(root.to_str().unwrap()).unwrap();
+        let second = GlobalConfig {
+            theme: "onyx".to_string(),
+            ..first.clone()
+        };
+        second.save(root.to_str().unwrap()).unwrap();
+
+        let primary: GlobalConfig =
+            serde_json::from_slice(&std::fs::read(root.join("global_config.json")).unwrap())
+                .unwrap();
+        let backup: GlobalConfig =
+            serde_json::from_slice(&std::fs::read(root.join("global_config.json.bak")).unwrap())
+                .unwrap();
+        assert_eq!(primary.theme, "onyx");
+        assert_eq!(backup.theme, "light");
+        assert!(!root.join("global_config.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn malformed_primary_recovers_the_last_good_backup_and_archives_the_bad_file() {
+        let root = temp_dir("malformed_primary_recovery");
+        let first = GlobalConfig {
+            theme: "light".to_string(),
+            ..GlobalConfig::default()
+        };
+        first.save(root.to_str().unwrap()).unwrap();
+        GlobalConfig {
+            theme: "onyx".to_string(),
+            ..first
+        }
+        .save(root.to_str().unwrap())
+        .unwrap();
+        std::fs::write(root.join("global_config.json"), "{broken").unwrap();
+
+        let recovered = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(recovered.theme, "light");
+        assert!(root.join("global_config.json.bak").is_file());
+        let corrupt = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("global_config.corrupt-"))
+            })
+            .unwrap();
+        assert_eq!(std::fs::read_to_string(corrupt).unwrap(), "{broken");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wrong_field_type_also_recovers_from_the_last_good_backup() {
+        let root = temp_dir("wrong_field_type_recovery");
+        let first = GlobalConfig::default();
+        first.save(root.to_str().unwrap()).unwrap();
+        GlobalConfig {
+            theme: "onyx".to_string(),
+            ..first
+        }
+        .save(root.to_str().unwrap())
+        .unwrap();
+        let mut invalid: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(root.join("global_config.json")).unwrap())
+                .unwrap();
+        invalid["enable_overlay"] = serde_json::json!("not-a-boolean");
+        std::fs::write(
+            root.join("global_config.json"),
+            serde_json::to_vec_pretty(&invalid).unwrap(),
+        )
+        .unwrap();
+
+        let recovered = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(recovered.theme, GlobalConfig::default().theme);
+        assert!(std::fs::read_dir(&root).unwrap().flatten().any(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .starts_with("global_config.corrupt-")
+        }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn corrupt_primary_without_a_backup_fails_closed_and_stays_untouched() {
+        let root = temp_dir("corrupt_without_backup");
+        let config_path = root.join("global_config.json");
+        std::fs::write(&config_path, "{broken").unwrap();
+
+        assert!(GlobalConfig::load(root.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_to_string(&config_path).unwrap(), "{broken");
+        assert!(!root.join("global_config.json.bak").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wrong_legacy_path_type_fails_closed_instead_of_becoming_an_empty_path() {
+        let root = temp_dir("wrong_legacy_path_type");
+        let config_path = root.join("global_config.json");
+        let invalid = serde_json::json!({
+            "version": 1,
+            "game_path": 42,
+            "saved_games_path": r"C:\Saved Games\Diablo II Resurrected",
+            "battle_net_path": r"C:\Battle.net\Battle.net.exe",
+            "program_data_agent_path": r"C:\ProgramData\Battle.net\Agent",
+            "app_data_roaming_bnet_path": r"C:\Roaming\Battle.net",
+            "accounts_dir": r"C:\D2RHub\accounts",
+            "first_run_complete": true
+        });
+        let bytes = serde_json::to_vec_pretty(&invalid).unwrap();
+        std::fs::write(&config_path, &bytes).unwrap();
+
+        assert!(GlobalConfig::load(root.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read(&config_path).unwrap(), bytes);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn completed_marker_without_any_game_path_returns_to_setup_without_losing_settings() {
+        let root = temp_dir("completed_without_game_path");
+        let config_path = root.join("global_config.json");
+        let broken = GlobalConfig {
+            first_run_complete: true,
+            theme: "onyx".to_string(),
+            font_scale: "large".to_string(),
+            ..GlobalConfig::default()
+        };
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&broken).unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert!(!loaded.first_run_complete);
+        assert_eq!(loaded.theme, "onyx");
+        assert_eq!(loaded.font_scale, "large");
+        let persisted: GlobalConfig =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert!(!persisted.first_run_complete);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_primary_is_restored_from_the_last_good_backup() {
+        let root = temp_dir("missing_primary_recovery");
+        let first = GlobalConfig {
+            theme: "light".to_string(),
+            ..GlobalConfig::default()
+        };
+        first.save(root.to_str().unwrap()).unwrap();
+        GlobalConfig {
+            theme: "onyx".to_string(),
+            ..first
+        }
+        .save(root.to_str().unwrap())
+        .unwrap();
+        std::fs::remove_file(root.join("global_config.json")).unwrap();
+
+        let recovered = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(recovered.theme, "light");
+        assert!(root.join("global_config.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn synced_staging_file_wins_when_save_was_interrupted_after_primary_rotation() {
+        let root = temp_dir("interrupted_after_primary_rotation");
+        let original = GlobalConfig {
+            theme: "light".to_string(),
+            ..GlobalConfig::default()
+        };
+        original.save(root.to_str().unwrap()).unwrap();
+        let latest = GlobalConfig {
+            theme: "onyx".to_string(),
+            ..original
+        };
+        std::fs::write(
+            root.join("global_config.json.tmp"),
+            serde_json::to_vec_pretty(&latest).unwrap(),
+        )
+        .unwrap();
+        std::fs::rename(
+            root.join("global_config.json"),
+            root.join("global_config.json.bak"),
+        )
+        .unwrap();
+
+        let recovered = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(recovered.theme, "onyx");
+        assert!(root.join("global_config.json").is_file());
+        assert!(!root.join("global_config.json.tmp").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn unreadable_backup_without_a_primary_fails_closed_instead_of_returning_defaults() {
+        let root = temp_dir("unreadable_backup_only");
+        let backup = root.join("global_config.json.bak");
+        std::fs::write(&backup, "{broken-backup").unwrap();
+
+        assert!(GlobalConfig::load(root.to_str().unwrap()).is_err());
+        assert_eq!(std::fs::read_to_string(&backup).unwrap(), "{broken-backup");
+        assert!(!root.join("global_config.json").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn future_config_version_fails_closed_even_when_an_older_backup_exists() {
+        let root = temp_dir("future_version");
+        let first = GlobalConfig::default();
+        first.save(root.to_str().unwrap()).unwrap();
+        GlobalConfig {
+            theme: "onyx".to_string(),
+            ..first
+        }
+        .save(root.to_str().unwrap())
+        .unwrap();
+        let config_path = root.join("global_config.json");
+        let mut future: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        future["version"] = serde_json::json!(CURRENT_CONFIG_VERSION + 1);
+        future["future_only_setting"] = serde_json::json!("must-survive");
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&future).unwrap()).unwrap();
+
+        assert!(GlobalConfig::load(root.to_str().unwrap()).is_err());
+        let preserved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(preserved["version"], CURRENT_CONFIG_VERSION + 1);
+        assert_eq!(preserved["future_only_setting"], "must-survive");
+        assert!(root.join("global_config.json.bak").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_v1_shape_migrates_without_requiring_modern_fields() {
+        let root = temp_dir("real_v1_shape");
+        let config_path = root.join("global_config.json");
+        let legacy = serde_json::json!({
+            "version": 1,
+            "battle_net_path": r"C:\Battle.net\Battle.net.exe",
+            "game_path": r"D:\Games\D2R-CN",
+            "saved_games_path": r"C:\Users\Tester\Saved Games\Diablo II Resurrected (CN)",
+            "program_data_agent_path": r"C:\ProgramData\Battle.net\Agent",
+            "app_data_roaming_bnet_path": r"C:\Users\Tester\AppData\Roaming\Battle.net",
+            "accounts_dir": r"D:\Portable\config\accounts",
+            "first_run_complete": true,
+            "theme": "onyx",
+            "enable_overlay": false,
+            "ocr_enabled": true,
+            "ocr_target_account": "acount1"
+        });
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(config.cn_game_path, r"D:\Games\D2R-CN");
+        assert_eq!(config.cn_battle_net_path, r"C:\Battle.net\Battle.net.exe");
+        assert_eq!(config.theme, "onyx");
+        assert!(!config.enable_tz_overlay);
+        assert!(!config.enable_stats_overlay);
+        assert!(config.legacy_path_migration.is_none());
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert!(persisted.get("game_path").is_none());
+        assert!(persisted.get("ocr_enabled").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn hypothetical_v2_single_path_shape_uses_the_same_safe_migration() {
+        let root = temp_dir("v2_single_path_shape");
+        let config_path = root.join("global_config.json");
+        let legacy = serde_json::json!({
+            "version": 2,
+            "battle_net_path": r"C:\Battle.net\Battle.net.exe",
+            "game_path": r"D:\Games\D2R-Global",
+            "saved_games_path": r"C:\Users\Tester\Saved Games\Diablo II Resurrected",
+            "program_data_agent_path": r"C:\ProgramData\Battle.net\Agent",
+            "app_data_roaming_bnet_path": r"C:\Roaming\Battle.net",
+            "accounts_dir": r"D:\Portable\config\accounts",
+            "first_run_complete": true
+        });
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(config.global_game_path, r"D:\Games\D2R-Global");
+        assert!(config.cn_game_path.is_empty());
+        assert!(config.cn_battle_net_path.is_empty());
+        assert!(config.legacy_path_migration.is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn real_v3_shape_removes_only_the_deprecated_global_battle_net_path() {
+        let root = temp_dir("real_v3_shape");
+        let config_path = root.join("global_config.json");
+        let legacy = serde_json::json!({
+            "version": 3,
+            "cn_battle_net_path": r"C:\Battle.net-CN\Battle.net.exe",
+            "cn_game_path": r"C:\Games\D2R-CN",
+            "cn_saved_games_path": r"C:\Saves\D2R-CN",
+            "global_battle_net_path": r"D:\Battle.net\Battle.net.exe",
+            "global_game_path": r"D:\Games\D2R-Global",
+            "global_saved_games_path": r"D:\Saves\D2R-Global",
+            "program_data_agent_path": r"C:\ProgramData\Battle.net\Agent",
+            "app_data_roaming_bnet_path": r"C:\Roaming\Battle.net",
+            "accounts_dir": r"D:\Portable\config\accounts",
+            "first_run_complete": true,
+            "enable_overlay": true,
+            "theme": "light"
+        });
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let config = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(config.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(
+            config.cn_battle_net_path,
+            r"C:\Battle.net-CN\Battle.net.exe"
+        );
+        assert_eq!(config.global_game_path, r"D:\Games\D2R-Global");
+        assert!(persisted.get("global_battle_net_path").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn v4_and_v5_shapes_gain_later_defaults_and_overlay_split_idempotently() {
+        for version in [4, 5] {
+            let root = temp_dir(&format!("real_v{version}_shape"));
+            let config_path = root.join("global_config.json");
+            let legacy = serde_json::json!({
+                "version": version,
+                "cn_battle_net_path": "",
+                "cn_game_path": "",
+                "cn_saved_games_path": "",
+                "global_game_path": r"D:\Games\D2R-Global",
+                "global_saved_games_path": r"D:\Saves\D2R-Global",
+                "program_data_agent_path": r"C:\ProgramData\Battle.net\Agent",
+                "app_data_roaming_bnet_path": r"C:\Roaming\Battle.net",
+                "accounts_dir": r"D:\Portable\config\accounts",
+                "first_run_complete": true,
+                "enable_overlay": false,
+                "theme": "light"
+            });
+            std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+            let first = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+            let first_bytes = std::fs::read(&config_path).unwrap();
+            let second = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+            let second_bytes = std::fs::read(&config_path).unwrap();
+
+            assert_eq!(first.version, CURRENT_CONFIG_VERSION);
+            assert!(!first.enable_tz_overlay);
+            assert!(!first.enable_stats_overlay);
+            assert_eq!(first.global_game_path, second.global_game_path);
+            assert_eq!(first_bytes, second_bytes);
+            let _ = std::fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn persisted_pending_marker_survives_restart_until_the_user_resolves_it() {
+        let root = temp_dir("persisted_pending_marker");
+        let config_path = root.join("global_config.json");
+        let pending = LegacyPathMigration {
+            game_path: r"D:\Unknown\D2R".to_string(),
+            saved_games_path: r"D:\Unknown\Saves".to_string(),
+            battle_net_path: r"D:\Unknown\Battle.net.exe".to_string(),
+        };
+        let config = GlobalConfig {
+            first_run_complete: true,
+            legacy_path_migration: Some(pending.clone()),
+            ..GlobalConfig::default()
+        };
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&config).unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert!(!loaded.first_run_complete);
+        assert_eq!(loaded.legacy_path_migration, Some(pending));
+        assert!(loaded.save(root.to_str().unwrap()).is_err());
+        let _ = std::fs::remove_dir_all(root);
+    }
 }
 
 /// 窗口几何信息（位置+尺寸持久化）
@@ -1012,23 +1411,166 @@ impl GlobalConfig {
         Path::new(app_data_dir).join("global_config.json")
     }
 
+    fn config_backup_path(app_data_dir: &str) -> PathBuf {
+        Path::new(app_data_dir).join("global_config.json.bak")
+    }
+
+    fn config_staging_path(app_data_dir: &str) -> PathBuf {
+        Path::new(app_data_dir).join("global_config.json.tmp")
+    }
+
+    fn unique_corrupt_config_path(app_data_dir: &str) -> PathBuf {
+        let dir = Path::new(app_data_dir);
+        let stem = format!("global_config.corrupt-{}", std::process::id());
+        for suffix in 0..1000 {
+            let name = if suffix == 0 {
+                format!("{stem}.json")
+            } else {
+                format!("{stem}-{suffix}.json")
+            };
+            let candidate = dir.join(name);
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        dir.join(format!("{stem}-overflow.json"))
+    }
+
+    fn config_file_is_readable(path: &Path) -> bool {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<GlobalConfig>(&content).ok())
+            .is_some()
+    }
+
+    fn restore_missing_primary_from_backup(app_data_dir: &str) -> bool {
+        let path = Self::config_path(app_data_dir);
+        let backup = Self::config_backup_path(app_data_dir);
+        let staging = Self::config_staging_path(app_data_dir);
+        if path.exists() {
+            return false;
+        }
+
+        for candidate in [&staging, &backup] {
+            if !candidate.is_file() || !Self::config_file_is_readable(candidate) {
+                continue;
+            }
+            match std::fs::rename(candidate, &path) {
+                Ok(()) => {
+                    log::warn!("主配置缺失，已从 {} 恢复", candidate.display());
+                    return true;
+                }
+                Err(error) => {
+                    log::error!("从配置候选 {} 恢复失败: {error}", candidate.display());
+                }
+            }
+        }
+        false
+    }
+
+    fn archive_corrupt_primary_and_restore_backup(app_data_dir: &str) -> bool {
+        let path = Self::config_path(app_data_dir);
+        let backup = Self::config_backup_path(app_data_dir);
+        let staging = Self::config_staging_path(app_data_dir);
+        if !path.exists() {
+            return false;
+        }
+
+        let recovery = if backup.is_file() && Self::config_file_is_readable(&backup) {
+            &backup
+        } else if staging.is_file() && Self::config_file_is_readable(&staging) {
+            &staging
+        } else {
+            return false;
+        };
+
+        let corrupt = Self::unique_corrupt_config_path(app_data_dir);
+        if let Err(error) = std::fs::rename(&path, &corrupt) {
+            log::error!("归档损坏配置 {} 失败: {error}", path.display());
+            return false;
+        }
+        if let Err(error) = std::fs::rename(recovery, &path) {
+            let _ = std::fs::rename(&corrupt, &path);
+            log::error!("安装配置恢复候选 {} 失败: {error}", recovery.display());
+            return false;
+        }
+        log::warn!(
+            "主配置无法读取，已恢复可用候选；损坏文件保留在 {}",
+            corrupt.display()
+        );
+        true
+    }
+
     fn geometry_path(app_data_dir: &str) -> PathBuf {
         Path::new(app_data_dir).join("window_geometry.json")
     }
 
     /// 从磁盘加载配置
     pub fn load(app_data_dir: &str) -> Result<Self, AppError> {
+        Self::load_inner(app_data_dir, true)
+    }
+
+    fn load_inner(app_data_dir: &str, allow_backup_recovery: bool) -> Result<Self, AppError> {
         let path = Self::config_path(app_data_dir);
+        if allow_backup_recovery {
+            Self::restore_missing_primary_from_backup(app_data_dir);
+        }
         if !path.exists() {
+            let backup = Self::config_backup_path(app_data_dir);
+            let staging = Self::config_staging_path(app_data_dir);
+            if backup.exists() || staging.exists() {
+                return Err(AppError::ConfigReadError(
+                    "主配置缺失，且遗留的备份或暂存配置无法安全读取".to_string(),
+                ));
+            }
             return Ok(Self::default());
         }
         let content =
             std::fs::read_to_string(&path).map_err(|e| AppError::ConfigReadError(e.to_string()))?;
-        let mut value: serde_json::Value = serde_json::from_str(&content)?;
+        let mut value: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(value) => value,
+            Err(_error)
+                if allow_backup_recovery
+                    && Self::archive_corrupt_primary_and_restore_backup(app_data_dir) =>
+            {
+                return Self::load_inner(app_data_dir, false);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        if value
+            .get("version")
+            .and_then(serde_json::Value::as_u64)
+            .is_some_and(|version| version > u64::from(CURRENT_CONFIG_VERSION))
+        {
+            return Err(AppError::ConfigReadError(format!(
+                "配置版本高于当前程序支持的 v{CURRENT_CONFIG_VERSION}，请使用更新版本的 D2RHub 打开"
+            )));
+        }
+        if let Some(invalid_key) = [
+            "game_path",
+            "saved_games_path",
+            "battle_net_path",
+            "global_battle_net_path",
+        ]
+        .into_iter()
+        .find(|key| value.get(*key).is_some_and(|field| !field.is_string()))
+        {
+            if allow_backup_recovery
+                && Self::archive_corrupt_primary_and_restore_backup(app_data_dir)
+            {
+                return Self::load_inner(app_data_dir, false);
+            }
+            return Err(AppError::ConfigReadError(format!(
+                "旧版配置字段 {invalid_key} 类型无效，已停止迁移以防数据丢失"
+            )));
+        }
         let legacy_overlay_enabled = value
             .get("enable_overlay")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or_else(default_enable_overlay);
+        let had_raw_legacy_paths = value.get("game_path").is_some()
+            || value.get("saved_games_path").is_some()
+            || value.get("battle_net_path").is_some();
         let mut overlay_split_migrated = false;
         if let Some(object) = value.as_object_mut() {
             if !object.contains_key("enable_tz_overlay") {
@@ -1063,8 +1605,24 @@ impl GlobalConfig {
                 });
             }
         }
-        let mut config: GlobalConfig = serde_json::from_value(value)?;
-        config.legacy_path_migration = pending_legacy_paths;
+        let mut config: GlobalConfig = match serde_json::from_value(value) {
+            Ok(config) => config,
+            Err(_error)
+                if allow_backup_recovery
+                    && Self::archive_corrupt_primary_and_restore_backup(app_data_dir) =>
+            {
+                return Self::load_inner(app_data_dir, false);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let persisted_pending_paths = config.legacy_path_migration.take();
+        config.legacy_path_migration = pending_legacy_paths.or_else(|| {
+            if had_raw_legacy_paths {
+                None
+            } else {
+                persisted_pending_paths
+            }
+        });
 
         if config.version != CURRENT_CONFIG_VERSION {
             config.version = CURRENT_CONFIG_VERSION;
@@ -1097,6 +1655,15 @@ impl GlobalConfig {
         if config.normalize_rune_audio_configuration() {
             log::warn!("检测到无效的声纹目标配置，已自动关闭自动识别");
             migrated = true;
+        }
+
+        if config.first_run_complete
+            && config.cn_game_path.trim().is_empty()
+            && config.global_game_path.trim().is_empty()
+        {
+            config.first_run_complete = false;
+            migrated = true;
+            log::warn!("配置标记为已完成但没有任何游戏目录，已要求重新确认设置");
         }
 
         if config.legacy_path_migration.is_some() {
@@ -1311,8 +1878,35 @@ impl GlobalConfig {
             std::fs::create_dir_all(dir).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
         }
         let path = Self::config_path(app_data_dir);
+        let backup = Self::config_backup_path(app_data_dir);
+        let staging = Self::config_staging_path(app_data_dir);
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, content).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        if staging.exists() {
+            std::fs::remove_file(&staging)
+                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        }
+        std::fs::write(&staging, content).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&staging) {
+            file.sync_all()
+                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        }
+
+        let had_primary = path.exists();
+        if had_primary {
+            if backup.exists() {
+                std::fs::remove_file(&backup)
+                    .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+            }
+            std::fs::rename(&path, &backup)
+                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
+        }
+        if let Err(error) = std::fs::rename(&staging, &path) {
+            if had_primary {
+                let _ = std::fs::rename(&backup, &path);
+            }
+            let _ = std::fs::remove_file(&staging);
+            return Err(AppError::ConfigWriteError(error.to_string()));
+        }
         Ok(())
     }
 
@@ -1519,6 +2113,10 @@ pub fn get_global_config(state: tauri::State<'_, SharedState>) -> Result<GlobalC
         None => {
             // 首次调用，尝试从磁盘加载
             drop(config);
+            let _config_io = state.config_io.lock();
+            if let Some(loaded) = state.config.read().clone() {
+                return Ok(loaded);
+            }
             let loaded = GlobalConfig::load(&state.app_data_dir)?;
             let mut cfg = state.config.write();
             *cfg = Some(loaded.clone());
@@ -1533,9 +2131,19 @@ pub fn save_global_config(
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
+    let _config_io = state.config_io.lock();
     if config.legacy_path_migration.is_some() {
         return Err(AppError::ConfigWriteError(
             "请先确认旧版路径属于国服还是国际服".to_string(),
+        ));
+    }
+    let existing_config_artifact = GlobalConfig::config_path(&state.app_data_dir).exists()
+        || GlobalConfig::config_backup_path(&state.app_data_dir).exists()
+        || GlobalConfig::config_staging_path(&state.app_data_dir).exists();
+    if state.config.read().is_none() && existing_config_artifact {
+        return Err(AppError::ConfigWriteError(
+            "现有配置未能安全加载，已阻止用新配置覆盖；请先检查日志和 global_config.json"
+                .to_string(),
         ));
     }
     let previous = state.config.read().clone();
@@ -1736,6 +2344,7 @@ pub fn save_theme(
     theme: String,
     window: tauri::Window,
 ) -> Result<(), AppError> {
+    let _config_io = state.config_io.lock();
     let mut config_lock = state.config.write();
     if let Some(ref mut cfg) = *config_lock {
         if window.label() == "overlay" {

@@ -989,6 +989,7 @@ pub fn delete_account(
     state.remove_active_game(&account_id);
 
     let updated_config = {
+        let _config_io = state.config_io.lock();
         let mut config = state.config.write();
         let cfg = config
             .as_mut()
