@@ -249,7 +249,7 @@ export function useFirstLaunch(
   const firstLaunchOpenedRef = useRef(false);
 
   useEffect(() => {
-    if (loading || !config) return;
+    if (loading || !config || !config.first_run_complete) return;
     if (!config.first_launch) return;
     if (firstLaunchOpenedRef.current) return;
 
@@ -269,7 +269,7 @@ export function useFirstLaunch(
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [loading, config?.first_launch, saveConfig]);
+  }, [loading, config?.first_launch, config?.first_run_complete, saveConfig]);
 }
 
 export function usePreventDragRegionDoubleClick() {

@@ -5,6 +5,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig } from "../store/types";
+import { resolveLegacyPathMigration, type LegacyPathResolution } from "../utils/legacyConfigMigration";
 
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
@@ -38,6 +39,12 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   const [showError, setShowError] = useState(false);
   const [isCurrentStepValid, setIsCurrentStepValid] = useState(false);
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
+  const pendingLegacyPaths = config.legacy_path_migration;
+
+  const applyLegacyPaths = (edition: LegacyPathResolution) => {
+    setConfig(current => resolveLegacyPathMigration(current, edition));
+    setCurrentStep(edition === "Global" ? 3 : 0);
+  };
 
   const handleSelectBrowser = async (btype: "chrome" | "edge") => {
     try {
@@ -212,6 +219,67 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   const current = steps[currentStep];
 
+  if (pendingLegacyPaths) {
+    const candidates = [
+      ["游戏目录", pendingLegacyPaths.game_path],
+      ["存档目录", pendingLegacyPaths.saved_games_path],
+      ["Battle.net", pendingLegacyPaths.battle_net_path],
+    ].filter((entry): entry is [string, string] => Boolean(entry[1]));
+
+    return (
+      <div className="flex-1 flex items-center justify-center px-6">
+        <div className="w-[560px] account-line px-6 py-5">
+          <div className="flex items-start gap-3 mb-5">
+            <div className="swiss-mark shrink-0">
+              <AlertTriangle size={16} className="text-warning" strokeWidth={1.8} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-text-primary">确认旧版配置归属</p>
+              <p className="micro-meta mt-1 leading-relaxed">
+                旧版只保存了一套客户端路径，无法自动判断是国服还是国际服。确认前原配置文件不会被覆盖。
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-2 mb-5">
+            {candidates.map(([label, value]) => (
+              <div key={label} className="rounded-card px-3.5 py-3"
+                style={{ background: "var(--surface-tile-soft, var(--surface-card))", border: "1px solid var(--border-default)" }}>
+                <p className="micro-meta mb-1">{label}</p>
+                <p className="text-xs font-mono text-text-secondary break-all leading-relaxed">{value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 mb-3">
+            <button type="button" onClick={() => applyLegacyPaths("CN")}
+              className="primary-cta h-10 justify-center">归为国服配置</button>
+            <button type="button" onClick={() => applyLegacyPaths("Global")}
+              className="control-btn h-10 justify-center">归为国际服配置</button>
+          </div>
+          <button type="button" onClick={() => applyLegacyPaths("keep")}
+            className="control-btn h-9 w-full justify-center">
+            保留当前新版路径，稍后手动检查
+          </button>
+          <p className="text-xs text-text-muted mt-3 leading-relaxed">
+            国际服仅使用 Token 直启，因此选择国际服时不会迁移旧 Battle.net 路径。其它主题、快捷键、悬浮窗和音频设置均保持不变。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  const setupTitle = initialConfig?.legacy_path_migration
+    ? "完成旧配置迁移"
+    : initialConfig?.first_run_complete
+      ? "重新配置"
+      : "初始设置";
+  const setupDescription = initialConfig?.legacy_path_migration
+    ? "确认路径后保存，其它设置不会改变"
+    : initialConfig?.first_run_complete
+      ? "修改路径后保存即可生效"
+      : "配置游戏路径，只需一次";
+
   return (
     <div className="flex-1 flex items-center justify-center px-6">
       <div className="w-[520px] account-line px-6 py-5">
@@ -220,8 +288,8 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
             <Wrench size={16} className="text-text-secondary" strokeWidth={1.8} />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">{initialConfig ? "重新配置" : "初始设置"}</p>
-            <p className="micro-meta mt-1">{initialConfig ? "修改路径后保存即可生效" : "配置游戏路径，只需一次"}</p>
+            <p className="text-sm font-semibold text-text-primary">{setupTitle}</p>
+            <p className="micro-meta mt-1">{setupDescription}</p>
           </div>
         </div>
 

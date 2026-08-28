@@ -86,10 +86,17 @@ pub fn run() {
     let app_state = Arc::new(AppState::new());
 
     // Load global config on startup to populate state and shortcut map cache early
-    if let Ok(cfg) = GlobalConfig::load(&app_state.app_data_dir) {
-        commands::global_config::update_shortcut_map(&app_state, &cfg);
-        let mut config_guard = app_state.config.write();
-        *config_guard = Some(cfg);
+    match GlobalConfig::load(&app_state.app_data_dir) {
+        Ok(cfg) => {
+            commands::global_config::update_shortcut_map(&app_state, &cfg);
+            let mut config_guard = app_state.config.write();
+            *config_guard = Some(cfg);
+        }
+        Err(error) => logger::log_msg(
+            "ERROR",
+            "Config",
+            &format!("全局配置加载失败，为防止覆盖已停止自动初始化: {error}"),
+        ),
     }
 
     // 从磁盘加载窗口几何并应用到初始窗口
