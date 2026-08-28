@@ -5,12 +5,12 @@ param(
 $generatorRoot = (Resolve-Path -LiteralPath $GeneratorRepo -ErrorAction Stop).Path
 $manifestPath = Join-Path $generatorRoot "Cargo.toml"
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
-    throw "未找到独立生成器仓库：$generatorRoot"
+    throw "Standalone generator repository not found: $generatorRoot"
 }
 
 & cargo build --release --manifest-path $manifestPath
 if ($LASTEXITCODE -ne 0) {
-    throw "独立生成器构建失败"
+    throw "Standalone generator build failed"
 }
 
 $source = Join-Path $generatorRoot "target\release\d2r-audio-mod.exe"
@@ -18,4 +18,4 @@ $destinationDirectory = Join-Path $PSScriptRoot "..\src-tauri\binaries"
 $destination = Join-Path $destinationDirectory "d2r-audio-mod-x86_64-pc-windows-msvc.exe"
 New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
 Copy-Item -LiteralPath $source -Destination $destination -Force
-Write-Host "已更新 D2RHub sidecar：$destination"
+Write-Host "Updated D2RHub sidecar: $destination"
