@@ -201,10 +201,6 @@ impl LocationCatalog {
         self.areas.is_empty()
     }
 
-    pub fn contains_area(&self, area_id: u32) -> bool {
-        self.areas.contains_key(&area_id) || area_definition(area_id).is_some()
-    }
-
     pub fn resolve(&self, marker: TelemetryMarker) -> Option<ResolvedLocation> {
         if let Some(definition) = location_definition(marker) {
             return Some(ResolvedLocation {
