@@ -51,7 +51,7 @@ D2RHub 通过 Windows 进程、句柄、注册表、文件、窗口和 WASAPI �
 - `config/stateData/data.db`：场次、历史记录和符文声纹观测数据库；
 - `logs/`：运行日志，最多自动保留 16 个。
 
-程序不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口。请勿在公开 Issue 中提交 Token、账号目录、个人路径或包含隐私的日志；安全问题请按 [安全政策](SECURITY.md) 私下报告。
+程序不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口。完整的管理员权限、进程与句柄访问、注册表、全局快捷键、进程音频捕获和 v0.9.4 杀毒软件误报说明见 [安全、权限与漏洞报告政策](SECURITY.md)。请勿在公开 Issue 中提交 Token、账号目录、个人路径或包含隐私的日志；安全问题请按该政策私下报告。
 
 ### 从源码开发
 
@@ -97,7 +97,7 @@ The v7 protocol uses isolated area/drop synchronization, a 127-chip Gold signatu
 
 D2RHub uses Windows process, handle, registry, filesystem, window, and WASAPI interfaces. It does **not** write to game memory or inject DLLs. The Mod generator writes to a new output Mod and never overwrites the selected source Mod.
 
-Runtime data is stored beside the executable in `config/` and `logs/`, including global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data.
+Runtime data is stored beside the executable in `config/` and `logs/`, including global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data. See the [Security, permissions, antivirus false-positive, and vulnerability-reporting policy](SECURITY.md) for the complete Windows capability and trust-boundary disclosure.
 
 ### Development
 
