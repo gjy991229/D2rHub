@@ -37,8 +37,10 @@ import { AccountInitDialog } from "./components/accounts/AccountInitDialog";
 import { requiresTokenMigration } from "./utils/regionPaths";
 import { Modal } from "./components/ui/Modal";
 import { Button } from "./components/ui/Button";
-import type { GlobalConfig, AccountMeta } from "./store/types";
+import type { AudioModSetupState, GlobalConfig, AccountMeta } from "./store/types";
 import { setAuxiliaryWindowVisible } from "./utils/windowPlacement";
+import { sortAccountsByCardOrder } from "./utils/accountOrder";
+import { validateTrackingTarget } from "./utils/trackingTarget";
 
 type View =
   | { type: "loading" }
@@ -57,6 +59,7 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<string | null>(null);
   const [settingsAccountId, setSettingsAccountId] = useState<string | null>(null);
+  const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
 
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
@@ -177,6 +180,30 @@ function App() {
   });
   useFirstLaunch(initialLoading, config, save);
 
+  useEffect(() => {
+    if (initialLoading || !config?.rune_audio_enabled) {
+      setAudioModUpdate(null);
+      return;
+    }
+    const target = validateTrackingTarget(config.rune_audio_target_account, accounts);
+    if (!target.valid) {
+      setAudioModUpdate(null);
+      return;
+    }
+
+    let cancelled = false;
+    void invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId: target.account.id })
+      .then((state) => {
+        if (!cancelled) setAudioModUpdate(state.update_required ? state : null);
+      })
+      .catch(() => {
+        if (!cancelled) setAudioModUpdate(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [initialLoading, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
+
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
   };
@@ -235,7 +262,7 @@ function App() {
   const initialized = accounts.filter(
     a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config),
   );
-  const sortedAccounts = [...accounts].sort((a, b) => (a.order || 0) - (b.order || 0));
+  const sortedAccounts = sortAccountsByCardOrder(accounts);
 
   return (
     <>
@@ -345,6 +372,38 @@ function App() {
               )}
             </div>
           </ActionBar>
+
+          {audioModUpdate && (
+            <div className="shrink-0 px-5 pb-2.5">
+              <div
+                role="status"
+                className="flex items-center justify-between gap-4 rounded-xl border border-warning/25 bg-warning/10 px-3.5 py-2.5"
+              >
+                <div className="flex min-w-0 items-start gap-2.5">
+                  <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-text-primary">
+                      “{audioModUpdate.account_name}”的识别 Mod 有新版
+                    </p>
+                    <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
+                      {audioModUpdate.message}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsTab("automation");
+                    setSettingsAccountId(null);
+                    setShowSettings(true);
+                  }}
+                  className="control-btn shrink-0"
+                >
+                  更新识别 Mod
+                </button>
+              </div>
+            </div>
+          )}
 
           {initialLoading ? (
             <AccountGridLoading />

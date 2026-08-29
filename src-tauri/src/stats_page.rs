@@ -64,6 +64,8 @@ mod tests {
         assert!(rendered.contains("durations.length<10"));
         assert!(rendered.contains("seconds>average*10||seconds<average*.1"));
         assert!(rendered.contains("_stats_timer_seconds"));
+        assert!(rendered.contains("id=\"report-dialog\""));
+        assert!(rendered.contains("id=\"download-report\""));
     }
 
     #[test]

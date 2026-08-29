@@ -22,6 +22,8 @@ const surface = ((params.get("surface") as Surface | null) || "main") as Surface
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
 const auditFrame = params.get("frame");
 const settingsState = params.get("settingsState");
+const settingsTab = params.get("settingsTab");
+const audioModState = params.get("audioModState");
 const seedSampleDrops = params.get("drops") === "sample";
 const currentWindowLabel =
   surface === "overlay"
@@ -205,6 +207,8 @@ const baseConfig: GlobalConfig = {
   rune_audio_detection_threshold: 0.58,
   rune_audio_tracked_categories: ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"],
   rune_audio_min_rune_number: 20,
+  rune_audio_min_gem_level: 4,
+  rune_audio_tracked_charm_codes: ["cm1", "cm3"],
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
   overlay_opacity: 94,
   main_opacity: 96,
@@ -307,6 +311,32 @@ function installIpcMock() {
       case "get_scene_stats":
         return { avg_time: 73.4, total_runs: 218 };
       case "get_audio_mod_setup_state":
+        if (audioModState === "legacy") {
+          return {
+            account_id: "sorc-01",
+            account_name: "Ladder Sorc",
+            current_mod_name: "jcy-tz",
+            launch_arguments: "-mod jcy-tz -txt -assettestmode 1",
+            has_txt: true,
+            ready: true,
+            update_required: true,
+            recipe_version: null,
+            required_recipe_version: 2,
+            build_mode: "augment",
+            source_mod_name: null,
+            reason_code: "update_available",
+            message: "旧版识别 Mod 仍可使用；更新后可获得即时恐怖区域识别",
+            installed_mods: [
+              { name: "jcy", audio_ready: false, update_required: false, source_eligible: true },
+              { name: "jcy-tz", audio_ready: true, update_required: true, source_eligible: false },
+            ],
+            running_pid: 28420,
+            session_verified: true,
+            active_session_ready: true,
+            active_session_update_required: true,
+            restart_required: false,
+          };
+        }
         return {
           account_id: "sorc-01",
           account_name: "Ladder Sorc",
@@ -314,15 +344,21 @@ function installIpcMock() {
           launch_arguments: "-w",
           has_txt: false,
           ready: false,
+          update_required: false,
+          recipe_version: null,
+          required_recipe_version: 2,
+          build_mode: null,
+          source_mod_name: null,
           reason_code: "missing_mod",
           message: "当前账号还没有使用识别 Mod",
           installed_mods: [
-            { name: "ReMoDDeD", audio_ready: false },
-            { name: "VanillaPlus", audio_ready: false },
+            { name: "ReMoDDeD", audio_ready: false, update_required: false, source_eligible: true },
+            { name: "VanillaPlus", audio_ready: false, update_required: false, source_eligible: true },
           ],
           running_pid: null,
           session_verified: false,
           active_session_ready: null,
+          active_session_update_required: null,
           restart_required: false,
         };
       case "get_terror_zone_snapshot":
@@ -474,7 +510,12 @@ function AuditRuntime() {
             setContent(
               <AppShell>
                 <div className="flex-1" />
-                <SettingsCenter open onClose={() => {}} onReconfigure={() => {}} />
+                <SettingsCenter
+                  open
+                  onClose={() => {}}
+                  onReconfigure={() => {}}
+                  initialTab={settingsTab}
+                />
                 <ToastContainer />
               </AppShell>,
             );

@@ -48,6 +48,9 @@ const matchesAreaType = new Function(`
   ${areaTypeFilterSource}
   return matchesAreaType;
 `)() as (record: RecordFixture, areaType: "all" | "normal" | "tz") => boolean;
+const shareReportSource = template
+  .split("// SHARE_REPORT_START")[1]
+  .split("// SHARE_REPORT_END")[0];
 
 function assert(condition: boolean, message: string) {
   if (!condition) throw new Error(message);
@@ -127,6 +130,20 @@ function makeRecords(scene: string, count: number, seconds = 100): RecordFixture
   assert(matchesAreaType(normal, "all") && matchesAreaType(tz, "all"), "全部区域应保留普通与 TZ 记录");
   assert(matchesAreaType(normal, "normal") && !matchesAreaType(tz, "normal"), "普通区域筛选应排除 TZ 记录");
   assert(matchesAreaType(tz, "tz") && !matchesAreaType(normal, "tz"), "TZ 区域筛选应排除普通及缺失 tz 字段的旧记录");
+}
+
+{
+  assert(template.includes('id="report-canvas" width="1080" height="1350"'), "图片战报应使用适合分享的 4:5 高清画布");
+  assert(shareReportSource.includes("reportSourceRecords()") && shareReportSource.includes("state.records:state.rawRecords"), "图片战报应允许在原始分段与当前策略结果间选择");
+  assert(!shareReportSource.includes("state.filtered"), "图片战报不应依赖统计页筛选结果");
+  assert(shareReportSource.includes("reportGroupedScenes(records)") && shareReportSource.includes('tzGrouping==="separate"'), "图片战报应支持普通区域与 TZ 分开或合并统计");
+  assert(!shareReportSource.includes("有产出场次") && !shareReportSource.includes("是否有产出"), "图片战报不应展示低价值的产出状态指标");
+  assert(template.includes('id="open-report"'), "统计页顶部应保留图片战报入口");
+  assert(template.includes('id="report-config"') && template.includes("统计范围") && template.includes("展示内容") && template.includes("统计口径"), "图片战报应提供完整的配置页面");
+  assert(template.includes('data-report-range="custom"') && template.includes('id="report-date-start"') && template.includes('id="report-date-end"'), "图片战报应支持自定义日期范围");
+  assert(shareReportSource.includes("REPORT_METRIC_IDS") && shareReportSource.includes("slice(0,4)"), "图片战报应允许选择并限制顶部指标数量");
+  assert(shareReportSource.includes("reportEditorialRule") && shareReportSource.includes("#cc785c"), "图片战报应使用暖色编辑式视觉语言");
+  assert(shareReportSource.includes("每日战报") && shareReportSource.includes("今日小结"), "图片战报应保留清晰的战报与小结信息层级");
 }
 
 console.log("stats outlier optimizer tests passed");

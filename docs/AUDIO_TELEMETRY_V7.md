@@ -25,7 +25,7 @@ Mod 生产端是独立仓库中的 `d2r-audio-mod.exe`，D2RHub 是接收端和�
 - 无源 Mod 时，从本机 D2R CASC 提取必要表格、世界实体、状态机、环境音与主界面资源，创建最小 Mod。
 - 有 jcy 等已解包 Mod 时，先完整复制到新的组合 Mod，再只改加工目标；源目录不写入。`misc.txt`、`sounds.txt`、`levels.txt` 与 `soundenviron.txt` 分别以源 Mod 为优先，缺失的单张表才从同版本本机 D2R 数据补齐，因此无需源 Mod 自带完整数据表集合。
 - 若源 Mod 已占用目标物品的实体、状态机或声音，处理器按该目标的当前资源克隆独立实体和状态机，把原声音混入标记文件，并同步复制普通/低配背包 sprite。这样原本共用一个实体的物品也能使用不同声纹，同时保留模型和物品图标。无法安全保留的 Compound、缺失声音或缺失 sprite 会拒绝生成并给出具体冲突，而不是静默输出不可见物品。
-- `audio-telemetry-manifest.json` 会记录每个资源的来源、保留方式、置信度与兼容处理；地图与物品身份分别写入 `audio-telemetry-area-catalog.json` 和 `audio-telemetry-item-catalog.json`。
+- `audio-telemetry-manifest.json` 会记录每个资源的来源、保留方式、置信度、生成配方版本与可选源 Mod 名称；地图与物品身份分别写入 `audio-telemetry-area-catalog.json` 和 `audio-telemetry-item-catalog.json`。旧正式版清单缺少配方版本时仍继续识别，只显示非阻断更新提醒；协议不匹配或清单损坏才停止识别。
 
 ### 掉落：Flippy 重复载波与生命周期去重
 

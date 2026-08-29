@@ -40,10 +40,14 @@ import {
   AutomapSection,
   SettingsMap
 } from "../../pages/SettingsEditor";
-import type { GlobalConfig } from "../../store/types";
+import type { AudioModSetupState, GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
-import { AUDIO_MOD_NAME_MAX_LENGTH, validateAudioModName } from "../../utils/audioModName";
+import {
+  AUDIO_MOD_NAME_MAX_LENGTH,
+  validateAudioModName,
+} from "../../utils/audioModName";
+import { sortAccountsByCardOrder } from "../../utils/accountOrder";
 import {
   locateAuxiliaryWindow,
   recoverAuxiliaryWindows,
@@ -101,27 +105,6 @@ interface RuneAudioStatus {
   diagnostic_recording_path: string | null;
 }
 
-interface InstalledAudioMod {
-  name: string;
-  audio_ready: boolean;
-}
-
-interface AudioModSetupState {
-  account_id: string;
-  account_name: string;
-  current_mod_name: string | null;
-  launch_arguments: string;
-  has_txt: boolean;
-  ready: boolean;
-  reason_code: string;
-  message: string;
-  installed_mods: InstalledAudioMod[];
-  running_pid: number | null;
-  session_verified: boolean;
-  active_session_ready: boolean | null;
-  restart_required: boolean;
-}
-
 interface AudioModPrepareProgress {
   account_id: string;
   phase: string;
@@ -137,6 +120,28 @@ interface AudioModPrepareResult {
   source_mod_name: string | null;
 }
 
+function audioSetupDefaults(state: AudioModSetupState): {
+  mode: "original" | "existing";
+  source: string;
+  name: string;
+} {
+  const sources = state.installed_mods.filter((mod) => mod.source_eligible);
+  const recordedSource = sources.find((mod) => (
+    !!state.source_mod_name && mod.name.toLowerCase() === state.source_mod_name.toLowerCase()
+  ));
+  const source = recordedSource
+    ?? (state.update_required && state.build_mode === "augment" && sources.length === 1 ? sources[0] : undefined)
+    ?? (!state.update_required ? sources[0] : undefined);
+  const preserveExisting = state.update_required
+    ? state.build_mode === "augment"
+    : !!source;
+  return {
+    mode: preserveExisting ? "existing" : "original",
+    source: source?.name ?? "",
+    name: state.update_required ? state.current_mod_name ?? "" : "",
+  };
+}
+
 const TRACKING_CATEGORIES = [
   { id: "runes", label: "符文", detail: "#1–#33" },
   { id: "gems", label: "宝石与骷髅", detail: "35 种等级/颜色" },
@@ -148,6 +153,18 @@ const TRACKING_CATEGORIES = [
 ] as const;
 
 const DEFAULT_TRACKING_CATEGORIES = TRACKING_CATEGORIES.map(category => category.id);
+const GEM_LEVELS = ["碎裂", "裂开", "普通", "无瑕疵", "完美"] as const;
+const CHARM_FILTERS = [
+  { code: "cm1", label: "小型护身符", detail: "Small Charm" },
+  { code: "cm2", label: "大型护身符", detail: "Large Charm" },
+  { code: "cm3", label: "超大型护身符", detail: "Grand Charm" },
+] as const;
+const AGGREGATE_ITEM_FILTERS = [
+  { id: "jewels", label: "珠宝", detail: "全部基础珠宝，不区分品质或词缀" },
+  { id: "keys", label: "钥匙", detail: "恐惧、憎恨、毁灭三把钥匙" },
+  { id: "organs", label: "器官", detail: "角、眼、脑作为一整项" },
+  { id: "essences", label: "精华与徽章", detail: "四种精华及赦免徽章" },
+] as const;
 type InstallationPathField =
   | "cn_battle_net_path"
   | "cn_game_path"
@@ -289,6 +306,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
   const { theme, setTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
+  const shortcutAccounts = sortAccountsByCardOrder(accounts);
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
   const trackingTargetId = trackingTarget.valid ? trackingTarget.account.id : "";
 
@@ -306,9 +324,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
   const normalizedAudioSetupName = audioSetupName.trim();
+  const isAudioModUpgrade = !!audioModState?.update_required;
   const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
-  const audioSetupNameError = validateAudioModName(audioSetupName, installedAudioModNames);
-  const showAudioSetupNameError = audioSetupName.length > 0 && !!audioSetupNameError;
+  const audioSetupNameError = isAudioModUpgrade
+    ? ""
+    : validateAudioModName(audioSetupName, installedAudioModNames);
+  const showAudioSetupNameError = !isAudioModUpgrade && audioSetupName.length > 0 && !!audioSetupNameError;
 
   const locateWindow = async (label: AuxiliaryWindowLabel) => {
     const names = config?.app_language === "en-US"
@@ -418,14 +439,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       .then((next) => {
         if (cancelled) return;
         setAudioModState(next);
-        const availableSources = next.installed_mods.filter((mod) => !mod.audio_ready);
-        const preferred = availableSources.find((mod) => mod.name === next.current_mod_name)
-          ?? availableSources[0];
+        const defaults = audioSetupDefaults(next);
+        const availableSources = next.installed_mods.filter((mod) => mod.source_eligible);
         setAudioSetupSource((current) => (
           current && availableSources.some((mod) => mod.name === current)
             ? current
-            : preferred?.name ?? ""
+            : defaults.source
         ));
+        setAudioSetupMode(defaults.mode);
+        setAudioSetupName(defaults.name);
         if (!next.ready && config?.rune_audio_enabled) setAudioSetupOpen(true);
       })
       .catch((error) => {
@@ -817,10 +839,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     try {
       const next = await invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
       setAudioModState(next);
-      const sources = next.installed_mods.filter((mod) => !mod.audio_ready);
-      const preferred = sources.find((mod) => mod.name === next.current_mod_name) ?? sources[0];
-      setAudioSetupSource(preferred?.name ?? "");
-      setAudioSetupMode(preferred ? "existing" : "original");
+      const defaults = audioSetupDefaults(next);
+      setAudioSetupSource(defaults.source);
+      setAudioSetupMode(defaults.mode);
+      setAudioSetupName(defaults.name);
       if (wasEnabled && next.ready) {
         await persistAudioEnabledState(accountId, true);
       } else if (wasEnabled) {
@@ -854,6 +876,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       if (next.ready) {
         await persistAudioEnabledState(accountId, true);
         setAudioSetupOpen(false);
+        if (next.update_required) {
+          showToast("warning", "旧版识别 Mod 仍可使用；建议更新以获得即时恐怖区域识别");
+        }
         if (next.running_pid && next.active_session_ready === true) {
           await invoke("start_rune_audio_monitor").catch(() => {});
         } else if (next.restart_required) {
@@ -862,11 +887,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
         return;
       }
 
-      const sources = next.installed_mods.filter((mod) => !mod.audio_ready);
-      const preferred = sources.find((mod) => mod.name === next.current_mod_name) ?? sources[0];
-      setAudioSetupSource(preferred?.name ?? "");
-      setAudioSetupMode(preferred ? "existing" : "original");
-      setAudioSetupName("");
+      const defaults = audioSetupDefaults(next);
+      setAudioSetupSource(defaults.source);
+      setAudioSetupMode(defaults.mode);
+      setAudioSetupName(defaults.name);
       updateConfig(current => {
         current.rune_audio_target_account = accountId;
         current.rune_audio_enabled = false;
@@ -899,6 +923,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
       message: "正在开始准备…",
     });
     try {
+      if (isAudioModUpgrade) {
+        const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
+        const next = await invoke<AudioModSetupState>("upgrade_audio_mod", {
+          accountId,
+          sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+        });
+        setAudioModState(next);
+        await persistAudioEnabledState(accountId, wasEnabled);
+        setAudioSetupOpen(false);
+        showToast("success", `识别 Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`);
+        return;
+      }
       const result = await invoke<AudioModPrepareResult>("prepare_audio_mod", {
         accountId,
         modName: normalizedAudioSetupName,
@@ -1939,13 +1975,21 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       {audioModStateLoading && !audioModState ? (
                         <div className="h-16 rounded-xl bg-surface-hover skeleton" aria-label="正在检查识别 Mod" />
                       ) : audioModState?.ready && !audioSetupOpen ? (
-                        <div className="flex items-start justify-between gap-3 rounded-xl bg-success/10 px-3 py-2.5">
+                        <div className={`flex items-start justify-between gap-3 rounded-xl px-3 py-2.5 ${
+                          audioModState.update_required ? "bg-warning/10" : "bg-success/10"
+                        }`}>
                           <div className="flex min-w-0 items-start gap-2.5">
-                            <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />
+                            {audioModState.update_required
+                              ? <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />
+                              : <CheckCircle2 size={16} className="mt-0.5 shrink-0 text-success" />}
                             <div className="min-w-0">
-                              <p className="text-xs font-semibold text-text-primary">识别 Mod 已就绪</p>
-                              <p className="mt-0.5 truncate text-2xs text-text-secondary">
-                                {audioModState.current_mod_name} · 启动参数已自动配置
+                              <p className="text-xs font-semibold text-text-primary">
+                                {audioModState.update_required ? "识别 Mod 可以更新" : "识别 Mod 已就绪"}
+                              </p>
+                              <p className="mt-0.5 text-2xs text-text-secondary">
+                                {audioModState.update_required
+                                  ? audioModState.message
+                                  : `${audioModState.current_mod_name} · 启动参数已自动配置`}
                               </p>
                               {audioModState.restart_required && (
                                 <p className="mt-1 text-2xs text-warning">当前游戏仍是旧配置，重启该账号后生效</p>
@@ -1955,12 +1999,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           <button
                             type="button"
                             onClick={() => {
-                              setAudioSetupName("");
+                              const defaults = audioSetupDefaults(audioModState);
+                              setAudioSetupMode(defaults.mode);
+                              setAudioSetupSource(defaults.source);
+                              setAudioSetupName(defaults.name);
                               setAudioSetupOpen(true);
                             }}
                             className="shrink-0 text-2xs font-medium text-text-secondary hover:text-text-primary"
                           >
-                            重新准备
+                            {audioModState.update_required ? "更新" : "重新准备"}
                           </button>
                         </div>
                       ) : audioSetupOpen ? (
@@ -1968,9 +2015,13 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                           <div className="flex items-start gap-2.5">
                             <Package size={16} className="mt-0.5 shrink-0 text-accent" />
                             <div>
-                              <p className="text-xs font-semibold text-text-primary">准备识别 Mod</p>
+                              <p className="text-xs font-semibold text-text-primary">
+                                {audioModState?.update_required ? "更新识别 Mod" : "准备识别 Mod"}
+                              </p>
                               <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
-                                选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。
+                                {audioModState?.update_required
+                                  ? `关闭该账号游戏后，D2RHub 会先完整生成并校验新版，再原位替换“${audioModState.current_mod_name}”；名称和启动参数不变。`
+                                  : "选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。"}
                               </p>
                             </div>
                           </div>
@@ -1991,7 +2042,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                               type="button"
                               role="radio"
                               aria-checked={audioSetupMode === "existing"}
-                              disabled={audioPreparing || !audioModState?.installed_mods.some((mod) => !mod.audio_ready)}
+                              disabled={audioPreparing || !audioModState?.installed_mods.some((mod) => mod.source_eligible)}
                               onClick={() => setAudioSetupMode("existing")}
                               className={`audio-mod-choice flex-1 ${audioSetupMode === "existing" ? "is-selected" : ""}`}
                             >
@@ -2009,46 +2060,66 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                                 onChange={event => setAudioSetupSource(event.target.value)}
                                 className="h-8 w-full rounded-lg border border-border-default bg-surface-card px-2.5 text-xs text-text-primary"
                               >
+                                <option value="" disabled>请选择未经加工的原始 Mod</option>
+                                {!audioModState?.installed_mods.some((mod) => mod.source_eligible) && (
+                                  <option value="">未找到可用的原始 Mod</option>
+                                )}
                                 {audioModState?.installed_mods
-                                  .filter((mod) => !mod.audio_ready)
+                                  .filter((mod) => mod.source_eligible)
                                   .map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
                               </select>
+                              {audioModState?.update_required && audioModState.build_mode === "augment" && !audioSetupSource && (
+                                <span className="mt-1 block text-2xs text-warning">
+                                  旧版基于其他 Mod 生成，但未能自动确定原始 Mod；请选择当时那个未经加工的 Mod，或明确改选“我玩原版”。
+                                </span>
+                              )}
                             </label>
                           )}
 
-                          <label className="mt-3 block" htmlFor="audio-mod-name">
-                            <span className="flex items-center justify-between gap-3 text-2xs font-semibold text-text-secondary">
-                              <span>新 Mod 名称</span>
-                              <span className="font-normal text-text-muted">必填</span>
-                            </span>
-                            <input
-                              id="audio-mod-name"
-                              type="text"
-                              value={audioSetupName}
-                              maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
-                              disabled={audioPreparing}
-                              autoCapitalize="off"
-                              autoCorrect="off"
-                              spellCheck={false}
-                              aria-invalid={showAudioSetupNameError}
-                              aria-describedby="audio-mod-name-help"
-                              placeholder="例如：MyAudioMod"
-                              onChange={event => setAudioSetupName(event.target.value)}
-                              className={`mt-1 h-8 w-full rounded-lg border bg-surface-card px-2.5 text-xs text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent disabled:cursor-not-allowed disabled:opacity-60 ${
-                                showAudioSetupNameError ? "border-danger" : "border-border-default"
-                              }`}
-                            />
-                          </label>
-                          <p
-                            id="audio-mod-name-help"
-                            className={`mt-1 text-2xs leading-relaxed ${
-                              showAudioSetupNameError ? "text-danger" : "text-text-muted"
-                            }`}
-                          >
-                            {showAudioSetupNameError
-                              ? audioSetupNameError
-                              : "仅可使用英文字母、数字、短横线和下划线。"}
-                          </p>
+                          {isAudioModUpgrade ? (
+                            <div className="mt-3 rounded-lg border border-border-default bg-surface-card px-2.5 py-2">
+                              <span className="block text-2xs font-semibold text-text-muted">原位更新，Mod 名称保持不变</span>
+                              <span className="mt-0.5 block truncate font-mono text-xs font-semibold text-text-primary">
+                                {audioModState?.current_mod_name}
+                              </span>
+                            </div>
+                          ) : (
+                            <>
+                              <label className="mt-3 block" htmlFor="audio-mod-name">
+                                <span className="flex items-center justify-between gap-3 text-2xs font-semibold text-text-secondary">
+                                  <span>新 Mod 名称</span>
+                                  <span className="font-normal text-text-muted">必填</span>
+                                </span>
+                                <input
+                                  id="audio-mod-name"
+                                  type="text"
+                                  value={audioSetupName}
+                                  maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
+                                  disabled={audioPreparing}
+                                  autoCapitalize="off"
+                                  autoCorrect="off"
+                                  spellCheck={false}
+                                  aria-invalid={showAudioSetupNameError}
+                                  aria-describedby="audio-mod-name-help"
+                                  placeholder="例如：MyAudioMod"
+                                  onChange={event => setAudioSetupName(event.target.value)}
+                                  className={`mt-1 h-8 w-full rounded-lg border bg-surface-card px-2.5 text-xs text-text-primary outline-none transition-colors placeholder:text-text-muted focus:border-accent disabled:cursor-not-allowed disabled:opacity-60 ${
+                                    showAudioSetupNameError ? "border-danger" : "border-border-default"
+                                  }`}
+                                />
+                              </label>
+                              <p
+                                id="audio-mod-name-help"
+                                className={`mt-1 text-2xs leading-relaxed ${
+                                  showAudioSetupNameError ? "text-danger" : "text-text-muted"
+                                }`}
+                              >
+                                {showAudioSetupNameError
+                                  ? audioSetupNameError
+                                  : "仅可使用英文字母、数字、短横线和下划线。"}
+                              </p>
+                            </>
+                          )}
                           <p className="mt-1 truncate rounded-md bg-surface-card px-2 py-1 font-mono text-2xs text-text-secondary">
                             -mod {audioSetupNameError ? "<名称>" : normalizedAudioSetupName} -txt -assettestmode 1
                           </p>
@@ -2072,21 +2143,30 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             variant="primary"
                             size="md"
                             loading={audioPreparing}
-                            disabled={!!audioSetupNameError || (audioSetupMode === "existing" && !audioSetupSource)}
+                            disabled={(!isAudioModUpgrade && !!audioSetupNameError) || (audioSetupMode === "existing" && !audioSetupSource)}
                             onClick={handlePrepareAudioMod}
                             className="mt-3 w-full"
                           >
-                            {audioPreparing ? "正在准备，请勿关闭软件" : "一键准备并开启"}
+                            {audioPreparing
+                              ? "正在准备，请勿关闭软件"
+                              : audioModState?.update_required ? "同名更新并替换旧版" : "一键准备并开启"}
                           </Button>
                           <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
-                            不修改源 Mod；账号参数固定配置为 -mod 名称 -txt -assettestmode 1。
+                            {isAudioModUpgrade
+                              ? "不会拿旧版识别 Mod 再加工；会从原版或所选原始 Mod 重建，校验成功后才替换旧目录。"
+                              : "不修改源 Mod；账号参数固定配置为 -mod 名称 -txt -assettestmode 1。"}
                           </p>
                         </div>
                       ) : (
                         <button
                           type="button"
                           onClick={() => {
-                            setAudioSetupName("");
+                            if (audioModState) {
+                              const defaults = audioSetupDefaults(audioModState);
+                              setAudioSetupMode(defaults.mode);
+                              setAudioSetupSource(defaults.source);
+                              setAudioSetupName(defaults.name);
+                            }
                             setAudioSetupOpen(true);
                           }}
                           className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-hover px-3 py-2.5 text-left hover:bg-surface-active"
@@ -2103,77 +2183,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                       )}
                     </div>
                   )}
-
-                  <div className="space-y-2 border-t border-border-default/50 pt-3">
-                    <div>
-                      <span className="text-sm font-semibold text-text-secondary">识别与记录内容</span>
-                      <p className="text-2xs text-text-muted">
-                        这里只控制 D2RHub 记录哪些已接收事件；独立 Mod 工具不会读取这份设置
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {TRACKING_CATEGORIES.map(category => {
-                        const selected = (config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES)
-                          .includes(category.id);
-                        return (
-                          <label
-                            key={category.id}
-                            className={`flex items-start gap-2 rounded-lg border px-2.5 py-2 cursor-pointer transition-colors ${selected
-                              ? "border-accent/40 bg-accent/5"
-                              : "border-border-default bg-surface-hover"}`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={selected}
-                              onChange={event => updateConfig(next => {
-                                const current = new Set(next.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES);
-                                if (event.target.checked) current.add(category.id);
-                                else current.delete(category.id);
-                                next.rune_audio_tracked_categories = TRACKING_CATEGORIES
-                                  .map(item => item.id)
-                                  .filter(id => current.has(id));
-                              })}
-                              className="mt-0.5 accent-[var(--accent)]"
-                            />
-                            <span>
-                              <span className="block text-xs font-semibold text-text-secondary">{category.label}</span>
-                              <span className="block text-2xs text-text-muted">{category.detail}</span>
-                            </span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <div className="flex items-center justify-between gap-4 rounded-lg border border-border-default bg-surface-hover px-2.5 py-2">
-                      <div>
-                        <label htmlFor="rune-audio-min-rune-number" className="text-xs font-semibold text-text-secondary">
-                          最低记录符文编号（含）
-                        </label>
-                        <p className="text-2xs text-text-muted">
-                          例如设为 20，只记录 #20–#33；更低符文即使解码成功也不入库
-                        </p>
-                      </div>
-                      <input
-                        id="rune-audio-min-rune-number"
-                        type="number"
-                        min={1}
-                        max={33}
-                        step={1}
-                        disabled={!(config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES).includes("runes")}
-                        value={config.rune_audio_min_rune_number ?? 1}
-                        onChange={event => updateConfig(c => {
-                          const value = Math.round(Number(event.target.value));
-                          c.rune_audio_min_rune_number = Math.max(1, Math.min(33, Number.isFinite(value) ? value : 1));
-                        })}
-                        className="h-8 w-20 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs disabled:opacity-50 disabled:cursor-not-allowed"
-                      />
-                    </div>
-                    <p className="text-2xs text-text-muted">
-                      所有掉落仅在已确认的野外或地下城场景中记录；主城、主界面和尚未识别地点时一律忽略。
-                    </p>
-                    <p className="text-2xs text-warning">
-                      声纹按基础物品代码识别；同一代码的暗金/套装/词缀，以及完全同步落地的两个同名物品，无法仅凭游戏音频可靠区分。
-                    </p>
-                  </div>
 
                   <div className="space-y-2 border-t border-border-default/50 pt-3">
                     <div className="flex items-center justify-between text-xs">
@@ -2279,33 +2288,195 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   )}
                 </div>
 
-                <div className="spatial-panel p-4 space-y-3">
-                  <div>
-                    <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
-                    <p className="text-2xs text-text-muted">
-                      D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。
+                <div className="space-y-3">
+                  <details className="spatial-panel group overflow-hidden" open>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
+                      <span>
+                        <span className="block text-sm font-bold text-text-primary">识别过滤器</span>
+                        <span className="mt-0.5 block text-2xs text-text-muted">选择哪些已识别掉落写入统计；点击可收起</span>
+                      </span>
+                      <ChevronDown size={15} className="shrink-0 text-text-muted transition-transform duration-200 group-open:rotate-180" />
+                    </summary>
+
+                    <div className="border-t border-border-default/50 px-4 pb-4 pt-3">
+                      <div className="space-y-4">
+                        {([
+                          {
+                            id: "runes",
+                            label: "符文",
+                            value: config.rune_audio_min_rune_number ?? 1,
+                            max: 33,
+                            valueLabel: `#${config.rune_audio_min_rune_number ?? 1}–#33`,
+                            detail: "最低编号（含）；滑到 #20 时只记录 #20–#33",
+                            onChange: (value: number) => updateConfig(next => { next.rune_audio_min_rune_number = value; }),
+                          },
+                          {
+                            id: "gems",
+                            label: "宝石与骷髅",
+                            value: config.rune_audio_min_gem_level ?? 1,
+                            max: 5,
+                            valueLabel: `${GEM_LEVELS[(config.rune_audio_min_gem_level ?? 1) - 1]}及以上`,
+                            detail: "五档品质：碎裂、裂开、普通、无瑕疵、完美",
+                            onChange: (value: number) => updateConfig(next => { next.rune_audio_min_gem_level = value; }),
+                          },
+                        ] as const).map(filter => {
+                          const enabled = (config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES).includes(filter.id);
+                          return (
+                            <div key={filter.id} className={enabled ? "" : "opacity-55"}>
+                              <div className="flex items-center justify-between gap-3">
+                                <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-text-secondary">
+                                  <input
+                                    type="checkbox"
+                                    checked={enabled}
+                                    onChange={event => updateConfig(next => {
+                                      const current = new Set(next.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES);
+                                      if (event.target.checked) current.add(filter.id);
+                                      else current.delete(filter.id);
+                                      next.rune_audio_tracked_categories = TRACKING_CATEGORIES
+                                        .map(item => item.id)
+                                        .filter(id => current.has(id));
+                                    })}
+                                    className="accent-[var(--accent)]"
+                                  />
+                                  {filter.label}
+                                </label>
+                                <span className="rounded-md bg-surface-hover px-2 py-0.5 font-mono text-2xs font-semibold text-text-primary">
+                                  {filter.valueLabel}
+                                </span>
+                              </div>
+                              <input
+                                type="range"
+                                min={1}
+                                max={filter.max}
+                                step={1}
+                                value={filter.value}
+                                disabled={!enabled}
+                                aria-label={`${filter.label}最低记录等级`}
+                                onChange={event => filter.onChange(Number(event.target.value))}
+                                className="tracking-filter-range mt-2 w-full"
+                              />
+                              <div className="mt-1 flex items-center justify-between text-2xs text-text-muted">
+                                <span>{filter.detail}</span>
+                                <span className="ml-3 shrink-0">1 — {filter.max}</span>
+                              </div>
+                            </div>
+                          );
+                        })}
+
+                        <div className="border-t border-border-default/50 pt-3">
+                          <p className="mb-2 text-2xs font-semibold text-text-muted">护身符 · 分别选择</p>
+                          <div className="grid grid-cols-3 gap-1.5">
+                            {CHARM_FILTERS.map(item => {
+                              const categories = config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES;
+                              const codes = config.rune_audio_tracked_charm_codes ?? CHARM_FILTERS.map(filter => filter.code);
+                              const selected = categories.includes("charms") && codes.includes(item.code);
+                              return (
+                                <label
+                                  key={item.code}
+                                  className={`cursor-pointer rounded-lg border px-2 py-2 transition-colors ${selected
+                                    ? "border-accent/40 bg-accent/5"
+                                    : "border-border-default bg-surface-hover"}`}
+                                >
+                                  <span className="flex items-start gap-1.5">
+                                    <input
+                                      type="checkbox"
+                                      checked={selected}
+                                      onChange={event => updateConfig(next => {
+                                        const currentCategories = new Set(next.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES);
+                                        const charmCodes = new Set(
+                                          currentCategories.has("charms")
+                                            ? next.rune_audio_tracked_charm_codes ?? CHARM_FILTERS.map(filter => filter.code)
+                                            : [],
+                                        );
+                                        if (event.target.checked) charmCodes.add(item.code);
+                                        else charmCodes.delete(item.code);
+                                        next.rune_audio_tracked_charm_codes = CHARM_FILTERS
+                                          .map(filter => filter.code)
+                                          .filter(code => charmCodes.has(code));
+                                        if (next.rune_audio_tracked_charm_codes.length > 0) currentCategories.add("charms");
+                                        else currentCategories.delete("charms");
+                                        next.rune_audio_tracked_categories = TRACKING_CATEGORIES
+                                          .map(filter => filter.id)
+                                          .filter(id => currentCategories.has(id));
+                                      })}
+                                      className="mt-0.5 accent-[var(--accent)]"
+                                    />
+                                    <span className="min-w-0">
+                                      <span className="block text-2xs font-semibold leading-tight text-text-secondary">{item.label}</span>
+                                      <span className="mt-0.5 block truncate text-[9px] text-text-muted">{item.detail}</span>
+                                    </span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <div className="border-t border-border-default/50 pt-3">
+                          <p className="mb-2 text-2xs font-semibold text-text-muted">其他物品 · 按整项选择</p>
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                            {AGGREGATE_ITEM_FILTERS.map(item => {
+                              const selected = (config.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES).includes(item.id);
+                              return (
+                                <label key={item.id} className="flex cursor-pointer items-start gap-2 border-b border-border-default/40 py-2 last:border-b-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={selected}
+                                    onChange={event => updateConfig(next => {
+                                      const current = new Set(next.rune_audio_tracked_categories ?? DEFAULT_TRACKING_CATEGORIES);
+                                      if (event.target.checked) current.add(item.id);
+                                      else current.delete(item.id);
+                                      next.rune_audio_tracked_categories = TRACKING_CATEGORIES
+                                        .map(filter => filter.id)
+                                        .filter(id => current.has(id));
+                                    })}
+                                    className="mt-0.5 accent-[var(--accent)]"
+                                  />
+                                  <span>
+                                    <span className="block text-xs font-semibold text-text-secondary">{item.label}</span>
+                                    <span className="block text-2xs leading-relaxed text-text-muted">{item.detail}</span>
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        <p className="border-t border-border-default/50 pt-3 text-2xs leading-relaxed text-text-muted">
+                          所有掉落仅在已确认的野外或地下城场景中记录；主城、主界面和尚未识别地点时一律忽略。修改后点击左侧“应用并重启识别”。
+                        </p>
+                      </div>
+                    </div>
+                  </details>
+
+                  <div className="spatial-panel p-4 space-y-3">
+                    <div>
+                      <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
+                      <p className="text-2xs text-text-muted">
+                        D2RHub 只捕获所选账号的游戏声音，不读取游戏内存，也不会向游戏注入代码。
+                      </p>
+                    </div>
+                    <p className="text-2xs text-text-secondary">
+                      过滤器只决定 D2RHub 是否将已接收事件写入统计；Mod 始终包含完整识别声纹。
                     </p>
-                  </div>
-                  <p className="text-2xs text-text-secondary">
-                    内置的生成器仍是独立组件：它只生成新的 Mod 文件，不修改源 Mod；账号切换与识别由 D2RHub 管理。
-                  </p>
-                  <p className="text-2xs text-warning">
-                    当前账号必须使用软件生成的新 Mod。若游戏已经打开，修改会在重启该账号后生效。
-                  </p>
-                  <div className="border-t border-border-default/50 pt-3">
-                    <Button
-                      size="sm"
-                      onClick={async () => {
-                        try {
-                          await invoke("open_stats_page");
-                        } catch (e) {
-                          showToast("error", `打开统计界面失败: ${e}`);
-                        }
-                      }}
-                    >
-                      <Play size={10} className="text-success fill-success" />
-                      打开掉落统计图表
-                    </Button>
+                    <p className="text-2xs text-warning">
+                      声纹按基础物品代码识别；同一代码的暗金、套装或词缀无法仅凭音频区分。
+                    </p>
+                    <div className="border-t border-border-default/50 pt-3">
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          try {
+                            await invoke("open_stats_page");
+                          } catch (e) {
+                            showToast("error", `打开统计界面失败: ${e}`);
+                          }
+                        }}
+                      >
+                        <Play size={10} className="text-success fill-success" />
+                        打开掉落统计图表
+                      </Button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2415,7 +2586,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                   <p className="text-2xs text-text-muted mb-2">按下对应组合键可以一键聚焦并切换至指定的账号游戏窗口</p>
 
                   <div className="space-y-2.5 pt-1">
-                    {accounts.filter(a => a.initialized).map((acc, index) => {
+                    {shortcutAccounts.map((acc, index) => {
                       const posStr = String(index + 1);
                       let bindings: Record<string, string> = {};
                       try {
@@ -2463,8 +2634,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                         </div>
                       );
                     })}
-                    {accounts.filter(a => a.initialized).length === 0 && (
-                      <p className="text-center text-xs text-text-muted py-4">无已初始化的账号</p>
+                    {shortcutAccounts.length === 0 && (
+                      <p className="text-center text-xs text-text-muted py-4">还没有账号</p>
                     )}
                   </div>
                 </div>

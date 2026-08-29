@@ -38,6 +38,8 @@ export interface GlobalConfig {
   rune_audio_detection_threshold?: number;
   rune_audio_tracked_categories: string[];
   rune_audio_min_rune_number?: number;
+  rune_audio_min_gem_level?: number;
+  rune_audio_tracked_charm_codes?: string[];
   shortcut_bindings_json: string;
   overlay_opacity: number;
   main_opacity: number;
@@ -198,4 +200,33 @@ export interface AudioModRuntimeWarning {
   target_pid: number;
   reason_code: string;
   message: string;
+}
+
+export interface InstalledAudioMod {
+  name: string;
+  audio_ready: boolean;
+  update_required: boolean;
+  source_eligible: boolean;
+}
+
+export interface AudioModSetupState {
+  account_id: string;
+  account_name: string;
+  current_mod_name: string | null;
+  launch_arguments: string;
+  has_txt: boolean;
+  ready: boolean;
+  update_required: boolean;
+  recipe_version: number | null;
+  required_recipe_version: number;
+  build_mode: "minimal" | "augment" | null;
+  source_mod_name: string | null;
+  reason_code: string;
+  message: string;
+  installed_mods: InstalledAudioMod[];
+  running_pid: number | null;
+  session_verified: boolean;
+  active_session_ready: boolean | null;
+  active_session_update_required: boolean | null;
+  restart_required: boolean;
 }

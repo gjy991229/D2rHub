@@ -112,6 +112,12 @@ pub struct GlobalConfig {
     /// 最低记录符文编号（含）；低于该编号的有效声纹只诊断、不入库。
     #[serde(default = "default_rune_audio_min_rune_number")]
     pub rune_audio_min_rune_number: u32,
+    /// 最低记录宝石等级（1=碎裂，5=完美）。
+    #[serde(default = "default_rune_audio_min_gem_level")]
+    pub rune_audio_min_gem_level: u32,
+    /// 独立记录的护身符基础代码；旧配置默认三种全部记录。
+    #[serde(default = "default_rune_audio_tracked_charm_codes")]
+    pub rune_audio_tracked_charm_codes: Vec<String>,
     /// 快捷键绑定 JSON: {"1": "Ctrl+1", "2": "Ctrl+2", ...} ，key 为账号位置序号（1-based）
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
@@ -162,6 +168,14 @@ fn default_rune_audio_tracked_categories() -> Vec<String> {
 
 fn default_rune_audio_min_rune_number() -> u32 {
     1
+}
+
+fn default_rune_audio_min_gem_level() -> u32 {
+    1
+}
+
+fn default_rune_audio_tracked_charm_codes() -> Vec<String> {
+    crate::rune_audio::item_catalog::default_tracked_charm_codes()
 }
 
 fn default_agent_mode() -> u8 {
@@ -549,6 +563,39 @@ mod validation_tests {
         };
         assert!(above.normalize_rune_audio_configuration());
         assert_eq!(above.rune_audio_min_rune_number, 33);
+    }
+
+    #[test]
+    fn missing_detailed_item_filters_preserve_legacy_recording_behavior() {
+        let mut value = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("rune_audio_min_gem_level");
+        object.remove("rune_audio_tracked_charm_codes");
+
+        let config: GlobalConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.rune_audio_min_gem_level, 1);
+        assert_eq!(
+            config.rune_audio_tracked_charm_codes,
+            crate::rune_audio::item_catalog::default_tracked_charm_codes()
+        );
+    }
+
+    #[test]
+    fn detailed_item_filters_are_normalized() {
+        let mut config = GlobalConfig {
+            rune_audio_min_gem_level: 99,
+            rune_audio_tracked_charm_codes: vec![
+                " CM3 ".to_string(),
+                "unknown".to_string(),
+                "cm1".to_string(),
+            ],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_rune_audio_configuration());
+        assert_eq!(config.rune_audio_min_gem_level, 5);
+        assert_eq!(config.rune_audio_tracked_charm_codes, ["cm1", "cm3"]);
     }
 
     #[test]
@@ -1348,6 +1395,8 @@ impl Default for GlobalConfig {
             rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
             rune_audio_tracked_categories: default_rune_audio_tracked_categories(),
             rune_audio_min_rune_number: default_rune_audio_min_rune_number(),
+            rune_audio_min_gem_level: default_rune_audio_min_gem_level(),
+            rune_audio_tracked_charm_codes: default_rune_audio_tracked_charm_codes(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
             overlay_opacity: 95,
             main_opacity: 95,
@@ -1398,6 +1447,18 @@ impl GlobalConfig {
         let minimum_rune = self.rune_audio_min_rune_number.clamp(1, 33);
         if minimum_rune != self.rune_audio_min_rune_number {
             self.rune_audio_min_rune_number = minimum_rune;
+            changed = true;
+        }
+        let minimum_gem = self.rune_audio_min_gem_level.clamp(1, 5);
+        if minimum_gem != self.rune_audio_min_gem_level {
+            self.rune_audio_min_gem_level = minimum_gem;
+            changed = true;
+        }
+        let charm_codes = crate::rune_audio::item_catalog::normalize_tracked_charm_codes(
+            &self.rune_audio_tracked_charm_codes,
+        );
+        if charm_codes != self.rune_audio_tracked_charm_codes {
+            self.rune_audio_tracked_charm_codes = charm_codes;
             changed = true;
         }
         if self.rune_audio_enabled && self.resolve_rune_audio_target_account().is_err() {
@@ -1616,7 +1677,7 @@ impl GlobalConfig {
             Err(error) => return Err(error.into()),
         };
         let persisted_pending_paths = config.legacy_path_migration.take();
-        config.legacy_path_migration = pending_legacy_paths.or_else(|| {
+        config.legacy_path_migration = pending_legacy_paths.or({
             if had_raw_legacy_paths {
                 None
             } else {
@@ -2159,6 +2220,11 @@ pub fn save_global_config(
             &cfg.rune_audio_tracked_categories,
         );
     cfg.rune_audio_min_rune_number = cfg.rune_audio_min_rune_number.clamp(1, 33);
+    cfg.rune_audio_min_gem_level = cfg.rune_audio_min_gem_level.clamp(1, 5);
+    cfg.rune_audio_tracked_charm_codes =
+        crate::rune_audio::item_catalog::normalize_tracked_charm_codes(
+            &cfg.rune_audio_tracked_charm_codes,
+        );
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

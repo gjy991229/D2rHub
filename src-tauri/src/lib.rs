@@ -397,6 +397,7 @@ pub fn run() {
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
             audio_mod::prepare_audio_mod,
+            audio_mod::upgrade_audio_mod,
             audio_mod::apply_audio_mod_to_account,
             // ── 符文音频声纹 ──
             rune_audio::monitor::start_rune_audio_monitor,

@@ -1187,6 +1187,42 @@ html, body, #root {
   border-bottom: 1px solid var(--border-default);
 }
 
+.tracking-filter-range {
+  height: 16px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.tracking-filter-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--surface-active));
+}
+
+.tracking-filter-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  appearance: none;
+  border: 2px solid var(--surface-card);
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 20%);
+}
+
+.tracking-filter-range:disabled {
+  cursor: not-allowed;
+}
+
+.tracking-filter-range:disabled::-webkit-slider-runnable-track {
+  background: var(--surface-active);
+}
+
+.tracking-filter-range:disabled::-webkit-slider-thumb {
+  background: var(--text-muted);
+}
+
 @media (max-width: 640px) {
   .spatial-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

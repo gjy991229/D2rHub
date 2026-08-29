@@ -1306,7 +1306,7 @@ fn escape_json_for_html_script(json: &str) -> String {
         .replace('\u{2029}', "\\u2029")
 }
 
-/// 打开统计可视化页面
+/// 打开统计可视化页面。
 #[tauri::command]
 pub fn open_stats_page(
     state: tauri::State<'_, SharedState>,
@@ -1373,7 +1373,6 @@ pub fn open_stats_page(
 
     Ok(())
 }
-
 /// 内部函数：直接从 app_data_dir 读取统计数据（避免移动 state）
 fn get_stats_data_inner(app_data_dir: &str) -> Result<StatsData, String> {
     let db = get_db(app_data_dir)?;

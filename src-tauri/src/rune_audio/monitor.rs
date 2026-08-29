@@ -1,5 +1,8 @@
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_AREA_ID};
-use super::item_catalog::{ItemCatalog, CATEGORY_RUNES};
+use super::item_catalog::{
+    gem_quality_level, ItemCatalog, ItemCatalogEntry, CATEGORY_CHARMS, CATEGORY_GEMS,
+    CATEGORY_RUNES,
+};
 use super::protocol::{StreamingDetector, PROTOCOL_VERSION};
 use super::tracking::{
     DropPresenceGate, SceneTransitionGate, SegmentTracker, TerrorZonePresenceGate, TrackedDrop,
@@ -121,6 +124,8 @@ struct MonitorConfig {
     threshold: f32,
     tracked_categories: HashSet<String>,
     min_rune_number: u32,
+    min_gem_level: u32,
+    tracked_charm_codes: HashSet<String>,
     catalog_directory: Option<PathBuf>,
 }
 
@@ -130,8 +135,23 @@ fn should_record_rune(config: &MonitorConfig, tracker: &SegmentTracker, rune_num
         && rune_number >= config.min_rune_number
 }
 
-fn should_record_item(config: &MonitorConfig, tracker: &SegmentTracker, category: &str) -> bool {
-    tracker.accepts_drop_observations() && config.tracked_categories.contains(category)
+fn should_record_item(
+    config: &MonitorConfig,
+    tracker: &SegmentTracker,
+    item: &ItemCatalogEntry,
+) -> bool {
+    if !tracker.accepts_drop_observations() || !config.tracked_categories.contains(&item.category) {
+        return false;
+    }
+    match item.category.as_str() {
+        CATEGORY_GEMS => {
+            gem_quality_level(&item.code).is_some_and(|level| level >= config.min_gem_level)
+        }
+        CATEGORY_CHARMS => config
+            .tracked_charm_codes
+            .contains(&item.code.to_ascii_lowercase()),
+        _ => true,
+    }
 }
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -311,6 +331,12 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         threshold: config.rune_audio_detection_threshold.clamp(0.40, 0.95),
         tracked_categories: config.rune_audio_tracked_categories.into_iter().collect(),
         min_rune_number: config.rune_audio_min_rune_number.clamp(1, 33),
+        min_gem_level: config.rune_audio_min_gem_level.clamp(1, 5),
+        tracked_charm_codes: config
+            .rune_audio_tracked_charm_codes
+            .into_iter()
+            .map(|code| code.to_ascii_lowercase())
+            .collect(),
         catalog_directory,
     })
 }
@@ -933,7 +959,7 @@ fn capture_loop(
                 marker @ TelemetryMarker::Item { item_id } => {
                     let tracked = item_catalog
                         .resolve(item_id)
-                        .is_some_and(|item| should_record_item(&config, &tracker, &item.category));
+                        .is_some_and(|item| should_record_item(&config, &tracker, item));
                     let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
                     record_decoded_packet(
                         detection.marker,
@@ -1191,6 +1217,12 @@ mod tests {
             threshold: 0.56,
             tracked_categories: HashSet::from([CATEGORY_RUNES.to_string(), "gems".to_string()]),
             min_rune_number,
+            min_gem_level: 1,
+            tracked_charm_codes: HashSet::from([
+                "cm1".to_string(),
+                "cm2".to_string(),
+                "cm3".to_string(),
+            ]),
             catalog_directory: None,
         }
     }
@@ -1205,7 +1237,8 @@ mod tests {
         );
 
         assert!(!should_record_rune(&config, &tracker, 20));
-        assert!(!should_record_item(&config, &tracker, "gems"));
+        let gem = ItemCatalog::builtin().resolve(1).unwrap().clone();
+        assert!(!should_record_item(&config, &tracker, &gem));
         tracker
             .observe_location(
                 TelemetryMarker::Area { area_id: 1 },
@@ -1215,7 +1248,7 @@ mod tests {
             )
             .unwrap();
         assert!(!should_record_rune(&config, &tracker, 24));
-        assert!(!should_record_item(&config, &tracker, "gems"));
+        assert!(!should_record_item(&config, &tracker, &gem));
 
         tracker
             .observe_location(
@@ -1228,8 +1261,58 @@ mod tests {
         assert!(!should_record_rune(&config, &tracker, 19));
         assert!(should_record_rune(&config, &tracker, 20));
         assert!(should_record_rune(&config, &tracker, 24));
-        assert!(should_record_item(&config, &tracker, "gems"));
-        assert!(!should_record_item(&config, &tracker, "keys"));
+        assert!(should_record_item(&config, &tracker, &gem));
+        let key = ItemCatalog::builtin().resolve(40).unwrap().clone();
+        assert!(!should_record_item(&config, &tracker, &key));
+    }
+
+    #[test]
+    fn detailed_gem_and_charm_filters_are_applied_after_scene_validation() {
+        let mut config = test_monitor_config(1);
+        config
+            .tracked_categories
+            .insert(CATEGORY_CHARMS.to_string());
+        config.min_gem_level = 4;
+        config.tracked_charm_codes = HashSet::from(["cm1".to_string(), "cm3".to_string()]);
+        let mut tracker = SegmentTracker::new(
+            "account-1".to_string(),
+            "test".to_string(),
+            CAPTURE_SAMPLE_RATE,
+        );
+        tracker
+            .observe_location(
+                TelemetryMarker::Area { area_id: 6 },
+                200,
+                200,
+                "wild".to_string(),
+            )
+            .unwrap();
+        let catalog = ItemCatalog::builtin();
+        assert!(!should_record_item(
+            &config,
+            &tracker,
+            catalog.resolve(1).unwrap()
+        ));
+        assert!(should_record_item(
+            &config,
+            &tracker,
+            catalog.resolve(4).unwrap()
+        ));
+        assert!(should_record_item(
+            &config,
+            &tracker,
+            catalog.resolve(36).unwrap()
+        ));
+        assert!(!should_record_item(
+            &config,
+            &tracker,
+            catalog.resolve(37).unwrap()
+        ));
+        assert!(should_record_item(
+            &config,
+            &tracker,
+            catalog.resolve(38).unwrap()
+        ));
     }
 
     #[test]

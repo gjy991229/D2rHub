@@ -24,6 +24,8 @@ pub const SUPPORTED_TRACKING_CATEGORIES: [&str; 7] = [
     CATEGORY_ESSENCES,
 ];
 
+pub const SUPPORTED_CHARM_CODES: [&str; 3] = ["cm1", "cm2", "cm3"];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SupportedItemDefinition {
     pub item_id: u32,
@@ -243,6 +245,13 @@ pub fn default_tracked_categories() -> Vec<String> {
         .collect()
 }
 
+pub fn default_tracked_charm_codes() -> Vec<String> {
+    SUPPORTED_CHARM_CODES
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
 pub fn normalize_tracked_categories(categories: &[String]) -> Vec<String> {
     let requested = categories
         .iter()
@@ -253,6 +262,30 @@ pub fn normalize_tracked_categories(categories: &[String]) -> Vec<String> {
         .filter(|category| requested.contains(*category))
         .map(str::to_string)
         .collect()
+}
+
+pub fn normalize_tracked_charm_codes(codes: &[String]) -> Vec<String> {
+    let requested = codes
+        .iter()
+        .map(|code| code.trim().to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    SUPPORTED_CHARM_CODES
+        .into_iter()
+        .filter(|code| requested.contains(*code))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Returns the protocol gem quality (1=chipped, 5=perfect).
+pub fn gem_quality_level(code: &str) -> Option<u32> {
+    match code.trim().to_ascii_lowercase().as_str() {
+        "gcv" | "gcy" | "gcb" | "gcg" | "gcr" | "gcw" | "skc" => Some(1),
+        "gfv" | "gfy" | "gfb" | "gfg" | "gfr" | "gfw" | "skf" => Some(2),
+        "gsv" | "gsy" | "gsb" | "gsg" | "gsr" | "gsw" | "sku" => Some(3),
+        "gzv" | "gly" | "glb" | "glg" | "glr" | "glw" | "skl" => Some(4),
+        "gpv" | "gpy" | "gpb" | "gpg" | "gpr" | "gpw" | "skz" => Some(5),
+        _ => None,
+    }
 }
 
 pub fn is_supported_item_category(category: &str) -> bool {
@@ -324,5 +357,30 @@ mod tests {
             CATEGORY_KEYS.to_string(),
         ]);
         assert_eq!(normalized, [CATEGORY_RUNES, CATEGORY_KEYS]);
+    }
+
+    #[test]
+    fn charm_selection_is_normalized_in_catalog_order() {
+        let normalized = normalize_tracked_charm_codes(&[
+            " CM3 ".to_string(),
+            "unknown".to_string(),
+            "cm1".to_string(),
+            "CM3".to_string(),
+        ]);
+        assert_eq!(normalized, ["cm1", "cm3"]);
+    }
+
+    #[test]
+    fn every_supported_gem_has_the_expected_quality_level() {
+        let levels = SUPPORTED_ITEMS
+            .iter()
+            .filter(|item| item.category == CATEGORY_GEMS)
+            .map(|item| gem_quality_level(item.code).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(levels.len(), 35);
+        for level in 1..=5 {
+            assert_eq!(levels.iter().filter(|value| **value == level).count(), 7);
+        }
+        assert_eq!(gem_quality_level("cm1"), None);
     }
 }
