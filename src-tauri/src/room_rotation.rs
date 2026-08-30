@@ -60,7 +60,14 @@ impl Default for RoomRotationStatus {
 #[derive(Clone, PartialEq, Eq)]
 struct AppliedPassword {
     pid: u32,
+    create: bool,
     value: String,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct SelectedFormTab {
+    pid: u32,
+    create: bool,
 }
 
 #[derive(Default)]
@@ -70,6 +77,7 @@ struct Runtime {
     pending_room_name: Option<String>,
     pending_sequence: Option<u32>,
     applied_passwords: HashMap<String, AppliedPassword>,
+    selected_form_tabs: HashMap<String, SelectedFormTab>,
     status: RoomRotationStatus,
 }
 
@@ -143,23 +151,41 @@ fn room_name(config: &RoomRotationConfig, sequence: u32) -> Result<String, Strin
     Ok(value)
 }
 
-fn password_needs_update(account_id: &str, pid: u32, password: &str) -> bool {
+fn password_needs_update(account_id: &str, pid: u32, create: bool, password: &str) -> bool {
     let current = runtime().lock().unwrap_or_else(|error| error.into_inner());
     current
         .applied_passwords
         .get(account_id)
-        .is_none_or(|applied| applied.pid != pid || applied.value != password)
+        .is_none_or(|applied| {
+            applied.pid != pid || applied.create != create || applied.value != password
+        })
 }
 
-fn remember_applied_password(account_id: &str, pid: u32, password: &str) {
+fn remember_applied_password(account_id: &str, pid: u32, create: bool, password: &str) {
     let mut current = runtime().lock().unwrap_or_else(|error| error.into_inner());
     current.applied_passwords.insert(
         account_id.to_string(),
         AppliedPassword {
             pid,
+            create,
             value: password.to_string(),
         },
     );
+}
+
+fn form_tab_needs_select(account_id: &str, pid: u32, create: bool) -> bool {
+    let current = runtime().lock().unwrap_or_else(|error| error.into_inner());
+    current
+        .selected_form_tabs
+        .get(account_id)
+        .is_none_or(|selected| selected.pid != pid || selected.create != create)
+}
+
+fn remember_selected_form_tab(account_id: &str, pid: u32, create: bool) {
+    let mut current = runtime().lock().unwrap_or_else(|error| error.into_inner());
+    current
+        .selected_form_tabs
+        .insert(account_id.to_string(), SelectedFormTab { pid, create });
 }
 
 fn resolve_pid(state: &SharedState, account_id: &str) -> Result<u32, String> {
@@ -327,7 +353,9 @@ fn fill_credentials(
     // Keep each form transaction together so parallel followers cannot replace
     // one another's clipboard or cursor target. Cursor-guard/background modes
     // stay unfocused; only the explicit focus fallback activates the window.
-    let update_password = password_needs_update(input.account_id, input.pid, input.password);
+    let update_password =
+        password_needs_update(input.account_id, input.pid, input.create, input.password);
+    let select_tab = form_tab_needs_select(input.account_id, input.pid, input.create);
     let form = driver.begin_form_input(hwnd)?;
     let (tab, game_name_field, password_field) = if input.create {
         (
@@ -342,8 +370,11 @@ fn fill_credentials(
             flow.ui_profile.join_password_field,
         )
     };
-    form.click(tab)?;
-    sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
+    if select_tab {
+        form.click(tab)?;
+        remember_selected_form_tab(input.account_id, input.pid, input.create);
+        sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
+    }
     form.click(game_name_field)?;
     sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     form.paste_text(
@@ -364,9 +395,16 @@ fn fill_credentials(
         )?;
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     }
+    // The join form can display the posted password text before D2R copies it
+    // into the value used by validation. A final guarded click on that field
+    // reproduces the user-confirmed commit gesture without changing its text.
+    if !input.create {
+        form.click(password_field)?;
+        sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
+    }
     form.key(win::VK_RETURN, input.text_strategy)?;
     if update_password {
-        remember_applied_password(input.account_id, input.pid, input.password);
+        remember_applied_password(input.account_id, input.pid, input.create, input.password);
     }
     Ok(())
 }
@@ -829,7 +867,12 @@ pub fn test_room_rotation_input(
             .unwrap_or(&config.background_text_strategy);
         if !matches!(
             text_strategy,
-            "post_keys_1ms" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste"
+            "post_keys_paced"
+                | "post_keys_1ms"
+                | "post_ctrl_v"
+                | "send_ctrl_v"
+                | "post_paste"
+                | "send_paste"
         ) {
             return Err("未知的后台填字方案".to_string());
         }
@@ -864,6 +907,7 @@ pub fn test_room_rotation_input(
                     )
                 };
                 form.click(tab)?;
+                remember_selected_form_tab(&account_id, pid, action == "create_name");
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 form.click(game_name_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
@@ -891,6 +935,7 @@ pub fn test_room_rotation_input(
                     )
                 };
                 form.click(tab)?;
+                remember_selected_form_tab(&account_id, pid, create);
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 form.click(password_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
@@ -902,9 +947,6 @@ pub fn test_room_rotation_input(
                 }
                 form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
                 text_report = Some(win::background_text_strategy_label(text_strategy));
-                if value == config.password {
-                    remember_applied_password(&account_id, pid, &value);
-                }
             }
             _ => return Err("未知的后台输入测试动作".to_string()),
         }
@@ -966,7 +1008,7 @@ mod win {
     const VK_A: u16 = 0x41;
     const VK_V: u16 = 0x56;
     const VK_BACK: u16 = 0x08;
-    const VK_DELETE: u16 = 0x2E;
+    const VK_END: u16 = 0x23;
     const VK_TAB: u16 = 0x09;
     const VK_SHIFT: u16 = 0x10;
     const VK_SPACE: u16 = 0x20;
@@ -995,8 +1037,8 @@ mod win {
     // D2R may sample key state instead of consuming every queued key message.
     // Keep each synthetic key down long enough to cross a rendered frame and
     // leave a release gap so repeated digits such as `00` are not coalesced.
-    const FORM_KEY_DOWN_MS: u64 = 35;
-    const FORM_KEY_UP_GAP_MS: u64 = 15;
+    const FORM_KEY_DOWN_MS: u64 = 30;
+    const FORM_KEY_UP_GAP_MS: u64 = 10;
     const FORM_FOCUS_SETTLE_MS: u64 = 80;
 
     static GLOBAL_INPUT_LOCK: Mutex<()> = Mutex::new(());
@@ -1094,7 +1136,7 @@ mod win {
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum BackgroundTextStrategy {
-        PostKeys1ms,
+        PostKeysPaced,
         PostCtrlV,
         SendCtrlV,
         PostPaste,
@@ -1104,12 +1146,12 @@ mod win {
     impl BackgroundTextStrategy {
         fn from_value(value: &str) -> Self {
             match value {
-                "post_keys_1ms" => Self::PostKeys1ms,
+                "post_keys_paced" | "post_keys_1ms" => Self::PostKeysPaced,
                 "send_ctrl_v" => Self::SendCtrlV,
                 "post_paste" => Self::PostPaste,
                 "send_paste" => Self::SendPaste,
                 "post_ctrl_v" => Self::PostCtrlV,
-                _ => Self::PostKeys1ms,
+                _ => Self::PostKeysPaced,
             }
         }
 
@@ -1122,12 +1164,12 @@ mod win {
         }
 
         fn uses_fast_keys(self) -> bool {
-            self == Self::PostKeys1ms
+            self == Self::PostKeysPaced
         }
 
         fn label(self) -> &'static str {
             match self {
-                Self::PostKeys1ms => "L 后台逐字 1ms",
+                Self::PostKeysPaced => "L 后台跨帧逐字",
                 Self::PostCtrlV => "H 异步 Ctrl+V",
                 Self::SendCtrlV => "I 同步 Ctrl+V",
                 Self::PostPaste => "J 异步 WM_PASTE",
@@ -1212,7 +1254,7 @@ mod win {
             if strategy.uses_fast_keys() {
                 return match self.driver.mode {
                     InputMode::Background | InputMode::CursorGuard => {
-                        replace_background_text_fast(self.hwnd, value)
+                        replace_background_text_paced(self.hwnd, value, fallback_character_delay_ms)
                     }
                     InputMode::Focus => self.replace_real_text(value, 1),
                 };
@@ -1514,31 +1556,41 @@ mod win {
         }
     }
 
-    fn deliver_background_key_fast(hwnd: isize, vk: u16, shift: bool) -> Result<(), String> {
+    fn deliver_background_key_paced(
+        hwnd: isize,
+        vk: u16,
+        shift: bool,
+        release_gap_ms: u64,
+    ) -> Result<(), String> {
         if shift {
             deliver_key_message(hwnd, VK_SHIFT, true, false)?;
         }
         deliver_key_message(hwnd, vk, true, false)?;
+        std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_DOWN_MS));
         deliver_key_message(hwnd, vk, false, false)?;
         if shift {
             deliver_key_message(hwnd, VK_SHIFT, false, false)?;
         }
-        std::thread::sleep(std::time::Duration::from_millis(1));
+        std::thread::sleep(std::time::Duration::from_millis(
+            release_gap_ms.clamp(5, 250),
+        ));
         Ok(())
     }
 
-    fn replace_background_text_fast(hwnd: isize, value: &str) -> Result<(), String> {
-        // Clear both sides of the current caret without relying on Ctrl+A,
+    fn replace_background_text_paced(
+        hwnd: isize,
+        value: &str,
+        release_gap_ms: u64,
+    ) -> Result<(), String> {
+        // Move to the end and erase the entire bounded field without Ctrl+A,
         // because D2R may ignore synthetic modifier state in a background window.
+        deliver_background_key_paced(hwnd, VK_END, false, release_gap_ms)?;
         for _ in 0..MAX_GAME_NAME_LENGTH {
-            deliver_background_key_fast(hwnd, VK_BACK, false)?;
-        }
-        for _ in 0..MAX_GAME_NAME_LENGTH {
-            deliver_background_key_fast(hwnd, VK_DELETE, false)?;
+            deliver_background_key_paced(hwnd, VK_BACK, false, release_gap_ms)?;
         }
         for character in value.chars() {
             let (vk, shift) = character_key(character)?;
-            deliver_background_key_fast(hwnd, vk, shift)?;
+            deliver_background_key_paced(hwnd, vk, shift, release_gap_ms)?;
         }
         Ok(())
     }
@@ -1596,7 +1648,7 @@ mod win {
 
     fn key_lparam(vk: u16, pressed: bool) -> isize {
         let scan_code = unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC) } & 0xFF;
-        let extended = matches!(vk, VK_LEFT | VK_UP | VK_RIGHT | VK_DOWN);
+        let extended = matches!(vk, VK_END | VK_LEFT | VK_UP | VK_RIGHT | VK_DOWN);
         let mut value = 1u32 | (scan_code << 16);
         if extended {
             value |= 1 << 24;
@@ -1920,13 +1972,24 @@ mod tests {
     }
 
     #[test]
-    fn password_cache_is_scoped_to_account_process_and_value() {
+    fn password_cache_is_scoped_to_account_process_form_and_value() {
         let account_id = "password-cache-test-account";
-        assert!(password_needs_update(account_id, 101, "1"));
-        remember_applied_password(account_id, 101, "1");
-        assert!(!password_needs_update(account_id, 101, "1"));
-        assert!(password_needs_update(account_id, 101, "2"));
-        assert!(password_needs_update(account_id, 202, "1"));
+        assert!(password_needs_update(account_id, 101, true, "1"));
+        remember_applied_password(account_id, 101, true, "1");
+        assert!(!password_needs_update(account_id, 101, true, "1"));
+        assert!(password_needs_update(account_id, 101, true, "2"));
+        assert!(password_needs_update(account_id, 101, false, "1"));
+        assert!(password_needs_update(account_id, 202, true, "1"));
+    }
+
+    #[test]
+    fn form_tab_cache_is_scoped_to_account_process_and_mode() {
+        let account_id = "form-tab-cache-test-account";
+        assert!(form_tab_needs_select(account_id, 101, true));
+        remember_selected_form_tab(account_id, 101, true);
+        assert!(!form_tab_needs_select(account_id, 101, true));
+        assert!(form_tab_needs_select(account_id, 101, false));
+        assert!(form_tab_needs_select(account_id, 202, true));
     }
 
     #[test]

@@ -56,7 +56,7 @@ export interface RoomRotationConfig {
   sequence_width: number;
   input_mode: "background" | "cursor_guard" | "focus";
   background_click_strategy: "post_top" | "send_top" | "post_child" | "send_child";
-  background_text_strategy: "post_keys_1ms" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste";
+  background_text_strategy: "post_keys_paced" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste";
   cursor_lease_ms: number;
   frontend_timeout_ms: number;
   create_timeout_ms: number;

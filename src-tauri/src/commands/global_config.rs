@@ -136,7 +136,7 @@ pub struct RoomRotationFlowStrategy {
     pub lobby_load_ms: u64,
     /// Delay between form-control operations.
     pub step_delay_ms: u64,
-    /// Legacy fallback delay when clipboard paste is unavailable.
+    /// Release gap between paced background characters.
     pub character_delay_ms: u64,
     #[serde(default)]
     pub ui_profile: RoomRotationUiProfile,
@@ -150,7 +150,7 @@ impl RoomRotationFlowStrategy {
             exit_load_ms: 2_200,
             lobby_load_ms: 0,
             step_delay_ms: 120,
-            character_delay_ms: 18,
+            character_delay_ms: 10,
             ui_profile: RoomRotationUiProfile::default(),
         }
     }
@@ -162,7 +162,7 @@ impl RoomRotationFlowStrategy {
             exit_load_ms: 1_500,
             lobby_load_ms: 0,
             step_delay_ms: 80,
-            character_delay_ms: 12,
+            character_delay_ms: 10,
             ui_profile: RoomRotationUiProfile::default(),
         }
     }
@@ -253,7 +253,7 @@ impl Default for RoomRotationConfig {
             follower_exit_delay_ms: default_room_rotation_follower_exit_delay_ms(),
             duplicate_retries: default_room_rotation_duplicate_retries(),
             ui_profile: RoomRotationUiProfile::default(),
-            strategy_version: 2,
+            strategy_version: 4,
             standard_flow: default_room_rotation_standard_flow(),
             direct_lobby_flow: default_room_rotation_direct_lobby_flow(),
             account_flow_bindings: std::collections::HashMap::new(),
@@ -304,7 +304,7 @@ fn default_room_rotation_background_click_strategy() -> String {
 }
 
 fn default_room_rotation_background_text_strategy() -> String {
-    "post_keys_1ms".to_string()
+    "post_keys_paced".to_string()
 }
 
 fn default_room_rotation_cursor_lease_ms() -> u64 {
@@ -359,7 +359,7 @@ fn normalize_room_rotation_flow(flow: &mut RoomRotationFlowStrategy) {
     flow.exit_load_ms = flow.exit_load_ms.min(30_000);
     flow.lobby_load_ms = 0;
     flow.step_delay_ms = flow.step_delay_ms.min(2_000);
-    flow.character_delay_ms = flow.character_delay_ms.clamp(1, 250);
+    flow.character_delay_ms = flow.character_delay_ms.clamp(5, 250);
     normalize_room_rotation_ui_profile(&mut flow.ui_profile);
 }
 
@@ -657,7 +657,7 @@ mod validation_tests {
         assert_eq!(config.room_rotation.background_click_strategy, "post_top");
         assert_eq!(
             config.room_rotation.background_text_strategy,
-            "post_keys_1ms"
+            "post_keys_paced"
         );
         assert_eq!(config.room_rotation.cursor_lease_ms, 16);
     }
@@ -714,7 +714,7 @@ mod validation_tests {
         };
 
         assert!(config.normalize_room_rotation());
-        assert_eq!(config.room_rotation.strategy_version, 2);
+        assert_eq!(config.room_rotation.strategy_version, 4);
         assert_eq!(
             config.room_rotation.standard_flow.ui_profile.save_and_exit,
             legacy_point
@@ -755,7 +755,7 @@ mod validation_tests {
         );
         assert_eq!(
             config.room_rotation.background_text_strategy,
-            "post_keys_1ms"
+            "post_keys_paced"
         );
         assert!(!config.room_rotation.standard_flow.click_lobby_after_exit);
         assert_eq!(config.room_rotation.standard_flow.lobby_load_ms, 0);
@@ -799,10 +799,15 @@ mod validation_tests {
         assert_eq!(profile.join_password_field, password);
         assert_eq!(profile.create_submit_button, submit);
         assert_eq!(profile.join_submit_button, submit);
-        assert_eq!(config.room_rotation.strategy_version, 2);
+        assert_eq!(config.room_rotation.strategy_version, 4);
         assert_eq!(
             config.room_rotation.background_text_strategy,
-            "post_keys_1ms"
+            "post_keys_paced"
+        );
+        assert_eq!(config.room_rotation.standard_flow.character_delay_ms, 10);
+        assert_eq!(
+            config.room_rotation.direct_lobby_flow.character_delay_ms,
+            10
         );
     }
 
@@ -2157,7 +2162,12 @@ impl GlobalConfig {
         }
         if !matches!(
             config.background_text_strategy.as_str(),
-            "post_keys_1ms" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste"
+            "post_keys_paced"
+                | "post_keys_1ms"
+                | "post_ctrl_v"
+                | "send_ctrl_v"
+                | "post_paste"
+                | "send_paste"
         ) {
             config.background_text_strategy = default_room_rotation_background_text_strategy();
         }
@@ -2194,6 +2204,21 @@ impl GlobalConfig {
                 .migrate_shared_form_points();
             config.background_text_strategy = default_room_rotation_background_text_strategy();
             config.strategy_version = 2;
+        }
+        if config.strategy_version < 3 {
+            config.background_text_strategy = default_room_rotation_background_text_strategy();
+            config.standard_flow.character_delay_ms = 15;
+            config.direct_lobby_flow.character_delay_ms = 15;
+            config.strategy_version = 3;
+        }
+        if config.strategy_version < 4 {
+            if config.standard_flow.character_delay_ms == 15 {
+                config.standard_flow.character_delay_ms = 10;
+            }
+            if config.direct_lobby_flow.character_delay_ms == 15 {
+                config.direct_lobby_flow.character_delay_ms = 10;
+            }
+            config.strategy_version = 4;
         }
         normalize_room_rotation_flow(&mut config.standard_flow);
         normalize_room_rotation_flow(&mut config.direct_lobby_flow);
