@@ -5,6 +5,7 @@ mod error;
 mod input_listener;
 mod launch_context;
 pub mod logger;
+mod room_rotation;
 mod rune_audio;
 mod rune_data;
 mod state;
@@ -407,6 +408,12 @@ pub fn run() {
             rune_audio::monitor::get_rune_audio_status,
             rune_audio::monitor::start_rune_audio_diagnostic_recording,
             rune_audio::monitor::stop_rune_audio_diagnostic_recording,
+            // ── 自动换房测试版 ──
+            room_rotation::start_room_rotation,
+            room_rotation::join_room_rotation_followers,
+            room_rotation::cancel_room_rotation,
+            room_rotation::get_room_rotation_status,
+            room_rotation::test_room_rotation_input,
             // ── 数据统计 ──
             stats::save_scene_record,
             stats::get_stats_data,

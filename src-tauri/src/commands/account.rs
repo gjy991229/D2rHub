@@ -1000,7 +1000,8 @@ pub fn delete_account(
             cfg.rune_audio_target_account.clear();
         }
         let removed_from_launch_group = cfg.remove_account_from_launch_groups(&account_id);
-        if cleared_audio_target || removed_from_launch_group {
+        let removed_from_room_rotation = cfg.remove_account_from_room_rotation(&account_id);
+        if cleared_audio_target || removed_from_launch_group || removed_from_room_rotation {
             cfg.save(&state.app_data_dir)?;
             Some(cfg.clone())
         } else {

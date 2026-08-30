@@ -221,18 +221,41 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
         if let Some(app) = &*guard {
             if let Some(state) = app.try_state::<SharedState>() {
                 let combo_lower = combo.to_lowercase();
-                let shortcut_map = state.shortcut_map.read();
-                if let Some(&pos) = shortcut_map.get(&combo_lower) {
+                let (primary_rotation_match, follower_rotation_match, accounts_dir) = {
                     let config = state.config.read();
-                    if let Some(cfg) = config.as_ref() {
-                        let accounts_dir = cfg.accounts_dir.clone();
-                        let app_clone = app.clone();
-                        let combo_clone = combo.clone();
-                        std::thread::spawn(move || {
-                            focus_account_at_position(&app_clone, &accounts_dir, pos, &combo_clone);
-                        });
-                        return true; // 已处理，吞掉按键
-                    }
+                    let Some(cfg) = config.as_ref() else {
+                        return false;
+                    };
+                    (
+                        cfg.room_rotation.enabled
+                            && cfg.room_rotation.shortcut.eq_ignore_ascii_case(&combo),
+                        cfg.room_rotation.enabled
+                            && cfg.room_rotation.join_shortcut.eq_ignore_ascii_case(&combo),
+                        cfg.accounts_dir.clone(),
+                    )
+                };
+                if primary_rotation_match {
+                    let app_clone = app.clone();
+                    std::thread::spawn(move || {
+                        crate::room_rotation::start_primary_from_shortcut(app_clone);
+                    });
+                    return true;
+                }
+                if follower_rotation_match {
+                    let app_clone = app.clone();
+                    std::thread::spawn(move || {
+                        crate::room_rotation::start_followers_from_shortcut(app_clone);
+                    });
+                    return true;
+                }
+                let shortcut_position = state.shortcut_map.read().get(&combo_lower).copied();
+                if let Some(pos) = shortcut_position {
+                    let app_clone = app.clone();
+                    let combo_clone = combo.clone();
+                    std::thread::spawn(move || {
+                        focus_account_at_position(&app_clone, &accounts_dir, pos, &combo_clone);
+                    });
+                    return true; // 已处理，吞掉按键
                 }
             }
         }
