@@ -543,6 +543,7 @@ const textMap: Record<string, string> = {
   "交流反馈QQ群": "QQ feedback group",
   "已复制": "Copied",
   "复制": "Copy",
+  "感谢赞助": "Sponsor Thanks",
   "赞助支持作者": "Support the author",
   "折叠": "Collapse",
   "展开": "Expand",

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Heart, Copy, Check, ZoomIn, X, ChevronRight, ChevronDown, Github } from "lucide-react";
+import { Heart, HeartHandshake, Copy, Check, ZoomIn, X, ChevronRight, ChevronDown, Github } from "lucide-react";
 import { Modal } from "../components/ui/Modal";
 import UpdateConfirmModal from "../components/ui/UpdateConfirmModal";
 import { invoke } from "@tauri-apps/api/core";
@@ -13,6 +13,7 @@ interface Props {
 export function AboutModal({ open, onClose }: Props) {
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [showSponsors, setShowSponsors] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const [version, setVersion] = useState("0.1.0");
   const [checking, setChecking] = useState(false);
@@ -26,6 +27,7 @@ export function AboutModal({ open, onClose }: Props) {
 
 
   const qq = "1070676143";
+  const sponsors = ["rabbitxman#1168", "忙着搞数学"];
 
   useEffect(() => {
     if (!open) return;
@@ -168,11 +170,60 @@ export function AboutModal({ open, onClose }: Props) {
             </button>
           </div>
 
+          {/* Sponsors */}
+          <div className="pt-1">
+            <button
+              type="button"
+              aria-expanded={showSponsors}
+              aria-controls="about-sponsor-list"
+              onClick={() => setShowSponsors(!showSponsors)}
+              className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
+            >
+              <div className="flex items-center gap-1.5">
+                <HeartHandshake size={12} className="text-accent" />
+                <span className="text-md font-medium text-text-primary">感谢赞助</span>
+              </div>
+              <span className="text-text-muted text-xs flex items-center gap-0.5 font-medium">
+                {showSponsors ? "折叠" : "展开"}
+                {showSponsors ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </span>
+            </button>
+
+            <div
+              id="about-sponsor-list"
+              aria-hidden={!showSponsors}
+              className="overflow-hidden transition-all duration-200 ease-in-out motion-reduce:transition-none"
+              style={{
+                maxHeight: showSponsors ? "120px" : "0px",
+                opacity: showSponsors ? 1 : 0,
+              }}
+            >
+              <div
+                className="mt-3 rounded-xl px-3.5"
+                style={{ background: "var(--surface-hover)" }}
+              >
+                {sponsors.map((sponsor, index) => (
+                  <div
+                    key={sponsor}
+                    className="flex items-center gap-2.5 py-2.5"
+                    style={index > 0 ? { borderTop: "1px solid var(--border-default)" } : undefined}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" aria-hidden="true" />
+                    <span className="text-sm font-medium text-text-secondary">{sponsor}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
           {/* Donation */}
           <div className="pt-1">
             <button
+              type="button"
+              aria-expanded={showDonation}
+              aria-controls="about-donation-codes"
               onClick={() => setShowDonation(!showDonation)}
-              className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left focus:outline-none"
+              className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-1.5">
                 <Heart size={12} className="text-accent" />
@@ -185,7 +236,9 @@ export function AboutModal({ open, onClose }: Props) {
             </button>
 
             <div
-              className="overflow-hidden transition-all duration-300 ease-in-out"
+              id="about-donation-codes"
+              aria-hidden={!showDonation}
+              className="overflow-hidden transition-all duration-200 ease-in-out motion-reduce:transition-none"
               style={{
                 maxHeight: showDonation ? "300px" : "0px",
                 opacity: showDonation ? 1 : 0,
@@ -202,6 +255,7 @@ export function AboutModal({ open, onClose }: Props) {
                       style={{ border: "1px solid var(--border-default)" }}>
                       <button
                         onClick={() => setPreviewImage(qr.src)}
+                        tabIndex={showDonation ? 0 : -1}
                         className="w-full h-full block cursor-pointer border-0 p-0 bg-transparent"
                         aria-label={`放大 ${qr.label} 收款码`}>
                         <img src={qr.src} alt={qr.label}
