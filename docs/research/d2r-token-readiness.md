@@ -1,8 +1,15 @@
-# D2R Token 启动完成判定研究
+# D2R 启动完成判定研究
 
-## 当前测试结论（2026-08-26）
+## 当前实现（2026-08-30）
 
-当前实现对 Token 直启和 Battle.net 启动采用相同的两个必要判据：目标 `D2R.exe` PID 成功读取注册表值 `WEB_TOKEN`，并且该 PID 的多开互斥句柄已经成功关闭。两条流程都不再读取 TCP 表、不再等待游戏窗口，也不再依赖 `WEB_TOKEN` 内容发生回写。
+Token 直启和 Battle.net 启动使用不同的组合判据：
+
+- Token 直启：目标 `D2R.exe` PID 成功读取注册表值 `WEB_TOKEN`，并且该 PID 的多开互斥句柄已经成功关闭。
+- Battle.net 启动：并行检测目标 PID 读取 `WEB_TOKEN` 的 ETW 事件，以及连续两次采样均存在 `ESTABLISHED` TCP 连接；任一信号先命中即停止另一检测。
+
+批量启动仍要求当前账号启动成功且互斥句柄已清除，才会继续启动下一个账号。
+
+## Token 直启的 ETW 判定
 
 监听对象是 Windows ETW provider `Microsoft-Windows-Kernel-Registry`（GUID `70eb4f03-c1de-4f73-a051-33d13d5413bd`）的 `QueryValue` 事件（事件 ID 7）。事件必须同时满足：
 
@@ -12,28 +19,25 @@
 
 这不是在读取或导出 Token 内容。监听器只保留满足条件的 PID、匹配事件数和解析错误数。
 
-## 为什么取消 TCP
+Token 直启在创建 D2R 前启动监听，避免漏掉快速发生的读取事件。随后并行检测 Token 消费和 `DiabloII Check For Other Instances` 互斥句柄清除；60 秒仍未同时满足则失败。
 
-TCP `ESTABLISHED` 只能证明进程存在可传输数据的连接，不能证明认证 Token 已被消费。认证、遥测、CDN、代理和大厅连接都可能提前满足；加速器还可能改变端口或连接所属 PID。因此固定 1119、443 或“任意已建立连接”都不能作为 Token 可以被下一账号覆盖的可靠信号。
+## Battle.net 的 ETW/TCP 竞争判定
 
-Battle.net 启动也不再保留独立的 TCP 就绪逻辑。TCP 连接既不负责停止跳过动画的按键，也不参与放行下一个账号。
+Battle.net 在发送游戏启动指令前尝试启动 ETW 监听。监听启动失败只记录告警并继续 TCP 检测，不会阻断战网启动。ETW 命中目标 D2R PID 后立即停止 TCP 采样；TCP 先稳定时则立即停止 ETW 会话。
 
-## 状态机
+Battle.net 路径通过 Windows `GetExtendedTcpTable` 分别读取 IPv4 和 IPv6 TCP 表，并只接受：
 
-1. Token 直启将账号 Token 写入共享 `WEB_TOKEN`；Battle.net 启动恢复对应账号的认证快照并启动客户端。
-2. 在直接创建 D2R 或向 Battle.net 发送游戏启动指令前启动 ETW 监听，避免快速读取发生在 PID 发现之前而漏报。
-3. 启动 D2R 并发现新 PID。监听器会保留此前捕获的成功读取 PID，因此此时即可反查。
-4. 后台查找目标 PID 的 `DiabloII Check For Other Instances` 句柄。只有关闭调用成功，并再次查找确认该命名句柄不存在，才记为清除成功。
-5. 每 50 ms 同时检查“目标 PID 已读取 `WEB_TOKEN`”和“互斥句柄已清除”；两者都成立后才允许启动下一个账号。
-6. 60 秒仍未同时满足则失败，并记录 Token 读取状态、句柄状态、匹配事件数、成功读取过的 PID 和解析错误数。
-7. ETW 会话启动失败时直接报错，不退回 TCP、窗口或注册表回写判据。
-8. 任一认证模式的当前账号只要有一个必要条件失败，就立即停止批次，绝不覆盖共享 Token 启动下一个账号。
+- 连接所属 PID 等于本次新启动的目标 `D2R.exe` PID；
+- TCP 状态为 `ESTABLISHED`；
+- 连续两次、间隔约 1 秒的采样均命中。
 
-跳过开场动画仍由独立后台任务执行，但 ETW 确认目标 D2R 已读取 `WEB_TOKEN` 后会立即停止发送按键。互斥句柄清除与 Token 消费检测并发执行，二者都是放行下一账号的必要条件。
+该判断不绑定 1119、443 等固定远端端口，以兼容服务器端口变化、本机代理和游戏加速器。检测期间继续向游戏窗口发送跳过动画按键；ETW 或 TCP 任一命中后停止发送，并额外等待最多 3 秒确认互斥句柄处理结果。
+
+TCP `ESTABLISHED` 只能作为 Battle.net 模式的兼容性联网信号，不能严格证明认证 Token 已消费。遥测、CDN、代理或大厅连接可能提前满足；ETW 与互斥句柄检测提供额外保障。
 
 ## 已知风险与验证点
 
-- 应用清单要求管理员权限；非提升权限的开发终端启动 Kernel Registry provider 会返回“拒绝访问”。国际服实机验证所用的提升权限程序已成功启动监听。
-- 当前假设 `WEB_TOKEN` 由 `D2R.exe` 自身读取。如果实测事件显示由中间辅助进程读取，严格 PID 过滤会超时；超时诊断中的“成功读取 PID”可用于确认这一点。
-- `WEB_TOKEN` 名称本身很有辨识度，但当前版本不解析 `KeyObject` 对应的完整注册表路径。这是本测试分支刻意接受的简化。
-- 国际服 Token 一键启动已于 2026-08-26 完成实机验证，Token 读取与句柄清除双条件符合预期。国服 Token 直启和 Battle.net 启动都应分别做一次管理员权限下的实机回归，重点确认读取事件仍由目标 `D2R.exe` PID 发出。
+- Battle.net 模式需要分别验证国服、国际服以及常用加速器环境，确认连接仍归属于目标 D2R PID。
+- 如果加速器完全由其他进程持有游戏连接，严格 PID 过滤不会命中 TCP；此时可由 ETW 路径兜底。
+- Token 直启仍依赖管理员权限启动 Kernel Registry provider；Battle.net 的 ETW 启动失败则自动保留 TCP 路径。
+- 当前假设 `WEB_TOKEN` 由 `D2R.exe` 自身读取。如果事件由中间辅助进程发出，严格 PID 过滤不会命中 ETW；Battle.net 可由 TCP 兜底，Token 直启仍会超时。
