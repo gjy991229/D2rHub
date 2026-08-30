@@ -70,7 +70,7 @@ const DEFAULT_STANDARD_FLOW: RoomRotationFlowStrategy = {
   exit_load_ms: 2_200,
   lobby_load_ms: 0,
   step_delay_ms: 120,
-  character_delay_ms: 18,
+  character_delay_ms: 10,
   ui_profile: DEFAULT_UI_PROFILE,
 };
 
@@ -80,7 +80,7 @@ const DEFAULT_DIRECT_FLOW: RoomRotationFlowStrategy = {
   exit_load_ms: 1_500,
   lobby_load_ms: 0,
   step_delay_ms: 80,
-  character_delay_ms: 12,
+  character_delay_ms: 10,
   ui_profile: DEFAULT_UI_PROFILE,
 };
 
@@ -96,7 +96,7 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
   sequence_width: 3,
   input_mode: "cursor_guard",
   background_click_strategy: "post_top",
-  background_text_strategy: "post_keys_1ms",
+  background_text_strategy: "post_keys_paced",
   cursor_lease_ms: 16,
   frontend_timeout_ms: 12_000,
   create_timeout_ms: 10_000,
@@ -104,7 +104,7 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
   follower_exit_delay_ms: 2_200,
   duplicate_retries: 3,
   ui_profile: DEFAULT_UI_PROFILE,
-  strategy_version: 2,
+  strategy_version: 4,
   standard_flow: DEFAULT_STANDARD_FLOW,
   direct_lobby_flow: DEFAULT_DIRECT_FLOW,
   account_flow_bindings: {},
@@ -154,7 +154,7 @@ const BACKGROUND_TEXT_VARIANTS: ReadonlyArray<{
   shortLabel: string;
   description: string;
 }> = [
-  { key: "post_keys_1ms", shortLabel: "L 逐字 1ms", description: "后台逐字投递按键，字符间隔 1ms，不使用剪贴板" },
+  { key: "post_keys_paced", shortLabel: "L 跨帧逐字", description: "每键保持 30ms，再按当前流程的字符间隔逐字输入" },
   { key: "post_ctrl_v", shortLabel: "H 异步 Ctrl+V", description: "投递 Ctrl+A、退格与 Ctrl+V 按键消息" },
   { key: "send_ctrl_v", shortLabel: "I 同步 Ctrl+V", description: "同步发送同一组 Ctrl+V 按键消息" },
   { key: "post_paste", shortLabel: "J 异步 WM_PASTE", description: "选中并清空后异步发送系统粘贴消息" },
@@ -639,7 +639,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
         </div>
       </div>
       <p className="text-2xs leading-relaxed text-text-secondary">
-        保存退出与加载等待会并行执行；受保护光标模式下，页签、输入框、1ms 逐字输入和回车均不主动激活小号窗口。密码只在该账号本次运行首次使用、游戏进程重启或配置密码变化时重写。
+        保存退出与加载等待会并行执行；受保护光标模式下，页签、输入框、跨帧逐字输入和回车均不主动激活小号窗口。密码只在该账号当前创建/加入表单首次使用、游戏进程重启或配置密码变化时重写。
       </p>
 
       <div className={`rounded-xl border px-3 py-2.5 ${status?.running ? "border-accent/25 bg-accent/10" : status?.last_error ? "border-error/25 bg-error/10" : "border-border-default bg-surface-hover"}`}>
@@ -682,7 +682,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             <p className="text-xs font-semibold text-text-primary">{STRATEGY_META[activeStrategy].label}</p>
             <p className="mt-0.5 text-2xs text-text-muted">{STRATEGY_META[activeStrategy].description}</p>
           </div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             {([
               ["escape_to_exit_ms", "Esc → 退出", 0, 5],
               ["exit_load_ms", "退出加载", 0, 30],
@@ -701,9 +701,23 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
                 />
               </label>
             ))}
+            <label className="space-y-1">
+              <span className="text-2xs text-text-muted">字符释放间隔（毫秒）</span>
+              <input
+                type="number"
+                min={5}
+                max={250}
+                step={1}
+                value={activeFlow.character_delay_ms}
+                onChange={event => patchFlow(activeStrategy, {
+                  character_delay_ms: Math.round(Math.max(5, Math.min(250, Number(event.target.value) || 10))),
+                })}
+                className="h-8 w-full rounded-lg border border-border-default bg-surface-hover px-2.5 font-mono text-xs text-text-primary"
+              />
+            </label>
           </div>
           <p className="text-2xs leading-relaxed text-text-secondary">
-            当前顺序：Esc → 等待 → 保存退出 → 等待大厅加载 → 创建/加入页签 → 1ms 逐字填写房间名 → 首次或变更时填写密码 → Enter。创建页和加入页使用各自独立坐标。
+            当前顺序：Esc → 等待 → 保存退出 → 等待大厅加载 → 首次选择创建/加入页签 → 跨帧逐字填写房间名 → 当前表单首次使用或密码变更时填写密码 → 加入流程复点密码框确认 → Enter。每键保持 30ms，再等待上方字符间隔；默认约 40ms/字符。
           </p>
         </div>
       </details>
@@ -747,7 +761,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             </Button>
           </div>
           <p className="text-2xs leading-relaxed text-warning">
-            填字测试不会按 Enter；受保护光标模式不会主动激活目标窗口。默认 L 方案不使用剪贴板，按 1ms 间隔逐字输入；H–K 仅保留用于兼容性诊断。点击 E–L 后，对应方案也会应用到自动流程。
+            填字测试不会按 Enter，也不会把测试内容记作“密码已更新”。受保护光标模式不会主动激活目标窗口。默认 L 方案不使用剪贴板，每键保持 30ms 并按当前流程设置留出释放间隔；H–K 仅保留用于兼容性诊断。
           </p>
           <p className="text-2xs leading-relaxed text-text-secondary">
             坐标相对 D2R 客户区：左上角 X 0%、Y 0%，右下角 X 100%、Y 100%。窗口移动、缩放或位于不同显示器时无需换算屏幕坐标。
@@ -767,7 +781,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             <div>
               <p className="text-xs font-semibold text-text-secondary">后台填字方案 · 加入页实测</p>
               <p className="mt-0.5 text-2xs leading-relaxed text-text-muted">
-                L 会按 1ms 间隔逐字输入；H–K 是剪贴板兼容性方案。都会执行“加入页签 → 加入房间名坐标 → 填写当前预览”，不按 Enter。
+                L 会跨帧逐字输入；H–K 是剪贴板兼容性方案。都会执行“加入页签 → 加入房间名坐标 → 填写当前预览”，不按 Enter。
               </p>
             </div>
             <div className="flex flex-wrap gap-1.5">
