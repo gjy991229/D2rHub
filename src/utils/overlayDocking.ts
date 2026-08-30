@@ -18,7 +18,7 @@ export interface OverlayDockPlacement {
   hidden: PhysicalPoint;
 }
 
-export const OVERLAY_DOCK_SNAP_DISTANCE = 24;
+export const OVERLAY_DOCK_SNAP_DISTANCE = 4.8;
 export const OVERLAY_DOCK_REVEAL_SIZE = 8;
 
 export type OverlayDockMotion = "reveal" | "hide";

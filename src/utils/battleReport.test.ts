@@ -42,4 +42,20 @@ const rawSnapshot = buildBattleReportSnapshot(stats, {
 }, now);
 assert(rawSnapshot.summary.runs === 2, "用户明确清空策略后快捷战报应同步为原始分段口径");
 
+const monthlySnapshot = buildBattleReportSnapshot({
+  records: [
+    { absolute_time: "2026/07/31/23:59:59", character_name: "Sor", scene_name: "深坑一层", timer_seconds: 20 },
+    { absolute_time: "2026/08/01/00:00:00", character_name: "Sor", scene_name: "深坑一层", timer_seconds: 30 },
+    { absolute_time: "2026/08/30/11:59:59", character_name: "Sor", scene_name: "深坑二层", timer_seconds: 40 },
+  ],
+  strategies: [],
+}, {
+  activeStrategyIds: [],
+  reportConfig: { range: "month", dataSource: "raw" },
+}, now);
+assert(monthlySnapshot.summary.runs === 2, "本月战报应按自然月边界统计");
+assert(monthlySnapshot.range.start.getDate() === 1 && monthlySnapshot.range.next.getMonth() === 8, "本月战报范围应从月初到下月月初");
+assert(monthlySnapshot.title === "月度战报" && monthlySnapshot.summaryLabel === "本月小结", "本月战报应使用月度标题与小结");
+assert(template.includes('data-report-range="month"'), "统计 HTML 应提供与快捷分享同步的本月范围");
+
 console.log("battle report sharing tests passed");

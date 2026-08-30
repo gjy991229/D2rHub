@@ -1,5 +1,6 @@
 import React from "react";
 import { TopNav } from "./TopNav";
+import type { BattleReportQuickRange } from "../../utils/battleReport";
 
 interface DashboardProps {
   onAbout: () => void;
@@ -7,7 +8,7 @@ interface DashboardProps {
   onOpenConfig: () => void;
   onHelp: () => void;
   onStats: () => void;
-  onShareReport: () => void;
+  onShareReport: (range: BattleReportQuickRange) => void;
   sharingReport: boolean;
   children: React.ReactNode;
 }

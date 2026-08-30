@@ -40,7 +40,7 @@ export type BattleReportStatsData = {
 };
 
 export type BattleReportConfig = {
-  range: "today" | "week" | "7" | "30" | "custom";
+  range: "today" | "week" | "month" | "7" | "30" | "custom";
   customStart: string;
   customEnd: string;
   character: string;
@@ -56,6 +56,8 @@ export type BattleReportConfig = {
   outliers: "optimized" | "short" | "raw";
   tzGrouping: "separate" | "combined";
 };
+
+export type BattleReportQuickRange = Extract<BattleReportConfig["range"], "today" | "week" | "month">;
 
 export type StatsPagePreferences = {
   version?: number;
@@ -118,7 +120,7 @@ export function sanitizeBattleReportConfig(value: Partial<BattleReportConfig> = 
   const metrics = [...new Set(Array.isArray(value.metrics) ? value.metrics : BATTLE_REPORT_CONFIG_DEFAULTS.metrics)]
     .filter((metric) => METRIC_IDS.includes(metric)).slice(0, 4);
   return {
-    range: option(value.range, ["today", "week", "7", "30", "custom"], "today"),
+    range: option(value.range, ["today", "week", "month", "7", "30", "custom"], "today"),
     customStart: String(value.customStart || "").slice(0, 10),
     customEnd: String(value.customEnd || "").slice(0, 10),
     character: String(value.character || ""),
@@ -278,6 +280,8 @@ function reportPeriodRange(config: BattleReportConfig, now = new Date()) {
     kicker = "CUSTOM REPORT";
   } else if (config.range === "week") {
     start = shiftLocalDate(today, -((today.getDay() + 6) % 7)); next = shiftLocalDate(start, 7); title = "一周战报"; kicker = "WEEKLY REPORT";
+  } else if (config.range === "month") {
+    start = new Date(today.getFullYear(), today.getMonth(), 1); next = new Date(today.getFullYear(), today.getMonth() + 1, 1); title = "月度战报"; kicker = "MONTHLY REPORT";
   } else if (config.range === "7") {
     start = shiftLocalDate(today, -6); next = shiftLocalDate(start, 7); title = "七日战报"; kicker = "7-DAY REPORT";
   } else if (config.range === "30") {
@@ -288,12 +292,16 @@ function reportPeriodRange(config: BattleReportConfig, now = new Date()) {
   const end = next > now && start <= now ? now : next;
   const periodDuration = Math.max(1, next.getTime() - start.getTime());
   const observedDuration = Math.max(1, end.getTime() - start.getTime());
-  const previousStart = new Date(start.getTime() - periodDuration);
-  const previousEnd = new Date(previousStart.getTime() + observedDuration);
+  const previousStart = config.range === "month"
+    ? new Date(start.getFullYear(), start.getMonth() - 1, 1)
+    : new Date(start.getTime() - periodDuration);
+  const previousEnd = config.range === "month"
+    ? new Date(Math.min(start.getTime(), previousStart.getTime() + observedDuration))
+    : new Date(previousStart.getTime() + observedDuration);
   const pad = (value: number) => String(value).padStart(2, "0");
   const full = (date: Date) => `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
   const last = shiftLocalDate(next, -1);
-  const suffix = config.range === "today" ? " · 今日" : config.range === "week" ? " · 本周" : config.range === "7" ? " · 近 7 天" : config.range === "30" ? " · 近 30 天" : "";
+  const suffix = config.range === "today" ? " · 今日" : config.range === "week" ? " · 本周" : config.range === "month" ? " · 本月" : config.range === "7" ? " · 近 7 天" : config.range === "30" ? " · 近 30 天" : "";
   const label = config.range === "today" ? `${full(start)}${suffix}` : `${full(start)} — ${full(last)}${suffix}`;
   return { start, end, next, label, previousStart, previousEnd, title, kicker };
 }
@@ -460,7 +468,7 @@ export function buildBattleReportSnapshot(data: BattleReportStatsData, preferenc
     rightMode: rightUsesDrops ? "drops" : "efficiency",
     rightTitle: rightUsesDrops ? "重点掉落" : "效率概览",
     rightSubtitle: rightUsesDrops ? "按稀有度与数量排序" : "本期战斗节奏",
-    summaryLabel: config.range === "today" ? "今日小结" : config.range === "week" ? "本周小结" : "本期小结",
+    summaryLabel: config.range === "today" ? "今日小结" : config.range === "week" ? "本周小结" : config.range === "month" ? "本月小结" : "本期小结",
     metrics: [],
   };
   const areaCount = records.length ? new Set(records.map((record) => record.scene_name)).size : 0;

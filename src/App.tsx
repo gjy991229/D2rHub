@@ -45,6 +45,7 @@ import { validateTrackingTarget } from "./utils/trackingTarget";
 import {
   copyBattleReportToClipboard,
   type BattleReportStatsData,
+  type BattleReportQuickRange,
   type StatsPagePreferences,
 } from "./utils/battleReport";
 import {
@@ -116,7 +117,7 @@ function App() {
     });
   };
 
-  const handleShareBattleReport = async () => {
+  const handleShareBattleReport = async (range: BattleReportQuickRange) => {
     if (sharingReport) return;
     setSharingReport(true);
     try {
@@ -124,7 +125,11 @@ function App() {
         invoke<BattleReportStatsData>("get_stats_data"),
         invoke<StatsPagePreferences | null>("get_stats_page_preferences"),
       ]);
-      const result = await copyBattleReportToClipboard(stats, preferences || {});
+      const syncedPreferences = preferences || {};
+      const result = await copyBattleReportToClipboard(stats, {
+        ...syncedPreferences,
+        reportConfig: { ...syncedPreferences.reportConfig, range },
+      });
       showToast("success", `${result.rangeLabel}战报已复制（${result.runs} 场），可直接粘贴。`);
     } catch (error) {
       showToast("error", `生成战报失败: ${error}`);

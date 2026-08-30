@@ -4,6 +4,7 @@ import {
   easeOverlayDockProgress,
   findOverlayDockEdge,
   OVERLAY_DOCK_REVEAL_SIZE,
+  OVERLAY_DOCK_SNAP_DISTANCE,
 } from "./overlayDocking";
 
 function assertEqual(actual: unknown, expected: unknown, message: string) {
@@ -18,9 +19,19 @@ export function runTests() {
   const size = { width: 320, height: 180 };
 
   assertEqual(
-    findOverlayDockEdge({ x: 14, y: 300 }, size, workArea, 24),
+    OVERLAY_DOCK_SNAP_DISTANCE,
+    4.8,
+    "overlay docking uses one fifth of the former 24-pixel snap distance",
+  );
+  assertEqual(
+    findOverlayDockEdge({ x: 4.8, y: 300 }, size, workArea, OVERLAY_DOCK_SNAP_DISTANCE),
     "left",
-    "nearest left edge is detected inside the snap distance",
+    "nearest left edge is detected at the reduced snap-distance boundary",
+  );
+  assertEqual(
+    findOverlayDockEdge({ x: 4.9, y: 300 }, size, workArea, OVERLAY_DOCK_SNAP_DISTANCE),
+    null,
+    "an overlay outside the reduced snap distance remains freely positioned",
   );
   assertEqual(
     findOverlayDockEdge({ x: 900, y: 700 }, size, workArea, 24),
