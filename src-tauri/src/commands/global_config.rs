@@ -65,6 +65,328 @@ pub struct LaunchGroup {
     pub members: Vec<LaunchGroupMember>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomRotationPoint {
+    /// Coordinate relative to the D2R client area, in thousandths.
+    pub x: u16,
+    pub y: u16,
+}
+
+impl RoomRotationPoint {
+    const fn new(x: u16, y: u16) -> Self {
+        Self { x, y }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomRotationUiProfile {
+    /// Current 2026 pause menu. Older three-button layouts usually need y≈435.
+    pub save_and_exit: RoomRotationPoint,
+    pub character_select_lobby: RoomRotationPoint,
+    pub create_tab: RoomRotationPoint,
+    pub join_tab: RoomRotationPoint,
+    pub game_name_field: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_password_field")]
+    pub password_field: RoomRotationPoint,
+    pub submit_button: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_game_name_field")]
+    pub create_game_name_field: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_password_field")]
+    pub create_password_field: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_submit_button")]
+    pub create_submit_button: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_game_name_field")]
+    pub join_game_name_field: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_password_field")]
+    pub join_password_field: RoomRotationPoint,
+    #[serde(default = "default_room_rotation_submit_button")]
+    pub join_submit_button: RoomRotationPoint,
+    pub dialog_confirm: RoomRotationPoint,
+}
+
+fn default_room_rotation_game_name_field() -> RoomRotationPoint {
+    RoomRotationPoint::new(696, 136)
+}
+
+fn default_room_rotation_password_field() -> RoomRotationPoint {
+    RoomRotationPoint::new(696, 205)
+}
+
+fn default_room_rotation_submit_button() -> RoomRotationPoint {
+    RoomRotationPoint::new(766, 625)
+}
+
+impl RoomRotationUiProfile {
+    fn migrate_shared_form_points(&mut self) {
+        self.create_game_name_field = self.game_name_field;
+        self.create_password_field = self.password_field;
+        self.create_submit_button = self.submit_button;
+        self.join_game_name_field = self.game_name_field;
+        self.join_password_field = self.password_field;
+        self.join_submit_button = self.submit_button;
+    }
+}
+
+impl Default for RoomRotationUiProfile {
+    fn default() -> Self {
+        Self {
+            save_and_exit: RoomRotationPoint::new(500, 350),
+            character_select_lobby: RoomRotationPoint::new(583, 898),
+            create_tab: RoomRotationPoint::new(665, 69),
+            join_tab: RoomRotationPoint::new(768, 69),
+            game_name_field: default_room_rotation_game_name_field(),
+            password_field: default_room_rotation_password_field(),
+            submit_button: default_room_rotation_submit_button(),
+            create_game_name_field: default_room_rotation_game_name_field(),
+            create_password_field: default_room_rotation_password_field(),
+            create_submit_button: default_room_rotation_submit_button(),
+            join_game_name_field: default_room_rotation_game_name_field(),
+            join_password_field: default_room_rotation_password_field(),
+            join_submit_button: default_room_rotation_submit_button(),
+            dialog_confirm: RoomRotationPoint::new(500, 560),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomRotationFlowStrategy {
+    /// Legacy compatibility only. Automatic flows no longer click a lobby button.
+    pub click_lobby_after_exit: bool,
+    /// Delay between Esc and clicking Save & Exit.
+    pub escape_to_exit_ms: u64,
+    /// Loading delay after Save & Exit.
+    pub exit_load_ms: u64,
+    /// Legacy compatibility only. Automatic flows no longer use this delay.
+    pub lobby_load_ms: u64,
+    /// Delay between form-control operations.
+    pub step_delay_ms: u64,
+    /// Legacy fallback delay when clipboard paste is unavailable.
+    pub character_delay_ms: u64,
+    #[serde(default)]
+    pub ui_profile: RoomRotationUiProfile,
+}
+
+impl RoomRotationFlowStrategy {
+    fn standard() -> Self {
+        Self {
+            click_lobby_after_exit: false,
+            escape_to_exit_ms: 550,
+            exit_load_ms: 2_200,
+            lobby_load_ms: 0,
+            step_delay_ms: 120,
+            character_delay_ms: 18,
+            ui_profile: RoomRotationUiProfile::default(),
+        }
+    }
+
+    fn direct_lobby() -> Self {
+        Self {
+            click_lobby_after_exit: false,
+            escape_to_exit_ms: 300,
+            exit_load_ms: 1_500,
+            lobby_load_ms: 0,
+            step_delay_ms: 80,
+            character_delay_ms: 12,
+            ui_profile: RoomRotationUiProfile::default(),
+        }
+    }
+}
+
+fn default_room_rotation_standard_flow() -> RoomRotationFlowStrategy {
+    RoomRotationFlowStrategy::standard()
+}
+
+fn default_room_rotation_direct_lobby_flow() -> RoomRotationFlowStrategy {
+    RoomRotationFlowStrategy::direct_lobby()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RoomRotationConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub primary_account_id: String,
+    #[serde(default)]
+    pub follower_account_ids: Vec<String>,
+    #[serde(default = "default_room_rotation_shortcut")]
+    pub shortcut: String,
+    #[serde(default = "default_room_rotation_join_shortcut")]
+    pub join_shortcut: String,
+    #[serde(default = "default_room_rotation_prefix")]
+    pub name_prefix: String,
+    #[serde(default)]
+    pub password: String,
+    #[serde(default = "default_room_rotation_sequence")]
+    pub next_sequence: u32,
+    #[serde(default = "default_room_rotation_sequence_width")]
+    pub sequence_width: u8,
+    /// "background" posts messages, "cursor_guard" leases the cursor, and "focus" foregrounds.
+    #[serde(default = "default_room_rotation_input_mode")]
+    pub input_mode: String,
+    /// Pure background mouse delivery: post_top, send_top, post_child, or send_child.
+    #[serde(default = "default_room_rotation_background_click_strategy")]
+    pub background_click_strategy: String,
+    /// Background text delivery. Fast key messages are the default; paste variants remain diagnostic.
+    #[serde(default = "default_room_rotation_background_text_strategy")]
+    pub background_text_strategy: String,
+    /// How long the guarded global cursor stays at the click target.
+    #[serde(default = "default_room_rotation_cursor_lease_ms")]
+    pub cursor_lease_ms: u64,
+    #[serde(default = "default_room_rotation_frontend_timeout_ms")]
+    pub frontend_timeout_ms: u64,
+    #[serde(default = "default_room_rotation_create_timeout_ms")]
+    pub create_timeout_ms: u64,
+    #[serde(default = "default_room_rotation_ui_delay_ms")]
+    pub ui_delay_ms: u64,
+    #[serde(default = "default_room_rotation_follower_exit_delay_ms")]
+    pub follower_exit_delay_ms: u64,
+    #[serde(default = "default_room_rotation_duplicate_retries")]
+    pub duplicate_retries: u8,
+    #[serde(default)]
+    pub ui_profile: RoomRotationUiProfile,
+    /// Zero identifies the legacy single-profile representation.
+    #[serde(default)]
+    pub strategy_version: u8,
+    #[serde(default = "default_room_rotation_standard_flow")]
+    pub standard_flow: RoomRotationFlowStrategy,
+    #[serde(default = "default_room_rotation_direct_lobby_flow")]
+    pub direct_lobby_flow: RoomRotationFlowStrategy,
+    #[serde(default)]
+    pub account_flow_bindings: std::collections::HashMap<String, String>,
+}
+
+impl Default for RoomRotationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            primary_account_id: String::new(),
+            follower_account_ids: Vec::new(),
+            shortcut: default_room_rotation_shortcut(),
+            join_shortcut: default_room_rotation_join_shortcut(),
+            name_prefix: default_room_rotation_prefix(),
+            password: String::new(),
+            next_sequence: default_room_rotation_sequence(),
+            sequence_width: default_room_rotation_sequence_width(),
+            input_mode: default_room_rotation_input_mode(),
+            background_click_strategy: default_room_rotation_background_click_strategy(),
+            background_text_strategy: default_room_rotation_background_text_strategy(),
+            cursor_lease_ms: default_room_rotation_cursor_lease_ms(),
+            frontend_timeout_ms: default_room_rotation_frontend_timeout_ms(),
+            create_timeout_ms: default_room_rotation_create_timeout_ms(),
+            ui_delay_ms: default_room_rotation_ui_delay_ms(),
+            follower_exit_delay_ms: default_room_rotation_follower_exit_delay_ms(),
+            duplicate_retries: default_room_rotation_duplicate_retries(),
+            ui_profile: RoomRotationUiProfile::default(),
+            strategy_version: 2,
+            standard_flow: default_room_rotation_standard_flow(),
+            direct_lobby_flow: default_room_rotation_direct_lobby_flow(),
+            account_flow_bindings: std::collections::HashMap::new(),
+        }
+    }
+}
+
+impl RoomRotationConfig {
+    pub(crate) fn flow_for_account(&self, account_id: &str) -> &RoomRotationFlowStrategy {
+        if self
+            .account_flow_bindings
+            .get(account_id)
+            .is_some_and(|strategy| strategy == "direct_lobby")
+        {
+            &self.direct_lobby_flow
+        } else {
+            &self.standard_flow
+        }
+    }
+}
+
+fn default_room_rotation_shortcut() -> String {
+    "Ctrl+Alt+R".to_string()
+}
+
+fn default_room_rotation_join_shortcut() -> String {
+    "Ctrl+Alt+J".to_string()
+}
+
+fn default_room_rotation_prefix() -> String {
+    "run-".to_string()
+}
+
+fn default_room_rotation_sequence() -> u32 {
+    1
+}
+
+fn default_room_rotation_sequence_width() -> u8 {
+    3
+}
+
+fn default_room_rotation_input_mode() -> String {
+    "cursor_guard".to_string()
+}
+
+fn default_room_rotation_background_click_strategy() -> String {
+    "post_top".to_string()
+}
+
+fn default_room_rotation_background_text_strategy() -> String {
+    "post_keys_1ms".to_string()
+}
+
+fn default_room_rotation_cursor_lease_ms() -> u64 {
+    16
+}
+
+fn default_room_rotation_frontend_timeout_ms() -> u64 {
+    12_000
+}
+
+fn default_room_rotation_create_timeout_ms() -> u64 {
+    10_000
+}
+
+fn default_room_rotation_ui_delay_ms() -> u64 {
+    550
+}
+
+fn default_room_rotation_follower_exit_delay_ms() -> u64 {
+    2_200
+}
+
+fn default_room_rotation_duplicate_retries() -> u8 {
+    3
+}
+
+fn normalize_room_rotation_ui_profile(profile: &mut RoomRotationUiProfile) {
+    for point in [
+        &mut profile.save_and_exit,
+        &mut profile.character_select_lobby,
+        &mut profile.create_tab,
+        &mut profile.join_tab,
+        &mut profile.game_name_field,
+        &mut profile.password_field,
+        &mut profile.submit_button,
+        &mut profile.create_game_name_field,
+        &mut profile.create_password_field,
+        &mut profile.create_submit_button,
+        &mut profile.join_game_name_field,
+        &mut profile.join_password_field,
+        &mut profile.join_submit_button,
+        &mut profile.dialog_confirm,
+    ] {
+        point.x = point.x.min(1_000);
+        point.y = point.y.min(1_000);
+    }
+}
+
+fn normalize_room_rotation_flow(flow: &mut RoomRotationFlowStrategy) {
+    flow.click_lobby_after_exit = false;
+    flow.escape_to_exit_ms = flow.escape_to_exit_ms.min(5_000);
+    flow.exit_load_ms = flow.exit_load_ms.min(30_000);
+    flow.lobby_load_ms = 0;
+    flow.step_delay_ms = flow.step_delay_ms.min(2_000);
+    flow.character_delay_ms = flow.character_delay_ms.clamp(1, 250);
+    normalize_room_rotation_ui_profile(&mut flow.ui_profile);
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     pub version: u32,
@@ -181,6 +503,9 @@ pub struct GlobalConfig {
     /// 可复用的账号启动组合。账号启动顺序由账号卡片当前排序决定。
     #[serde(default)]
     pub launch_groups: Vec<LaunchGroup>,
+    /// Experimental one-hotkey room creation/join workflow.
+    #[serde(default)]
+    pub room_rotation: RoomRotationConfig,
 }
 
 fn default_font_scale() -> String {
@@ -312,7 +637,8 @@ mod validation_tests {
     use super::{
         saved_games_settings_exists, should_validate_installation_paths,
         validate_installation_paths, GlobalConfig, LaunchGroup, LaunchGroupMember,
-        LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        LegacyPathMigration, RoomRotationConfig, RoomRotationFlowStrategy, RoomRotationPoint,
+        CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -328,6 +654,236 @@ mod validation_tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn legacy_config_without_room_rotation_uses_safe_defaults() {
+        let mut value = serde_json::to_value(GlobalConfig::default()).unwrap();
+        value.as_object_mut().unwrap().remove("room_rotation");
+
+        let config: GlobalConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.room_rotation, RoomRotationConfig::default());
+        assert!(!config.room_rotation.enabled);
+    }
+
+    #[test]
+    fn legacy_room_rotation_uses_input_defaults() {
+        let mut value = serde_json::to_value(GlobalConfig::default()).unwrap();
+        let rotation = value["room_rotation"].as_object_mut().unwrap();
+        rotation.remove("input_mode");
+        rotation.remove("background_click_strategy");
+        rotation.remove("background_text_strategy");
+        rotation.remove("cursor_lease_ms");
+
+        let config: GlobalConfig = serde_json::from_value(value).unwrap();
+
+        assert_eq!(config.room_rotation.input_mode, "cursor_guard");
+        assert_eq!(config.room_rotation.background_click_strategy, "post_top");
+        assert_eq!(
+            config.room_rotation.background_text_strategy,
+            "post_keys_1ms"
+        );
+        assert_eq!(config.room_rotation.cursor_lease_ms, 16);
+    }
+
+    #[test]
+    fn guarded_cursor_mode_is_preserved_and_lease_is_bounded() {
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                input_mode: "cursor_guard".to_string(),
+                cursor_lease_ms: 0,
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_room_rotation());
+        assert_eq!(config.room_rotation.input_mode, "cursor_guard");
+        assert_eq!(config.room_rotation.cursor_lease_ms, 4);
+
+        config.room_rotation.cursor_lease_ms = 51;
+        assert!(config.normalize_room_rotation());
+        assert_eq!(config.room_rotation.cursor_lease_ms, 50);
+    }
+
+    #[test]
+    fn legacy_background_room_rotation_mode_migrates_to_cursor_guard() {
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                input_mode: "background".to_string(),
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_room_rotation());
+        assert_eq!(config.room_rotation.input_mode, "cursor_guard");
+    }
+
+    #[test]
+    fn legacy_room_rotation_profile_migrates_into_both_flow_strategies() {
+        let legacy_point = RoomRotationPoint::new(111, 999);
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                strategy_version: 0,
+                ui_delay_ms: 640,
+                follower_exit_delay_ms: 3_400,
+                ui_profile: super::RoomRotationUiProfile {
+                    save_and_exit: legacy_point,
+                    ..super::RoomRotationUiProfile::default()
+                },
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_room_rotation());
+        assert_eq!(config.room_rotation.strategy_version, 2);
+        assert_eq!(
+            config.room_rotation.standard_flow.ui_profile.save_and_exit,
+            legacy_point
+        );
+        assert_eq!(
+            config
+                .room_rotation
+                .direct_lobby_flow
+                .ui_profile
+                .save_and_exit,
+            legacy_point
+        );
+        assert_eq!(config.room_rotation.standard_flow.escape_to_exit_ms, 640);
+        assert_eq!(config.room_rotation.standard_flow.exit_load_ms, 3_400);
+        assert_eq!(
+            config
+                .room_rotation
+                .standard_flow
+                .ui_profile
+                .create_game_name_field,
+            config
+                .room_rotation
+                .standard_flow
+                .ui_profile
+                .game_name_field
+        );
+        assert_eq!(
+            config
+                .room_rotation
+                .standard_flow
+                .ui_profile
+                .join_game_name_field,
+            config
+                .room_rotation
+                .standard_flow
+                .ui_profile
+                .game_name_field
+        );
+        assert_eq!(
+            config.room_rotation.background_text_strategy,
+            "post_keys_1ms"
+        );
+        assert!(!config.room_rotation.standard_flow.click_lobby_after_exit);
+        assert_eq!(config.room_rotation.standard_flow.lobby_load_ms, 0);
+        assert!(
+            !config
+                .room_rotation
+                .direct_lobby_flow
+                .click_lobby_after_exit
+        );
+    }
+
+    #[test]
+    fn shared_room_form_points_split_without_losing_custom_coordinates() {
+        let name = RoomRotationPoint::new(123, 456);
+        let password = RoomRotationPoint::new(234, 567);
+        let submit = RoomRotationPoint::new(345, 678);
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                strategy_version: 1,
+                background_text_strategy: "post_ctrl_v".to_string(),
+                standard_flow: RoomRotationFlowStrategy {
+                    ui_profile: super::RoomRotationUiProfile {
+                        game_name_field: name,
+                        password_field: password,
+                        submit_button: submit,
+                        ..super::RoomRotationUiProfile::default()
+                    },
+                    ..super::default_room_rotation_standard_flow()
+                },
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_room_rotation());
+
+        let profile = &config.room_rotation.standard_flow.ui_profile;
+        assert_eq!(profile.create_game_name_field, name);
+        assert_eq!(profile.join_game_name_field, name);
+        assert_eq!(profile.create_password_field, password);
+        assert_eq!(profile.join_password_field, password);
+        assert_eq!(profile.create_submit_button, submit);
+        assert_eq!(profile.join_submit_button, submit);
+        assert_eq!(config.room_rotation.strategy_version, 2);
+        assert_eq!(
+            config.room_rotation.background_text_strategy,
+            "post_keys_1ms"
+        );
+    }
+
+    #[test]
+    fn room_rotation_requires_two_unique_shortcuts_without_audio() {
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                enabled: true,
+                primary_account_id: "main".to_string(),
+                follower_account_ids: vec!["follower".to_string()],
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.validate_room_rotation().is_ok());
+        config.shortcut_bindings_json = r#"{"1":"Ctrl+Alt+R"}"#.to_string();
+        assert!(config.validate_room_rotation().is_err());
+        config.shortcut_bindings_json = r#"{"1":"Ctrl+Alt+J"}"#.to_string();
+        assert!(config.validate_room_rotation().is_err());
+        config.shortcut_bindings_json = "{}".to_string();
+        config.room_rotation.join_shortcut = config.room_rotation.shortcut.clone();
+        assert!(config.validate_room_rotation().is_err());
+    }
+
+    #[test]
+    fn deleting_room_rotation_accounts_disables_or_removes_them() {
+        let mut config = GlobalConfig {
+            room_rotation: RoomRotationConfig {
+                enabled: true,
+                primary_account_id: "main".to_string(),
+                follower_account_ids: vec!["one".to_string(), "two".to_string()],
+                account_flow_bindings: [
+                    ("main".to_string(), "direct_lobby".to_string()),
+                    ("one".to_string(), "standard".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..RoomRotationConfig::default()
+            },
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.remove_account_from_room_rotation("one"));
+        assert_eq!(config.room_rotation.follower_account_ids, vec!["two"]);
+        assert!(!config
+            .room_rotation
+            .account_flow_bindings
+            .contains_key("one"));
+        assert!(config.remove_account_from_room_rotation("main"));
+        assert!(!config.room_rotation.enabled);
+        assert!(config.room_rotation.primary_account_id.is_empty());
+        assert!(!config
+            .room_rotation
+            .account_flow_bindings
+            .contains_key("main"));
     }
 
     #[test]
@@ -1655,6 +2211,7 @@ impl Default for GlobalConfig {
             agent_delay_secs: 1.0,
             agent_threshold: 5,
             launch_groups: Vec::new(),
+            room_rotation: RoomRotationConfig::default(),
         }
     }
 }
@@ -1676,6 +2233,19 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
 }
 
 impl GlobalConfig {
+    pub(crate) fn remove_account_from_room_rotation(&mut self, account_id: &str) -> bool {
+        let original = self.room_rotation.clone();
+        if self.room_rotation.primary_account_id == account_id {
+            self.room_rotation.enabled = false;
+            self.room_rotation.primary_account_id.clear();
+        }
+        self.room_rotation
+            .follower_account_ids
+            .retain(|candidate| candidate != account_id);
+        self.room_rotation.account_flow_bindings.remove(account_id);
+        original != self.room_rotation
+    }
+
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
@@ -1805,6 +2375,165 @@ impl GlobalConfig {
                     )));
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn normalize_room_rotation(&mut self) -> bool {
+        let original = self.room_rotation.clone();
+        let config = &mut self.room_rotation;
+        config.primary_account_id = config.primary_account_id.trim().to_string();
+        config.shortcut = config.shortcut.trim().to_string();
+        config.join_shortcut = config.join_shortcut.trim().to_string();
+        config.name_prefix = config.name_prefix.trim().to_string();
+        config.password = config.password.trim().to_string();
+        config.sequence_width = config.sequence_width.clamp(1, 6);
+        config.frontend_timeout_ms = config.frontend_timeout_ms.clamp(3_000, 60_000);
+        config.create_timeout_ms = config.create_timeout_ms.clamp(3_000, 60_000);
+        config.ui_delay_ms = config.ui_delay_ms.clamp(100, 5_000);
+        config.follower_exit_delay_ms = config.follower_exit_delay_ms.clamp(500, 15_000);
+        config.duplicate_retries = config.duplicate_retries.clamp(0, 9);
+        // D2R ignores the coordinates carried by synthetic background mouse
+        // messages on affected clients. Migrate that legacy automatic mode to
+        // the guarded cursor path so E/F/G tests and shortcuts behave alike.
+        if !matches!(config.input_mode.as_str(), "cursor_guard" | "focus") {
+            config.input_mode = "cursor_guard".to_string();
+        }
+        if !matches!(
+            config.background_click_strategy.as_str(),
+            "post_top" | "send_top" | "post_child" | "send_child"
+        ) {
+            config.background_click_strategy = default_room_rotation_background_click_strategy();
+        }
+        if !matches!(
+            config.background_text_strategy.as_str(),
+            "post_keys_1ms" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste"
+        ) {
+            config.background_text_strategy = default_room_rotation_background_text_strategy();
+        }
+        config.cursor_lease_ms = config.cursor_lease_ms.clamp(4, 50);
+
+        if config.strategy_version == 0 {
+            let legacy_profile = config.ui_profile.clone();
+            config.standard_flow = RoomRotationFlowStrategy {
+                click_lobby_after_exit: false,
+                escape_to_exit_ms: config.ui_delay_ms,
+                exit_load_ms: config.follower_exit_delay_ms,
+                lobby_load_ms: 0,
+                step_delay_ms: 120,
+                character_delay_ms: 18,
+                ui_profile: legacy_profile.clone(),
+            };
+            config.direct_lobby_flow = RoomRotationFlowStrategy {
+                click_lobby_after_exit: false,
+                escape_to_exit_ms: config.ui_delay_ms,
+                exit_load_ms: config.follower_exit_delay_ms,
+                lobby_load_ms: 0,
+                step_delay_ms: 120,
+                character_delay_ms: 18,
+                ui_profile: legacy_profile,
+            };
+            config.strategy_version = 1;
+        }
+        if config.strategy_version < 2 {
+            config.ui_profile.migrate_shared_form_points();
+            config.standard_flow.ui_profile.migrate_shared_form_points();
+            config
+                .direct_lobby_flow
+                .ui_profile
+                .migrate_shared_form_points();
+            config.background_text_strategy = default_room_rotation_background_text_strategy();
+            config.strategy_version = 2;
+        }
+        normalize_room_rotation_flow(&mut config.standard_flow);
+        normalize_room_rotation_flow(&mut config.direct_lobby_flow);
+        for strategy in config.account_flow_bindings.values_mut() {
+            if strategy != "direct_lobby" {
+                *strategy = "standard".to_string();
+            }
+        }
+
+        let mut seen = std::collections::HashSet::new();
+        config.follower_account_ids = config
+            .follower_account_ids
+            .iter()
+            .map(|account_id| account_id.trim())
+            .filter(|account_id| !account_id.is_empty())
+            .filter(|account_id| *account_id != config.primary_account_id)
+            .filter(|account_id| seen.insert((*account_id).to_string()))
+            .map(str::to_string)
+            .collect();
+
+        normalize_room_rotation_ui_profile(&mut config.ui_profile);
+        original != self.room_rotation
+    }
+
+    fn validate_room_rotation(&self) -> Result<(), AppError> {
+        let config = &self.room_rotation;
+        if !config.enabled {
+            return Ok(());
+        }
+        if !config.name_prefix.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        }) {
+            return Err(AppError::ConfigWriteError(
+                "换房名称前缀只能包含英文字母、数字、短横线和下划线".to_string(),
+            ));
+        }
+        if config.name_prefix.is_empty() {
+            return Err(AppError::ConfigWriteError(
+                "换房名称前缀不能为空".to_string(),
+            ));
+        }
+        if config.password.len() > 15
+            || !config.password.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '-' || character == '_'
+            })
+        {
+            return Err(AppError::ConfigWriteError(
+                "房间密码最多 15 个字符，且只能包含英文字母、数字、短横线和下划线".to_string(),
+            ));
+        }
+        let preview = format!(
+            "{}{:0width$}",
+            config.name_prefix,
+            config.next_sequence,
+            width = usize::from(config.sequence_width)
+        );
+        if preview.len() > 15 {
+            return Err(AppError::ConfigWriteError(format!(
+                "换房名称“{preview}”超过 D2R 的 15 字符限制"
+            )));
+        }
+        if config.primary_account_id.is_empty() {
+            return Err(AppError::ConfigWriteError(
+                "启用自动换房前请选择主操作账号".to_string(),
+            ));
+        }
+        if config.follower_account_ids.is_empty() {
+            return Err(AppError::ConfigWriteError(
+                "启用自动换房前请至少选择一个小号".to_string(),
+            ));
+        }
+        if config.shortcut.is_empty() || config.join_shortcut.is_empty() {
+            return Err(AppError::ConfigWriteError(
+                "启用自动换房前请配置主号建房和小号跟进快捷键".to_string(),
+            ));
+        }
+        if config.shortcut.eq_ignore_ascii_case(&config.join_shortcut) {
+            return Err(AppError::ConfigWriteError(
+                "主号建房和小号跟进快捷键不能相同".to_string(),
+            ));
+        }
+        let bindings: std::collections::HashMap<String, String> =
+            serde_json::from_str(&self.shortcut_bindings_json).unwrap_or_default();
+        if bindings.values().any(|shortcut| {
+            shortcut.eq_ignore_ascii_case(&config.shortcut)
+                || shortcut.eq_ignore_ascii_case(&config.join_shortcut)
+        }) {
+            return Err(AppError::ConfigWriteError(
+                "自动换房快捷键与账号聚焦快捷键冲突".to_string(),
+            ));
         }
         Ok(())
     }
@@ -2117,6 +2846,9 @@ impl GlobalConfig {
         }
 
         if config.normalize_launch_groups() {
+            migrated = true;
+        }
+        if config.normalize_room_rotation() {
             migrated = true;
         }
 
@@ -2629,6 +3361,8 @@ pub fn save_global_config(
         );
     cfg.normalize_launch_groups();
     cfg.validate_launch_groups()?;
+    cfg.normalize_room_rotation();
+    cfg.validate_room_rotation()?;
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

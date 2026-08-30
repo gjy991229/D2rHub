@@ -32,6 +32,64 @@ export interface WindowPositionPreset {
   y: number;
 }
 
+export interface RoomRotationPoint {
+  x: number;
+  y: number;
+}
+
+export interface RoomRotationUiProfile {
+  save_and_exit: RoomRotationPoint;
+  character_select_lobby: RoomRotationPoint;
+  create_tab: RoomRotationPoint;
+  join_tab: RoomRotationPoint;
+  game_name_field: RoomRotationPoint;
+  password_field: RoomRotationPoint;
+  submit_button: RoomRotationPoint;
+  create_game_name_field: RoomRotationPoint;
+  create_password_field: RoomRotationPoint;
+  create_submit_button: RoomRotationPoint;
+  join_game_name_field: RoomRotationPoint;
+  join_password_field: RoomRotationPoint;
+  join_submit_button: RoomRotationPoint;
+  dialog_confirm: RoomRotationPoint;
+}
+
+export interface RoomRotationFlowStrategy {
+  click_lobby_after_exit: boolean;
+  escape_to_exit_ms: number;
+  exit_load_ms: number;
+  lobby_load_ms: number;
+  step_delay_ms: number;
+  character_delay_ms: number;
+  ui_profile: RoomRotationUiProfile;
+}
+
+export interface RoomRotationConfig {
+  enabled: boolean;
+  primary_account_id: string;
+  follower_account_ids: string[];
+  shortcut: string;
+  join_shortcut: string;
+  name_prefix: string;
+  password: string;
+  next_sequence: number;
+  sequence_width: number;
+  input_mode: "background" | "cursor_guard" | "focus";
+  background_click_strategy: "post_top" | "send_top" | "post_child" | "send_child";
+  background_text_strategy: "post_keys_1ms" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste";
+  cursor_lease_ms: number;
+  frontend_timeout_ms: number;
+  create_timeout_ms: number;
+  ui_delay_ms: number;
+  follower_exit_delay_ms: number;
+  duplicate_retries: number;
+  ui_profile: RoomRotationUiProfile;
+  strategy_version: number;
+  standard_flow: RoomRotationFlowStrategy;
+  direct_lobby_flow: RoomRotationFlowStrategy;
+  account_flow_bindings: Record<string, "standard" | "direct_lobby">;
+}
+
 export interface GlobalConfig {
   version: number;
   cn_battle_net_path: string;
@@ -76,6 +134,7 @@ export interface GlobalConfig {
   agent_delay_secs?: number;
   agent_threshold?: number;
   launch_groups: LaunchGroup[];
+  room_rotation?: RoomRotationConfig;
 }
 
 // ── 数据统计 ──

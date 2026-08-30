@@ -84,6 +84,7 @@ const textMap: Record<string, string> = {
   "符文声纹、统计、监听账户与 FLAC 制作": "Rune audio IDs, statistics, monitored account, and FLAC tooling",
   "掉落声纹、统计、监听账号与 Mod 加工": "Drop audio IDs, statistics, monitored account, and Mod processing",
   "掉落声纹、统计、监听账号与协议诊断": "Drop audio IDs, statistics, monitored account, and protocol diagnostics",
+  "双阶段换房、掉落声纹、统计与协议诊断": "Two-stage room rotation, drop audio IDs, statistics, and protocol diagnostics",
   "准备识别 Mod": "Prepare Audio Mod",
   "选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。": "Choose how to prepare it and name the new Mod. D2RHub handles the rest.",
   "我玩原版": "Original Game",
