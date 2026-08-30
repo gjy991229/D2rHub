@@ -26,12 +26,14 @@ pub(crate) fn stats_template_candidates(
 pub(crate) fn render_stats_template(
     template: &str,
     stats_json: &str,
+    preferences_json: &str,
     api_port: u16,
     api_token: &str,
     theme: &str,
 ) -> String {
     template
         .replace("{{STATS_DATA}}", stats_json)
+        .replace("{{STATS_PREFERENCES}}", preferences_json)
         .replace("{{STATS_API_PORT}}", &api_port.to_string())
         .replace("{{STATS_API_TOKEN}}", api_token)
         .replace("{{STATS_THEME}}", normalize_stats_theme(theme))
@@ -44,7 +46,14 @@ mod tests {
     #[test]
     fn light_app_theme_is_injected_without_a_stale_local_override() {
         let template = include_str!("../../docs/stats.html");
-        let rendered = render_stats_template(template, "[]", 43123, "test-token", "light");
+        let rendered = render_stats_template(
+            template,
+            "[]",
+            r#"{"activeStrategyIds":["preset-countess"]}"#,
+            43123,
+            "test-token",
+            "light",
+        );
 
         assert!(rendered.contains("<html lang=\"zh-CN\" data-theme=\"light\">"));
         assert!(rendered.contains("const API_PORT=43123"));
@@ -52,6 +61,8 @@ mod tests {
         assert!(!rendered.contains("{{STATS_API_PORT}}"));
         assert!(!rendered.contains("{{STATS_API_TOKEN}}"));
         assert!(!rendered.contains("{{STATS_THEME}}"));
+        assert!(!rendered.contains("{{STATS_PREFERENCES}}"));
+        assert!(rendered.contains("preset-countess"));
         assert!(!rendered.contains("d2rhub-stats-theme"));
         assert!(rendered.contains("X-D2RHub-Stats-Token"));
         assert!(rendered.contains("apiFetch(\"/api/records\")"));

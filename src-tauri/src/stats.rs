@@ -111,6 +111,52 @@ struct BatchDeleteRecordsRequest {
 }
 
 const MAX_STATS_API_REQUEST_BYTES: usize = 1024 * 1024;
+const MAX_STATS_PAGE_PREFERENCES_BYTES: usize = 256 * 1024;
+const STATS_PAGE_PREFERENCES_FILE: &str = "stats_page_preferences.json";
+
+fn stats_page_preferences_path(app_data_dir: &str) -> std::path::PathBuf {
+    Path::new(app_data_dir)
+        .join("stateData")
+        .join(STATS_PAGE_PREFERENCES_FILE)
+}
+
+fn read_stats_page_preferences(app_data_dir: &str) -> Result<Option<serde_json::Value>, String> {
+    let path = stats_page_preferences_path(app_data_dir);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(format!("读取统计页偏好失败: {error}")),
+    };
+    if bytes.len() > MAX_STATS_PAGE_PREFERENCES_BYTES {
+        return Err("统计页偏好文件过大".to_string());
+    }
+    let value = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .map_err(|error| format!("统计页偏好文件损坏: {error}"))?;
+    if !value.is_object() {
+        return Err("统计页偏好格式无效".to_string());
+    }
+    Ok(Some(value))
+}
+
+fn write_stats_page_preferences(
+    app_data_dir: &str,
+    preferences: &serde_json::Value,
+) -> Result<(), String> {
+    if !preferences.is_object() {
+        return Err("统计页偏好格式无效".to_string());
+    }
+    let json = serde_json::to_vec_pretty(preferences)
+        .map_err(|error| format!("序列化统计页偏好失败: {error}"))?;
+    if json.len() > MAX_STATS_PAGE_PREFERENCES_BYTES {
+        return Err("统计页偏好内容过大".to_string());
+    }
+    let path = stats_page_preferences_path(app_data_dir);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|error| format!("创建统计页偏好目录失败: {error}"))?;
+    }
+    std::fs::write(path, json).map_err(|error| format!("保存统计页偏好失败: {error}"))
+}
 
 /// 懒初始化数据库连接
 static DB: std::sync::OnceLock<Mutex<Connection>> = std::sync::OnceLock::new();
@@ -621,6 +667,31 @@ fn insert_merge_strategy(
     })
 }
 
+fn update_merge_strategy(
+    conn: &Connection,
+    strategy_id: i64,
+    name: &str,
+    scene_names: Vec<String>,
+) -> Result<MergeStrategy, String> {
+    let (name, scene_names) = normalize_strategy(name, scene_names)?;
+    let scene_names_json =
+        serde_json::to_string(&scene_names).map_err(|e| format!("序列化统计策略失败: {e}"))?;
+    let affected = conn
+        .execute(
+            "UPDATE stats_merge_strategies SET name = ?2, scene_names_json = ?3 WHERE id = ?1",
+            rusqlite::params![strategy_id, &name, scene_names_json],
+        )
+        .map_err(|e| format!("更新统计策略失败（名称不可重复）: {e}"))?;
+    if affected == 0 {
+        return Err("统计策略不存在或已被删除".to_string());
+    }
+    Ok(MergeStrategy {
+        id: strategy_id,
+        name,
+        scene_names,
+    })
+}
+
 /// 获取所有统计数据（结构体形式，供前端使用）
 #[tauri::command]
 pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData, String> {
@@ -635,6 +706,21 @@ pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData,
         observations,
         strategies,
     })
+}
+
+#[tauri::command]
+pub fn get_stats_page_preferences(
+    state: tauri::State<'_, SharedState>,
+) -> Result<Option<serde_json::Value>, String> {
+    read_stats_page_preferences(&state.app_data_dir)
+}
+
+#[tauri::command]
+pub fn save_stats_page_preferences(
+    state: tauri::State<'_, SharedState>,
+    preferences: serde_json::Value,
+) -> Result<(), String> {
+    write_stats_page_preferences(&state.app_data_dir, &preferences)
 }
 
 fn query_drop_observations(conn: &Connection) -> Result<Vec<DropObservation>, String> {
@@ -890,7 +976,7 @@ fn parse_query(query_str: &str) -> HashMap<String, String> {
 
 const STATS_API_CORS_HEADERS: &str = "Access-Control-Allow-Origin: null\r\n\
                                        Vary: Origin\r\n\
-                                       Access-Control-Allow-Methods: GET, POST, DELETE, OPTIONS\r\n\
+                                       Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
                                        Access-Control-Allow-Headers: Content-Type, X-D2RHub-Stats-Token\r\n";
 
 /// 统计 API 服务端口
@@ -1036,6 +1122,48 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                                 }
                             },
                             Err(error) => {
+                                let body = serde_json::json!({"ok": false, "error": error});
+                                resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                        }
+                    } else if method == "PUT" && path.starts_with("/api/strategies/") {
+                        let id_str = path.trim_start_matches("/api/strategies/");
+                        let name = query_params.get("name").cloned().unwrap_or_default();
+                        let scenes_json = query_params.get("scenes").cloned().unwrap_or_default();
+                        let strategy_id = id_str
+                            .parse::<i64>()
+                            .map_err(|_| "无效的策略 ID".to_string());
+                        let scene_names = serde_json::from_str::<Vec<String>>(&scenes_json)
+                            .map_err(|error| format!("场景列表格式无效: {error}"));
+                        match (strategy_id, scene_names) {
+                            (Ok(strategy_id), Ok(scene_names)) => match get_db(&app_data_dir) {
+                                Ok(db) => match db.lock() {
+                                    Ok(conn) => match update_merge_strategy(
+                                        &conn,
+                                        strategy_id,
+                                        &name,
+                                        scene_names,
+                                    ) {
+                                        Ok(strategy) => {
+                                            let body = serde_json::json!({"ok": true, "strategy": strategy});
+                                            resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                        Err(error) => {
+                                            let body = serde_json::json!({"ok": false, "error": error});
+                                            resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                        }
+                                    },
+                                    Err(error) => {
+                                        let body = serde_json::json!({"ok": false, "error": error.to_string()});
+                                        resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                    }
+                                },
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            },
+                            (Err(error), _) | (_, Err(error)) => {
                                 let body = serde_json::json!({"ok": false, "error": error});
                                 resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
                             }
@@ -1268,6 +1396,34 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                             let body = serde_json::json!({"ok": false, "error": "不支持的 DELETE 路径"});
                             resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
                         }
+                    } else if method == "GET" && path == "/api/preferences" {
+                        match read_stats_page_preferences(&app_data_dir) {
+                            Ok(preferences) => {
+                                let body = serde_json::json!({"ok": true, "preferences": preferences});
+                                resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                            Err(error) => {
+                                let body = serde_json::json!({"ok": false, "error": error});
+                                resp_body = format!("HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                        }
+                    } else if method == "PUT" && path == "/api/preferences" {
+                        match serde_json::from_str::<serde_json::Value>(request_body) {
+                            Ok(preferences) => match write_stats_page_preferences(&app_data_dir, &preferences) {
+                                Ok(()) => {
+                                    let body = serde_json::json!({"ok": true});
+                                    resp_body = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                                Err(error) => {
+                                    let body = serde_json::json!({"ok": false, "error": error});
+                                    resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                                }
+                            },
+                            Err(error) => {
+                                let body = serde_json::json!({"ok": false, "error": format!("统计页偏好请求无效: {error}")});
+                                resp_body = format!("HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\n{}\r\n\r\n{}", cors_headers, body);
+                            }
+                        }
                     } else if method == "GET" && path == "/api/records" {
                         match get_stats_data_inner(&app_data_dir) {
                             Ok(data) => {
@@ -1351,6 +1507,12 @@ pub fn open_stats_page(
     // 3. 启动统计 API 服务并注入端口号
     let (api_port, api_token) = start_stats_api(state.app_data_dir.clone())?;
     let stats_json = escape_json_for_html_script(&stats_json);
+    let preferences_json = read_stats_page_preferences(&state.app_data_dir)?
+        .map(|preferences| serde_json::to_string(&preferences))
+        .transpose()
+        .map_err(|error| format!("序列化统计页偏好失败: {error}"))?
+        .unwrap_or_else(|| "null".to_string());
+    let preferences_json = escape_json_for_html_script(&preferences_json);
     let stats_theme = state
         .config
         .read()
@@ -1358,7 +1520,14 @@ pub fn open_stats_page(
         .map(|config| config.theme.as_str())
         .unwrap_or("light")
         .to_string();
-    let html = render_stats_template(&template, &stats_json, api_port, &api_token, &stats_theme);
+    let html = render_stats_template(
+        &template,
+        &stats_json,
+        &preferences_json,
+        api_port,
+        &api_token,
+        &stats_theme,
+    );
 
     // 4. 写入 stateData/stats.html（使相对路径 img/ 可用）
     let state_data_dir = Path::new(&state.app_data_dir).join("stateData");
@@ -1393,7 +1562,7 @@ mod tests {
     use super::{
         delete_scene_records_by_ids, ensure_drop_observation_schema, ensure_scene_segment_columns,
         migrate_legacy_drops, normalize_strategy, query_scene_stats, request_content_length,
-        stats_api_token_is_valid, DropKind, STATS_API_CORS_HEADERS,
+        stats_api_token_is_valid, update_merge_strategy, DropKind, STATS_API_CORS_HEADERS,
     };
     use rusqlite::Connection;
 
@@ -1591,6 +1760,32 @@ mod tests {
     fn strategy_requires_a_name_and_at_least_one_scene() {
         assert!(normalize_strategy("", vec!["黑色荒地".to_string()]).is_err());
         assert!(normalize_strategy("女伯爵", vec![" ".to_string()]).is_err());
+    }
+
+    #[test]
+    fn custom_strategy_can_be_updated_without_replacing_its_id() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE stats_merge_strategies (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL UNIQUE,
+                    scene_names_json TEXT NOT NULL
+                );
+                INSERT INTO stats_merge_strategies (name, scene_names_json)
+                VALUES ('旧路线', '[\"黑色荒地\"]');",
+            )
+            .unwrap();
+        let updated = update_merge_strategy(
+            &connection,
+            1,
+            " 新路线 ",
+            vec!["黑色荒地".to_string(), "毁灭王座".to_string()],
+        )
+        .unwrap();
+        assert_eq!(updated.id, 1);
+        assert_eq!(updated.name, "新路线");
+        assert_eq!(updated.scene_names, ["黑色荒地", "毁灭王座"]);
     }
 
     #[test]

@@ -40,6 +40,7 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
     bongo_cat_scale: 1,
     bongo_cat_skin: "original",
     bongo_cat_unlocked_skins: ["original"],
+    launch_groups: [],
     ...overrides,
   };
 }

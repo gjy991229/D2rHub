@@ -30,7 +30,7 @@ interface GridItemProps {
   onLaunch: (id: string) => void;
   onBattleNetOnly: (id: string) => void;
   progress?: LaunchProgress | null;
-  isMultiSelectMode?: boolean;
+  isSelectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
   onUpdateToken?: (a: AccountMeta) => void;
@@ -163,7 +163,7 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
-  isMultiSelectMode, selected, onToggleSelect, onUpdateToken, config
+  isSelectionMode, selected, onToggleSelect, onUpdateToken, config
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -301,6 +301,11 @@ export function AccountGridItem({
   };
 
   const handleCardClick = () => {
+    if (isSelectionMode) {
+      const canToggle = !!selected || (account.initialized && !tokenMigrationRequired);
+      if (canToggle) onToggleSelect?.(account.id);
+      return;
+    }
     if (!account.initialized) return;
     if (!expanded) loadDrawerSettings();
     setExpanded(!expanded);
@@ -465,20 +470,28 @@ export function AccountGridItem({
       className="spatial-tile group account-tile flex min-h-[152px] flex-col animate-card-in"
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
-      style={{ cursor: account.initialized ? "pointer" : "default" }}
+      style={{
+        cursor: isSelectionMode
+          ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
+          : (account.initialized ? "pointer" : "default"),
+      }}
     >
       <div className="tile-core">
         <div className="tile-top">
           <div className="min-w-0">
             <div className="name-row">
-              {isMultiSelectMode ? (
+              {isSelectionMode ? (
                 <input
                   type="checkbox"
                   checked={!!selected}
-                  disabled={tokenMigrationRequired}
+                  disabled={!selected && (!account.initialized || tokenMigrationRequired)}
                   onChange={() => onToggleSelect && onToggleSelect(account.id)}
                   onClick={stop}
-                  title={tokenMigrationRequired ? "请先迁移为 Token 直启" : undefined}
+                  title={!account.initialized
+                    ? "请先初始化账号"
+                    : tokenMigrationRequired
+                      ? "请先迁移为 Token 直启"
+                      : undefined}
                   className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                 />
               ) : (
@@ -501,7 +514,7 @@ export function AccountGridItem({
                 <button
                   className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
                   onClick={e => {
-                    if (isMultiSelectMode) return;
+                    if (isSelectionMode) return;
                     e.stopPropagation();
                     setEditingName(true);
                   }}
@@ -510,7 +523,7 @@ export function AccountGridItem({
                 </button>
               )}
 
-              {!isMultiSelectMode && (
+              {!isSelectionMode && (
                 <div
                   className="mod-row inline-mod-row"
                   role="group"
@@ -608,7 +621,7 @@ export function AccountGridItem({
 
         <div className="tag-row tag-row-offset">
           <span className="hig-badge hig-badge-neutral">{lastLaunchText || (account.initialized ? "已就绪" : "待配置")}</span>
-          {canSwitchInternationalRegion && !isMultiSelectMode ? (
+          {canSwitchInternationalRegion && !isSelectionMode ? (
             <AccountRegionSwitcher
               accountId={account.id}
               currentRegion={account.region}
@@ -645,7 +658,7 @@ export function AccountGridItem({
         </div>
 
         <div className="bottom-row">
-          {!isMultiSelectMode && (
+          {!isSelectionMode && (
             <div className="account-card-actions">
               {tokenMigrationRequired && onUpdateToken ? (
                 <button
@@ -796,11 +809,11 @@ export function AccountGridItem({
 
 export function SortableAccountCard({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
-  isMultiSelectMode, selected, onToggleSelect, onUpdateToken, config
+  isSelectionMode, selected, onToggleSelect, onUpdateToken, config
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: account.id, disabled: isMultiSelectMode });
+  } = useSortable({ id: account.id, disabled: isSelectionMode });
   const { progress } = useLaunch();
 
   const style = {
@@ -812,7 +825,12 @@ export function SortableAccountCard({
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div
+      ref={setNodeRef}
+      style={style}
+      {...(isSelectionMode ? {} : attributes)}
+      {...(isSelectionMode ? {} : listeners)}
+    >
       <AccountGridItem
         account={account}
         onRename={onRename}
@@ -821,7 +839,7 @@ export function SortableAccountCard({
         onLaunch={onLaunch}
         onBattleNetOnly={onBattleNetOnly}
         progress={progress[account.id] || null}
-        isMultiSelectMode={isMultiSelectMode}
+        isSelectionMode={isSelectionMode}
         selected={selected}
         onToggleSelect={onToggleSelect}
         onUpdateToken={onUpdateToken}

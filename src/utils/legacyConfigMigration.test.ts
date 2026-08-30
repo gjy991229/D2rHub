@@ -40,6 +40,7 @@ function config(overrides: Partial<GlobalConfig> = {}): GlobalConfig {
     overlay_opacity: 81,
     main_opacity: 92,
     font_scale: "large",
+    launch_groups: [],
     ...overrides,
   };
 }

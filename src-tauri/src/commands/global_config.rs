@@ -33,6 +33,14 @@ pub struct LegacyPathMigration {
 }
 
 /// 全局配置
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchGroup {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub account_ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalConfig {
     pub version: u32,
@@ -146,6 +154,9 @@ pub struct GlobalConfig {
     /// 模式2: bnet_count 阈值, 4/5/7, 默认 5
     #[serde(default = "default_agent_threshold")]
     pub agent_threshold: u32,
+    /// 可复用的账号启动组合。账号启动顺序由账号卡片当前排序决定。
+    #[serde(default)]
+    pub launch_groups: Vec<LaunchGroup>,
 }
 
 fn default_font_scale() -> String {
@@ -276,7 +287,8 @@ fn should_validate_installation_paths(
 mod validation_tests {
     use super::{
         saved_games_settings_exists, should_validate_installation_paths,
-        validate_installation_paths, GlobalConfig, LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        validate_installation_paths, GlobalConfig, LaunchGroup, LegacyPathMigration,
+        CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -448,6 +460,85 @@ mod validation_tests {
 
         assert!(saved_games_settings_exists(&saved_games));
         let _ = std::fs::remove_dir_all(saved_games);
+    }
+
+    #[test]
+    fn launch_groups_are_trimmed_and_deduplicated_without_changing_member_order() {
+        let mut config = GlobalConfig {
+            launch_groups: vec![LaunchGroup {
+                id: "  primary  ".to_string(),
+                name: "  主力队  ".to_string(),
+                account_ids: vec![
+                    " account-b ".to_string(),
+                    "account-a".to_string(),
+                    "account-b".to_string(),
+                    " ".to_string(),
+                ],
+            }],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_launch_groups());
+        assert_eq!(config.launch_groups[0].id, "primary");
+        assert_eq!(config.launch_groups[0].name, "主力队");
+        assert_eq!(
+            config.launch_groups[0].account_ids,
+            vec!["account-b".to_string(), "account-a".to_string()]
+        );
+        assert!(config.validate_launch_groups().is_ok());
+    }
+
+    #[test]
+    fn launch_group_names_and_ids_must_be_unique() {
+        let mut config = GlobalConfig {
+            launch_groups: vec![
+                LaunchGroup {
+                    id: "group-1".to_string(),
+                    name: "Farm".to_string(),
+                    account_ids: vec!["account-a".to_string()],
+                },
+                LaunchGroup {
+                    id: "group-2".to_string(),
+                    name: "farm".to_string(),
+                    account_ids: vec!["account-b".to_string()],
+                },
+            ],
+            ..GlobalConfig::default()
+        };
+        config.normalize_launch_groups();
+        assert!(config.validate_launch_groups().is_err());
+
+        config.launch_groups[1].name = "副队".to_string();
+        config.launch_groups[1].id = "group-1".to_string();
+        assert!(config.validate_launch_groups().is_err());
+    }
+
+    #[test]
+    fn deleting_an_account_removes_it_from_every_group_but_keeps_empty_groups() {
+        let mut config = GlobalConfig {
+            launch_groups: vec![
+                LaunchGroup {
+                    id: "only".to_string(),
+                    name: "单账号组".to_string(),
+                    account_ids: vec!["account-a".to_string()],
+                },
+                LaunchGroup {
+                    id: "mixed".to_string(),
+                    name: "混合组".to_string(),
+                    account_ids: vec!["account-a".to_string(), "account-b".to_string()],
+                },
+            ],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.remove_account_from_launch_groups("account-a"));
+        assert_eq!(config.launch_groups.len(), 2);
+        assert!(config.launch_groups[0].account_ids.is_empty());
+        assert_eq!(
+            config.launch_groups[1].account_ids,
+            vec!["account-b".to_string()]
+        );
+        assert!(!config.remove_account_from_launch_groups("missing"));
     }
 
     #[test]
@@ -1406,11 +1497,69 @@ impl Default for GlobalConfig {
             agent_mode: 1,
             agent_delay_secs: 1.0,
             agent_threshold: 5,
+            launch_groups: Vec::new(),
         }
     }
 }
 
 impl GlobalConfig {
+    pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
+        let mut removed = false;
+        for group in &mut self.launch_groups {
+            let previous_len = group.account_ids.len();
+            group
+                .account_ids
+                .retain(|member_id| member_id != account_id);
+            removed |= group.account_ids.len() != previous_len;
+        }
+        removed
+    }
+
+    fn normalize_launch_groups(&mut self) -> bool {
+        let original = self.launch_groups.clone();
+        for group in &mut self.launch_groups {
+            group.id = group.id.trim().to_string();
+            group.name = group.name.trim().to_string();
+            let mut seen = std::collections::HashSet::new();
+            group.account_ids = group
+                .account_ids
+                .iter()
+                .map(|account_id| account_id.trim())
+                .filter(|account_id| !account_id.is_empty())
+                .filter(|account_id| seen.insert((*account_id).to_string()))
+                .map(str::to_string)
+                .collect();
+        }
+        original != self.launch_groups
+    }
+
+    fn validate_launch_groups(&self) -> Result<(), AppError> {
+        let mut group_ids = std::collections::HashSet::new();
+        let mut group_names = std::collections::HashSet::new();
+        for group in &self.launch_groups {
+            if group.id.is_empty() {
+                return Err(AppError::ConfigWriteError("启动组缺少唯一标识".to_string()));
+            }
+            if !group_ids.insert(group.id.clone()) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "启动组唯一标识重复: {}",
+                    group.id
+                )));
+            }
+            if group.name.is_empty() {
+                return Err(AppError::ConfigWriteError("启动组名称不能为空".to_string()));
+            }
+            let comparable_name = group.name.to_lowercase();
+            if !group_names.insert(comparable_name) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "启动组名称重复: {}",
+                    group.name
+                )));
+            }
+        }
+        Ok(())
+    }
+
     /// 解析并验证当前声纹识别目标。识别关闭时不要求配置目标账号。
     pub(crate) fn resolve_rune_audio_target_account(
         &self,
@@ -1715,6 +1864,10 @@ impl GlobalConfig {
 
         if config.normalize_rune_audio_configuration() {
             log::warn!("检测到无效的声纹目标配置，已自动关闭自动识别");
+            migrated = true;
+        }
+
+        if config.normalize_launch_groups() {
             migrated = true;
         }
 
@@ -2225,6 +2378,8 @@ pub fn save_global_config(
         crate::rune_audio::item_catalog::normalize_tracked_charm_codes(
             &cfg.rune_audio_tracked_charm_codes,
         );
+    cfg.normalize_launch_groups();
+    cfg.validate_launch_groups()?;
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

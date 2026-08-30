@@ -30,6 +30,7 @@ const defaultConfig: GlobalConfig = {
   enable_bongo_cat: true, bongo_cat_chatterbox: true,
   bongo_cat_scale: 1.0, bongo_cat_skin: "original",
   bongo_cat_unlocked_skins: ["original"],
+  launch_groups: [],
 };
 
 export function SetupWizard({ onComplete, initialConfig }: Props) {

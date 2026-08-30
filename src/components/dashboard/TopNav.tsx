@@ -1,14 +1,16 @@
 
-import { Settings, Info, Minus, BookOpen, BarChart3 } from "lucide-react";
+import { Settings, Info, Minus, BookOpen, BarChart3, Share2 } from "lucide-react";
 
 export function TopNav({
-  onAbout, onExit, onOpenConfig, onHelp, onStats,
+  onAbout, onExit, onOpenConfig, onHelp, onStats, onShareReport, sharingReport,
 }: {
   onAbout: () => void;
   onExit: () => void;
   onOpenConfig: () => void;
   onHelp: () => void;
   onStats: () => void;
+  onShareReport: () => void;
+  sharingReport: boolean;
 }) {
   return (
     <div
@@ -37,6 +39,16 @@ export function TopNav({
         <button onClick={onStats}
           className="icon-btn w-7 h-7" title="查看统计">
           <BarChart3 size={14} strokeWidth={1.8} />
+        </button>
+        <button
+          onClick={onShareReport}
+          className="icon-btn w-7 h-7 disabled:cursor-wait disabled:opacity-40"
+          title={sharingReport ? "正在生成战报" : "分享战报（复制图片）"}
+          aria-label={sharingReport ? "正在生成战报" : "分享战报并复制图片"}
+          aria-busy={sharingReport}
+          disabled={sharingReport}
+        >
+          <Share2 size={14} strokeWidth={1.8} />
         </button>
         <button onClick={onHelp}
           className="icon-btn w-7 h-7" title="帮助文档">

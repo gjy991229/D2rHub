@@ -994,9 +994,13 @@ pub fn delete_account(
         let cfg = config
             .as_mut()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-        if cfg.rune_audio_target_account.trim() == account_id {
+        let cleared_audio_target = cfg.rune_audio_target_account.trim() == account_id;
+        if cleared_audio_target {
             cfg.rune_audio_enabled = false;
             cfg.rune_audio_target_account.clear();
+        }
+        let removed_from_launch_group = cfg.remove_account_from_launch_groups(&account_id);
+        if cleared_audio_target || removed_from_launch_group {
             cfg.save(&state.app_data_dir)?;
             Some(cfg.clone())
         } else {
@@ -1005,7 +1009,9 @@ pub fn delete_account(
     };
 
     if let Some(config) = updated_config {
-        crate::rune_audio::monitor::stop_rune_audio_monitor();
+        if config.rune_audio_target_account.is_empty() {
+            crate::rune_audio::monitor::stop_rune_audio_monitor();
+        }
         let _ = app.emit("global-config-updated", config);
     }
 

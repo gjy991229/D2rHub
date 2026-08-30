@@ -105,6 +105,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state.clone())
         .setup(move |app| {
             let mut apply_default = true;
@@ -410,6 +411,8 @@ pub fn run() {
             stats::save_scene_record,
             stats::get_stats_data,
             stats::get_stats_json,
+            stats::get_stats_page_preferences,
+            stats::save_stats_page_preferences,
             stats::get_scene_avg_time,
             stats::get_scene_stats,
             stats::delete_scene_record,

@@ -35,6 +35,31 @@ const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
 
+fn battle_net_launch_argument(product_code: &str) -> String {
+    format!(r#"--exec="launch {product_code}""#)
+}
+
+fn spawn_battle_net_launch_command(
+    battle_net_path: &str,
+    product_code: &str,
+) -> std::io::Result<std::process::Child> {
+    let launch_argument = battle_net_launch_argument(product_code);
+    let mut command = Command::new(battle_net_path);
+
+    #[cfg(windows)]
+    {
+        // Battle.net parses this switch from the raw Windows command line and expects the
+        // value, rather than the complete argument, to be quoted: --exec="launch OSI".
+        use std::os::windows::process::CommandExt;
+        command.raw_arg(&launch_argument);
+    }
+
+    #[cfg(not(windows))]
+    command.arg(&launch_argument);
+
+    command.spawn()
+}
+
 fn token_and_mutex_are_ready(web_token_read_by_target_pid: bool, mutex_closed: bool) -> bool {
     web_token_read_by_target_pid && mutex_closed
 }
@@ -1391,6 +1416,7 @@ async fn launch_single(
     let mut first_agent_killed = false;
     let mut agent_locked_at: Option<std::time::Instant> = None;
     let mut last_launch_sent: Option<std::time::Instant> = None;
+    let mut last_launch_error: Option<String> = None;
     let mut d2r_pid_opt: Option<u32> = None;
     let mut sys = sysinfo::System::new(); // 优化：复用 System 实例以提高效率
                                           // 跟踪已尝试 kill 的 Agent PID，避免重复日志洪水
@@ -1573,19 +1599,38 @@ async fn launch_single(
 
             if should_send {
                 let battle_net_path = battle_net_path.clone();
-                let launch_argument = format!("--exec=launch {}", product_code);
                 emit(
                     "game",
                     "running",
                     &format!(
-                        "战网进程数达到 {} (>5)，发送游戏启动指令...",
-                        status.bnet_count
+                        "战网进程数达到 {} (>5)，正在发送游戏启动指令 ({})...",
+                        status.bnet_count, product_code
                     ),
                 );
-                let _ = tokio::task::spawn_blocking(move || {
-                    Command::new(&battle_net_path).arg(&launch_argument).spawn()
+                let launch_result = tokio::task::spawn_blocking(move || {
+                    spawn_battle_net_launch_command(&battle_net_path, product_code)
                 })
                 .await;
+                match launch_result {
+                    Ok(Ok(_child)) => {
+                        last_launch_error = None;
+                        emit(
+                            "game",
+                            "running",
+                            &format!("已向战网提交游戏启动指令 ({})", product_code),
+                        );
+                    }
+                    Ok(Err(error)) => {
+                        let message = format!("发送游戏启动指令失败: {error}");
+                        last_launch_error = Some(message.clone());
+                        emit("game", "warning", &message);
+                    }
+                    Err(error) => {
+                        let message = format!("发送游戏启动指令线程异常: {error}");
+                        last_launch_error = Some(message.clone());
+                        emit("game", "warning", &message);
+                    }
+                }
                 last_launch_sent = Some(std::time::Instant::now());
             }
         } else {
@@ -1710,12 +1755,13 @@ async fn launch_single(
             pid
         }
         None => {
-            emit("game", "error", "等待游戏进程启动超时");
+            let error = last_launch_error.unwrap_or_else(|| "等待游戏进程启动超时".to_string());
+            emit("game", "error", &error);
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
                 d2r_pid: None,
-                error: Some("等待游戏进程启动超时".to_string()),
+                error: Some(error),
                 mutex_killed: false,
             };
         }
@@ -2459,9 +2505,9 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        launch_queue_can_continue, parse_windows_command_line, persist_window_position,
-        preflight_accounts, replace_bnet_roaming_snapshot, token_and_mutex_are_ready,
-        unique_account_window_executable, validate_launch_account_ids,
+        battle_net_launch_argument, launch_queue_can_continue, parse_windows_command_line,
+        persist_window_position, preflight_accounts, replace_bnet_roaming_snapshot,
+        token_and_mutex_are_ready, unique_account_window_executable, validate_launch_account_ids,
         validate_legacy_reg_sections,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
@@ -2483,6 +2529,11 @@ mod tests {
         assert!(!launch_queue_can_continue(false, true));
         assert!(!launch_queue_can_continue(true, false));
         assert!(launch_queue_can_continue(true, true));
+    }
+
+    #[test]
+    fn battle_net_launch_argument_quotes_only_the_exec_value() {
+        assert_eq!(battle_net_launch_argument("OSI"), r#"--exec="launch OSI""#);
     }
 
     #[test]

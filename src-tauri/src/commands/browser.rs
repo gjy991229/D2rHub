@@ -36,7 +36,20 @@ fn ensure_allowed_bnet_login_url(url: &str) -> Result<(), AppError> {
     let allowed_host = allowed_prefixes
         .iter()
         .any(|prefix| lower.starts_with(prefix));
-    let expected_query = lower.contains("externalchallenge=login") && lower.contains("app=osi");
+    let query = lower
+        .split_once('?')
+        .map(|(_, query)| query.split('#').next().unwrap_or(query));
+    let has_query_parameter = |expected_name: &str, expected_value: &str| {
+        query.is_some_and(|query| {
+            query.split('&').any(|parameter| {
+                parameter
+                    .split_once('=')
+                    .is_some_and(|(name, value)| name == expected_name && value == expected_value)
+            })
+        })
+    };
+    let expected_query =
+        has_query_parameter("externalchallenge", "login") && has_query_parameter("app", "osi");
     if allowed_host && expected_query {
         Ok(())
     } else {
@@ -348,7 +361,10 @@ pub fn open_url_in_browser(
 
 #[cfg(test)]
 mod tests {
-    use super::{browser_profile_name, browser_profile_paths, private_browser_arguments};
+    use super::{
+        browser_profile_name, browser_profile_paths, ensure_allowed_bnet_login_url,
+        private_browser_arguments,
+    };
     use crate::commands::global_config::GlobalConfig;
     use std::path::Path;
 
@@ -405,6 +421,26 @@ mod tests {
             assert!(!args
                 .iter()
                 .any(|argument| argument.starts_with("--profile-directory=")));
+        }
+    }
+
+    #[test]
+    fn token_login_urls_require_exact_external_challenge_and_osi_app_parameters() {
+        for url in [
+            "https://account.battlenet.com.cn/login/zh/?externalChallenge=login&app=OSI",
+            "https://kr.battle.net/login/en/?app=OSI&externalChallenge=login",
+            "https://us.battle.net/login/en/?externalChallenge=login&app=OSI",
+            "https://eu.battle.net/login/en/?externalChallenge=login&app=OSI",
+        ] {
+            ensure_allowed_bnet_login_url(url).unwrap();
+        }
+
+        for url in [
+            "https://account.battlenet.com.cn/login/zh/?externalChallenge=login&app=osic",
+            "https://us.battle.net/login/en/?externalChallenge=login&xapp=osi",
+            "https://eu.battle.net/login/en/?externalChallenge=login2&app=osi",
+        ] {
+            assert!(ensure_allowed_bnet_login_url(url).is_err());
         }
     }
 }

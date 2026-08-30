@@ -13,3 +13,4 @@ reasonix.toml
 .impeccable/
 /.codex-vite*.log
 /temp.txt
+/artifacts/

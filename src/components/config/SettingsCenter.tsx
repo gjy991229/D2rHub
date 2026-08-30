@@ -71,6 +71,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onReconfigure: () => void;
+  onInitializeAccount: () => void;
   initialTab?: string | null;
   initialAccountId?: string | null;
 }
@@ -301,7 +302,7 @@ type TabType =
   | "shortcuts"
   | "advanced";
 
-export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initialAccountId }: Props) {
+export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
   const { theme, setTheme } = useTheme();
@@ -330,6 +331,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
     ? ""
     : validateAudioModName(audioSetupName, installedAudioModNames);
   const showAudioSetupNameError = !isAudioModUpgrade && audioSetupName.length > 0 && !!audioSetupNameError;
+  const hasInitializedAudioAccount = initializedTrackingAccounts.length > 0;
+  const hasAudioTarget = trackingTarget.valid;
+  const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
+  const isAudioEnableRequested = !!config?.rune_audio_enabled;
+  const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
+  const audioPrepareBlockedReason = !isAudioModUpgrade && audioSetupNameError
+    ? audioSetupNameError
+    : audioSetupMode === "existing" && !audioSetupSource
+      ? "请选择一个要保留功能的原始 Mod"
+      : "";
 
   const locateWindow = async (label: AuxiliaryWindowLabel) => {
     const names = config?.app_language === "en-US"
@@ -1924,17 +1935,119 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
               <div className="settings-content-grid">
                 <div className="spatial-panel p-3 space-y-2">
                   <div className="flex items-center justify-between py-1">
-                    <div>
+                    <div className="min-w-0 pr-4">
                       <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
                       <p className="text-2xs text-text-muted">按 D2R 进程捕获 Mod 音频；自动识别所选掉落、场景切换并完成刷图计时统计</p>
                     </div>
                     <Toggle
-                      checked={!!config.rune_audio_enabled}
-                      disabled={initializedTrackingAccounts.length === 0 || audioPreparing}
+                      checked={isAudioEnableRequested}
+                      disabled={audioPreparing || audioModStateLoading}
                       ariaLabel="启用音频声纹自动识别"
-                      descriptionId="rune-audio-target-help"
+                      descriptionId="rune-audio-readiness"
                       onChange={handleAudioToggle}
                     />
+                  </div>
+
+                  <div
+                    id="rune-audio-readiness"
+                    className={`rounded-xl border px-3 py-3 ${
+                      isAudioRecognitionActive
+                        ? "border-success/25 bg-success/10"
+                        : hasReadyAudioMod
+                          ? "border-accent/20 bg-surface-hover"
+                          : "border-warning/25 bg-warning/10"
+                    }`}
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        {isAudioRecognitionActive || hasReadyAudioMod
+                          ? <CheckCircle2 size={16} className={`mt-0.5 shrink-0 ${isAudioRecognitionActive ? "text-success" : "text-accent"}`} />
+                          : <AlertTriangle size={16} className="mt-0.5 shrink-0 text-warning" />}
+                        <div className="min-w-0">
+                          <p className="text-xs font-semibold text-text-primary">
+                            {isAudioRecognitionActive
+                              ? "声纹识别已开启"
+                              : !hasInitializedAudioAccount
+                                ? isAudioEnableRequested ? "开启尚未完成：初始化账号" : "先初始化一个游戏账号"
+                                : !hasAudioTarget
+                                  ? isAudioEnableRequested ? "开启尚未完成：选择监听账号" : "第 2 步：选择监听账号"
+                                  : audioModStateLoading
+                                    ? "正在检查识别 Mod"
+                                    : !hasReadyAudioMod
+                                      ? isAudioEnableRequested ? "开启尚未完成：准备识别 Mod" : "还差一步：准备识别 Mod"
+                                      : "准备完成，可以开启识别"}
+                          </p>
+                          <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
+                            {isAudioRecognitionActive
+                              ? audioModState?.restart_required
+                                ? "配置已完成；请重启该账号的游戏，让新的 Mod 启动参数生效。"
+                                : "D2RHub 会锁定所选账号的 D2R 进程，不会录制其他应用声音。"
+                              : !hasInitializedAudioAccount
+                                ? "声纹需要绑定一个可启动的账号。点击右侧按钮完成初始化，再回来选择账号和准备 Mod。"
+                                : !hasAudioTarget
+                                  ? "声音按 D2R 进程隔离捕获；先明确要统计哪个账号。"
+                                  : !hasReadyAudioMod
+                                    ? "D2R 需要播放极短的识别音频。D2RHub 会保留你的原 Mod，并自动生成启动参数。"
+                                    : "所有前置项均已完成。点击开启后，目标游戏运行时会自动开始识别。"}
+                          </p>
+                        </div>
+                      </div>
+                      {!isAudioRecognitionActive && (
+                        <Button
+                          variant={hasReadyAudioMod ? "primary" : "secondary"}
+                          size="sm"
+                          className="shrink-0"
+                          disabled={audioPreparing || audioModStateLoading}
+                          onClick={() => {
+                            if (!hasInitializedAudioAccount) {
+                              onClose();
+                              onInitializeAccount();
+                              return;
+                            }
+                            if (!hasAudioTarget) {
+                              const firstAccount = initializedTrackingAccounts[0];
+                              if (firstAccount) void handleAudioTargetChange(firstAccount.id);
+                              return;
+                            }
+                            void handleAudioToggle(true);
+                          }}
+                        >
+                          {!hasInitializedAudioAccount
+                            ? "初始化账号"
+                            : !hasAudioTarget
+                              ? "选择首个账号"
+                              : !hasReadyAudioMod
+                                ? "开始准备"
+                                : "立即开启"}
+                        </Button>
+                      )}
+                    </div>
+                    <ol className="mt-3 grid grid-cols-3 gap-2" aria-label="声纹识别启用步骤">
+                      {[
+                        { label: "初始化账号", complete: hasInitializedAudioAccount },
+                        { label: "选择监听账号", complete: hasAudioTarget },
+                        { label: "准备识别 Mod", complete: hasReadyAudioMod },
+                      ].map((step, index) => (
+                        <li
+                          key={step.label}
+                          className={`flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-2xs ${
+                            step.complete ? "bg-success/10 text-success" : "bg-surface-card text-text-secondary"
+                          }`}
+                        >
+                          <span
+                            className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-bold ${
+                              step.complete ? "bg-success text-black" : "border border-border-default text-text-muted"
+                            }`}
+                            aria-hidden="true"
+                          >
+                            {step.complete ? "✓" : index + 1}
+                          </span>
+                          <span className="truncate">{step.label}</span>
+                        </li>
+                      ))}
+                    </ol>
                   </div>
 
                   <div className="space-y-1.5 border-t border-border-default/50 pt-3">
@@ -1963,10 +2076,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                     </div>
                     <p id="rune-audio-target-help" aria-live="polite" className="text-2xs text-text-secondary">
                       {initializedTrackingAccounts.length === 0
-                        ? "请先初始化至少一个账号，才能启用声纹识别。"
+                        ? "上方“初始化账号”会直接打开账号向导；完成后回到这里继续。"
                         : trackingTarget.valid
                           ? `只识别“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的游戏声音。`
-                          : "开启时会自动使用第一个可用账号，也可以先在这里选择。"}
+                          : "必须先选择目标账号；也可点击上方“选择首个账号”快速继续。"}
                     </p>
                   </div>
 
@@ -2096,10 +2209,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                                   value={audioSetupName}
                                   maxLength={AUDIO_MOD_NAME_MAX_LENGTH}
                                   disabled={audioPreparing}
+                                  autoFocus
                                   autoCapitalize="off"
                                   autoCorrect="off"
                                   spellCheck={false}
-                                  aria-invalid={showAudioSetupNameError}
+                                  aria-invalid={!!audioSetupNameError}
                                   aria-describedby="audio-mod-name-help"
                                   placeholder="例如：MyAudioMod"
                                   onChange={event => setAudioSetupName(event.target.value)}
@@ -2111,10 +2225,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                               <p
                                 id="audio-mod-name-help"
                                 className={`mt-1 text-2xs leading-relaxed ${
-                                  showAudioSetupNameError ? "text-danger" : "text-text-muted"
+                                  audioSetupNameError ? "font-medium text-warning" : "text-text-muted"
                                 }`}
                               >
-                                {showAudioSetupNameError
+                                {audioSetupNameError
                                   ? audioSetupNameError
                                   : "仅可使用英文字母、数字、短横线和下划线。"}
                               </p>
@@ -2139,17 +2253,33 @@ export function SettingsCenter({ open, onClose, onReconfigure, initialTab, initi
                             </div>
                           )}
 
+                          {!!audioPrepareBlockedReason && !audioPreparing && (
+                            <div
+                              id="audio-prepare-blocked-reason"
+                              className="mt-3 flex items-start gap-2 rounded-lg border border-warning/25 bg-warning/10 px-2.5 py-2 text-2xs leading-relaxed text-text-secondary"
+                              role="status"
+                            >
+                              <AlertTriangle size={13} className="mt-0.5 shrink-0 text-warning" />
+                              <span><strong className="text-warning">还不能开始：</strong>{audioPrepareBlockedReason}。</span>
+                            </div>
+                          )}
+
                           <Button
                             variant="primary"
                             size="md"
                             loading={audioPreparing}
-                            disabled={(!isAudioModUpgrade && !!audioSetupNameError) || (audioSetupMode === "existing" && !audioSetupSource)}
+                            disabled={!!audioPrepareBlockedReason}
+                            aria-describedby={audioPrepareBlockedReason ? "audio-prepare-blocked-reason" : undefined}
                             onClick={handlePrepareAudioMod}
                             className="mt-3 w-full"
                           >
                             {audioPreparing
                               ? "正在准备，请勿关闭软件"
-                              : audioModState?.update_required ? "同名更新并替换旧版" : "一键准备并开启"}
+                              : audioPrepareBlockedReason
+                                ? audioSetupNameError === "请输入新 Mod 名称"
+                                  ? "填写 Mod 名称后即可准备"
+                                  : "完成上方配置后即可准备"
+                                : audioModState?.update_required ? "同名更新并替换旧版" : "一键准备并开启"}
                           </Button>
                           <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
                             {isAudioModUpgrade

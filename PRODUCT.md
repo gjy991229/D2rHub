@@ -32,7 +32,7 @@ Treat the current frontend as the visual baseline and product memory. Improve we
 
 ## Design Principles
 
-1. Function is the source of structure. Preserve the real workflows first: setup, account readiness, launch, multi-select launch, settings, overlay, audio telemetry, stats, logs, and destructive process controls.
+1. Function is the source of structure. Preserve the real workflows first: setup, account readiness, launch, reusable launch groups, settings, overlay, audio telemetry, stats, logs, and destructive process controls.
 2. State must be legible at a glance. Ready, needs setup, launching, running, expired, warning, error, selected, and disabled states should be visually distinct without loud decoration.
 3. Dangerous actions require calm friction. Killing processes, deleting accounts, resetting auth, and overwriting settings should feel controlled, explicit, and reversible where possible.
 4. Density should feel intentional. Power users need compact information, but hierarchy, grouping, and rhythm must keep repeated use comfortable.

@@ -6,6 +6,12 @@ export interface LegacyPathMigration {
   battle_net_path: string;
 }
 
+export interface LaunchGroup {
+  id: string;
+  name: string;
+  account_ids: string[];
+}
+
 export interface GlobalConfig {
   version: number;
   cn_battle_net_path: string;
@@ -49,6 +55,7 @@ export interface GlobalConfig {
   agent_mode?: number;
   agent_delay_secs?: number;
   agent_threshold?: number;
+  launch_groups: LaunchGroup[];
 }
 
 // ── 数据统计 ──

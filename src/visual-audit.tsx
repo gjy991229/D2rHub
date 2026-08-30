@@ -217,6 +217,10 @@ const baseConfig: GlobalConfig = {
   agent_mode: 1,
   agent_delay_secs: 4,
   agent_threshold: 2,
+  launch_groups: [
+    { id: "farm-core", name: "日常 Farm", account_ids: ["sorc-01", "barb-02"] },
+    { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
+  ],
 };
 
 const accountSettings: SettingsMap = {
@@ -287,7 +291,7 @@ function installIpcMock() {
       case "get_global_config":
         return { ...baseConfig, first_run_complete: surface !== "setup" };
       case "save_global_config":
-        return null;
+        return (payload as { config?: GlobalConfig } | undefined)?.config ?? baseConfig;
       case "list_accounts":
         return accounts;
       case "refresh_account_running_state":
@@ -514,6 +518,7 @@ function AuditRuntime() {
                   open
                   onClose={() => {}}
                   onReconfigure={() => {}}
+                  onInitializeAccount={() => {}}
                   initialTab={settingsTab}
                 />
                 <ToastContainer />

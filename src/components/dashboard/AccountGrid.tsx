@@ -12,16 +12,16 @@ interface AccountGridProps {
   accounts: AccountMeta[];
   onReorder: (orderedIds: string[]) => Promise<void>;
   children: React.ReactNode;
-  isMultiSelectMode?: boolean;
+  isSelectionMode?: boolean;
 }
 
-export function AccountGrid({ accounts, onReorder, children, isMultiSelectMode }: AccountGridProps) {
+export function AccountGrid({ accounts, onReorder, children, isSelectionMode }: AccountGridProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: isMultiSelectMode ? 99999 : 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: isSelectionMode ? 99999 : 5 } })
   );
 
   const handleDragEnd = (event: DragEndEvent) => {
-    if (isMultiSelectMode) return;
+    if (isSelectionMode) return;
     const { active, over } = event;
     if (over && active.id !== over.id) {
       const oldIndex = accounts.findIndex(a => a.id === active.id);

@@ -93,10 +93,13 @@ pub(crate) enum ContextPurpose {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct EditionConventions {
+    /// Product accepted by Battle.net's `--exec="launch ..."` command.
     pub battle_net_launch_product: &'static str,
+    /// Object key under `Games` in Battle.net.config.
     pub battle_net_config_game_key: &'static str,
-    /// Token 认证应用、注册表键与客户端产品码是不同契约，不能互相推断。
+    /// Application UID passed to D2R.exe with `-uid` for Token authentication.
     pub token_auth_app: &'static str,
+    /// Subkey under Battle.net's `Launch Options` registry key.
     pub token_registry_game_key: &'static str,
 }
 
@@ -104,7 +107,9 @@ impl EditionConventions {
     pub(crate) fn for_edition(edition: ClientEdition) -> Self {
         match edition {
             ClientEdition::Cn => Self {
-                battle_net_launch_product: "osic",
+                // The CN client uses `osic` for its config key and direct-launch UID,
+                // but Battle.net's command-line launcher still identifies D2R as `OSI`.
+                battle_net_launch_product: "OSI",
                 battle_net_config_game_key: "osic",
                 token_auth_app: "osic",
                 token_registry_game_key: "OSI",
@@ -550,6 +555,37 @@ mod tests {
     }
 
     #[test]
+    fn edition_identifiers_follow_their_independent_external_contracts() {
+        let cn = EditionConventions::for_edition(ClientEdition::Cn);
+        assert_eq!(cn.battle_net_launch_product, "OSI");
+        assert_eq!(cn.battle_net_config_game_key, "osic");
+        assert_eq!(cn.token_auth_app, "osic");
+        assert_eq!(cn.token_registry_game_key, "OSI");
+
+        let global = EditionConventions::for_edition(ClientEdition::Global);
+        assert_eq!(global.battle_net_launch_product, "OSI");
+        assert_eq!(global.battle_net_config_game_key, "osi");
+        assert_eq!(global.token_auth_app, "OSI");
+        assert_eq!(global.token_registry_game_key, "OSI");
+    }
+
+    #[test]
+    fn account_regions_map_to_registry_regions_and_default_locales_explicitly() {
+        let cases = [
+            (GameRegion::Cn, "CN", "zhCN"),
+            (GameRegion::Asia, "KR", "zhTW"),
+            (GameRegion::Americas, "US", "enUS"),
+            (GameRegion::Europe, "EU", "enUS"),
+        ];
+
+        for (region, expected_registry_region, expected_locale) in cases {
+            let conventions = RegionConventions::for_region(region);
+            assert_eq!(conventions.registry_region, expected_registry_region);
+            assert_eq!(conventions.default_locale, expected_locale);
+        }
+    }
+
+    #[test]
     fn window_identity_only_needs_the_accounts_configured_game_directory() {
         let config = GlobalConfig {
             cn_game_path: r"C:\Games\D2R-CN".to_string(),
@@ -596,7 +632,7 @@ mod tests {
         assert_eq!(cn.installation.edition, ClientEdition::Cn);
         assert_eq!(cn.installation.game_directory, PathBuf::from(cn_game));
         assert_eq!(cn.battle_net_executable().unwrap(), Path::new(&cn_bnet));
-        assert_eq!(cn.edition.battle_net_launch_product, "osic");
+        assert_eq!(cn.edition.battle_net_launch_product, "OSI");
         assert_eq!(cn.edition.battle_net_config_game_key, "osic");
         assert_eq!(cn.edition.token_auth_app, "osic");
         assert_eq!(cn.edition.token_registry_game_key, "OSI");
