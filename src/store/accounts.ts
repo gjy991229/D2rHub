@@ -14,8 +14,8 @@ interface AccountsState {
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<boolean>;
   addAccountMod: (id: string, modConfiguration: string) => Promise<boolean | null>;
-  updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<void>;
-  updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<void>;
+  updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<boolean>;
+  updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<boolean>;
   updateAccountRegion: (id: string, region: InternationalAccountRegion) => Promise<void>;
   initializeBnetAccount: (id: string) => Promise<void>;
   reinitializeAccount: (id: string) => Promise<void>;
@@ -96,9 +96,11 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     try {
       await invoke("update_account_mods", { accountId: id, activeMod, modList });
       await get().loadAccounts();
+      return true;
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `保存 Mod 参数失败: ${e}`);
+      return false;
     }
   },
 
@@ -106,9 +108,11 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     try {
       await invoke("update_account_positions", { accountId: id, activePositionId, positionPresets });
       await get().loadAccounts();
+      return true;
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `保存窗口位置失败: ${e}`);
+      return false;
     }
   },
 

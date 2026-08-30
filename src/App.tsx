@@ -86,6 +86,9 @@ function createLaunchGroupMember(account: AccountMeta): LaunchGroupMember {
     mod_args: account.mod_args || "",
     position_preset_id: account.active_position_id ?? null,
     position_configured: true,
+    graphics_configured: false,
+    resolution: null,
+    fps: null,
   };
 }
 
@@ -222,6 +225,11 @@ function App() {
       showToast("warning", "启动方案至少需要选择一个账号");
       return;
     }
+    if (launchGroupDraft.members.some(member =>
+      !member.graphics_configured || !member.resolution || member.fps == null)) {
+      showToast("warning", "请等待所有已选账号的分辨率与 FPS 加载完成");
+      return;
+    }
     if (launchGroupNameExists(config.launch_groups, name, launchGroupDraft.id)) {
       showToast("warning", `启动方案名称“${name}”已存在`);
       return;
@@ -237,6 +245,9 @@ function App() {
         mod_args: member.mod_args ?? "",
         position_preset_id: member.position_preset_id ?? null,
         position_configured: true,
+        graphics_configured: true,
+        resolution: member.resolution,
+        fps: member.fps,
       })),
     };
     const nextGroups = launchGroupDraft.id
@@ -496,7 +507,11 @@ function App() {
                     }}
                   />
                   <button
-                    disabled={configSaving || launchGroupDraft.members.length === 0 || !launchGroupDraft.name.trim()}
+                    disabled={configSaving
+                      || launchGroupDraft.members.length === 0
+                      || !launchGroupDraft.name.trim()
+                      || launchGroupDraft.members.some(member =>
+                        !member.graphics_configured || !member.resolution || member.fps == null)}
                     onClick={() => void saveLaunchGroup()}
                     className="primary-cta"
                   >
@@ -639,10 +654,12 @@ function App() {
                     schemeMember={schemeMember}
                     onSchemeMemberChange={updateLaunchGroupMember}
                     getModSchemeUsage={(accountId, modArgs) => (config?.launch_groups ?? [])
+                      .filter(group => group.id !== launchGroupDraft?.id)
                       .filter(group => group.members?.some(member =>
                         member.account_id === accountId && member.mod_args === modArgs))
                       .map(group => group.name)}
                     getPositionSchemeUsage={(accountId, positionId) => (config?.launch_groups ?? [])
+                      .filter(group => group.id !== launchGroupDraft?.id)
                       .filter(group => group.members?.some(member =>
                         member.account_id === accountId
                         && member.position_configured

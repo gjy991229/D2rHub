@@ -54,6 +54,9 @@ export function materializeLaunchGroupMembers(
         ? configured.position_preset_id ?? null
         : account?.active_position_id ?? null,
       position_configured: true,
+      graphics_configured: configured?.graphics_configured ?? false,
+      resolution: configured?.graphics_configured ? configured.resolution ?? null : null,
+      fps: configured?.graphics_configured ? configured.fps ?? null : null,
     };
   });
 }
@@ -144,6 +147,10 @@ export function launchEntriesForGroup(
         overrides: {
           mod_args: member.mod_args ?? "",
           position_preset_id: member.position_preset_id ?? null,
+          ...(member.graphics_configured ? {
+            resolution: member.resolution ?? null,
+            fps: member.fps ?? null,
+          } : {}),
         },
       };
     });

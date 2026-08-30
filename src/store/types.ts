@@ -19,6 +19,10 @@ export interface LaunchGroupMember {
   mod_args?: string | null;
   position_preset_id?: string | null;
   position_configured?: boolean;
+  /** false/undefined keeps legacy groups inheriting the account's current graphics settings. */
+  graphics_configured?: boolean;
+  resolution?: string | null;
+  fps?: number | null;
 }
 
 export interface WindowPositionPreset {
@@ -224,6 +228,8 @@ export interface LaunchAccountEntry {
   overrides: {
     mod_args: string;
     position_preset_id: string | null;
+    resolution?: string | null;
+    fps?: number | null;
   };
 }
 

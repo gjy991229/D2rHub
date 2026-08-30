@@ -36,12 +36,43 @@ pub struct LaunchAccountOverrides {
     pub mod_args: String,
     #[serde(default)]
     pub position_preset_id: Option<String>,
+    /// 旧方案缺失时继续继承账号当前画质；新版方案会同时提供这两个字段。
+    #[serde(default)]
+    pub resolution: Option<String>,
+    #[serde(default)]
+    pub fps: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchAccountEntry {
     pub account_id: String,
     pub overrides: LaunchAccountOverrides,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LaunchGraphicsOverride {
+    resolution: String,
+    fps: u32,
+}
+
+struct TemporarySettingsOverride {
+    path: PathBuf,
+    original: Vec<u8>,
+}
+
+impl Drop for TemporarySettingsOverride {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::write(&self.path, &self.original) {
+            crate::logger::log_msg(
+                "ERROR",
+                "Launch",
+                &format!(
+                    "恢复方案启动前的 Settings.json 失败 ({}): {error}",
+                    self.path.display()
+                ),
+            );
+        }
+    }
 }
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
@@ -179,10 +210,158 @@ fn validate_launch_account_ids(account_ids: &[String]) -> Result<(), AppError> {
     Ok(())
 }
 
+fn launch_graphics_override(
+    overrides: &LaunchAccountOverrides,
+) -> Result<Option<LaunchGraphicsOverride>, AppError> {
+    match (overrides.resolution.as_deref(), overrides.fps) {
+        (None, None) => Ok(None),
+        (Some(resolution), Some(fps)) => {
+            let resolution = resolution.trim();
+            let Some((width, height)) = resolution.split_once('x') else {
+                return Err(AppError::ConfigReadError(
+                    "方案分辨率格式无效，应为 宽x高".to_string(),
+                ));
+            };
+            let width = width.parse::<u32>().map_err(|_| {
+                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
+            })?;
+            let height = height.parse::<u32>().map_err(|_| {
+                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
+            })?;
+            if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
+                return Err(AppError::ConfigReadError(
+                    "方案分辨率超出支持范围".to_string(),
+                ));
+            }
+            if fps > 500 {
+                return Err(AppError::ConfigReadError(
+                    "方案 FPS 必须在 0 到 500 之间".to_string(),
+                ));
+            }
+            Ok(Some(LaunchGraphicsOverride {
+                resolution: resolution.to_string(),
+                fps,
+            }))
+        }
+        _ => Err(AppError::ConfigReadError(
+            "方案分辨率与 FPS 必须同时配置".to_string(),
+        )),
+    }
+}
+
+fn graphics_settings_path(
+    config: &crate::commands::global_config::GlobalConfig,
+    meta: &AccountMeta,
+    context: &LaunchContext,
+) -> Result<PathBuf, AppError> {
+    if meta.has_customized_settings {
+        Ok(
+            AccountManager::account_dir_checked(&config.accounts_dir, &meta.id)?
+                .join("Settings.json"),
+        )
+    } else {
+        Ok(context
+            .required_saved_games_directory()?
+            .join("Settings.json"))
+    }
+}
+
+fn preflight_launch_graphics(
+    config: &crate::commands::global_config::GlobalConfig,
+    meta: &AccountMeta,
+    context: &LaunchContext,
+    graphics: Option<&LaunchGraphicsOverride>,
+) -> Result<(), AppError> {
+    if graphics.is_none() {
+        return Ok(());
+    }
+    let path = graphics_settings_path(config, meta, context)?;
+    let bytes = std::fs::read(&path).map_err(|error| {
+        AppError::FileError(format!(
+            "读取方案画质基础配置失败 ({}): {error}",
+            path.display()
+        ))
+    })?;
+    let settings: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes)
+        .map_err(|error| {
+            AppError::ConfigReadError(format!(
+                "方案画质基础配置无效 ({}): {error}",
+                path.display()
+            ))
+        })?;
+    if settings.is_empty() {
+        return Err(AppError::ConfigReadError(format!(
+            "方案画质基础配置为空: {}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn apply_temporary_graphics_override(
+    context: &LaunchContext,
+    graphics: Option<&LaunchGraphicsOverride>,
+) -> Result<Option<TemporarySettingsOverride>, AppError> {
+    let Some(graphics) = graphics else {
+        return Ok(None);
+    };
+    let path = context
+        .required_saved_games_directory()?
+        .join("Settings.json");
+    apply_temporary_graphics_override_at_path(path, graphics).map(Some)
+}
+
+fn apply_temporary_graphics_override_at_path(
+    path: PathBuf,
+    graphics: &LaunchGraphicsOverride,
+) -> Result<TemporarySettingsOverride, AppError> {
+    let original = std::fs::read(&path).map_err(|error| {
+        AppError::FileError(format!(
+            "读取系统 Settings.json 失败 ({}): {error}",
+            path.display()
+        ))
+    })?;
+    let mut settings: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_slice(&original).map_err(|error| {
+            AppError::ConfigReadError(format!(
+                "系统 Settings.json 无效 ({}): {error}",
+                path.display()
+            ))
+        })?;
+    if settings.is_empty() {
+        return Err(AppError::ConfigReadError(format!(
+            "系统 Settings.json 为空: {}",
+            path.display()
+        )));
+    }
+    settings.insert(
+        "Screen Resolution (Windowed)".to_string(),
+        serde_json::Value::String(graphics.resolution.clone()),
+    );
+    let fps_key = if settings.contains_key("Framerate Target") {
+        "Framerate Target"
+    } else {
+        "Framerate Cap"
+    };
+    settings.insert(
+        fps_key.to_string(),
+        serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
+    );
+    let content = serde_json::to_vec_pretty(&settings)?;
+    std::fs::write(&path, content).map_err(|error| {
+        AppError::FileError(format!(
+            "写入方案临时 Settings.json 失败 ({}): {error}",
+            path.display()
+        ))
+    })?;
+    Ok(TemporarySettingsOverride { path, original })
+}
+
 fn apply_launch_overrides(
     mut meta: AccountMeta,
     overrides: &LaunchAccountOverrides,
 ) -> Result<AccountMeta, AppError> {
+    launch_graphics_override(overrides)?;
     let mod_args = overrides.mod_args.trim().to_string();
     if !mod_args.is_empty()
         && !meta
@@ -834,6 +1013,7 @@ async fn prepare_bnet_environment(
     wait_login: bool,
     meta_override: Option<&AccountMeta>,
     preserved_default_mod_args: Option<&str>,
+    require_settings_copy: bool,
 ) -> Result<LaunchContext, LaunchResult> {
     // Resolve the complete account context before any process, file, or registry mutation.
     let meta = match meta_override {
@@ -996,12 +1176,18 @@ async fn prepare_bnet_environment(
                     if let Err(error) =
                         copy_account_settings_to_system(&account_dir, saved_games_path)
                     {
+                        if require_settings_copy {
+                            return Err(format!("独立 Settings.json 覆盖失败: {error}"));
+                        }
                         optional_warning = Some(format!(
                             "独立 Settings.json 覆盖失败，已继续使用系统配置: {error}"
                         ));
                     }
                 }
                 None => {
+                    if require_settings_copy {
+                        return Err("未配置可用的存档目录，无法应用方案画质".to_string());
+                    }
                     optional_warning =
                         Some("未配置可用的存档目录，已跳过独立 Settings.json 覆盖".to_string());
                 }
@@ -1216,7 +1402,7 @@ async fn launch_single_bnet_only(
     };
 
     if let Err(res) =
-        prepare_bnet_environment(app, config, state, account_id, true, None, None).await
+        prepare_bnet_environment(app, config, state, account_id, true, None, None, false).await
     {
         return res;
     }
@@ -1309,6 +1495,10 @@ pub async fn launch_accounts(
             })?;
             let effective_meta = apply_launch_overrides(meta, overrides)?;
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
+            let context =
+                LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
+            let graphics = launch_graphics_override(overrides)?;
+            preflight_launch_graphics(&config, &effective_meta, &context, graphics.as_ref())?;
         }
     }
     let mut results = Vec::new();
@@ -1368,6 +1558,16 @@ pub async fn launch_accounts(
         let preserved_default_mod_args = overrides_by_account
             .get(account_id)
             .map(|_| meta.mod_args.clone());
+        let graphics_override = match overrides_by_account.get(account_id) {
+            Some(overrides) => match launch_graphics_override(overrides) {
+                Ok(graphics) => graphics,
+                Err(error) => {
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            },
+            None => None,
+        };
         let meta = match overrides_by_account.get(account_id) {
             Some(overrides) => match apply_launch_overrides(meta, overrides) {
                 Ok(meta) => meta,
@@ -1392,6 +1592,23 @@ pub async fn launch_accounts(
                 "launch-progress",
                 LaunchProgress::new(account_id, "done", "error", &message),
             );
+            results.push(account_path_error(account_id, error));
+            continue;
+        }
+        let preflight_context =
+            match LaunchContext::for_account(&config, &meta, ContextPurpose::LaunchGame) {
+                Ok(context) => context,
+                Err(error) => {
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            };
+        if let Err(error) = preflight_launch_graphics(
+            &config,
+            &meta,
+            &preflight_context,
+            graphics_override.as_ref(),
+        ) {
             results.push(account_path_error(account_id, error));
             continue;
         }
@@ -1465,6 +1682,7 @@ pub async fn launch_accounts(
             meta,
             persist_position_changes,
             preserved_default_mod_args,
+            graphics_override,
         )
         .await;
         let killed = result.mutex_killed;
@@ -1538,6 +1756,7 @@ async fn launch_single(
     meta: AccountMeta,
     persist_position_changes: bool,
     preserved_default_mod_args: Option<String>,
+    graphics_override: Option<LaunchGraphicsOverride>,
 ) -> LaunchResult {
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -1571,8 +1790,16 @@ async fn launch_single(
     }
 
     if preflight_context.auth_mode == AuthMode::Token {
-        return launch_single_token(app, config, state, account_id, &meta, &preflight_context)
-            .await;
+        return launch_single_token(
+            app,
+            config,
+            state,
+            account_id,
+            &meta,
+            &preflight_context,
+            graphics_override.as_ref(),
+        )
+        .await;
     }
 
     let context = match prepare_bnet_environment(
@@ -1583,12 +1810,18 @@ async fn launch_single(
         false,
         Some(&meta),
         preserved_default_mod_args.as_deref(),
+        graphics_override.is_some(),
     )
     .await
     {
         Ok(context) => context,
         Err(result) => return result,
     };
+    let _settings_override =
+        match apply_temporary_graphics_override(&context, graphics_override.as_ref()) {
+            Ok(settings_override) => settings_override,
+            Err(error) => return account_path_error(account_id, error),
+        };
     let product_code = context.edition.battle_net_launch_product;
     let battle_net_path = match context.battle_net_executable() {
         Ok(path) => path.to_string_lossy().to_string(),
@@ -2225,6 +2458,7 @@ async fn launch_single_token(
     account_id: &str,
     meta: &crate::commands::account::AccountMeta,
     context: &LaunchContext,
+    graphics_override: Option<&LaunchGraphicsOverride>,
 ) -> LaunchResult {
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -2267,6 +2501,9 @@ async fn launch_single_token(
                 if let Err(error) =
                     copy_account_settings_to_system(&account_dir, saved_games_directory)
                 {
+                    if graphics_override.is_some() {
+                        return account_path_error(account_id, error);
+                    }
                     emit(
                         "copy",
                         "warning",
@@ -2290,6 +2527,11 @@ async fn launch_single_token(
             ),
         );
     }
+
+    let _settings_override = match apply_temporary_graphics_override(context, graphics_override) {
+        Ok(settings_override) => settings_override,
+        Err(error) => return account_path_error(account_id, error),
+    };
 
     // 2. 写入 Token 到注册表
     let protected_bytes = match &meta.token {
@@ -2781,11 +3023,13 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_launch_overrides, battle_net_launch_argument, launch_queue_can_continue,
-        battle_net_readiness_source, parse_windows_command_line, persist_window_position,
+        apply_launch_overrides, apply_temporary_graphics_override_at_path,
+        battle_net_launch_argument, battle_net_readiness_source, launch_graphics_override,
+        launch_queue_can_continue, parse_windows_command_line, persist_window_position,
         preflight_accounts, record_network_readiness_sample, replace_bnet_roaming_snapshot,
         token_launch_is_ready, unique_account_window_executable, validate_launch_account_ids,
         validate_legacy_reg_sections, BattleNetReadinessSource, LaunchAccountOverrides,
+        LaunchGraphicsOverride,
     };
     use crate::commands::account::{AccountManager, AccountMeta, WindowPositionPreset};
     use crate::commands::global_config::GlobalConfig;
@@ -2855,6 +3099,8 @@ mod tests {
             &LaunchAccountOverrides {
                 mod_args: "-mod scheme".to_string(),
                 position_preset_id: Some("scheme-position".to_string()),
+                resolution: Some("1920x1080".to_string()),
+                fps: Some(144),
             },
         )
         .unwrap();
@@ -2878,6 +3124,8 @@ mod tests {
             &LaunchAccountOverrides {
                 mod_args: "-mod deleted".to_string(),
                 position_preset_id: None,
+                resolution: None,
+                fps: None,
             },
         )
         .unwrap_err();
@@ -2888,12 +3136,71 @@ mod tests {
             &LaunchAccountOverrides {
                 mod_args: String::new(),
                 position_preset_id: Some("deleted-position".to_string()),
+                resolution: None,
+                fps: None,
             },
         )
         .unwrap_err();
         assert!(missing_position
             .to_string()
             .contains("方案位置已从胶囊库删除"));
+    }
+
+    #[test]
+    fn scheme_graphics_are_validated_as_an_atomic_pair() {
+        let partial = launch_graphics_override(&LaunchAccountOverrides {
+            mod_args: String::new(),
+            position_preset_id: None,
+            resolution: Some("1920x1080".to_string()),
+            fps: None,
+        })
+        .unwrap_err();
+        assert!(partial.to_string().contains("必须同时配置"));
+
+        let invalid = launch_graphics_override(&LaunchAccountOverrides {
+            mod_args: String::new(),
+            position_preset_id: None,
+            resolution: Some("not-a-resolution".to_string()),
+            fps: Some(60),
+        })
+        .unwrap_err();
+        assert!(invalid.to_string().contains("分辨率格式无效"));
+    }
+
+    #[test]
+    fn temporary_scheme_graphics_restore_the_exact_system_settings() {
+        let root = std::env::temp_dir().join(format!(
+            "d2rhub_scheme_settings_{}_{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("Settings.json");
+        let original = br#"{
+  "Screen Resolution (Windowed)": "1280x720",
+  "Framerate Target": 30,
+  "VSync": true
+}"#;
+        std::fs::write(&path, original).unwrap();
+
+        {
+            let _guard = apply_temporary_graphics_override_at_path(
+                path.clone(),
+                &LaunchGraphicsOverride {
+                    resolution: "2560x1440".to_string(),
+                    fps: 144,
+                },
+            )
+            .unwrap();
+            let temporary: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(temporary["Screen Resolution (Windowed)"], "2560x1440");
+            assert_eq!(temporary["Framerate Target"], 144);
+            assert_eq!(temporary["VSync"], true);
+        }
+
+        assert_eq!(std::fs::read(&path).unwrap(), original);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

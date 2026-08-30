@@ -62,8 +62,9 @@ const migratedMembers = materializeLaunchGroupMembers(group, accounts);
 assert(
   migratedMembers[0].mod_args === "-mod default-a"
     && migratedMembers[0].position_preset_id === "left"
-    && migratedMembers[0].position_configured === true,
-  "editing a legacy group materializes the current account defaults",
+    && migratedMembers[0].position_configured === true
+    && migratedMembers[0].graphics_configured === false,
+  "editing a legacy group materializes Mod/position while leaving graphics in legacy inherit mode",
 );
 
 const unavailable = inspectLaunchGroup(group, [
@@ -96,12 +97,18 @@ const explicitGroup: LaunchGroup = {
       mod_args: "-mod scheme-a",
       position_preset_id: "left",
       position_configured: true,
+      graphics_configured: true,
+      resolution: "2560x1440",
+      fps: 144,
     },
     {
       account_id: "account-b",
       mod_args: "",
       position_preset_id: null,
       position_configured: true,
+      graphics_configured: true,
+      resolution: "1920x1080",
+      fps: 60,
     },
   ],
 };
@@ -110,8 +117,17 @@ assert(
   entries[0].account_id === "account-b"
     && entries[1].account_id === "account-a"
     && entries[1].overrides.mod_args === "-mod scheme-a"
-    && entries[1].overrides.position_preset_id === "left",
-  "scheme launch entries preserve card order and per-account Mod/position choices",
+    && entries[1].overrides.position_preset_id === "left"
+    && entries[1].overrides.resolution === "2560x1440"
+    && entries[1].overrides.fps === 144,
+  "scheme launch entries preserve card order and all per-account choices",
+);
+
+const legacyEntries = launchEntriesForGroup(group, accounts);
+assert(
+  legacyEntries.every(entry =>
+    entry.overrides.resolution === undefined && entry.overrides.fps === undefined),
+  "legacy groups keep inheriting graphics instead of inventing persisted overrides",
 );
 
 const missingResources = inspectLaunchGroup(explicitGroup, [

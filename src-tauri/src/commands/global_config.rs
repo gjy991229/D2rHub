@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 7;
+const CURRENT_CONFIG_VERSION: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -45,6 +45,13 @@ pub struct LaunchGroupMember {
     /// 区分旧版缺失位置配置与新版明确选择“不指定位置”。
     #[serde(default)]
     pub position_configured: bool,
+    /// 区分 v7 及更早方案的“继承账号画质”与 v8 明确保存的独立画质。
+    #[serde(default)]
+    pub graphics_configured: bool,
+    #[serde(default)]
+    pub resolution: Option<String>,
+    #[serde(default)]
+    pub fps: Option<u32>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -519,18 +526,21 @@ mod validation_tests {
                         mod_args: Some(" -mod b ".to_string()),
                         position_preset_id: Some(" right ".to_string()),
                         position_configured: true,
+                        ..LaunchGroupMember::default()
                     },
                     LaunchGroupMember {
                         account_id: "account-b".to_string(),
                         mod_args: Some("ignored duplicate".to_string()),
                         position_preset_id: None,
                         position_configured: true,
+                        ..LaunchGroupMember::default()
                     },
                     LaunchGroupMember {
                         account_id: "account-a".to_string(),
                         mod_args: Some(String::new()),
                         position_preset_id: None,
                         position_configured: true,
+                        ..LaunchGroupMember::default()
                     },
                 ],
             }],
@@ -595,12 +605,14 @@ mod validation_tests {
                             mod_args: Some("-mod a".to_string()),
                             position_preset_id: None,
                             position_configured: true,
+                            ..LaunchGroupMember::default()
                         },
                         LaunchGroupMember {
                             account_id: "account-b".to_string(),
                             mod_args: Some(String::new()),
                             position_preset_id: None,
                             position_configured: true,
+                            ..LaunchGroupMember::default()
                         },
                     ],
                 },
@@ -1396,6 +1408,42 @@ mod validation_tests {
     }
 
     #[test]
+    fn v7_scheme_members_migrate_to_v8_without_inventing_graphics_overrides() {
+        let root = temp_dir("v7_launch_scheme_graphics");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        legacy["version"] = serde_json::json!(7);
+        legacy["launch_groups"] = serde_json::json!([{
+            "id": "legacy-scheme",
+            "name": "旧方案",
+            "account_ids": ["acount1"],
+            "members": [{
+                "account_id": "acount1",
+                "mod_args": "-mod legacy",
+                "position_preset_id": null,
+                "position_configured": true
+            }]
+        }]);
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        let member = &loaded.launch_groups[0].members[0];
+        assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
+        assert!(!member.graphics_configured);
+        assert_eq!(member.resolution, None);
+        assert_eq!(member.fps, None);
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(
+            persisted["launch_groups"][0]["members"][0]["graphics_configured"],
+            false
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn real_v1_shape_migrates_without_requiring_modern_fields() {
         let root = temp_dir("real_v1_shape");
         let config_path = root.join("global_config.json");
@@ -1611,6 +1659,22 @@ impl Default for GlobalConfig {
     }
 }
 
+fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
+    let Some((width, height)) = resolution.split_once('x') else {
+        return Err("分辨率格式无效");
+    };
+    let Ok(width) = width.parse::<u32>() else {
+        return Err("分辨率格式无效");
+    };
+    let Ok(height) = height.parse::<u32>() else {
+        return Err("分辨率格式无效");
+    };
+    if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
+        return Err("分辨率超出支持范围");
+    }
+    Ok(())
+}
+
 impl GlobalConfig {
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
@@ -1661,6 +1725,10 @@ impl GlobalConfig {
                         .position_preset_id
                         .map(|id| id.trim().to_string())
                         .filter(|id| !id.is_empty());
+                    member.resolution = member
+                        .resolution
+                        .map(|resolution| resolution.trim().to_string())
+                        .filter(|resolution| !resolution.is_empty());
                     Some(member)
                 })
                 .collect();
@@ -1713,6 +1781,29 @@ impl GlobalConfig {
                     "启动方案“{}”包含无效账号",
                     group.name
                 )));
+            }
+            for member in &group.members {
+                if !member.graphics_configured {
+                    continue;
+                }
+                let resolution = member.resolution.as_deref().ok_or_else(|| {
+                    AppError::ConfigWriteError(format!(
+                        "启动方案“{}”的账号 {} 缺少分辨率",
+                        group.name, member.account_id
+                    ))
+                })?;
+                validate_scheme_resolution(resolution).map_err(|message| {
+                    AppError::ConfigWriteError(format!(
+                        "启动方案“{}”的账号 {} {message}",
+                        group.name, member.account_id
+                    ))
+                })?;
+                if member.fps.is_none_or(|fps| fps > 500) {
+                    return Err(AppError::ConfigWriteError(format!(
+                        "启动方案“{}”的账号 {} FPS 必须在 0 到 500 之间",
+                        group.name, member.account_id
+                    )));
+                }
             }
         }
         Ok(())

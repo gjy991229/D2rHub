@@ -207,6 +207,7 @@ export function AccountGridItem({
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
   const [drawerLoaded, setDrawerLoaded] = useState(false);
+  const [drawerLoadError, setDrawerLoadError] = useState<string | null>(null);
   type DrawerSettings = { resolution: string; fps: number };
   const [drawer, setDrawer] = useState<DrawerSettings>({ resolution: "1280x720", fps: 30 });
 
@@ -260,7 +261,10 @@ export function AccountGridItem({
         fps: Number(raw["Framerate Target"] ?? raw["Framerate Cap"] ?? 30),
       });
       setDrawerLoaded(true);
+      setDrawerLoadError(null);
     } catch (e) {
+      setDrawerLoaded(false);
+      setDrawerLoadError(String(e));
       console.warn("Failed to load settings for", account.id, e);
     }
   };
@@ -271,6 +275,25 @@ export function AccountGridItem({
     }
   }, [account.id, account.initialized]);
 
+  useEffect(() => {
+    if (!isSelectionMode || !selected || !schemeMember || !drawerLoaded
+      || schemeMember.graphics_configured) return;
+    onSchemeMemberChange?.(account.id, {
+      graphics_configured: true,
+      resolution: drawer.resolution,
+      fps: drawer.fps,
+    });
+  }, [
+    account.id,
+    drawer.fps,
+    drawer.resolution,
+    drawerLoaded,
+    isSelectionMode,
+    onSchemeMemberChange,
+    schemeMember,
+    selected,
+  ]);
+
   const commitMod = async () => {
     if (modCommitInFlightRef.current) return;
     setModEditing(false);
@@ -279,6 +302,21 @@ export function AccountGridItem({
 
     modCommitInFlightRef.current = true;
     try {
+      if (isSelectionMode) {
+        const existing = (account.mod_list || []).find(mod => mod.trim() === v);
+        if (existing) {
+          onSchemeMemberChange?.(account.id, { mod_args: existing });
+          showToast("info", "已有完全相同的 Mod 配置，已为当前方案选中");
+          return;
+        }
+        const saved = await updateAccountMods(
+          account.id,
+          account.mod_args,
+          [...(account.mod_list || []), v],
+        );
+        if (saved) onSchemeMemberChange?.(account.id, { mod_args: v });
+        return;
+      }
       const added = await addAccountMod(account.id, v);
       if (added === false) {
         showToast("info", "已有完全相同的 Mod 配置，已跳过添加");
@@ -331,6 +369,17 @@ export function AccountGridItem({
     void updateAccountPositions(account.id, positionId, positionPresets);
   };
 
+  const selectDrawerSetting = (key: keyof DrawerSettings, value: string | number) => {
+    if (isSelectionMode) {
+      onSchemeMemberChange?.(account.id, {
+        graphics_configured: true,
+        [key]: value,
+      });
+      return;
+    }
+    saveDrawerSetting(key, value);
+  };
+
   const commitPosition = async () => {
     const name = positionNameDraft.trim();
     const x = Number(positionXDraft);
@@ -348,7 +397,18 @@ export function AccountGridItem({
       return;
     }
     const preset: WindowPositionPreset = { id: createPositionId(), name, x, y };
-    await updateAccountPositions(account.id, preset.id, [...positionPresets, preset]);
+    const saved = await updateAccountPositions(
+      account.id,
+      isSelectionMode ? account.active_position_id ?? null : preset.id,
+      [...positionPresets, preset],
+    );
+    if (!saved) return;
+    if (isSelectionMode) {
+      onSchemeMemberChange?.(account.id, {
+        position_preset_id: preset.id,
+        position_configured: true,
+      });
+    }
     setPositionEditing(false);
     setPositionNameDraft("");
   };
@@ -361,8 +421,16 @@ export function AccountGridItem({
       return;
     }
     const next = positionPresets.filter(candidate => candidate.id !== position.id);
-    const nextActive = selectedPositionId === position.id ? next[0]?.id ?? null : selectedPositionId;
-    await updateAccountPositions(account.id, nextActive, next);
+    const nextActive = account.active_position_id === position.id
+      ? next[0]?.id ?? null
+      : account.active_position_id ?? null;
+    const saved = await updateAccountPositions(account.id, nextActive, next);
+    if (saved && isSelectionMode && selectedPositionId === position.id) {
+      onSchemeMemberChange?.(account.id, {
+        position_preset_id: null,
+        position_configured: true,
+      });
+    }
     setPositionDelConfirmId(null);
   };
 
@@ -425,13 +493,24 @@ export function AccountGridItem({
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"
     && isInternationalRegion(account.region);
-  const performanceLabel = `${drawer.resolution} · ${drawer.fps === 0 ? "unlimited" : `${drawer.fps}fps`}`;
-  const configModeLabel = account.has_customized_settings ? "独立配置" : "系统配置";
+  const effectiveResolution = isSelectionMode
+    ? schemeMember?.resolution ?? drawer.resolution
+    : drawer.resolution;
+  const effectiveFps = isSelectionMode
+    ? schemeMember?.fps ?? drawer.fps
+    : drawer.fps;
+  const performanceLabel = `${effectiveResolution} · ${effectiveFps === 0 ? "unlimited" : `${effectiveFps}fps`}`;
+  const configModeLabel = isSelectionMode
+    ? "方案画质"
+    : account.has_customized_settings ? "独立配置" : "系统配置";
   const activeMod = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
   const resOptions = ["1280x720","1600x900","1920x1080","2560x1440","3840x2160"];
+  const effectiveResOptions = resOptions.includes(effectiveResolution)
+    ? resOptions
+    : [effectiveResolution, ...resOptions];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
 
@@ -648,7 +727,7 @@ export function AccountGridItem({
                         >
                           {modLabel}
                         </button>
-                        {!isSelectionMode && <button
+                        <button
                           className={`absolute -right-1.5 -top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
                             isConfirming
                               ? "scale-110 text-white opacity-100"
@@ -665,8 +744,12 @@ export function AccountGridItem({
                                 return;
                               }
                               const newMods = (account.mod_list || []).filter((_, i) => i !== idx);
-                              const nextActive = isActive ? (newMods[0] || "") : account.mod_args;
-                              updateAccountMods(account.id, nextActive, newMods);
+                              const nextActive = account.mod_args === mod ? (newMods[0] || "") : account.mod_args;
+                              void updateAccountMods(account.id, nextActive, newMods).then(saved => {
+                                if (saved && isSelectionMode && isActive) {
+                                  onSchemeMemberChange?.(account.id, { mod_args: "" });
+                                }
+                              });
                               setModDelConfirmIdx(null);
                             } else {
                               setModDelConfirmIdx(idx);
@@ -675,11 +758,11 @@ export function AccountGridItem({
                           title={isConfirming ? "确认删除" : "删除配置"}
                         >
                           <X size={9} />
-                        </button>}
+                        </button>
                       </div>
                     );
                   })}
-                  {!isSelectionMode && (modEditing ? (
+                  {(modEditing ? (
                     <input
                       className="line-input h-[24px] w-28 px-2 font-mono text-xs"
                       value={modDraft}
@@ -749,7 +832,9 @@ export function AccountGridItem({
         <div className="tag-row tag-row-secondary tag-row-offset">
           {drawerLoaded && account.initialized && <span className="hig-badge hig-badge-neutral performance-chip">{performanceLabel}</span>}
           {account.initialized && (
-            <span className={`hig-badge config-chip ${account.has_customized_settings ? "hig-badge-green" : "hig-badge-neutral"}`}>
+            <span className={`hig-badge config-chip ${isSelectionMode
+              ? "hig-badge-blue"
+              : account.has_customized_settings ? "hig-badge-green" : "hig-badge-neutral"}`}>
               {configModeLabel}
             </span>
           )}
@@ -822,16 +907,21 @@ export function AccountGridItem({
         <div style={{ overflow: "hidden", minHeight: 0 }}>
           <div className="drawer-body">
             <div className="drawer-grid">
-              {!isSelectionMode && <div className="drawer-resolution-fps-row">
+              {isSelectionMode && drawerLoadError && (
+                <div className="scheme-settings-error hig-badge hig-badge-red" title={drawerLoadError}>
+                  画质配置读取失败，请检查 Settings.json
+                </div>
+              )}
+              <div className="drawer-resolution-fps-row">
                 <div className="drawer-field">
                   <label className="micro-meta mb-1.5 block">分辨率</label>
                   <select
-                    value={drawer.resolution}
-                    onChange={e => saveDrawerSetting("resolution", e.target.value)}
+                    value={effectiveResolution}
+                    onChange={e => selectDrawerSetting("resolution", e.target.value)}
                     onClick={stop}
                     className="line-select w-full px-2.5"
                   >
-                    {resOptions.map(r => <option key={r} value={r}>{r}</option>)}
+                    {effectiveResOptions.map(r => <option key={r} value={r}>{r}</option>)}
                   </select>
                 </div>
 
@@ -843,16 +933,16 @@ export function AccountGridItem({
                       min={0}
                       max={500}
                       list={`fps-options-${account.id}`}
-                      value={drawer.fps}
+                      value={effectiveFps}
                       onClick={stop}
-                      onChange={e => saveDrawerSetting("fps", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
+                      onChange={e => selectDrawerSetting("fps", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
                     />
                     <datalist id={`fps-options-${account.id}`}>
                       {fpsOptions.map(f => <option key={f} value={f}>{f === 0 ? "无限制" : `${f} FPS`}</option>)}
                     </datalist>
                   </div>
                 </div>
-              </div>}
+              </div>
 
               <div className={isSelectionMode ? "scheme-position-field" : undefined}>
                 <label className="micro-meta mb-1.5 block">位置</label>
@@ -883,7 +973,7 @@ export function AccountGridItem({
                           <span>{position.name}</span>
                           <span className="position-chip-coordinates">{position.x},{position.y}</span>
                         </button>
-                        {!isSelectionMode && <button
+                        <button
                           type="button"
                           className={`position-chip-delete ${confirming ? "is-confirming" : ""}`}
                           aria-label={confirming ? `确认删除位置“${position.name}”` : `删除位置“${position.name}”`}
@@ -895,11 +985,11 @@ export function AccountGridItem({
                           }}
                         >
                           <X size={9} aria-hidden="true" />
-                        </button>}
+                        </button>
                       </div>
                     );
                   })}
-                  {!isSelectionMode && <button
+                  <button
                     type="button"
                     onClick={event => {
                       event.stopPropagation();
@@ -912,7 +1002,7 @@ export function AccountGridItem({
                     title="添加位置"
                   >
                     +
-                  </button>}
+                  </button>
                   {!isSelectionMode && <button
                     onClick={async (e) => {
                       e.stopPropagation();
@@ -931,7 +1021,7 @@ export function AccountGridItem({
                     复位
                   </button>}
                 </div>
-                {!isSelectionMode && positionEditing && (
+                {positionEditing && (
                   <div className="position-preset-editor" onClick={stop}>
                     <label>
                       <span>名称</span>

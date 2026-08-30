@@ -1378,6 +1378,11 @@ html, body, #root {
   grid-column: 1 / -1;
 }
 
+.scheme-settings-error {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
 .position-locate-button:disabled {
   cursor: not-allowed;
   opacity: 0.42;

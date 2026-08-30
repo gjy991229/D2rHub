@@ -188,7 +188,7 @@ const accounts: AccountMeta[] = [
 ];
 
 const baseConfig: GlobalConfig = {
-  version: 7,
+  version: 8,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -239,12 +239,18 @@ const baseConfig: GlobalConfig = {
           mod_args: "-direct -txt",
           position_preset_id: "right",
           position_configured: true,
+          graphics_configured: true,
+          resolution: "2560x1440",
+          fps: 144,
         },
         {
           account_id: "barb-02",
           mod_args: "",
           position_preset_id: "right",
           position_configured: true,
+          graphics_configured: true,
+          resolution: "1920x1080",
+          fps: 60,
         },
       ],
     },
