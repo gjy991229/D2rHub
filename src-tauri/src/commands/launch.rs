@@ -55,6 +55,19 @@ struct LaunchGraphicsOverride {
     fps: u32,
 }
 
+#[derive(Default)]
+struct BnetPreparationOptions<'a> {
+    meta_override: Option<&'a AccountMeta>,
+    preserved_default_mod_args: Option<&'a str>,
+    require_settings_copy: bool,
+}
+
+struct LaunchExecutionOptions {
+    persist_position_changes: bool,
+    preserved_default_mod_args: Option<String>,
+    graphics_override: Option<LaunchGraphicsOverride>,
+}
+
 struct TemporarySettingsOverride {
     path: PathBuf,
     original: Vec<u8>,
@@ -1011,10 +1024,13 @@ async fn prepare_bnet_environment(
     state: &SharedState,
     account_id: &str,
     wait_login: bool,
-    meta_override: Option<&AccountMeta>,
-    preserved_default_mod_args: Option<&str>,
-    require_settings_copy: bool,
+    options: BnetPreparationOptions<'_>,
 ) -> Result<LaunchContext, LaunchResult> {
+    let BnetPreparationOptions {
+        meta_override,
+        preserved_default_mod_args,
+        require_settings_copy,
+    } = options;
     // Resolve the complete account context before any process, file, or registry mutation.
     let meta = match meta_override {
         Some(meta) => meta.clone(),
@@ -1401,8 +1417,15 @@ async fn launch_single_bnet_only(
         );
     };
 
-    if let Err(res) =
-        prepare_bnet_environment(app, config, state, account_id, true, None, None, false).await
+    if let Err(res) = prepare_bnet_environment(
+        app,
+        config,
+        state,
+        account_id,
+        true,
+        BnetPreparationOptions::default(),
+    )
+    .await
     {
         return res;
     }
@@ -1680,9 +1703,11 @@ pub async fn launch_accounts(
             &state,
             account_id,
             meta,
-            persist_position_changes,
-            preserved_default_mod_args,
-            graphics_override,
+            LaunchExecutionOptions {
+                persist_position_changes,
+                preserved_default_mod_args,
+                graphics_override,
+            },
         )
         .await;
         let killed = result.mutex_killed;
@@ -1754,10 +1779,13 @@ async fn launch_single(
     state: &SharedState,
     account_id: &str,
     meta: AccountMeta,
-    persist_position_changes: bool,
-    preserved_default_mod_args: Option<String>,
-    graphics_override: Option<LaunchGraphicsOverride>,
+    options: LaunchExecutionOptions,
 ) -> LaunchResult {
+    let LaunchExecutionOptions {
+        persist_position_changes,
+        preserved_default_mod_args,
+        graphics_override,
+    } = options;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
             "INFO",
@@ -1808,9 +1836,11 @@ async fn launch_single(
         state,
         account_id,
         false,
-        Some(&meta),
-        preserved_default_mod_args.as_deref(),
-        graphics_override.is_some(),
+        BnetPreparationOptions {
+            meta_override: Some(&meta),
+            preserved_default_mod_args: preserved_default_mod_args.as_deref(),
+            require_settings_copy: graphics_override.is_some(),
+        },
     )
     .await
     {
@@ -2365,7 +2395,13 @@ async fn launch_single(
             if is_cancelled(state) {
                 emit("done", "error", "已取消，正在保存状态...");
                 mutex_task.abort();
-                return cancel_with_cleanup(config, &context, account_id).await;
+                return cancel_with_cleanup(
+                    config,
+                    &context,
+                    account_id,
+                    preserved_default_mod_args.as_deref(),
+                )
+                .await;
             }
             if mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
                 break;
