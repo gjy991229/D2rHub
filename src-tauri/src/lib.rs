@@ -355,6 +355,7 @@ pub fn run() {
             commands::account::mark_settings_customized,
             commands::account::set_settings_customized,
             commands::account::set_account_window_position,
+            commands::account::update_account_positions,
             commands::account::initialize_bnet_account,
             commands::account::reinitialize_account,
             commands::account::reorder_accounts,

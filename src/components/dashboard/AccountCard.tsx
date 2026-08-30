@@ -5,7 +5,13 @@ import { Play, RotateCw, Sliders, Trash2, FolderOpen, AlertTriangle, X, Locate, 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-import type { AccountMeta, GlobalConfig, LaunchProgress } from "../../store/types";
+import type {
+  AccountMeta,
+  GlobalConfig,
+  LaunchGroupMember,
+  LaunchProgress,
+  WindowPositionPreset,
+} from "../../store/types";
 import { useAccounts } from "../../store/accounts";
 import { showToast } from "../ui/Toast";
 import { useLaunch } from "../../store/launch";
@@ -33,6 +39,10 @@ interface GridItemProps {
   isSelectionMode?: boolean;
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
+  schemeMember?: LaunchGroupMember;
+  onSchemeMemberChange?: (id: string, patch: Partial<LaunchGroupMember>) => void;
+  getModSchemeUsage?: (id: string, modArgs: string) => string[];
+  getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
 }
@@ -86,6 +96,13 @@ function getModChipLabel(mod: string): string {
     .filter(token => token && !token.startsWith("-"));
 
   return names.join(" ") || mod;
+}
+
+function createPositionId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `position-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 function ProgressInline({ progress }: { progress: NonNullable<LaunchProgress> }) {
@@ -163,7 +180,8 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
-  isSelectionMode, selected, onToggleSelect, onUpdateToken, config
+  isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
+  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -173,16 +191,24 @@ export function AccountGridItem({
   const [reinit, setReinit] = useState(false);
   const [modEditing, setModEditing] = useState(false);
   const [modDraft, setModDraft] = useState(account.mod_args || "");
-  const { addAccountMod, reinitializeAccount, updateAccountMods, markSettingsCustomized } = useAccounts();
+  const [positionEditing, setPositionEditing] = useState(false);
+  const [positionNameDraft, setPositionNameDraft] = useState("");
+  const [positionXDraft, setPositionXDraft] = useState("0");
+  const [positionYDraft, setPositionYDraft] = useState("0");
+  const [positionDelConfirmId, setPositionDelConfirmId] = useState<string | null>(null);
+  const {
+    addAccountMod,
+    reinitializeAccount,
+    updateAccountMods,
+    updateAccountPositions,
+    markSettingsCustomized,
+  } = useAccounts();
 
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
   const [drawerLoaded, setDrawerLoaded] = useState(false);
   type DrawerSettings = { resolution: string; fps: number };
   const [drawer, setDrawer] = useState<DrawerSettings>({ resolution: "1280x720", fps: 30 });
-  // 本地窗口位置状态（同步 account prop 和后端）
-  const [winX, setWinX] = useState<number | null | undefined>(account.window_x);
-  const [winY, setWinY] = useState<number | null | undefined>(account.window_y);
 
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<Record<string, unknown>>({});
@@ -198,7 +224,6 @@ export function AccountGridItem({
   const modCommitInFlightRef = useRef(false);
   const nameCommitInFlightRef = useRef(false);
 
-  useEffect(() => { setWinX(account.window_x); setWinY(account.window_y); }, [account.window_x, account.window_y]);
   useEffect(() => { setModDraft(account.mod_args || ""); }, [account.mod_args]);
 
   useEffect(() => () => {
@@ -290,14 +315,55 @@ export function AccountGridItem({
     }, 1000);
   };
 
-  const saveWindowPosition = async (x: number | undefined, y: number | undefined) => {
-    setWinX(x ?? null);
-    setWinY(y ?? null);
-    try {
-      await invoke("set_account_window_position", { accountId: account.id, windowX: x ?? null, windowY: y ?? null });
-    } catch (e) {
-      showToast("error", `保存窗口位置失败: ${e}`);
+  const positionPresets = account.position_presets || [];
+  const selectedPositionId = isSelectionMode
+    ? schemeMember?.position_preset_id ?? null
+    : account.active_position_id ?? null;
+
+  const selectPosition = (positionId: string | null) => {
+    if (isSelectionMode) {
+      onSchemeMemberChange?.(account.id, {
+        position_preset_id: positionId,
+        position_configured: true,
+      });
+      return;
     }
+    void updateAccountPositions(account.id, positionId, positionPresets);
+  };
+
+  const commitPosition = async () => {
+    const name = positionNameDraft.trim();
+    const x = Number(positionXDraft);
+    const y = Number(positionYDraft);
+    if (!name) {
+      showToast("warning", "请输入位置名称");
+      return;
+    }
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+      showToast("warning", "X、Y 坐标必须是整数");
+      return;
+    }
+    if (positionPresets.some(position => position.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      showToast("warning", `位置名称“${name}”已存在`);
+      return;
+    }
+    const preset: WindowPositionPreset = { id: createPositionId(), name, x, y };
+    await updateAccountPositions(account.id, preset.id, [...positionPresets, preset]);
+    setPositionEditing(false);
+    setPositionNameDraft("");
+  };
+
+  const deletePosition = async (position: WindowPositionPreset) => {
+    const usedBy = getPositionSchemeUsage?.(account.id, position.id) ?? [];
+    if (usedBy.length > 0) {
+      showToast("warning", `位置“${position.name}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
+      setPositionDelConfirmId(null);
+      return;
+    }
+    const next = positionPresets.filter(candidate => candidate.id !== position.id);
+    const nextActive = selectedPositionId === position.id ? next[0]?.id ?? null : selectedPositionId;
+    await updateAccountPositions(account.id, nextActive, next);
+    setPositionDelConfirmId(null);
   };
 
   const handleCardClick = () => {
@@ -361,6 +427,8 @@ export function AccountGridItem({
     && isInternationalRegion(account.region);
   const performanceLabel = `${drawer.resolution} · ${drawer.fps === 0 ? "unlimited" : `${drawer.fps}fps`}`;
   const configModeLabel = account.has_customized_settings ? "独立配置" : "系统配置";
+  const activeMod = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
+  const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
   const resOptions = ["1280x720","1600x900","1920x1080","2560x1440","3840x2160"];
@@ -470,6 +538,7 @@ export function AccountGridItem({
       className="spatial-tile group account-tile flex min-h-[152px] flex-col animate-card-in"
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
+      data-scheme-edit={isSelectionMode ? "true" : undefined}
       style={{
         cursor: isSelectionMode
           ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
@@ -481,19 +550,22 @@ export function AccountGridItem({
           <div className="min-w-0">
             <div className="name-row">
               {isSelectionMode ? (
-                <input
-                  type="checkbox"
-                  checked={!!selected}
-                  disabled={!selected && (!account.initialized || tokenMigrationRequired)}
-                  onChange={() => onToggleSelect && onToggleSelect(account.id)}
-                  onClick={stop}
-                  title={!account.initialized
-                    ? "请先初始化账号"
-                    : tokenMigrationRequired
-                      ? "请先迁移为 Token 直启"
-                      : undefined}
-                  className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
-                />
+                <>
+                  <input
+                    type="checkbox"
+                    checked={!!selected}
+                    disabled={!selected && (!account.initialized || tokenMigrationRequired)}
+                    onChange={() => onToggleSelect && onToggleSelect(account.id)}
+                    onClick={stop}
+                    title={!account.initialized
+                      ? "请先初始化账号"
+                      : tokenMigrationRequired
+                        ? "请先迁移为 Token 直启"
+                        : undefined}
+                    className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
+                  />
+                  {selected && <span className="scheme-context-label">方案配置</span>}
+                </>
               ) : (
                 <span className="tile-index index">{String(account.order + 1).padStart(2, "0")} / {account.initialized ? "READY" : "ATTENTION"}</span>
               )}
@@ -523,7 +595,7 @@ export function AccountGridItem({
                 </button>
               )}
 
-              {!isSelectionMode && (
+              {(!isSelectionMode || selected) && (
                 <div
                   className="mod-row inline-mod-row"
                   role="group"
@@ -538,8 +610,24 @@ export function AccountGridItem({
                   onClickCapture={handleModClickCapture}
                   onKeyDown={handleModKeyDown}
                 >
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation();
+                      if (activeMod === "") return;
+                      if (isSelectionMode) {
+                        onSchemeMemberChange?.(account.id, { mod_args: "" });
+                      } else {
+                        void updateAccountMods(account.id, "", account.mod_list || []);
+                      }
+                    }}
+                    className={`hig-badge mod-chip shrink-0 active:scale-[0.97] ${activeMod === "" ? "mod-chip-active" : ""}`}
+                    title={activeMod === "" ? "当前不使用 Mod" : "不使用 Mod"}
+                  >
+                    无 Mod
+                  </button>
                   {(account.mod_list || []).map((mod, idx) => {
-                    const isActive = account.mod_args === mod;
+                    const isActive = activeMod === mod;
                     const isConfirming = modDelConfirmIdx === idx;
                     const modLabel = getModChipLabel(mod);
                     return (
@@ -548,7 +636,11 @@ export function AccountGridItem({
                           onClick={e => {
                             e.stopPropagation();
                             if (!isActive) {
-                              updateAccountMods(account.id, mod, account.mod_list || []);
+                              if (isSelectionMode) {
+                                onSchemeMemberChange?.(account.id, { mod_args: mod });
+                              } else {
+                                void updateAccountMods(account.id, mod, account.mod_list || []);
+                              }
                             }
                           }}
                           className={`hig-badge mod-chip max-w-[118px] truncate font-mono active:scale-[0.97] ${isActive ? "mod-chip-active" : ""}`}
@@ -556,7 +648,7 @@ export function AccountGridItem({
                         >
                           {modLabel}
                         </button>
-                        <button
+                        {!isSelectionMode && <button
                           className={`absolute -right-1.5 -top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
                             isConfirming
                               ? "scale-110 text-white opacity-100"
@@ -566,6 +658,12 @@ export function AccountGridItem({
                           onClick={e => {
                             e.stopPropagation();
                             if (isConfirming) {
+                              const usedBy = getModSchemeUsage?.(account.id, mod) ?? [];
+                              if (usedBy.length > 0) {
+                                showToast("warning", `Mod“${modLabel}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
+                                setModDelConfirmIdx(null);
+                                return;
+                              }
                               const newMods = (account.mod_list || []).filter((_, i) => i !== idx);
                               const nextActive = isActive ? (newMods[0] || "") : account.mod_args;
                               updateAccountMods(account.id, nextActive, newMods);
@@ -577,11 +675,11 @@ export function AccountGridItem({
                           title={isConfirming ? "确认删除" : "删除配置"}
                         >
                           <X size={9} />
-                        </button>
+                        </button>}
                       </div>
                     );
                   })}
-                  {modEditing ? (
+                  {!isSelectionMode && (modEditing ? (
                     <input
                       className="line-input h-[24px] w-28 px-2 font-mono text-xs"
                       value={modDraft}
@@ -610,7 +708,7 @@ export function AccountGridItem({
                     >
                       +
                     </button>
-                  )}
+                  ))}
                 </div>
               )}
             </div>
@@ -717,14 +815,14 @@ export function AccountGridItem({
       <div
         className="grid"
         style={{
-          gridTemplateRows: expanded ? "1fr" : "0fr",
+          gridTemplateRows: drawerExpanded ? "1fr" : "0fr",
           transition: "grid-template-rows 0.32s cubic-bezier(0.16, 1, 0.3, 1)",
         }}
       >
         <div style={{ overflow: "hidden", minHeight: 0 }}>
           <div className="drawer-body">
             <div className="drawer-grid">
-              <div className="drawer-resolution-fps-row">
+              {!isSelectionMode && <div className="drawer-resolution-fps-row">
                 <div className="drawer-field">
                   <label className="micro-meta mb-1.5 block">分辨率</label>
                   <select
@@ -754,34 +852,68 @@ export function AccountGridItem({
                     </datalist>
                   </div>
                 </div>
-              </div>
+              </div>}
 
-              <div>
-                <label className="micro-meta mb-1.5 block">坐标</label>
-                <div className="drawer-coordinate-controls">
-                  <input
-                    type="number"
-                    placeholder="X"
-                    value={winX ?? ""}
-                    onClick={stop}
-                    onChange={e => {
-                      const v = e.target.value;
-                      saveWindowPosition(v === "" ? undefined : Number(v), winY ?? undefined);
-                    }}
-                    className="line-input w-full px-2 text-center"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Y"
-                    value={winY ?? ""}
-                    onClick={stop}
-                    onChange={e => {
-                      const v = e.target.value;
-                      saveWindowPosition(winX ?? undefined, v === "" ? undefined : Number(v));
-                    }}
-                    className="line-input w-full px-2 text-center"
-                  />
+              <div className={isSelectionMode ? "scheme-position-field" : undefined}>
+                <label className="micro-meta mb-1.5 block">位置</label>
+                <div className="position-preset-row" role="group" aria-label={`${display} 窗口位置`}>
                   <button
+                    type="button"
+                    className={`hig-badge mod-chip position-chip ${selectedPositionId === null ? "mod-chip-active" : ""}`}
+                    onClick={event => { event.stopPropagation(); selectPosition(null); }}
+                    title="启动时不调整窗口位置"
+                  >
+                    不指定
+                  </button>
+                  {positionPresets.map(position => {
+                    const active = selectedPositionId === position.id;
+                    const confirming = positionDelConfirmId === position.id;
+                    return (
+                      <div
+                        key={position.id}
+                        className="group/position relative flex items-center"
+                        onMouseLeave={() => setPositionDelConfirmId(null)}
+                      >
+                        <button
+                          type="button"
+                          className={`hig-badge mod-chip position-chip active:scale-[0.97] ${active ? "mod-chip-active" : ""}`}
+                          onClick={event => { event.stopPropagation(); selectPosition(position.id); }}
+                          title={`${position.name}（${position.x}, ${position.y}）`}
+                        >
+                          <span>{position.name}</span>
+                          <span className="position-chip-coordinates">{position.x},{position.y}</span>
+                        </button>
+                        {!isSelectionMode && <button
+                          type="button"
+                          className={`position-chip-delete ${confirming ? "is-confirming" : ""}`}
+                          aria-label={confirming ? `确认删除位置“${position.name}”` : `删除位置“${position.name}”`}
+                          title={confirming ? "再次点击确认删除" : "删除位置"}
+                          onClick={event => {
+                            event.stopPropagation();
+                            if (confirming) void deletePosition(position);
+                            else setPositionDelConfirmId(position.id);
+                          }}
+                        >
+                          <X size={9} aria-hidden="true" />
+                        </button>}
+                      </div>
+                    );
+                  })}
+                  {!isSelectionMode && <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation();
+                      setPositionNameDraft("");
+                      setPositionXDraft(String(account.window_x ?? 0));
+                      setPositionYDraft(String(account.window_y ?? 0));
+                      setPositionEditing(true);
+                    }}
+                    className="hig-badge mod-chip position-add-chip"
+                    title="添加位置"
+                  >
+                    +
+                  </button>}
+                  {!isSelectionMode && <button
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
@@ -791,13 +923,57 @@ export function AccountGridItem({
                         showToast("error", "复位窗口失败: " + err);
                       }
                     }}
-                    className="control-btn shrink-0"
-                    title="立即将游戏窗口移动至设定的 X, Y 位置"
+                    className="control-btn position-locate-button shrink-0"
+                    title="立即将游戏窗口移动到当前默认位置"
+                    disabled={selectedPositionId === null}
                   >
                     <Locate size={11} />
                     复位
-                  </button>
+                  </button>}
                 </div>
+                {!isSelectionMode && positionEditing && (
+                  <div className="position-preset-editor" onClick={stop}>
+                    <label>
+                      <span>名称</span>
+                      <input
+                        className="line-input px-2"
+                        value={positionNameDraft}
+                        maxLength={16}
+                        placeholder="例如：左上"
+                        onChange={event => setPositionNameDraft(event.target.value)}
+                        autoFocus
+                      />
+                    </label>
+                    <label>
+                      <span>X</span>
+                      <input
+                        type="number"
+                        className="line-input px-2 text-center"
+                        value={positionXDraft}
+                        onChange={event => setPositionXDraft(event.target.value)}
+                      />
+                    </label>
+                    <label>
+                      <span>Y</span>
+                      <input
+                        type="number"
+                        className="line-input px-2 text-center"
+                        value={positionYDraft}
+                        onChange={event => setPositionYDraft(event.target.value)}
+                        onKeyDown={event => {
+                          if (event.key === "Enter") void commitPosition();
+                          if (event.key === "Escape") setPositionEditing(false);
+                        }}
+                      />
+                    </label>
+                    <button type="button" className="primary-cta" onClick={() => void commitPosition()}>
+                      保存位置
+                    </button>
+                    <button type="button" className="control-btn" onClick={() => setPositionEditing(false)}>
+                      取消
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -809,7 +985,8 @@ export function AccountGridItem({
 
 export function SortableAccountCard({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
-  isSelectionMode, selected, onToggleSelect, onUpdateToken, config
+  isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
+  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
@@ -842,6 +1019,10 @@ export function SortableAccountCard({
         isSelectionMode={isSelectionMode}
         selected={selected}
         onToggleSelect={onToggleSelect}
+        schemeMember={schemeMember}
+        onSchemeMemberChange={onSchemeMemberChange}
+        getModSchemeUsage={getModSchemeUsage}
+        getPositionSchemeUsage={getPositionSchemeUsage}
         onUpdateToken={onUpdateToken}
         config={config}
       />

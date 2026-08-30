@@ -9,7 +9,7 @@ use crate::battle_net_config::update_mod_args;
 use crate::commands::account::{
     copy_account_settings_to_system, recover_interrupted_replacement, remove_path_if_exists,
     replace_path_with_backup, resolve_account_runtime_snapshot, sibling_with_suffix,
-    AccountManager, RegistrySnapshotPath,
+    AccountManager, AccountMeta, RegistrySnapshotPath,
 };
 use crate::commands::system::LaunchProgress;
 use crate::commands::utils::silent_cmd;
@@ -28,6 +28,20 @@ pub struct LaunchResult {
     pub d2r_pid: Option<u32>,
     pub error: Option<String>,
     pub mutex_killed: bool,
+}
+
+/// 一次启动的账号级覆盖配置。它只存在于本次启动上下文，不会写回 account.json。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchAccountOverrides {
+    pub mod_args: String,
+    #[serde(default)]
+    pub position_preset_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchAccountEntry {
+    pub account_id: String,
+    pub overrides: LaunchAccountOverrides,
 }
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
@@ -165,6 +179,52 @@ fn validate_launch_account_ids(account_ids: &[String]) -> Result<(), AppError> {
     Ok(())
 }
 
+fn apply_launch_overrides(
+    mut meta: AccountMeta,
+    overrides: &LaunchAccountOverrides,
+) -> Result<AccountMeta, AppError> {
+    let mod_args = overrides.mod_args.trim().to_string();
+    if !mod_args.is_empty()
+        && !meta
+            .mod_list
+            .iter()
+            .any(|configuration| configuration.trim() == mod_args)
+    {
+        return Err(AppError::ConfigReadError(format!(
+            "账号 {} 的方案 Mod 已从胶囊库删除，请先修复启动方案",
+            meta.id
+        )));
+    }
+    meta.mod_args = mod_args;
+
+    let position_id = overrides
+        .position_preset_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    if let Some(position_id) = position_id {
+        let preset = meta
+            .position_presets
+            .iter()
+            .find(|preset| preset.id == position_id)
+            .ok_or_else(|| {
+                AppError::ConfigReadError(format!(
+                    "账号 {} 的方案位置已从胶囊库删除，请先修复启动方案",
+                    meta.id
+                ))
+            })?;
+        meta.window_x = Some(preset.x);
+        meta.window_y = Some(preset.y);
+        meta.active_position_id = Some(preset.id.clone());
+    } else {
+        meta.window_x = None;
+        meta.window_y = None;
+        meta.active_position_id = None;
+    }
+
+    Ok(meta)
+}
+
 fn persist_window_position(
     state: &SharedState,
     accounts_dir: &str,
@@ -179,6 +239,16 @@ fn persist_window_position(
     };
     meta.window_x = Some(position.0);
     meta.window_y = Some(position.1);
+    if let Some(active_id) = meta.active_position_id.as_deref() {
+        if let Some(active) = meta
+            .position_presets
+            .iter_mut()
+            .find(|preset| preset.id == active_id)
+        {
+            active.x = position.0;
+            active.y = position.1;
+        }
+    }
     AccountManager::save_meta(accounts_dir, &meta).is_ok()
 }
 
@@ -411,57 +481,66 @@ fn preflight_accounts(
     for account_id in account_ids {
         AccountManager::validate_account_id(account_id)?;
         let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
-        let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
-        if purpose == ContextPurpose::BattleNetOnly && auth_mode == AuthMode::Token {
-            return Err(AppError::ConfigReadError(format!(
-                "Token 认证账号不支持仅启动 Battle.net: {account_id}"
-            )));
-        }
-        if !meta.initialized {
-            return Err(AppError::ConfigReadError(format!(
-                "账号 {account_id} 尚未初始化"
-            )));
-        }
+        preflight_account_meta(config, &meta, purpose)?;
+    }
+    Ok(())
+}
 
-        let context = LaunchContext::for_account(config, &meta, purpose)?;
-        // Settings.json 是可选能力。缺失、损坏或存档目录不可用时，具体启动流程
-        // 会跳过画质覆盖并发出 warning，不能在这里阻断核心认证和 D2R.exe 启动。
-        match auth_mode {
-            AuthMode::Token => {
-                let token = meta
-                    .token
-                    .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        AppError::ConfigReadError(format!("账号 {account_id} 缺少 Token"))
-                    })?;
-                let bytes = crate::commands::crypto::hex_decode(token).map_err(|error| {
+fn preflight_account_meta(
+    config: &crate::commands::global_config::GlobalConfig,
+    meta: &AccountMeta,
+    purpose: ContextPurpose,
+) -> Result<(), AppError> {
+    let account_id = &meta.id;
+    AccountManager::validate_account_id(account_id)?;
+    let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
+    if purpose == ContextPurpose::BattleNetOnly && auth_mode == AuthMode::Token {
+        return Err(AppError::ConfigReadError(format!(
+            "Token 认证账号不支持仅启动 Battle.net: {account_id}"
+        )));
+    }
+    if !meta.initialized {
+        return Err(AppError::ConfigReadError(format!(
+            "账号 {account_id} 尚未初始化"
+        )));
+    }
+
+    let context = LaunchContext::for_account(config, meta, purpose)?;
+    // Settings.json 是可选能力。缺失、损坏或存档目录不可用时，具体启动流程
+    // 会跳过画质覆盖并发出 warning，不能在这里阻断核心认证和 D2R.exe 启动。
+    match auth_mode {
+        AuthMode::Token => {
+            let token = meta
+                .token
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    AppError::ConfigReadError(format!("账号 {account_id} 缺少 Token"))
+                })?;
+            let bytes = crate::commands::crypto::hex_decode(token).map_err(|error| {
+                AppError::ConfigReadError(format!("账号 {account_id} 的 Token 数据损坏: {error}"))
+            })?;
+            if bytes.is_empty() {
+                return Err(AppError::ConfigReadError(format!(
+                    "账号 {account_id} 的 Token 数据为空"
+                )));
+            }
+            if purpose == ContextPurpose::LaunchGame && !meta.mod_args.trim().is_empty() {
+                parse_windows_command_line(&meta.mod_args).map_err(|error| {
                     AppError::ConfigReadError(format!(
-                        "账号 {account_id} 的 Token 数据损坏: {error}"
+                        "账号 {account_id} 的 Mod 启动参数无效: {error}"
                     ))
                 })?;
-                if bytes.is_empty() {
-                    return Err(AppError::ConfigReadError(format!(
-                        "账号 {account_id} 的 Token 数据为空"
-                    )));
-                }
-                if purpose == ContextPurpose::LaunchGame && !meta.mod_args.trim().is_empty() {
-                    parse_windows_command_line(&meta.mod_args).map_err(|error| {
-                        AppError::ConfigReadError(format!(
-                            "账号 {account_id} 的 Mod 启动参数无效: {error}"
-                        ))
-                    })?;
-                }
             }
-            AuthMode::BattleNet => {
-                validate_bnet_snapshot(config, &meta, context.installation.edition)?;
-                if purpose == ContextPurpose::LaunchGame
-                    && crate::commands::account::is_token_expired(&meta.last_reset_at)
-                {
-                    return Err(AppError::ConfigReadError(format!(
-                        "账号 {account_id} 的认证已超过 30 天，请重新初始化账号"
-                    )));
-                }
+        }
+        AuthMode::BattleNet => {
+            validate_bnet_snapshot(config, meta, context.installation.edition)?;
+            if purpose == ContextPurpose::LaunchGame
+                && crate::commands::account::is_token_expired(&meta.last_reset_at)
+            {
+                return Err(AppError::ConfigReadError(format!(
+                    "账号 {account_id} 的认证已超过 30 天，请重新初始化账号"
+                )));
             }
         }
     }
@@ -508,6 +587,7 @@ async fn cancel_with_cleanup(
     config: &crate::commands::global_config::GlobalConfig,
     context: &LaunchContext,
     account_id: &str,
+    preserved_default_mod_args: Option<&str>,
 ) -> LaunchResult {
     // 取消清理只能认领当前 Launch Context 对应的 Battle.net，绝不回退到其他版本。
     let bnet_count = context
@@ -536,10 +616,22 @@ async fn cancel_with_cleanup(
         };
         let config_clone = config.clone();
         let account_dir_clone = account_dir.clone();
-        let sync_res = tokio::task::spawn_blocking(move || {
-            crate::commands::account::sync_back_to_account(&account_dir_clone, &config_clone)
-        })
-        .await;
+        let preserved_default_mod_args = preserved_default_mod_args.map(str::to_string);
+        let sync_res =
+            tokio::task::spawn_blocking(move || match preserved_default_mod_args.as_deref() {
+                Some(default_mod_args) => {
+                    crate::commands::account::sync_back_to_account_preserving_mod(
+                        &account_dir_clone,
+                        &config_clone,
+                        default_mod_args,
+                    )
+                }
+                None => crate::commands::account::sync_back_to_account(
+                    &account_dir_clone,
+                    &config_clone,
+                ),
+            })
+            .await;
 
         match sync_res {
             Ok(Ok(())) => {
@@ -740,10 +832,15 @@ async fn prepare_bnet_environment(
     state: &SharedState,
     account_id: &str,
     wait_login: bool,
+    meta_override: Option<&AccountMeta>,
+    preserved_default_mod_args: Option<&str>,
 ) -> Result<LaunchContext, LaunchResult> {
     // Resolve the complete account context before any process, file, or registry mutation.
-    let meta = AccountManager::load_meta(&config.accounts_dir, account_id)
-        .map_err(|error| account_path_error(account_id, error))?;
+    let meta = match meta_override {
+        Some(meta) => meta.clone(),
+        None => AccountManager::load_meta(&config.accounts_dir, account_id)
+            .map_err(|error| account_path_error(account_id, error))?,
+    };
     let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())
         .map_err(|error| account_path_error(account_id, error))?;
     if auth_mode != AuthMode::BattleNet {
@@ -1032,7 +1129,13 @@ async fn prepare_bnet_environment(
         for i in 1..=60 {
             if is_cancelled(state) {
                 emit("done", "error", "已取消，正在保存状态...");
-                return Err(cancel_with_cleanup(config, &context, account_id).await);
+                return Err(cancel_with_cleanup(
+                    config,
+                    &context,
+                    account_id,
+                    preserved_default_mod_args,
+                )
+                .await);
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             let count = crate::commands::system::count_bnet_processes_for_path(&battle_net_path);
@@ -1086,7 +1189,9 @@ async fn prepare_bnet_environment(
 
     if is_cancelled(state) {
         emit("done", "error", "已取消，正在保存状态...");
-        return Err(cancel_with_cleanup(config, &context, account_id).await);
+        return Err(
+            cancel_with_cleanup(config, &context, account_id, preserved_default_mod_args).await,
+        );
     }
 
     Ok(context)
@@ -1110,7 +1215,9 @@ async fn launch_single_bnet_only(
         );
     };
 
-    if let Err(res) = prepare_bnet_environment(app, config, state, account_id, true).await {
+    if let Err(res) =
+        prepare_bnet_environment(app, config, state, account_id, true, None, None).await
+    {
         return res;
     }
 
@@ -1158,8 +1265,29 @@ async fn launch_single_bnet_only(
 pub async fn launch_accounts(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
-    account_ids: Vec<String>,
+    account_ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    let (account_ids, overrides_by_account) = match (account_ids, entries) {
+        (Some(_), Some(_)) => {
+            return Err(AppError::ConfigReadError(
+                "启动请求不能同时包含默认账号列表和方案配置".to_string(),
+            ));
+        }
+        (Some(account_ids), None) => (account_ids, std::collections::HashMap::new()),
+        (None, Some(entries)) => {
+            let account_ids = entries
+                .iter()
+                .map(|entry| entry.account_id.clone())
+                .collect::<Vec<_>>();
+            let overrides = entries
+                .into_iter()
+                .map(|entry| (entry.account_id, entry.overrides))
+                .collect::<std::collections::HashMap<_, _>>();
+            (account_ids, overrides)
+        }
+        (None, None) => (Vec::new(), std::collections::HashMap::new()),
+    };
     if account_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -1171,6 +1299,18 @@ pub async fn launch_accounts(
         cfg.clone()
             .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
     };
+
+    // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
+    if !overrides_by_account.is_empty() {
+        for account_id in &account_ids {
+            let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
+            let overrides = overrides_by_account.get(account_id).ok_or_else(|| {
+                AppError::ConfigReadError(format!("账号 {account_id} 缺少方案启动配置"))
+            })?;
+            let effective_meta = apply_launch_overrides(meta, overrides)?;
+            preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
+        }
+    }
     let mut results = Vec::new();
     let total = account_ids.len();
     // 同名窗口检查不修改共享状态，因此不应被宿主运行时租约阻断。直到确实有账号
@@ -1225,6 +1365,19 @@ pub async fn launch_accounts(
                 continue;
             }
         };
+        let preserved_default_mod_args = overrides_by_account
+            .get(account_id)
+            .map(|_| meta.mod_args.clone());
+        let meta = match overrides_by_account.get(account_id) {
+            Some(overrides) => match apply_launch_overrides(meta, overrides) {
+                Ok(meta) => meta,
+                Err(error) => {
+                    results.push(account_path_error(account_id, error));
+                    continue;
+                }
+            },
+            None => meta,
+        };
         if let Some(result) =
             skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
         {
@@ -1233,11 +1386,7 @@ pub async fn launch_accounts(
         }
 
         // 单个账号的只读预检失败只影响该账号；未触碰共享宿主状态，可以继续下一项。
-        if let Err(error) = preflight_accounts(
-            &config,
-            std::slice::from_ref(account_id),
-            ContextPurpose::LaunchGame,
-        ) {
+        if let Err(error) = preflight_account_meta(&config, &meta, ContextPurpose::LaunchGame) {
             let message = error.to_string();
             let _ = app.emit(
                 "launch-progress",
@@ -1305,7 +1454,19 @@ pub async fn launch_accounts(
         );
 
         // 当前账号的生命周期租约保证本次启动期间元数据稳定。
-        let result = launch_single(&app, &config, &state, account_id).await;
+        // 只有默认启动且明确选择了位置胶囊时，才把用户后续拖动写回该胶囊。
+        let persist_position_changes =
+            !overrides_by_account.contains_key(account_id) && meta.active_position_id.is_some();
+        let result = launch_single(
+            &app,
+            &config,
+            &state,
+            account_id,
+            meta,
+            persist_position_changes,
+            preserved_default_mod_args,
+        )
+        .await;
         let killed = result.mutex_killed;
         let success = result.success;
         let pid = result.d2r_pid;
@@ -1374,6 +1535,9 @@ async fn launch_single(
     config: &crate::commands::global_config::GlobalConfig,
     state: &SharedState,
     account_id: &str,
+    meta: AccountMeta,
+    persist_position_changes: bool,
+    preserved_default_mod_args: Option<String>,
 ) -> LaunchResult {
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -1387,10 +1551,6 @@ async fn launch_single(
         );
     };
 
-    let meta = match AccountManager::load_meta(&config.accounts_dir, account_id) {
-        Ok(meta) => meta,
-        Err(error) => return account_path_error(account_id, error),
-    };
     let preflight_context =
         match LaunchContext::for_account(config, &meta, ContextPurpose::LaunchGame) {
             Ok(context) => context,
@@ -1415,7 +1575,17 @@ async fn launch_single(
             .await;
     }
 
-    let context = match prepare_bnet_environment(app, config, state, account_id, false).await {
+    let context = match prepare_bnet_environment(
+        app,
+        config,
+        state,
+        account_id,
+        false,
+        Some(&meta),
+        preserved_default_mod_args.as_deref(),
+    )
+    .await
+    {
         Ok(context) => context,
         Err(result) => return result,
     };
@@ -1467,7 +1637,13 @@ async fn launch_single(
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state) {
             emit("done", "error", "已取消，正在保存状态...");
-            return cancel_with_cleanup(config, &context, account_id).await;
+            return cancel_with_cleanup(
+                config,
+                &context,
+                account_id,
+                preserved_default_mod_args.as_deref(),
+            )
+            .await;
         }
 
         struct SysStatus {
@@ -1700,8 +1876,9 @@ async fn launch_single(
                 pid,
                 &meta.mod_args,
             );
-            // 将游戏窗口标题改为账号昵称，并调整窗口位置（如已配置）
-            if let Ok(meta) = AccountManager::load_meta(&config.accounts_dir, account_id) {
+            // 将游戏窗口标题改为账号昵称，并调整窗口位置（如已配置）。
+            // 方案覆盖不允许反向污染账号默认位置，因此关闭位置轮询写回。
+            {
                 let win_title = if meta.display_name.is_empty() {
                     account_id.to_string()
                 } else {
@@ -1757,7 +1934,10 @@ async fn launch_single(
                             ),
                         );
                     }
-                    // Phase 2: 窗口位置轮询，拖动停止后反向写入账号配置
+                    if !persist_position_changes {
+                        return;
+                    }
+                    // Phase 2: 默认启动时轮询窗口位置，拖动停止后反向写入账号配置
                     let mut sys = sysinfo::System::new();
                     let sys_pid = sysinfo::Pid::from(pid_copy as usize);
                     let mut last_pos: Option<(i32, i32)> = None;
@@ -1808,7 +1988,13 @@ async fn launch_single(
 
     if is_cancelled(state) {
         emit("done", "error", "已取消，正在保存状态...");
-        return cancel_with_cleanup(config, &context, account_id).await;
+        return cancel_with_cleanup(
+            config,
+            &context,
+            account_id,
+            preserved_default_mod_args.as_deref(),
+        )
+        .await;
     }
 
     // ── Step 7: 互斥句柄清除 (后台任务，与 Step 8 并发) ──
@@ -1864,7 +2050,13 @@ async fn launch_single(
             emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
             stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
-            return cancel_with_cleanup(config, &context, account_id).await;
+            return cancel_with_cleanup(
+                config,
+                &context,
+                account_id,
+                preserved_default_mod_args.as_deref(),
+            )
+            .await;
         }
 
         let now = std::time::Instant::now();
@@ -1975,10 +2167,21 @@ async fn launch_single(
     };
     let config_clone = config.clone();
     let account_dir_clone = account_dir.clone();
-    let sync_res = tokio::task::spawn_blocking(move || {
-        crate::commands::account::sync_back_to_account(&account_dir_clone, &config_clone)
-    })
-    .await;
+    let preserved_default_mod_args = preserved_default_mod_args.clone();
+    let sync_res =
+        tokio::task::spawn_blocking(move || match preserved_default_mod_args.as_deref() {
+            Some(default_mod_args) => {
+                crate::commands::account::sync_back_to_account_preserving_mod(
+                    &account_dir_clone,
+                    &config_clone,
+                    default_mod_args,
+                )
+            }
+            None => {
+                crate::commands::account::sync_back_to_account(&account_dir_clone, &config_clone)
+            }
+        })
+        .await;
 
     match sync_res {
         Ok(Ok(())) => {
@@ -2578,13 +2781,13 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        battle_net_launch_argument, battle_net_readiness_source, launch_queue_can_continue,
-        parse_windows_command_line, persist_window_position, preflight_accounts,
-        record_network_readiness_sample, replace_bnet_roaming_snapshot, token_launch_is_ready,
-        unique_account_window_executable, validate_launch_account_ids,
-        validate_legacy_reg_sections, BattleNetReadinessSource,
+        apply_launch_overrides, battle_net_launch_argument, launch_queue_can_continue,
+        battle_net_readiness_source, parse_windows_command_line, persist_window_position,
+        preflight_accounts, record_network_readiness_sample, replace_bnet_roaming_snapshot,
+        token_launch_is_ready, unique_account_window_executable, validate_launch_account_ids,
+        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchAccountOverrides,
     };
-    use crate::commands::account::{AccountManager, AccountMeta};
+    use crate::commands::account::{AccountManager, AccountMeta, WindowPositionPreset};
     use crate::commands::global_config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
@@ -2631,6 +2834,66 @@ mod tests {
         assert!(!launch_queue_can_continue(false, true));
         assert!(!launch_queue_can_continue(true, false));
         assert!(launch_queue_can_continue(true, true));
+    }
+
+    #[test]
+    fn scheme_overrides_create_an_effective_copy_without_changing_account_defaults() {
+        let mut defaults = AccountMeta::new("acount1");
+        defaults.mod_args = "-mod default".to_string();
+        defaults.mod_list = vec!["-mod default".to_string(), "-mod scheme".to_string()];
+        defaults.window_x = Some(10);
+        defaults.window_y = Some(20);
+        defaults.position_presets = vec![WindowPositionPreset {
+            id: "scheme-position".to_string(),
+            name: "右侧".to_string(),
+            x: 800,
+            y: 120,
+        }];
+
+        let effective = apply_launch_overrides(
+            defaults.clone(),
+            &LaunchAccountOverrides {
+                mod_args: "-mod scheme".to_string(),
+                position_preset_id: Some("scheme-position".to_string()),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(effective.mod_args, "-mod scheme");
+        assert_eq!(
+            (effective.window_x, effective.window_y),
+            (Some(800), Some(120))
+        );
+        assert_eq!(defaults.mod_args, "-mod default");
+        assert_eq!((defaults.window_x, defaults.window_y), (Some(10), Some(20)));
+    }
+
+    #[test]
+    fn scheme_overrides_fail_closed_when_a_capsule_was_deleted() {
+        let mut defaults = AccountMeta::new("acount1");
+        defaults.mod_list = vec!["-mod available".to_string()];
+
+        let missing_mod = apply_launch_overrides(
+            defaults.clone(),
+            &LaunchAccountOverrides {
+                mod_args: "-mod deleted".to_string(),
+                position_preset_id: None,
+            },
+        )
+        .unwrap_err();
+        assert!(missing_mod.to_string().contains("方案 Mod 已从胶囊库删除"));
+
+        let missing_position = apply_launch_overrides(
+            defaults,
+            &LaunchAccountOverrides {
+                mod_args: String::new(),
+                position_preset_id: Some("deleted-position".to_string()),
+            },
+        )
+        .unwrap_err();
+        assert!(missing_position
+            .to_string()
+            .contains("方案位置已从胶囊库删除"));
     }
 
     #[test]

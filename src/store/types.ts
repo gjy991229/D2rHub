@@ -10,6 +10,22 @@ export interface LaunchGroup {
   id: string;
   name: string;
   account_ids: string[];
+  members?: LaunchGroupMember[];
+}
+
+export interface LaunchGroupMember {
+  account_id: string;
+  /** undefined/null = legacy group inherits the account default; empty string = explicitly no Mod. */
+  mod_args?: string | null;
+  position_preset_id?: string | null;
+  position_configured?: boolean;
+}
+
+export interface WindowPositionPreset {
+  id: string;
+  name: string;
+  x: number;
+  y: number;
 }
 
 export interface GlobalConfig {
@@ -179,6 +195,8 @@ export interface AccountMeta {
   running_pid?: number | null;
   window_x?: number | null;
   window_y?: number | null;
+  position_presets?: WindowPositionPreset[];
+  active_position_id?: string | null;
   auth_mode?: string | null;
   region?: string | null;
   language?: string | null;
@@ -199,6 +217,14 @@ export interface LaunchResult {
   d2r_pid: number | null;
   error: string | null;
   mutex_killed: boolean;
+}
+
+export interface LaunchAccountEntry {
+  account_id: string;
+  overrides: {
+    mod_args: string;
+    position_preset_id: string | null;
+  };
 }
 
 export interface AudioModRuntimeWarning {

@@ -38,7 +38,7 @@ export function AccountGrid({ accounts, onReorder, children, isSelectionMode }: 
     <div className="flex-1 overflow-auto px-5 pb-5">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={accounts.map(a => a.id)} strategy={rectSortingStrategy}>
-          <div className="spatial-grid">
+          <div className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
             {children}
           </div>
         </SortableContext>

@@ -108,6 +108,11 @@ const accounts: AccountMeta[] = [
     running_pid: 28420,
     window_x: 12,
     window_y: 32,
+    position_presets: [
+      { id: "top-left", name: "左上", x: 12, y: 32 },
+      { id: "right", name: "右侧", x: 980, y: 34 },
+    ],
+    active_position_id: "top-left",
     auth_mode: "token",
     region: "KR",
     language: "zhCN",
@@ -128,6 +133,8 @@ const accounts: AccountMeta[] = [
     running_pid: 28421,
     window_x: 980,
     window_y: 34,
+    position_presets: [{ id: "right", name: "右侧", x: 980, y: 34 }],
+    active_position_id: "right",
     auth_mode: "token",
     region: "NA",
     language: "enUS",
@@ -148,6 +155,8 @@ const accounts: AccountMeta[] = [
     running_pid: 28422,
     window_x: null,
     window_y: null,
+    position_presets: [],
+    active_position_id: null,
     auth_mode: "browser",
     region: "EU",
     language: "zhTW",
@@ -168,6 +177,8 @@ const accounts: AccountMeta[] = [
     running_pid: null,
     window_x: null,
     window_y: null,
+    position_presets: [],
+    active_position_id: null,
     auth_mode: null,
     region: null,
     language: null,
@@ -177,7 +188,7 @@ const accounts: AccountMeta[] = [
 ];
 
 const baseConfig: GlobalConfig = {
-  version: 6,
+  version: 7,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -218,7 +229,25 @@ const baseConfig: GlobalConfig = {
   agent_delay_secs: 4,
   agent_threshold: 2,
   launch_groups: [
-    { id: "farm-core", name: "日常 Farm", account_ids: ["sorc-01", "barb-02"] },
+    {
+      id: "farm-core",
+      name: "日常 Farm",
+      account_ids: ["sorc-01", "barb-02"],
+      members: [
+        {
+          account_id: "sorc-01",
+          mod_args: "-direct -txt",
+          position_preset_id: "right",
+          position_configured: true,
+        },
+        {
+          account_id: "barb-02",
+          mod_args: "",
+          position_preset_id: "right",
+          position_configured: true,
+        },
+      ],
+    },
     { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
   ],
 };

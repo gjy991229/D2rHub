@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 6;
+const CURRENT_CONFIG_VERSION: u32 = 7;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -33,12 +33,29 @@ pub struct LegacyPathMigration {
 }
 
 /// 全局配置
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchGroupMember {
+    pub account_id: String,
+    /// None 表示由旧版启动组迁移而来，继续继承账号默认 Mod；Some("") 表示明确不使用 Mod。
+    #[serde(default)]
+    pub mod_args: Option<String>,
+    /// 位置胶囊引用；None 可表示“不指定位置”。
+    #[serde(default)]
+    pub position_preset_id: Option<String>,
+    /// 区分旧版缺失位置配置与新版明确选择“不指定位置”。
+    #[serde(default)]
+    pub position_configured: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaunchGroup {
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub account_ids: Vec<String>,
+    /// 新版启动方案成员配置。account_ids 作为旧版本兼容镜像继续保留。
+    #[serde(default)]
+    pub members: Vec<LaunchGroupMember>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,8 +304,8 @@ fn should_validate_installation_paths(
 mod validation_tests {
     use super::{
         saved_games_settings_exists, should_validate_installation_paths,
-        validate_installation_paths, GlobalConfig, LaunchGroup, LegacyPathMigration,
-        CURRENT_CONFIG_VERSION,
+        validate_installation_paths, GlobalConfig, LaunchGroup, LaunchGroupMember,
+        LegacyPathMigration, CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -474,6 +491,7 @@ mod validation_tests {
                     "account-b".to_string(),
                     " ".to_string(),
                 ],
+                members: Vec::new(),
             }],
             ..GlobalConfig::default()
         };
@@ -489,6 +507,48 @@ mod validation_tests {
     }
 
     #[test]
+    fn launch_group_members_are_authoritative_and_keep_the_legacy_id_mirror() {
+        let mut config = GlobalConfig {
+            launch_groups: vec![LaunchGroup {
+                id: " plan ".to_string(),
+                name: " 方案 ".to_string(),
+                account_ids: vec!["stale-account".to_string()],
+                members: vec![
+                    LaunchGroupMember {
+                        account_id: " account-b ".to_string(),
+                        mod_args: Some(" -mod b ".to_string()),
+                        position_preset_id: Some(" right ".to_string()),
+                        position_configured: true,
+                    },
+                    LaunchGroupMember {
+                        account_id: "account-b".to_string(),
+                        mod_args: Some("ignored duplicate".to_string()),
+                        position_preset_id: None,
+                        position_configured: true,
+                    },
+                    LaunchGroupMember {
+                        account_id: "account-a".to_string(),
+                        mod_args: Some(String::new()),
+                        position_preset_id: None,
+                        position_configured: true,
+                    },
+                ],
+            }],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_launch_groups());
+        let group = &config.launch_groups[0];
+        assert_eq!(group.account_ids, ["account-b", "account-a"]);
+        assert_eq!(group.members[0].mod_args.as_deref(), Some("-mod b"));
+        assert_eq!(
+            group.members[0].position_preset_id.as_deref(),
+            Some("right")
+        );
+        assert!(config.validate_launch_groups().is_ok());
+    }
+
+    #[test]
     fn launch_group_names_and_ids_must_be_unique() {
         let mut config = GlobalConfig {
             launch_groups: vec![
@@ -496,11 +556,13 @@ mod validation_tests {
                     id: "group-1".to_string(),
                     name: "Farm".to_string(),
                     account_ids: vec!["account-a".to_string()],
+                    members: Vec::new(),
                 },
                 LaunchGroup {
                     id: "group-2".to_string(),
                     name: "farm".to_string(),
                     account_ids: vec!["account-b".to_string()],
+                    members: Vec::new(),
                 },
             ],
             ..GlobalConfig::default()
@@ -521,11 +583,26 @@ mod validation_tests {
                     id: "only".to_string(),
                     name: "单账号组".to_string(),
                     account_ids: vec!["account-a".to_string()],
+                    members: Vec::new(),
                 },
                 LaunchGroup {
                     id: "mixed".to_string(),
                     name: "混合组".to_string(),
                     account_ids: vec!["account-a".to_string(), "account-b".to_string()],
+                    members: vec![
+                        LaunchGroupMember {
+                            account_id: "account-a".to_string(),
+                            mod_args: Some("-mod a".to_string()),
+                            position_preset_id: None,
+                            position_configured: true,
+                        },
+                        LaunchGroupMember {
+                            account_id: "account-b".to_string(),
+                            mod_args: Some(String::new()),
+                            position_preset_id: None,
+                            position_configured: true,
+                        },
+                    ],
                 },
             ],
             ..GlobalConfig::default()
@@ -538,6 +615,8 @@ mod validation_tests {
             config.launch_groups[1].account_ids,
             vec!["account-b".to_string()]
         );
+        assert_eq!(config.launch_groups[1].members.len(), 1);
+        assert_eq!(config.launch_groups[1].members[0].account_id, "account-b");
         assert!(!config.remove_account_from_launch_groups("missing"));
     }
 
@@ -1287,6 +1366,36 @@ mod validation_tests {
     }
 
     #[test]
+    fn v6_launch_groups_load_unchanged_and_gain_the_v7_member_field() {
+        let root = temp_dir("v6_launch_groups");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        legacy["version"] = serde_json::json!(6);
+        legacy["launch_groups"] = serde_json::json!([{
+            "id": "legacy-plan",
+            "name": "旧多选",
+            "account_ids": ["acount1", "acount2"]
+        }]);
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(loaded.launch_groups.len(), 1);
+        assert_eq!(loaded.launch_groups[0].account_ids, ["acount1", "acount2"]);
+        assert!(loaded.launch_groups[0].members.is_empty());
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(
+            persisted["launch_groups"][0]["members"],
+            serde_json::json!([])
+        );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn real_v1_shape_migrates_without_requiring_modern_fields() {
         let root = temp_dir("real_v1_shape");
         let config_path = root.join("global_config.json");
@@ -1511,6 +1620,11 @@ impl GlobalConfig {
                 .account_ids
                 .retain(|member_id| member_id != account_id);
             removed |= group.account_ids.len() != previous_len;
+            let previous_member_len = group.members.len();
+            group
+                .members
+                .retain(|member| member.account_id != account_id);
+            removed |= group.members.len() != previous_member_len;
         }
         removed
     }
@@ -1529,6 +1643,36 @@ impl GlobalConfig {
                 .filter(|account_id| seen.insert((*account_id).to_string()))
                 .map(str::to_string)
                 .collect();
+
+            let mut seen_members = std::collections::HashSet::new();
+            group.members = group
+                .members
+                .iter()
+                .cloned()
+                .filter_map(|mut member| {
+                    member.account_id = member.account_id.trim().to_string();
+                    if member.account_id.is_empty()
+                        || !seen_members.insert(member.account_id.clone())
+                    {
+                        return None;
+                    }
+                    member.mod_args = member.mod_args.map(|args| args.trim().to_string());
+                    member.position_preset_id = member
+                        .position_preset_id
+                        .map(|id| id.trim().to_string())
+                        .filter(|id| !id.is_empty());
+                    Some(member)
+                })
+                .collect();
+
+            // 新版成员是权威来源；同步 account_ids 让旧版字段始终可读。
+            if !group.members.is_empty() {
+                group.account_ids = group
+                    .members
+                    .iter()
+                    .map(|member| member.account_id.clone())
+                    .collect();
+            }
         }
         original != self.launch_groups
     }
@@ -1538,21 +1682,35 @@ impl GlobalConfig {
         let mut group_names = std::collections::HashSet::new();
         for group in &self.launch_groups {
             if group.id.is_empty() {
-                return Err(AppError::ConfigWriteError("启动组缺少唯一标识".to_string()));
+                return Err(AppError::ConfigWriteError(
+                    "启动方案缺少唯一标识".to_string(),
+                ));
             }
             if !group_ids.insert(group.id.clone()) {
                 return Err(AppError::ConfigWriteError(format!(
-                    "启动组唯一标识重复: {}",
+                    "启动方案唯一标识重复: {}",
                     group.id
                 )));
             }
             if group.name.is_empty() {
-                return Err(AppError::ConfigWriteError("启动组名称不能为空".to_string()));
+                return Err(AppError::ConfigWriteError(
+                    "启动方案名称不能为空".to_string(),
+                ));
             }
             let comparable_name = group.name.to_lowercase();
             if !group_names.insert(comparable_name) {
                 return Err(AppError::ConfigWriteError(format!(
-                    "启动组名称重复: {}",
+                    "启动方案名称重复: {}",
+                    group.name
+                )));
+            }
+            if group
+                .members
+                .iter()
+                .any(|member| member.account_id.is_empty())
+            {
+                return Err(AppError::ConfigWriteError(format!(
+                    "启动方案“{}”包含无效账号",
                     group.name
                 )));
             }

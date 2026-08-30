@@ -203,6 +203,15 @@ fn write_registry_snapshot_values(backups: &[RegistryValueBackup]) -> Result<(),
     Ok(())
 }
 
+/// 账号级窗口位置胶囊。`window_x/window_y` 仍作为兼容旧版本的默认位置镜像保留。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WindowPositionPreset {
+    pub id: String,
+    pub name: String,
+    pub x: i32,
+    pub y: i32,
+}
+
 /// 账号元信息（存储在 accounts/{id}/account.json）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccountMeta {
@@ -235,6 +244,12 @@ pub struct AccountMeta {
     /// 游戏窗口目标 Y 坐标（None = 不调整位置）
     #[serde(default)]
     pub window_y: Option<i32>,
+    /// 账号级窗口位置胶囊库。旧配置缺少该字段时，会由 window_x/window_y 补全。
+    #[serde(default)]
+    pub position_presets: Vec<WindowPositionPreset>,
+    /// 主界面默认选择的位置胶囊；None 表示不指定窗口位置。
+    #[serde(default)]
+    pub active_position_id: Option<String>,
     /// 认证模式 ("bnet" 或 "token")
     #[serde(default)]
     pub auth_mode: Option<String>,
@@ -275,6 +290,8 @@ impl AccountMeta {
             running_pid: None,
             window_x: None,
             window_y: None,
+            position_presets: Vec::new(),
+            active_position_id: None,
             auth_mode: None,
             region: None,
             token: None,
@@ -372,6 +389,8 @@ impl AccountManager {
             }
         }
 
+        normalize_legacy_window_position(&mut meta);
+
         if let Some(account_dir) = path.parent() {
             hydrate_meta_from_runtime_snapshot(account_dir, &mut meta);
         }
@@ -423,6 +442,81 @@ impl AccountManager {
     pub fn next_id(_accounts_dir: &str) -> String {
         uuid::Uuid::new_v4().to_string()
     }
+}
+
+fn next_legacy_position_id(presets: &[WindowPositionPreset]) -> String {
+    let base = "legacy-window-position";
+    if !presets.iter().any(|preset| preset.id == base) {
+        return base.to_string();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base}-{suffix}");
+        if !presets.iter().any(|preset| preset.id == candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+fn next_legacy_position_name(presets: &[WindowPositionPreset]) -> String {
+    let base = "原位置";
+    if !presets.iter().any(|preset| preset.name == base) {
+        return base.to_string();
+    }
+    let mut suffix = 2;
+    loop {
+        let candidate = format!("{base} {suffix}");
+        if !presets.iter().any(|preset| preset.name == candidate) {
+            return candidate;
+        }
+        suffix += 1;
+    }
+}
+
+/// 旧版本只有 window_x/window_y。它们继续作为跨版本兼容的权威镜像：
+/// 旧版修改坐标或清空坐标后，新版重新读取时也会得到相同默认位置。
+fn normalize_legacy_window_position(meta: &mut AccountMeta) {
+    let mut seen_ids = std::collections::HashSet::new();
+    meta.position_presets.retain_mut(|preset| {
+        preset.id = preset.id.trim().to_string();
+        preset.name = preset.name.trim().to_string();
+        !preset.id.is_empty() && !preset.name.is_empty() && seen_ids.insert(preset.id.clone())
+    });
+
+    let Some((x, y)) = meta.window_x.zip(meta.window_y) else {
+        meta.active_position_id = None;
+        return;
+    };
+
+    if let Some(active_id) = meta.active_position_id.as_deref() {
+        if meta
+            .position_presets
+            .iter()
+            .any(|preset| preset.id == active_id && preset.x == x && preset.y == y)
+        {
+            return;
+        }
+    }
+
+    if let Some(existing) = meta
+        .position_presets
+        .iter()
+        .find(|preset| preset.x == x && preset.y == y)
+    {
+        meta.active_position_id = Some(existing.id.clone());
+        return;
+    }
+
+    let id = next_legacy_position_id(&meta.position_presets);
+    let name = next_legacy_position_name(&meta.position_presets);
+    meta.position_presets.push(WindowPositionPreset {
+        id: id.clone(),
+        name,
+        x,
+        y,
+    });
+    meta.active_position_id = Some(id);
 }
 
 pub(crate) fn normalized_account_display_name(name: &str) -> String {
@@ -1240,6 +1334,104 @@ pub fn set_account_window_position(
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
     meta.window_x = window_x;
     meta.window_y = window_y;
+    match window_x.zip(window_y) {
+        Some((x, y)) => {
+            if let Some(active_id) = meta.active_position_id.clone() {
+                if let Some(active) = meta
+                    .position_presets
+                    .iter_mut()
+                    .find(|preset| preset.id == active_id)
+                {
+                    active.x = x;
+                    active.y = y;
+                } else {
+                    meta.active_position_id = None;
+                }
+            }
+            if meta.active_position_id.is_none() {
+                if let Some(existing) = meta
+                    .position_presets
+                    .iter()
+                    .find(|preset| preset.x == x && preset.y == y)
+                {
+                    meta.active_position_id = Some(existing.id.clone());
+                } else {
+                    let id = next_legacy_position_id(&meta.position_presets);
+                    let name = next_legacy_position_name(&meta.position_presets);
+                    meta.position_presets.push(WindowPositionPreset {
+                        id: id.clone(),
+                        name,
+                        x,
+                        y,
+                    });
+                    meta.active_position_id = Some(id);
+                }
+            }
+        }
+        None => meta.active_position_id = None,
+    }
+    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
+    Ok(meta.redacted_for_frontend())
+}
+
+/// 保存账号的位置胶囊库与主界面默认选择，并同步旧版 window_x/window_y 字段。
+#[tauri::command]
+pub fn update_account_positions(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    active_position_id: Option<String>,
+    position_presets: Vec<WindowPositionPreset>,
+) -> Result<AccountMeta, AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
+    let config = state.config.read();
+    let cfg = config
+        .as_ref()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    let mut normalized = Vec::with_capacity(position_presets.len());
+    let mut ids = std::collections::HashSet::new();
+    let mut names = std::collections::HashSet::new();
+    for mut preset in position_presets {
+        preset.id = preset.id.trim().to_string();
+        preset.name = preset.name.trim().to_string();
+        if preset.id.is_empty() || preset.name.is_empty() {
+            return Err(AppError::ConfigWriteError(
+                "位置名称和唯一标识不能为空".to_string(),
+            ));
+        }
+        if !ids.insert(preset.id.clone()) {
+            return Err(AppError::ConfigWriteError(format!(
+                "位置唯一标识重复: {}",
+                preset.id
+            )));
+        }
+        if !names.insert(preset.name.to_lowercase()) {
+            return Err(AppError::ConfigWriteError(format!(
+                "位置名称重复: {}",
+                preset.name
+            )));
+        }
+        normalized.push(preset);
+    }
+
+    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
+    let active_position_id = active_position_id
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty());
+    let selected = active_position_id
+        .as_deref()
+        .map(|id| {
+            normalized
+                .iter()
+                .find(|preset| preset.id == id)
+                .ok_or_else(|| AppError::ConfigWriteError(format!("所选位置不存在: {id}")))
+        })
+        .transpose()?;
+
+    meta.window_x = selected.map(|preset| preset.x);
+    meta.window_y = selected.map(|preset| preset.y);
+    meta.position_presets = normalized;
+    meta.active_position_id = active_position_id;
     AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
     Ok(meta.redacted_for_frontend())
 }
@@ -1289,6 +1481,64 @@ mod settings_json_tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn legacy_window_coordinates_become_a_position_capsule_without_losing_old_fields() {
+        let accounts = temp_dir("legacy_window_position");
+        let account_dir = accounts.join("acount1");
+        std::fs::create_dir_all(&account_dir).unwrap();
+        std::fs::write(
+            account_dir.join("account.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "id": "acount1",
+                "display_name": "旧账号",
+                "window_x": 128,
+                "window_y": 256
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let meta = AccountManager::load_meta(accounts.to_str().unwrap(), "acount1").unwrap();
+
+        assert_eq!((meta.window_x, meta.window_y), (Some(128), Some(256)));
+        assert_eq!(meta.position_presets.len(), 1);
+        assert_eq!(meta.position_presets[0].name, "原位置");
+        assert_eq!(
+            (meta.position_presets[0].x, meta.position_presets[0].y),
+            (128, 256)
+        );
+        assert_eq!(
+            meta.active_position_id.as_deref(),
+            Some(meta.position_presets[0].id.as_str())
+        );
+
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn legacy_account_without_complete_coordinates_keeps_position_disabled() {
+        let accounts = temp_dir("legacy_window_position_disabled");
+        let account_dir = accounts.join("acount1");
+        std::fs::create_dir_all(&account_dir).unwrap();
+        std::fs::write(
+            account_dir.join("account.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "id": "acount1",
+                "window_x": 128
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let meta = AccountManager::load_meta(accounts.to_str().unwrap(), "acount1").unwrap();
+
+        assert!(meta.position_presets.is_empty());
+        assert!(meta.active_position_id.is_none());
+        assert_eq!((meta.window_x, meta.window_y), (Some(128), None));
+
+        let _ = std::fs::remove_dir_all(accounts);
     }
 
     #[test]
@@ -3214,6 +3464,23 @@ pub fn sync_back_to_account(
     account_dir: &std::path::Path,
     cfg: &crate::commands::global_config::GlobalConfig,
 ) -> Result<(), AppError> {
+    sync_back_to_account_inner(account_dir, cfg, None)
+}
+
+/// 方案启动回写认证快照时，显式保留账号默认 Mod，避免临时启动参数进入账号库。
+pub fn sync_back_to_account_preserving_mod(
+    account_dir: &std::path::Path,
+    cfg: &crate::commands::global_config::GlobalConfig,
+    default_mod_args: &str,
+) -> Result<(), AppError> {
+    sync_back_to_account_inner(account_dir, cfg, Some(default_mod_args))
+}
+
+fn sync_back_to_account_inner(
+    account_dir: &std::path::Path,
+    cfg: &crate::commands::global_config::GlobalConfig,
+    preserved_mod_args: Option<&str>,
+) -> Result<(), AppError> {
     let meta_path = account_dir.join("account.json");
     let mut meta: AccountMeta = serde_json::from_str(&std::fs::read_to_string(&meta_path)?)
         .map_err(|error| AppError::FileError(format!("读取 account.json 失败: {error}")))?;
@@ -3222,7 +3489,14 @@ pub fn sync_back_to_account(
     let build_result = (|| -> Result<(), AppError> {
         let runtime =
             stage_runtime_snapshot(&pending.staged_root, cfg, context.installation.edition)?;
-        if meta.mod_args.is_empty() {
+        if let Some(default_mod_args) = preserved_mod_args {
+            meta.mod_args = default_mod_args.to_string();
+            update_mod_args(
+                &runtime.staged_bnet_config,
+                context.edition.battle_net_config_game_key,
+                default_mod_args,
+            )?;
+        } else if meta.mod_args.is_empty() {
             if let Some(args) = try_read_mod_args(
                 &runtime.staged_bnet_config,
                 context.edition.battle_net_config_game_key,

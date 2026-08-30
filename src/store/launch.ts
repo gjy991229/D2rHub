@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
-import type { LaunchProgress, LaunchResult } from "./types";
+import type { LaunchAccountEntry, LaunchProgress, LaunchResult } from "./types";
 import { showToast } from "../components/ui/Toast";
 
 export interface LaunchLog {
@@ -21,6 +21,7 @@ interface LaunchState {
   drawerOpen: boolean;
 
   startLaunch: (accountIds: string[]) => Promise<void>;
+  startSchemeLaunch: (entries: LaunchAccountEntry[]) => Promise<void>;
   startBattleNetOnly: (accountIds: string[]) => Promise<void>;
   cancelLaunch: () => Promise<void>;
   updateProgress: (p: LaunchProgress) => void;
@@ -55,6 +56,24 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动失败: ${e}`);
+      emit("launch-ended", { success: false });
+    }
+  },
+
+  startSchemeLaunch: async (entries: LaunchAccountEntry[]) => {
+    set({ launching: true, progress: {}, results: [], error: null });
+    try {
+      const results = await invoke<LaunchResult[]>("launch_accounts", { entries });
+      set({ results, launching: false });
+
+      const hasFailed = results.some((result) => !result.success);
+      results
+        .filter((result) => result.success && result.error)
+        .forEach((result) => showToast("warning", result.error as string));
+      emit("launch-ended", { success: !hasFailed });
+    } catch (e) {
+      set({ error: String(e), launching: false });
+      showToast("error", `启动方案失败: ${e}`);
       emit("launch-ended", { success: false });
     }
   },

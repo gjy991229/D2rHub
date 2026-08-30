@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { AccountMeta } from "./types";
+import type { AccountMeta, WindowPositionPreset } from "./types";
 import type { InternationalAccountRegion } from "../utils/regionPaths";
 import { showToast } from "../components/ui/Toast";
 
@@ -15,6 +15,7 @@ interface AccountsState {
   renameAccount: (id: string, newName: string) => Promise<boolean>;
   addAccountMod: (id: string, modConfiguration: string) => Promise<boolean | null>;
   updateAccountMods: (id: string, activeMod: string, modList: string[]) => Promise<void>;
+  updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<void>;
   updateAccountRegion: (id: string, region: InternationalAccountRegion) => Promise<void>;
   initializeBnetAccount: (id: string) => Promise<void>;
   reinitializeAccount: (id: string) => Promise<void>;
@@ -98,6 +99,16 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     } catch (e) {
       set({ error: String(e) });
       showToast("error", `保存 Mod 参数失败: ${e}`);
+    }
+  },
+
+  updateAccountPositions: async (id, activePositionId, positionPresets) => {
+    try {
+      await invoke("update_account_positions", { accountId: id, activePositionId, positionPresets });
+      await get().loadAccounts();
+    } catch (e) {
+      set({ error: String(e) });
+      showToast("error", `保存窗口位置失败: ${e}`);
     }
   },
 

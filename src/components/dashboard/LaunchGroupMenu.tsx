@@ -12,7 +12,11 @@ import { createPortal } from "react-dom";
 import { AlertTriangle, ChevronDown, ListChecks, Pencil, Play, Plus } from "lucide-react";
 
 import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
-import { inspectLaunchGroup, type LaunchGroupMemberIssue } from "../../utils/launchGroups";
+import {
+  inspectLaunchGroup,
+  launchGroupAccountIds,
+  type LaunchGroupMemberIssue,
+} from "../../utils/launchGroups";
 
 interface LaunchGroupMenuProps {
   groups: LaunchGroup[];
@@ -36,7 +40,9 @@ const VIEWPORT_PADDING = 8;
 function issueReason(issue: LaunchGroupMemberIssue): string {
   if (issue.reason === "missing") return "账号已删除";
   if (issue.reason === "not_initialized") return "尚未初始化";
-  return "需要迁移 Token";
+  if (issue.reason === "token_migration") return "需要迁移 Token";
+  if (issue.reason === "missing_mod") return "Mod 已删除";
+  return "位置已删除";
 }
 
 function issueDetails(issues: LaunchGroupMemberIssue[]): string {
@@ -143,7 +149,7 @@ export function LaunchGroupMenu({
         onKeyDown={handleTriggerKeyDown}
       >
         <ListChecks size={13} strokeWidth={1.9} aria-hidden="true" />
-        <span>启动组</span>
+        <span>启动方案</span>
         {groups.length > 0 && <span className="launch-group-trigger-count">{groups.length}</span>}
         <ChevronDown className="launch-group-trigger-chevron" size={11} strokeWidth={2} aria-hidden="true" />
       </button>
@@ -153,7 +159,7 @@ export function LaunchGroupMenu({
           ref={menuRef}
           id={menuId}
           role="dialog"
-          aria-label="启动组"
+          aria-label="启动方案"
           className="launch-group-menu"
           data-placement={menuPosition.opensUpward ? "top" : "bottom"}
           style={{ left: menuPosition.left, top: menuPosition.top }}
@@ -162,10 +168,10 @@ export function LaunchGroupMenu({
         >
           <div className="launch-group-menu-header">
             <div>
-              <p>启动组</p>
-              <span>按固定组合启动账号</span>
+              <p>启动方案</p>
+              <span>按账号独立配置启动</span>
             </div>
-            <span>{groups.length} 个启动组</span>
+            <span>{groups.length} 个方案</span>
           </div>
 
           <div className="launch-group-list">
@@ -173,19 +179,20 @@ export function LaunchGroupMenu({
               <div className="launch-group-empty">
                 <ListChecks size={18} strokeWidth={1.6} aria-hidden="true" />
                 <div>
-                  <p>还没有启动组</p>
-                  <span>创建一个常用账号组合，之后可以直接启动。</span>
+                  <p>还没有启动方案</p>
+                  <span>保存账号、Mod 和位置组合，之后可以直接启动。</span>
                 </div>
               </div>
             ) : groups.map(group => {
               const availability = inspectLaunchGroup(group, accounts, config);
-              const empty = group.account_ids.length === 0;
+              const memberCount = launchGroupAccountIds(group).length;
+              const empty = memberCount === 0;
               const unavailable = availability.issues.length > 0;
               const status = empty
                 ? "尚未选择账号"
                 : unavailable
                   ? `${availability.issues.length} 个账号不可用`
-                  : `${group.account_ids.length} 个账号`;
+                  : `${memberCount} 个账号 · 配置完整`;
               const title = empty ? "请先编辑并选择账号" : issueDetails(availability.issues);
               return (
                 <div
@@ -216,7 +223,7 @@ export function LaunchGroupMenu({
                   <button
                     type="button"
                     className="launch-group-edit"
-                    aria-label={`编辑启动组“${group.name}”`}
+                    aria-label={`编辑启动方案“${group.name}”`}
                     title={`编辑“${group.name}”`}
                     onClick={() => {
                       closeMenu();
@@ -239,7 +246,7 @@ export function LaunchGroupMenu({
             }}
           >
             <Plus size={13} strokeWidth={2} aria-hidden="true" />
-            新建启动组
+            新建启动方案
           </button>
         </div>,
         document.body,
