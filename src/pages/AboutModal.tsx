@@ -13,6 +13,8 @@ interface Props {
 export function AboutModal({ open, onClose }: Props) {
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [sponsors, setSponsors] = useState<string[]>([]);
+  const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
   const [showSponsors, setShowSponsors] = useState(false);
   const [showDonation, setShowDonation] = useState(false);
   const [version, setVersion] = useState("0.1.0");
@@ -27,7 +29,39 @@ export function AboutModal({ open, onClose }: Props) {
 
 
   const qq = "1070676143";
-  const sponsors = ["rabbitxman#1168", "忙着搞数学"];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/sponsors.json")
+      .then(response => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.json() as Promise<unknown>;
+      })
+      .then(data => {
+        if (!Array.isArray(data)) throw new Error("赞助名单必须是 JSON 数组");
+
+        const names = Array.from(new Set(
+          data
+            .filter((name): name is string => typeof name === "string")
+            .map(name => name.trim())
+            .filter(Boolean),
+        ));
+
+        if (!cancelled) setSponsors(names);
+      })
+      .catch(error => {
+        console.error("无法加载赞助名单:", error);
+        if (!cancelled) setSponsors([]);
+      })
+      .finally(() => {
+        if (!cancelled) setSponsorsLoaded(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -121,7 +155,7 @@ export function AboutModal({ open, onClose }: Props) {
   return (
     <>
       <Modal open={open} onClose={onClose} title="关于" width="max-w-sm">
-        <div className="space-y-5">
+        <div className="space-y-5 max-h-[calc(100vh-7rem)] overflow-y-auto overscroll-contain pr-1 -mr-1">
           {/* App info */}
           <div className="text-center">
             <img src="/logo.png" alt="D2RHub"
@@ -176,12 +210,24 @@ export function AboutModal({ open, onClose }: Props) {
               type="button"
               aria-expanded={showSponsors}
               aria-controls="about-sponsor-list"
-              onClick={() => setShowSponsors(!showSponsors)}
+              onClick={() => {
+                const nextOpen = !showSponsors;
+                setShowSponsors(nextOpen);
+                if (nextOpen) setShowDonation(false);
+              }}
               className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-1.5">
                 <HeartHandshake size={12} className="text-accent" />
                 <span className="text-md font-medium text-text-primary">感谢赞助</span>
+                {sponsorsLoaded && sponsors.length > 0 && (
+                  <span
+                    className="min-w-[18px] h-[18px] px-1.5 rounded-full inline-flex items-center justify-center bg-surface-active text-2xs font-semibold text-text-muted"
+                    aria-hidden="true"
+                  >
+                    {sponsors.length}
+                  </span>
+                )}
               </div>
               <span className="text-text-muted text-xs flex items-center gap-0.5 font-medium">
                 {showSponsors ? "折叠" : "展开"}
@@ -194,24 +240,39 @@ export function AboutModal({ open, onClose }: Props) {
               aria-hidden={!showSponsors}
               className="overflow-hidden transition-all duration-200 ease-in-out motion-reduce:transition-none"
               style={{
-                maxHeight: showSponsors ? "120px" : "0px",
+                maxHeight: showSponsors ? "188px" : "0px",
                 opacity: showSponsors ? 1 : 0,
               }}
             >
               <div
-                className="mt-3 rounded-xl px-3.5"
+                className="mt-3 rounded-xl overflow-hidden"
                 style={{ background: "var(--surface-hover)" }}
               >
-                {sponsors.map((sponsor, index) => (
-                  <div
-                    key={sponsor}
-                    className="flex items-center gap-2.5 py-2.5"
-                    style={index > 0 ? { borderTop: "1px solid var(--border-default)" } : undefined}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" aria-hidden="true" />
-                    <span className="text-sm font-medium text-text-secondary">{sponsor}</span>
+                {!sponsorsLoaded ? (
+                  <div className="px-3.5 py-3" aria-hidden="true">
+                    <div className="skeleton h-3 w-24" />
                   </div>
-                ))}
+                ) : sponsors.length > 0 ? (
+                  <ul
+                    className="max-h-[156px] overflow-y-auto overscroll-contain px-3.5"
+                    aria-label="赞助者名单"
+                  >
+                    {sponsors.map((sponsor, index) => (
+                      <li
+                        key={sponsor}
+                        className="flex items-start gap-2.5 py-2.5"
+                        style={index > 0 ? { borderTop: "1px solid var(--border-default)" } : undefined}
+                      >
+                        <span className="w-1.5 h-1.5 mt-1 rounded-full bg-accent shrink-0" aria-hidden="true" />
+                        <span className="min-w-0 break-words text-sm leading-snug font-medium text-text-secondary">
+                          {sponsor}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="px-3.5 py-3 text-sm text-text-muted">暂无赞助名单</p>
+                )}
               </div>
             </div>
           </div>
@@ -222,7 +283,11 @@ export function AboutModal({ open, onClose }: Props) {
               type="button"
               aria-expanded={showDonation}
               aria-controls="about-donation-codes"
-              onClick={() => setShowDonation(!showDonation)}
+              onClick={() => {
+                const nextOpen = !showDonation;
+                setShowDonation(nextOpen);
+                if (nextOpen) setShowSponsors(false);
+              }}
               className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
             >
               <div className="flex items-center gap-1.5">

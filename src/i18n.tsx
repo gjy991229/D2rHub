@@ -544,6 +544,8 @@ const textMap: Record<string, string> = {
   "已复制": "Copied",
   "复制": "Copy",
   "感谢赞助": "Sponsor Thanks",
+  "赞助者名单": "Sponsor list",
+  "暂无赞助名单": "No sponsors listed yet",
   "赞助支持作者": "Support the author",
   "折叠": "Collapse",
   "展开": "Expand",
