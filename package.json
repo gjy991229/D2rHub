@@ -1,7 +1,7 @@
 {
   "name": "d2rhub",
   "private": true,
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "Windows multi-account manager and audio telemetry run tracker for Diablo II: Resurrected",
   "license": "MIT",
   "repository": {
