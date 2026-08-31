@@ -5,6 +5,8 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
+pub mod detection;
+
 const CURRENT_CONFIG_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2860,41 +2862,6 @@ pub fn load_window_geometry(
     Ok(GlobalConfig::load_geometry(&state.app_data_dir))
 }
 
-fn detect_saved_games_path_for_edition(cn: bool) -> Option<String> {
-    let user = dirs::home_dir()?;
-    let saved_games = user.join("Saved Games");
-    let entries = std::fs::read_dir(&saved_games).ok()?;
-    entries.flatten().find_map(|entry| {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_d2r = name.starts_with("Diablo II Resurrected");
-        let is_cn = name.to_ascii_lowercase().contains("(cn)");
-        (is_d2r && is_cn == cn).then(|| saved_games.join(name).to_string_lossy().to_string())
-    })
-}
-
-/// 自动探测国服游戏存档路径。
-#[tauri::command]
-pub fn detect_saved_games_path() -> Option<String> {
-    detect_saved_games_path_for_edition(true)
-}
-
-/// 自动探测国际服游戏存档路径。
-#[tauri::command]
-pub fn detect_global_saved_games_path() -> Option<String> {
-    detect_saved_games_path_for_edition(false)
-}
-
-/// 检测 ProgramData 下的 Agent 路径
-#[tauri::command]
-pub fn detect_program_data_agent_path() -> Option<String> {
-    let path = r"C:\ProgramData\Battle.net\Agent";
-    if Path::new(path).exists() {
-        Some(path.to_string())
-    } else {
-        None
-    }
-}
-
 /// 供非命令函数（如 tray）获取全局配置
 pub fn get_global_config_ext(app: &tauri::AppHandle) -> Option<GlobalConfig> {
     use tauri::Manager;
@@ -2902,68 +2869,6 @@ pub fn get_global_config_ext(app: &tauri::AppHandle) -> Option<GlobalConfig> {
         let config_lock = state.config.read();
         return config_lock.clone();
     }
-    None
-}
-
-/// 检测 AppData\Roaming\Battle.net 路径
-#[tauri::command]
-pub fn detect_app_data_roaming_bnet_path() -> Option<String> {
-    if let Some(appdata) = dirs::config_dir() {
-        // config_dir on Windows = %APPDATA%
-        let bnet = appdata.join("Battle.net");
-        if bnet.exists() {
-            return Some(bnet.to_string_lossy().to_string());
-        }
-    }
-    None
-}
-/// 自动探测浏览器路径（仅支持 Edge 和 Chrome）
-/// 返回 (path, browser_type) 或 None
-#[tauri::command]
-pub fn detect_browser_path() -> Option<(String, String)> {
-    // 1. 优先检测 Microsoft Edge（系统自带，路径稳定）
-    let edge_candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ];
-    for p in &edge_candidates {
-        if std::path::Path::new(p).exists() {
-            return Some((p.to_string(), "edge".to_string()));
-        }
-    }
-    // 也尝试通过 LocalAppData 找
-    if let Some(local) = dirs::data_local_dir() {
-        let edge = local
-            .join("Microsoft")
-            .join("Edge")
-            .join("Application")
-            .join("msedge.exe");
-        if edge.exists() {
-            return Some((edge.to_string_lossy().to_string(), "edge".to_string()));
-        }
-    }
-
-    // 2. 检测 Google Chrome
-    let chrome_candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ];
-    for p in &chrome_candidates {
-        if std::path::Path::new(p).exists() {
-            return Some((p.to_string(), "chrome".to_string()));
-        }
-    }
-    if let Some(local) = dirs::data_local_dir() {
-        let chrome = local
-            .join("Google")
-            .join("Chrome")
-            .join("Application")
-            .join("chrome.exe");
-        if chrome.exists() {
-            return Some((chrome.to_string_lossy().to_string(), "chrome".to_string()));
-        }
-    }
-
     None
 }
 
@@ -3019,51 +2924,4 @@ pub fn save_theme(
         cfg.save(&state.app_data_dir)?;
     }
     Ok(())
-}
-
-/// 根据选择的浏览器类型（edge 或 chrome）自动探测路径
-#[tauri::command]
-pub fn detect_browser_path_by_type(browser_type: String) -> Option<String> {
-    if browser_type == "edge" {
-        let edge_candidates = [
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        ];
-        for p in &edge_candidates {
-            if std::path::Path::new(p).exists() {
-                return Some(p.to_string());
-            }
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            let edge = local
-                .join("Microsoft")
-                .join("Edge")
-                .join("Application")
-                .join("msedge.exe");
-            if edge.exists() {
-                return Some(edge.to_string_lossy().to_string());
-            }
-        }
-    } else if browser_type == "chrome" {
-        let chrome_candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        ];
-        for p in &chrome_candidates {
-            if std::path::Path::new(p).exists() {
-                return Some(p.to_string());
-            }
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            let chrome = local
-                .join("Google")
-                .join("Chrome")
-                .join("Application")
-                .join("chrome.exe");
-            if chrome.exists() {
-                return Some(chrome.to_string_lossy().to_string());
-            }
-        }
-    }
-    None
 }
