@@ -1162,7 +1162,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     { id: "agent", label: "启动策略", icon: Play, desc: "战网 Agent 与启动等待策略" },
     { id: "shortcuts", label: "快捷键", icon: Settings, desc: "账号窗口切换与聚焦" },
     { id: "appearance", label: "显示", icon: Palette, desc: "主题、透明度、字体和悬浮窗" },
-    { id: "automation", label: "自动化", icon: ScanEye, desc: "双阶段换房、掉落声纹、统计与协议诊断" },
+    { id: "automation", label: "自动化", icon: ScanEye, desc: "局内双阶段换房、掉落声纹、统计与协议诊断" },
     { id: "pet", label: "伴随", icon: Cat, desc: "桌宠与轻量状态提示" },
     { id: "advanced", label: "维护", icon: ShieldAlert, desc: "修复、日志、重置和向导" },
   ];

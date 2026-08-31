@@ -50,8 +50,8 @@ type BackgroundTextStrategy = RoomRotationConfig["background_text_strategy"];
 const DEFAULT_UI_PROFILE: RoomRotationUiProfile = {
   save_and_exit: { x: 500, y: 350 },
   character_select_lobby: { x: 583, y: 898 },
-  create_tab: { x: 665, y: 69 },
-  join_tab: { x: 768, y: 69 },
+  create_tab: { x: 730, y: 20 },
+  join_tab: { x: 820, y: 20 },
   game_name_field: { x: 696, y: 136 },
   password_field: { x: 696, y: 205 },
   submit_button: { x: 766, y: 625 },
@@ -66,8 +66,8 @@ const DEFAULT_UI_PROFILE: RoomRotationUiProfile = {
 
 const DEFAULT_STANDARD_FLOW: RoomRotationFlowStrategy = {
   click_lobby_after_exit: false,
-  escape_to_exit_ms: 550,
-  exit_load_ms: 2_200,
+  escape_to_exit_ms: 0,
+  exit_load_ms: 0,
   lobby_load_ms: 0,
   step_delay_ms: 120,
   character_delay_ms: 10,
@@ -76,8 +76,8 @@ const DEFAULT_STANDARD_FLOW: RoomRotationFlowStrategy = {
 
 const DEFAULT_DIRECT_FLOW: RoomRotationFlowStrategy = {
   click_lobby_after_exit: false,
-  escape_to_exit_ms: 300,
-  exit_load_ms: 1_500,
+  escape_to_exit_ms: 0,
+  exit_load_ms: 0,
   lobby_load_ms: 0,
   step_delay_ms: 80,
   character_delay_ms: 10,
@@ -104,7 +104,7 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
   follower_exit_delay_ms: 2_200,
   duplicate_retries: 3,
   ui_profile: DEFAULT_UI_PROFILE,
-  strategy_version: 4,
+  strategy_version: 5,
   standard_flow: DEFAULT_STANDARD_FLOW,
   direct_lobby_flow: DEFAULT_DIRECT_FLOW,
   account_flow_bindings: {},
@@ -112,12 +112,12 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
 
 const STRATEGY_META: Record<StrategyKey, { label: string; description: string }> = {
   standard: {
-    label: "默认大厅流程",
-    description: "保存退出后等待大厅加载，使用稳健延迟",
+    label: "局内工具 · 稳健",
+    description: "直接点击 Mod 顶部工具栏，使用更宽松的表单间隔",
   },
   direct_lobby: {
-    label: "快速大厅流程",
-    description: "同样直接进入大厅，使用更短延迟",
+    label: "局内工具 · 极速",
+    description: "相同局内路径，缩短按钮、输入框和提交之间的间隔",
   },
 };
 
@@ -127,12 +127,11 @@ const POINT_CONTROLS: Array<{
   action: string;
   dangerous?: boolean;
 }> = [
-  { key: "save_and_exit", label: "保存并退出", action: "save_exit", dangerous: true },
-  { key: "create_tab", label: "创建游戏页签", action: "create_tab" },
+  { key: "create_tab", label: "局内创建按钮", action: "create_tab" },
   { key: "create_game_name_field", label: "创建 · 房间名", action: "create_game_name_field" },
   { key: "create_password_field", label: "创建 · 密码", action: "create_password_field" },
   { key: "create_submit_button", label: "创建 · 确认", action: "create_submit", dangerous: true },
-  { key: "join_tab", label: "加入游戏页签", action: "join_tab" },
+  { key: "join_tab", label: "局内加入按钮", action: "join_tab" },
   { key: "join_game_name_field", label: "加入 · 房间名", action: "join_game_name_field" },
   { key: "join_password_field", label: "加入 · 密码", action: "join_password_field" },
   { key: "join_submit_button", label: "加入 · 确认", action: "join_submit", dangerous: true },
@@ -206,7 +205,7 @@ function phaseLabel(phase: string): string {
   const labels: Record<string, string> = {
     idle: "待命",
     starting_primary: "主号启动",
-    primary_exiting: "主号退出",
+    opening_primary_room_form: "打开局内建房",
     creating_primary: "主号建房",
     retrying_primary: "重名重试",
     ready_for_followers: "等待小号快捷键",
@@ -311,15 +310,6 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
     });
   };
 
-  const bindStrategy = (accountId: string, strategy: StrategyKey) => {
-    patchRotation({
-      account_flow_bindings: {
-        ...rotation.account_flow_bindings,
-        [accountId]: strategy,
-      },
-    });
-  };
-
   const toggleFollower = (accountId: string, checked: boolean) => {
     const followers = checked
       ? [...rotation.follower_account_ids, accountId]
@@ -401,31 +391,28 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
     }
   };
 
-  const accountStrategy = (accountId: string): StrategyKey =>
-    rotation.account_flow_bindings[accountId] === "direct_lobby" ? "direct_lobby" : "standard";
-
   return (
     <div className="spatial-panel settings-span-full space-y-3 p-3">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 max-w-[72ch]">
           <div className="flex items-center gap-2">
             <Route size={15} className="text-accent" />
-            <h3 className="text-xs font-bold text-text-primary">双阶段自动换房 · 实验测试版</h3>
+            <h3 className="text-xs font-bold text-text-primary">局内双阶段换房</h3>
             <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0.5 text-[10px] font-semibold text-warning">
               人工确认进房
             </span>
           </div>
           <p className="mt-1 text-2xs leading-relaxed text-text-muted">
-            主号快捷键只负责退出并创建房间；你确认主号进房后，再按小号快捷键并行处理全部小号。流程不依赖声纹，也不会猜测加载是否完成。
+            主号快捷键在当前房间直接打开“创建房间”、填写并回车；确认主号进房后，再按小号快捷键，让全部小号从各自当前房间直接加入。
           </p>
           <p className="mt-1 text-2xs leading-relaxed text-warning">
-            若看到“房间名已存在”，再次按主号快捷键会确认弹窗并用下一个序号重试；正常进房后请按小号跟进快捷键。
+            密码只在首次使用、进程重启或配置变化时填写。若提示房间名已存在，再按一次主号快捷键会自动换下一个序号重试。
           </p>
         </div>
         <Toggle
           checked={rotation.enabled}
           disabled={!rotation.enabled && readinessProblems.length > 0}
-          ariaLabel="启用双阶段自动换房测试版"
+          ariaLabel="启用局内双阶段换房"
           onChange={enabled => patchRotation({ enabled })}
         />
       </div>
@@ -492,8 +479,8 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
 
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-text-secondary">账号与流程策略</span>
-          <span className="text-2xs text-text-muted">每个账号独立绑定</span>
+          <span className="text-xs font-semibold text-text-secondary">参与账号</span>
+          <span className="text-2xs text-text-muted">所有账号需使用 r4 及以上加工 Mod</span>
         </div>
         {rotation.primary_account_id && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-2.5 py-2">
@@ -501,13 +488,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             <span className="min-w-[140px] flex-1 text-xs text-text-primary">
               {initializedAccounts.find(account => account.id === rotation.primary_account_id)?.display_name || rotation.primary_account_id}
             </span>
-            <select
-              value={accountStrategy(rotation.primary_account_id)}
-              onChange={event => bindStrategy(rotation.primary_account_id, event.target.value as StrategyKey)}
-              className="h-7 min-w-[180px] rounded-lg border border-border-default bg-surface-card px-2 text-xs text-text-primary"
-            >
-              {Object.entries(STRATEGY_META).map(([key, meta]) => <option key={key} value={key}>{meta.label}</option>)}
-            </select>
+            <span className="text-2xs text-text-muted">局内创建</span>
           </div>
         )}
         <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
@@ -529,15 +510,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
                     onChange={event => toggleFollower(account.id, event.target.checked)}
                   />
                   <span className="min-w-0 flex-1 truncate text-xs text-text-primary">{account.display_name || account.id}</span>
-                  <select
-                    value={accountStrategy(account.id)}
-                    disabled={!checked}
-                    aria-label={`${account.display_name || account.id} 流程策略`}
-                    onChange={event => bindStrategy(account.id, event.target.value as StrategyKey)}
-                    className="h-7 min-w-[150px] rounded-lg border border-border-default bg-surface-hover px-2 text-xs text-text-primary disabled:opacity-40"
-                  >
-                    {Object.entries(STRATEGY_META).map(([key, meta]) => <option key={key} value={key}>{meta.label}</option>)}
-                  </select>
+                   <span className="text-2xs text-text-muted">{checked ? "局内加入" : "未参与"}</span>
                 </div>
               );
             })}
@@ -639,7 +612,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
         </div>
       </div>
       <p className="text-2xs leading-relaxed text-text-secondary">
-        保存退出与加载等待会并行执行；受保护光标模式下，页签、输入框、跨帧逐字输入和回车均不主动激活小号窗口。密码只在该账号当前创建/加入表单首次使用、游戏进程重启或配置密码变化时重写。
+        不再发送 Esc、点击“保存并退出”或等待大厅。受保护光标模式只短暂占用局内按钮和输入框坐标；密码仅在该账号当前进程的创建/加入表单首次使用或配置变化时重写。
       </p>
 
       <div className={`rounded-xl border px-3 py-2.5 ${status?.running ? "border-accent/25 bg-accent/10" : status?.last_error ? "border-error/25 bg-error/10" : "border-border-default bg-surface-hover"}`}>
@@ -652,7 +625,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
               <p className="text-xs font-semibold text-text-primary">
                 {phaseLabel(status?.phase ?? "idle")}{status?.room_name ? ` · ${status.room_name}` : ""}
               </p>
-              <p className="text-2xs text-text-secondary">{status?.message ?? "先按主号建房，确认进房后再按小号跟进"}</p>
+              <p className="text-2xs text-text-secondary">{status?.message ?? "主号快捷键建房；确认进房后按小号快捷键"}</p>
             </div>
           </div>
           {status?.running && (
@@ -663,8 +636,8 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
         </div>
       </div>
 
-      <details className="rounded-xl border border-border-default bg-surface-card px-3 py-2.5" open>
-        <summary className="cursor-pointer text-xs font-semibold text-text-secondary">流程策略与延迟</summary>
+      <details className="rounded-xl border border-border-default bg-surface-card px-3 py-2.5">
+        <summary className="cursor-pointer text-xs font-semibold text-text-secondary">高级：速度与坐标校准</summary>
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap gap-2">
             {(Object.entries(STRATEGY_META) as Array<[StrategyKey, typeof STRATEGY_META.standard]>).map(([key, meta]) => (
@@ -684,8 +657,6 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
           </div>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
             {([
-              ["escape_to_exit_ms", "Esc → 退出", 0, 5],
-              ["exit_load_ms", "退出加载", 0, 30],
               ["step_delay_ms", "表单步骤", 0, 2],
             ] as const).map(([key, label, min, max]) => (
               <label key={key} className="space-y-1">
@@ -717,7 +688,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             </label>
           </div>
           <p className="text-2xs leading-relaxed text-text-secondary">
-            当前顺序：Esc → 等待 → 保存退出 → 等待大厅加载 → 首次选择创建/加入页签 → 跨帧逐字填写房间名 → 当前表单首次使用或密码变更时填写密码 → 加入流程复点密码框确认 → Enter。每键保持 30ms，再等待上方字符间隔；默认约 40ms/字符。
+            当前顺序：点击局内创建/加入 → 填写房间名 → 当前表单首次使用或密码变化时填写密码 → Enter。每轮都会重新点击局内按钮；不会缓存按钮状态，也不会回主界面或大厅。
           </p>
         </div>
       </details>

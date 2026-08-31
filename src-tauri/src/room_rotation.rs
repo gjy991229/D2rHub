@@ -64,12 +64,6 @@ struct AppliedPassword {
     value: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct SelectedFormTab {
-    pid: u32,
-    create: bool,
-}
-
 #[derive(Default)]
 struct Runtime {
     generation: u64,
@@ -77,7 +71,6 @@ struct Runtime {
     pending_room_name: Option<String>,
     pending_sequence: Option<u32>,
     applied_passwords: HashMap<String, AppliedPassword>,
-    selected_form_tabs: HashMap<String, SelectedFormTab>,
     status: RoomRotationStatus,
 }
 
@@ -173,21 +166,6 @@ fn remember_applied_password(account_id: &str, pid: u32, create: bool, password:
     );
 }
 
-fn form_tab_needs_select(account_id: &str, pid: u32, create: bool) -> bool {
-    let current = runtime().lock().unwrap_or_else(|error| error.into_inner());
-    current
-        .selected_form_tabs
-        .get(account_id)
-        .is_none_or(|selected| selected.pid != pid || selected.create != create)
-}
-
-fn remember_selected_form_tab(account_id: &str, pid: u32, create: bool) {
-    let mut current = runtime().lock().unwrap_or_else(|error| error.into_inner());
-    current
-        .selected_form_tabs
-        .insert(account_id.to_string(), SelectedFormTab { pid, create });
-}
-
 fn resolve_pid(state: &SharedState, account_id: &str) -> Result<u32, String> {
     state
         .active_games
@@ -210,12 +188,24 @@ fn validate_base_config(config: &RoomRotationConfig) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_room_tools_accounts(
+    state: &SharedState,
+    config: &RoomRotationConfig,
+) -> Result<(), String> {
+    crate::audio_mod::validate_in_game_room_tools_for_account(state, &config.primary_account_id)?;
+    for account_id in &config.follower_account_ids {
+        crate::audio_mod::validate_in_game_room_tools_for_account(state, account_id)?;
+    }
+    Ok(())
+}
+
 fn validate_primary_runtime(
     app: &tauri::AppHandle,
     config: &RoomRotationConfig,
 ) -> Result<u32, String> {
     validate_base_config(config)?;
     let state = app.state::<SharedState>();
+    validate_room_tools_accounts(&state, config)?;
     let primary_pid = resolve_pid(&state, &config.primary_account_id)?;
     #[cfg(target_os = "windows")]
     if win::foreground_pid() != Some(primary_pid) {
@@ -230,6 +220,7 @@ fn validate_follower_runtime(
 ) -> Result<Vec<(String, u32)>, String> {
     validate_base_config(config)?;
     let state = app.state::<SharedState>();
+    validate_room_tools_accounts(&state, config)?;
     let primary_pid = resolve_pid(&state, &config.primary_account_id)?;
     #[cfg(target_os = "windows")]
     if win::foreground_pid() != Some(primary_pid) {
@@ -284,7 +275,7 @@ fn finish(app: &tauri::AppHandle, generation: u64, result: Result<WorkflowComple
                 current.pending_sequence = Some(sequence);
                 current.status.phase = "ready_for_followers".to_string();
                 current.status.message =
-                    "主号建房指令已发送；确认主号进房后按小号跟进快捷键".to_string();
+                    "主号已从局内提交建房；确认进房后按小号跟进快捷键".to_string();
                 current.status.room_name = Some(room_name);
                 current.status.last_error = None;
             }
@@ -292,7 +283,7 @@ fn finish(app: &tauri::AppHandle, generation: u64, result: Result<WorkflowComple
                 current.pending_room_name = None;
                 current.pending_sequence = None;
                 current.status.phase = "complete".to_string();
-                current.status.message = "所有小号的加入指令已并行发送".to_string();
+                current.status.message = "所有小号已从局内并行提交加入".to_string();
                 current.status.last_error = None;
             }
             Err(error) => {
@@ -318,24 +309,11 @@ fn finish(app: &tauri::AppHandle, generation: u64, result: Result<WorkflowComple
 }
 
 #[cfg(target_os = "windows")]
-fn exit_game(
-    driver: &win::WindowDriver,
-    hwnd: isize,
-    flow: &RoomRotationFlowStrategy,
-    generation: u64,
-) -> Result<(), String> {
-    driver.key(hwnd, win::VK_ESCAPE)?;
-    sleep_interruptible(generation, Duration::from_millis(flow.escape_to_exit_ms))?;
-    driver.click(hwnd, flow.ui_profile.save_and_exit)?;
-    sleep_interruptible(generation, Duration::from_millis(flow.exit_load_ms))?;
-    Ok(())
-}
-
-#[cfg(target_os = "windows")]
 struct RoomFormInput<'a> {
     account_id: &'a str,
     pid: u32,
     create: bool,
+    open_form: bool,
     name: &'a str,
     password: &'a str,
     text_strategy: &'a str,
@@ -355,7 +333,6 @@ fn fill_credentials(
     // stay unfocused; only the explicit focus fallback activates the window.
     let update_password =
         password_needs_update(input.account_id, input.pid, input.create, input.password);
-    let select_tab = form_tab_needs_select(input.account_id, input.pid, input.create);
     let form = driver.begin_form_input(hwnd)?;
     let (tab, game_name_field, password_field) = if input.create {
         (
@@ -370,9 +347,11 @@ fn fill_credentials(
             flow.ui_profile.join_password_field,
         )
     };
-    if select_tab {
+    // The r4 Mod uses the same toolbar button to open and close a form. Normal
+    // rotations open it here, while a duplicate-name retry keeps the create
+    // form open after dismissing the dialog and must not toggle it closed.
+    if input.open_form {
         form.click(tab)?;
-        remember_selected_form_tab(input.account_id, input.pid, input.create);
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     }
     form.click(game_name_field)?;
@@ -435,10 +414,9 @@ fn run_primary_workflow(
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     } else {
         update_status(&app, generation, |status| {
-            status.phase = "primary_exiting".to_string();
-            status.message = "主号正在按绑定策略退出并进入大厅".to_string();
+            status.phase = "opening_primary_room_form".to_string();
+            status.message = "正在从局内工具栏打开主号创建房间面板".to_string();
         });
-        exit_game(&driver, primary_hwnd, flow, generation)?;
     }
 
     let sequence = retry_sequence.unwrap_or(config.next_sequence);
@@ -458,6 +436,7 @@ fn run_primary_workflow(
             account_id: &config.primary_account_id,
             pid: primary_pid,
             create: true,
+            open_form: retry_sequence.is_none(),
             name: &candidate,
             password: &config.password,
             text_strategy: &config.background_text_strategy,
@@ -496,7 +475,6 @@ fn run_one_follower(
     let hwnd = crate::commands::system::find_game_hwnd(pid)
         .ok_or_else(|| format!("无法找到小号“{account_id}”的 D2R 窗口"))?;
     let flow = config.flow_for_account(&account_id);
-    exit_game(&driver, hwnd, flow, generation)?;
     fill_credentials(
         app,
         &driver,
@@ -506,6 +484,7 @@ fn run_one_follower(
             account_id: &account_id,
             pid,
             create: false,
+            open_form: true,
             name: &room_name,
             password: &config.password,
             text_strategy: &config.background_text_strategy,
@@ -907,7 +886,6 @@ pub fn test_room_rotation_input(
                     )
                 };
                 form.click(tab)?;
-                remember_selected_form_tab(&account_id, pid, action == "create_name");
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 form.click(game_name_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
@@ -935,7 +913,6 @@ pub fn test_room_rotation_input(
                     )
                 };
                 form.click(tab)?;
-                remember_selected_form_tab(&account_id, pid, create);
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 form.click(password_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
@@ -1980,16 +1957,6 @@ mod tests {
         assert!(password_needs_update(account_id, 101, true, "2"));
         assert!(password_needs_update(account_id, 101, false, "1"));
         assert!(password_needs_update(account_id, 202, true, "1"));
-    }
-
-    #[test]
-    fn form_tab_cache_is_scoped_to_account_process_and_mode() {
-        let account_id = "form-tab-cache-test-account";
-        assert!(form_tab_needs_select(account_id, 101, true));
-        remember_selected_form_tab(account_id, 101, true);
-        assert!(!form_tab_needs_select(account_id, 101, true));
-        assert!(form_tab_needs_select(account_id, 101, false));
-        assert!(form_tab_needs_select(account_id, 202, true));
     }
 
     #[test]

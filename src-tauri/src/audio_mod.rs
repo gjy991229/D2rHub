@@ -16,7 +16,9 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 2;
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 4;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v2";
+const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
@@ -100,6 +102,7 @@ struct Compatibility {
 struct ValidatedAudioMod {
     directory: PathBuf,
     recipe_version: Option<u32>,
+    capabilities: Vec<String>,
     build_mode: Option<String>,
     source_mod_name: Option<String>,
 }
@@ -340,6 +343,19 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
                 .ok_or_else(|| "识别 Mod 清单的配方版本无效，请重新准备".to_string())?,
         ),
     };
+    let capabilities = match manifest.get("capabilities") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(serde_json::Value::Array(values)) => values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| "识别 Mod 清单的能力列表无效，请重新准备".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+        Some(_) => return Err("识别 Mod 清单的能力列表无效，请重新准备".to_string()),
+    };
     let build_mode = manifest
         .get("build_mode")
         .and_then(serde_json::Value::as_str)
@@ -356,9 +372,212 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
     Ok(ValidatedAudioMod {
         directory: mod_directory,
         recipe_version,
+        capabilities,
         build_mode,
         source_mod_name,
     })
+}
+
+fn read_room_tool_layout(layout_directory: &Path, name: &str) -> Result<serde_json::Value, String> {
+    let path = layout_directory.join(name);
+    let bytes = std::fs::read(&path).map_err(|_| format!("局内房间工具缺少布局文件：{name}"))?;
+    serde_json::from_slice(&bytes).map_err(|_| format!("局内房间工具布局已损坏：{name}"))
+}
+
+fn layout_has_child_message(document: &serde_json::Value, field: &str, expected: &str) -> bool {
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                child
+                    .get("fields")
+                    .and_then(|fields| fields.get(field))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected)
+            })
+        })
+}
+
+fn find_layout_node<'a>(
+    document: &'a serde_json::Value,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    if document.get("name").and_then(serde_json::Value::as_str) == Some(name) {
+        return Some(document);
+    }
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .find_map(|child| find_layout_node(child, name))
+}
+
+fn validate_in_game_room_tool_layouts(
+    validated: &ValidatedAudioMod,
+    mod_name: &str,
+) -> Result<(), String> {
+    let layout_directory = validated
+        .directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let hud = read_room_tool_layout(&layout_directory, "HudWarningshd.json")?;
+    if !layout_has_child_message(&hud, "message", "PanelManager:OpenPanel:D2RHubRoomToolbar") {
+        return Err("局内房间工具没有挂载到游戏 HUD".to_string());
+    }
+
+    let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
+    for action in [
+        "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm",
+        "PanelManager:OpenPanel:D2RHubOpenCreateGame",
+        "PanelManager:OpenPanel:D2RHubOpenJoinGame",
+    ] {
+        if !layout_has_child_message(&toolbar, "onClickMessage", action) {
+            return Err("局内房间工具栏按钮不完整".to_string());
+        }
+    }
+
+    let confirmation =
+        read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateConfirmhd.json")?;
+    if confirmation
+        .pointer("/fields/isDismissable")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+        || confirmation
+            .pointer("/fields/acceptsEscKeyEverywhere")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || !layout_has_child_message(
+            &confirmation,
+            "onClickMessage",
+            "PanelManager:OpenPanel:D2RHubQuickRecreate",
+        )
+        || !layout_has_child_message(
+            &confirmation,
+            "message",
+            "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm",
+        )
+    {
+        return Err("局内“下一局”确认条不完整".to_string());
+    }
+
+    let quick_recreate = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreatehd.json")?;
+    if !layout_has_child_message(
+        &quick_recreate,
+        "message",
+        "CharacterSelect:LoadCharacter:2",
+    ) {
+        return Err("局内“下一局”动作无效".to_string());
+    }
+    for (name, target) in [
+        ("D2RHubOpenCreateGamehd.json", "CreateGamePanel"),
+        ("D2RHubOpenJoinGamehd.json", "JoinGamePanel"),
+    ] {
+        let opener = read_room_tool_layout(&layout_directory, name)?;
+        if !layout_has_child_message(
+            &opener,
+            "message",
+            &format!("PanelManager:TogglePanel:{target}"),
+        ) {
+            return Err(format!("局内房间工具无法切换 {target}"));
+        }
+    }
+
+    for (name, panel_name, default_widget, input_names) in [
+        (
+            "creategamepanelhd.json",
+            "CreateGamePanel",
+            "GameNameInput",
+            ["GameNameInput", "PasswordInput"],
+        ),
+        (
+            "joingamepanelhd.json",
+            "JoinGamePanel",
+            "NameInput",
+            ["NameInput", "PasswordInput"],
+        ),
+    ] {
+        let form = read_room_tool_layout(&layout_directory, name)?;
+        if form
+            .pointer("/fields/priority")
+            .and_then(serde_json::Value::as_u64)
+            != Some(2)
+            || form
+                .pointer("/fields/defaultWidget")
+                .and_then(serde_json::Value::as_str)
+                != Some(default_widget)
+            || form
+                .pointer("/fields/isDismissable")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            || form
+                .pointer("/fields/acceptsEscKeyEverywhere")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        {
+            return Err(format!("局内房间表单未正确加工：{name}"));
+        }
+        if input_names.iter().any(|input_name| {
+            find_layout_node(&form, input_name)
+                .and_then(|node| node.pointer("/fields/imeEnabled"))
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+        }) {
+            return Err(format!("局内房间表单没有固定为英文数字输入：{name}"));
+        }
+        if find_layout_node(&form, "D2RHubCloseRoomForm")
+            .and_then(|node| node.pointer("/fields/onClickMessage"))
+            .and_then(serde_json::Value::as_str)
+            != Some(&format!("PanelManager:ClosePanel:{panel_name}"))
+        {
+            return Err(format!("局内房间表单缺少关闭按钮：{name}"));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_in_game_room_tools_for_account(
+    state: &SharedState,
+    account_id: &str,
+) -> Result<(), String> {
+    let (_config, account, context) = configured_account(state, account_id)?;
+    let mod_name = active_mod_name(&account.mod_args)?.ok_or_else(|| {
+        format!(
+            "账号“{}”没有启用经过 D2RHub 加工的 Mod",
+            account.display_name
+        )
+    })?;
+    if !has_txt_argument(&account.mod_args)? {
+        return Err(format!(
+            "账号“{}”的 Mod 启动参数缺少 -txt",
+            account.display_name
+        ));
+    }
+    let mods_directory = context.installation.game_directory.join("mods");
+    let installed_name = find_existing_mod_name(&mods_directory, &mod_name)?
+        .ok_or_else(|| format!("账号“{}”配置的 Mod 不存在", account.display_name))?;
+    let validated = validate_audio_mod(&mods_directory, &installed_name)
+        .map_err(|error| format!("账号“{}”：{error}", account.display_name))?;
+    if validated
+        .recipe_version
+        .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || !validated
+            .capabilities
+            .iter()
+            .any(|capability| capability == IN_GAME_ROOM_TOOLS_CAPABILITY)
+    {
+        return Err(format!(
+            "账号“{}”的识别 Mod 不含局内房间工具，请重新加工并重启该账号",
+            account.display_name
+        ));
+    }
+    validate_in_game_room_tool_layouts(&validated, &installed_name).map_err(|error| {
+        format!(
+            "账号“{}”的局内房间工具不可用：{error}；请重新加工并重启该账号",
+            account.display_name
+        )
+    })?;
+    Ok(())
 }
 
 fn official_update_metadata(
@@ -1240,8 +1459,9 @@ mod tests {
     use super::{
         active_mod_name, arguments_with_audio_mod, compatibility, find_existing_mod_name,
         generated_audio_mod_name, has_txt_argument, installed_mods, replace_audio_mod_directory,
-        resolve_source_directory, AREA_CATALOG_FILE_NAME, ITEM_CATALOG_FILE_NAME, PROTOCOL_VERSION,
-        REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+        resolve_source_directory, validate_audio_mod, validate_in_game_room_tool_layouts,
+        AREA_CATALOG_FILE_NAME, IN_GAME_ROOM_TOOLS_CAPABILITY, ITEM_CATALOG_FILE_NAME,
+        PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_LAYOUT_DIRECTORY,
     };
 
     fn write_test_audio_mod(
@@ -1266,6 +1486,123 @@ mod tests {
 
     fn test_mods_directory(label: &str) -> std::path::PathBuf {
         std::env::temp_dir().join(format!("d2rhub_audio_mod_{label}_{}", uuid::Uuid::new_v4()))
+    }
+
+    fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str) {
+        let layouts = mods_directory
+            .join(mod_name)
+            .join(format!("{mod_name}.mpq"))
+            .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+        std::fs::create_dir_all(&layouts).unwrap();
+        for (name, document) in [
+            (
+                "HudWarningshd.json",
+                serde_json::json!({"children": [{"fields": {"message": "PanelManager:OpenPanel:D2RHubRoomToolbar"}}]}),
+            ),
+            (
+                "D2RHubRoomToolbarhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"}},
+                    {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"}},
+                    {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenJoinGame"}}
+                ]}),
+            ),
+            (
+                "D2RHubQuickRecreateConfirmhd.json",
+                serde_json::json!({
+                    "fields": {"isDismissable": true, "acceptsEscKeyEverywhere": true},
+                    "children": [
+                        {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"}},
+                        {"fields": {"message": "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm"}}
+                    ]
+                }),
+            ),
+            (
+                "D2RHubQuickRecreatehd.json",
+                serde_json::json!({"children": [{"fields": {"message": "CharacterSelect:LoadCharacter:2"}}]}),
+            ),
+            (
+                "D2RHubOpenCreateGamehd.json",
+                serde_json::json!({"children": [{"fields": {"message": "PanelManager:TogglePanel:CreateGamePanel"}}]}),
+            ),
+            (
+                "D2RHubOpenJoinGamehd.json",
+                serde_json::json!({"children": [{"fields": {"message": "PanelManager:TogglePanel:JoinGamePanel"}}]}),
+            ),
+            (
+                "creategamepanelhd.json",
+                serde_json::json!({
+                    "fields": {
+                        "priority": 2,
+                        "defaultWidget": "GameNameInput",
+                        "isDismissable": true,
+                        "acceptsEscKeyEverywhere": true
+                    },
+                    "children": [
+                        {"name": "GameNameInput", "fields": {"imeEnabled": false}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": false}},
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
+                    ]
+                }),
+            ),
+            (
+                "joingamepanelhd.json",
+                serde_json::json!({
+                    "fields": {
+                        "priority": 2,
+                        "defaultWidget": "NameInput",
+                        "isDismissable": true,
+                        "acceptsEscKeyEverywhere": true
+                    },
+                    "children": [
+                        {"name": "NameInput", "fields": {"imeEnabled": false}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": false}},
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
+                    ]
+                }),
+            ),
+        ] {
+            std::fs::write(layouts.join(name), serde_json::to_vec(&document).unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn room_rotation_rejects_claimed_but_incomplete_room_tools() {
+        let root = test_mods_directory("room_tool_validation");
+        let name = "room-tools";
+        write_test_audio_mod(
+            &root,
+            name,
+            serde_json::json!({
+                "manifest_format": "d2r-audio-telemetry-mod",
+                "producer": "d2r-audio-mod",
+                "protocol_version": PROTOCOL_VERSION,
+                "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+                "capabilities": [IN_GAME_ROOM_TOOLS_CAPABILITY],
+                "build_mode": "minimal",
+                "mod_name": name
+            }),
+        );
+        let validated = validate_audio_mod(&root, name).unwrap();
+        assert!(validate_in_game_room_tool_layouts(&validated, name)
+            .unwrap_err()
+            .contains("缺少布局文件"));
+
+        write_test_room_tool_layouts(&root, name);
+        validate_in_game_room_tool_layouts(&validated, name).unwrap();
+
+        std::fs::write(
+            root.join(name)
+                .join(format!("{name}.mpq"))
+                .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+                .join("D2RHubQuickRecreatehd.json"),
+            br#"{"children": []}"#,
+        )
+        .unwrap();
+        assert!(validate_in_game_room_tool_layouts(&validated, name)
+            .unwrap_err()
+            .contains("下一局"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

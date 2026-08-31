@@ -80,10 +80,12 @@ impl RoomRotationPoint {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomRotationUiProfile {
-    /// Current 2026 pause menu. Older three-button layouts usually need y≈435.
+    /// Legacy compatibility; the in-game flow no longer opens the pause menu.
     pub save_and_exit: RoomRotationPoint,
     pub character_select_lobby: RoomRotationPoint,
+    /// D2RHub r4 in-game room toolbar create button.
     pub create_tab: RoomRotationPoint,
+    /// D2RHub r4 in-game room toolbar join button.
     pub join_tab: RoomRotationPoint,
     pub game_name_field: RoomRotationPoint,
     #[serde(default = "default_room_rotation_password_field")]
@@ -116,6 +118,14 @@ fn default_room_rotation_submit_button() -> RoomRotationPoint {
     RoomRotationPoint::new(766, 625)
 }
 
+fn default_room_rotation_create_button() -> RoomRotationPoint {
+    RoomRotationPoint::new(730, 20)
+}
+
+fn default_room_rotation_join_button() -> RoomRotationPoint {
+    RoomRotationPoint::new(820, 20)
+}
+
 impl RoomRotationUiProfile {
     fn migrate_shared_form_points(&mut self) {
         self.create_game_name_field = self.game_name_field;
@@ -132,8 +142,8 @@ impl Default for RoomRotationUiProfile {
         Self {
             save_and_exit: RoomRotationPoint::new(500, 350),
             character_select_lobby: RoomRotationPoint::new(583, 898),
-            create_tab: RoomRotationPoint::new(665, 69),
-            join_tab: RoomRotationPoint::new(768, 69),
+            create_tab: default_room_rotation_create_button(),
+            join_tab: default_room_rotation_join_button(),
             game_name_field: default_room_rotation_game_name_field(),
             password_field: default_room_rotation_password_field(),
             submit_button: default_room_rotation_submit_button(),
@@ -150,11 +160,11 @@ impl Default for RoomRotationUiProfile {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomRotationFlowStrategy {
-    /// Legacy compatibility only. Automatic flows no longer click a lobby button.
+    /// Legacy compatibility only. In-game room tools do not use this flag.
     pub click_lobby_after_exit: bool,
-    /// Delay between Esc and clicking Save & Exit.
+    /// Legacy compatibility only. In-game room tools do not open the pause menu.
     pub escape_to_exit_ms: u64,
-    /// Loading delay after Save & Exit.
+    /// Legacy compatibility only. In-game room tools do not return to the frontend.
     pub exit_load_ms: u64,
     /// Legacy compatibility only. Automatic flows no longer use this delay.
     pub lobby_load_ms: u64,
@@ -170,8 +180,8 @@ impl RoomRotationFlowStrategy {
     fn standard() -> Self {
         Self {
             click_lobby_after_exit: false,
-            escape_to_exit_ms: 550,
-            exit_load_ms: 2_200,
+            escape_to_exit_ms: 0,
+            exit_load_ms: 0,
             lobby_load_ms: 0,
             step_delay_ms: 120,
             character_delay_ms: 10,
@@ -182,8 +192,8 @@ impl RoomRotationFlowStrategy {
     fn direct_lobby() -> Self {
         Self {
             click_lobby_after_exit: false,
-            escape_to_exit_ms: 300,
-            exit_load_ms: 1_500,
+            escape_to_exit_ms: 0,
+            exit_load_ms: 0,
             lobby_load_ms: 0,
             step_delay_ms: 80,
             character_delay_ms: 10,
@@ -277,7 +287,7 @@ impl Default for RoomRotationConfig {
             follower_exit_delay_ms: default_room_rotation_follower_exit_delay_ms(),
             duplicate_retries: default_room_rotation_duplicate_retries(),
             ui_profile: RoomRotationUiProfile::default(),
-            strategy_version: 4,
+            strategy_version: 5,
             standard_flow: default_room_rotation_standard_flow(),
             direct_lobby_flow: default_room_rotation_direct_lobby_flow(),
             account_flow_bindings: std::collections::HashMap::new(),
@@ -739,7 +749,7 @@ mod validation_tests {
         };
 
         assert!(config.normalize_room_rotation());
-        assert_eq!(config.room_rotation.strategy_version, 4);
+        assert_eq!(config.room_rotation.strategy_version, 5);
         assert_eq!(
             config.room_rotation.standard_flow.ui_profile.save_and_exit,
             legacy_point
@@ -752,8 +762,16 @@ mod validation_tests {
                 .save_and_exit,
             legacy_point
         );
-        assert_eq!(config.room_rotation.standard_flow.escape_to_exit_ms, 640);
-        assert_eq!(config.room_rotation.standard_flow.exit_load_ms, 3_400);
+        assert_eq!(config.room_rotation.standard_flow.escape_to_exit_ms, 0);
+        assert_eq!(config.room_rotation.standard_flow.exit_load_ms, 0);
+        assert_eq!(
+            config.room_rotation.standard_flow.ui_profile.create_tab,
+            super::default_room_rotation_create_button()
+        );
+        assert_eq!(
+            config.room_rotation.standard_flow.ui_profile.join_tab,
+            super::default_room_rotation_join_button()
+        );
         assert_eq!(
             config
                 .room_rotation
@@ -824,7 +842,7 @@ mod validation_tests {
         assert_eq!(profile.join_password_field, password);
         assert_eq!(profile.create_submit_button, submit);
         assert_eq!(profile.join_submit_button, submit);
-        assert_eq!(config.room_rotation.strategy_version, 4);
+        assert_eq!(config.room_rotation.strategy_version, 5);
         assert_eq!(
             config.room_rotation.background_text_strategy,
             "post_keys_paced"
@@ -2469,6 +2487,19 @@ impl GlobalConfig {
                 config.direct_lobby_flow.character_delay_ms = 10;
             }
             config.strategy_version = 4;
+        }
+        if config.strategy_version < 5 {
+            for flow in [&mut config.standard_flow, &mut config.direct_lobby_flow] {
+                flow.click_lobby_after_exit = false;
+                flow.escape_to_exit_ms = 0;
+                flow.exit_load_ms = 0;
+                flow.lobby_load_ms = 0;
+                flow.ui_profile.create_tab = default_room_rotation_create_button();
+                flow.ui_profile.join_tab = default_room_rotation_join_button();
+            }
+            config.ui_profile.create_tab = default_room_rotation_create_button();
+            config.ui_profile.join_tab = default_room_rotation_join_button();
+            config.strategy_version = 5;
         }
         normalize_room_rotation_flow(&mut config.standard_flow);
         normalize_room_rotation_flow(&mut config.direct_lobby_flow);
