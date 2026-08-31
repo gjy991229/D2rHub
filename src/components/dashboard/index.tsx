@@ -5,3 +5,4 @@ export { LaunchButton } from "./LaunchButton";
 export { LaunchGroupMenu } from "./LaunchGroupMenu";
 export { AccountGrid, AccountGridLoading, AccountGridEmpty } from "./AccountGrid";
 export { AccountGridItem, SortableAccountCard } from "./AccountCard";
+export { AccountWorkspace } from "./AccountWorkspace";

@@ -5,7 +5,7 @@ use crate::commands::account::{recover_account_transactions, AccountManager, Acc
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 8;
+const CURRENT_CONFIG_VERSION: u32 = 9;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -181,6 +181,9 @@ pub struct GlobalConfig {
     /// 可复用的账号启动组合。账号启动顺序由账号卡片当前排序决定。
     #[serde(default)]
     pub launch_groups: Vec<LaunchGroup>,
+    /// 全局待机账号池。池内账号不会参与“默认启动”，但启动方案始终忽略该状态。
+    #[serde(default)]
+    pub standby_account_ids: Vec<String>,
 }
 
 fn default_font_scale() -> String {
@@ -630,6 +633,25 @@ mod validation_tests {
         assert_eq!(config.launch_groups[1].members.len(), 1);
         assert_eq!(config.launch_groups[1].members[0].account_id, "account-b");
         assert!(!config.remove_account_from_launch_groups("missing"));
+    }
+
+    #[test]
+    fn standby_pool_is_global_ordered_and_case_insensitively_unique() {
+        let mut config = GlobalConfig {
+            standby_account_ids: vec![
+                " account-b ".to_string(),
+                "ACCOUNT-B".to_string(),
+                "account-a".to_string(),
+                " ".to_string(),
+            ],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_standby_account_ids());
+        assert_eq!(config.standby_account_ids, ["account-b", "account-a"]);
+        assert!(config.remove_account_from_standby_pool("ACCOUNT-B"));
+        assert_eq!(config.standby_account_ids, ["account-a"]);
+        assert!(!config.remove_account_from_standby_pool("missing"));
     }
 
     #[test]
@@ -1655,6 +1677,7 @@ impl Default for GlobalConfig {
             agent_delay_secs: 1.0,
             agent_threshold: 5,
             launch_groups: Vec::new(),
+            standby_account_ids: Vec::new(),
         }
     }
 }
@@ -1676,6 +1699,13 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
 }
 
 impl GlobalConfig {
+    pub(crate) fn remove_account_from_standby_pool(&mut self, account_id: &str) -> bool {
+        let previous_len = self.standby_account_ids.len();
+        self.standby_account_ids
+            .retain(|candidate| !candidate.eq_ignore_ascii_case(account_id));
+        previous_len != self.standby_account_ids.len()
+    }
+
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
@@ -1691,6 +1721,20 @@ impl GlobalConfig {
             removed |= group.members.len() != previous_member_len;
         }
         removed
+    }
+
+    fn normalize_standby_account_ids(&mut self) -> bool {
+        let original = self.standby_account_ids.clone();
+        let mut seen = std::collections::HashSet::new();
+        self.standby_account_ids = self
+            .standby_account_ids
+            .iter()
+            .map(|account_id| account_id.trim())
+            .filter(|account_id| !account_id.is_empty())
+            .filter(|account_id| seen.insert(account_id.to_ascii_lowercase()))
+            .map(str::to_string)
+            .collect();
+        original != self.standby_account_ids
     }
 
     fn normalize_launch_groups(&mut self) -> bool {
@@ -2117,6 +2161,9 @@ impl GlobalConfig {
         }
 
         if config.normalize_launch_groups() {
+            migrated = true;
+        }
+        if config.normalize_standby_account_ids() {
             migrated = true;
         }
 
@@ -2629,6 +2676,7 @@ pub fn save_global_config(
         );
     cfg.normalize_launch_groups();
     cfg.validate_launch_groups()?;
+    cfg.normalize_standby_account_ids();
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

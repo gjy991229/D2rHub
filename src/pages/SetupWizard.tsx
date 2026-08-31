@@ -31,6 +31,7 @@ const defaultConfig: GlobalConfig = {
   bongo_cat_scale: 1.0, bongo_cat_skin: "original",
   bongo_cat_unlocked_skins: ["original"],
   launch_groups: [],
+  standby_account_ids: [],
 };
 
 export function SetupWizard({ onComplete, initialConfig }: Props) {

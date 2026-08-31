@@ -25,6 +25,8 @@ const settingsState = params.get("settingsState");
 const settingsTab = params.get("settingsTab");
 const audioModState = params.get("audioModState");
 const seedSampleDrops = params.get("drops") === "sample";
+const seedManyAccounts = params.get("accounts") === "many";
+const seedAllStandby = params.get("standby") === "all";
 const currentWindowLabel =
   surface === "overlay"
     ? "overlay"
@@ -187,8 +189,24 @@ const accounts: AccountMeta[] = [
   },
 ];
 
+if (seedManyAccounts) {
+  for (let index = 5; index <= 20; index += 1) {
+    accounts.push({
+      ...accounts[0],
+      id: `bench-${String(index).padStart(2, "0")}`,
+      display_name: `Bench ${String(index).padStart(2, "0")}`,
+      order: index,
+      is_running: false,
+      running_pid: null,
+      last_launched_at: index % 2 === 0 ? "2026-06-29T18:20:00Z" : null,
+      active_position_id: null,
+      position_presets: [],
+    });
+  }
+}
+
 const baseConfig: GlobalConfig = {
-  version: 8,
+  version: 9,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -256,6 +274,11 @@ const baseConfig: GlobalConfig = {
     },
     { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
   ],
+  standby_account_ids: seedAllStandby
+    ? accounts.map(account => account.id)
+    : seedManyAccounts
+    ? accounts.filter((_, index) => index % 3 === 1).map(account => account.id)
+    : ["barb-02", "new-04"],
 };
 
 const accountSettings: SettingsMap = {
