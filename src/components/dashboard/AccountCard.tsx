@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
   FolderOpen,
@@ -31,6 +30,10 @@ import {
   requiresTokenMigration,
 } from "../../utils/regionPaths";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
+import {
+  type AccountQuickSettings,
+  useAccountQuickSettings,
+} from "../../hooks/useAccountQuickSettings";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
 const stepLabels: Record<string, string> = {
@@ -183,18 +186,21 @@ export function AccountGridItem({
     reinitializeAccount,
     updateAccountMods,
     updateAccountPositions,
-    markSettingsCustomized,
   } = useAccounts();
 
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
-  const [drawerLoaded, setDrawerLoaded] = useState(false);
-  const [drawerLoadError, setDrawerLoadError] = useState<string | null>(null);
-  type DrawerSettings = { resolution: string; fps: number };
-  const [drawer, setDrawer] = useState<DrawerSettings>({ resolution: "1280x720", fps: 30 });
-
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSettingsRef = useRef<Record<string, unknown>>({});
+  const quickSettingsEnabled = account.initialized
+    && (expanded || (Boolean(isSelectionMode) && Boolean(selected)));
+  const {
+    settings: drawer,
+    loaded: drawerLoaded,
+    loading: drawerLoading,
+    error: drawerLoadError,
+    load: loadDrawerSettings,
+    update: updateDrawerSettings,
+    flush: flushDrawerSettings,
+  } = useAccountQuickSettings(account.id, quickSettingsEnabled);
   const modRowDragRef = useRef<{
     pointerId: number;
     startX: number;
@@ -214,48 +220,6 @@ export function AccountGridItem({
       clearTimeout(suppressModClickTimerRef.current);
     }
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    const setupListener = async () => {
-      const stopListening = await listen<{ accountId: string }>("account-settings-updated", (event) => {
-        if (event.payload.accountId === account.id) {
-          loadDrawerSettings(true);
-        }
-      });
-      if (cancelled) stopListening();
-      else unlisten = stopListening;
-    };
-    void setupListener();
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [account.id]);
-
-  const loadDrawerSettings = async (force = false) => {
-    if (drawerLoaded && !force) return;
-    try {
-      const raw = await invoke<Record<string, unknown>>("get_account_settings", { accountId: account.id });
-      setDrawer({
-        resolution: String(raw["Screen Resolution (Windowed)"] ?? "1280x720"),
-        fps: Number(raw["Framerate Target"] ?? raw["Framerate Cap"] ?? 30),
-      });
-      setDrawerLoaded(true);
-      setDrawerLoadError(null);
-    } catch (e) {
-      setDrawerLoaded(false);
-      setDrawerLoadError(String(e));
-      console.warn("Failed to load settings for", account.id, e);
-    }
-  };
-
-  useEffect(() => {
-    if (account.initialized) {
-      loadDrawerSettings();
-    }
-  }, [account.id, account.initialized]);
 
   useEffect(() => {
     if (!isSelectionMode || !selected || !schemeMember || !drawerLoaded
@@ -308,33 +272,6 @@ export function AccountGridItem({
     }
   };
 
-  const saveDrawerSetting = (key: string, value: unknown) => {
-    setDrawer(prev => ({ ...prev, [key]: value }));
-
-    const configKey = key === "resolution"
-      ? "Screen Resolution (Windowed)"
-      : "Framerate Target";
-    pendingSettingsRef.current[configKey] = value;
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        const raw = await invoke<Record<string, unknown>>("get_account_settings", { accountId: account.id });
-        const merged = { ...raw, ...pendingSettingsRef.current };
-        await invoke("save_account_settings", { accountId: account.id, settings: merged });
-        await markSettingsCustomized(account.id);
-        pendingSettingsRef.current = {};
-
-        await emit("account-settings-updated", { accountId: account.id });
-      } catch (e) {
-        showToast("error", `保存设置失败: ${e}`);
-      }
-    }, 1000);
-  };
-
   const positionPresets = account.position_presets || [];
   const selectedPositionId = isSelectionMode
     ? schemeMember?.position_preset_id ?? null
@@ -351,7 +288,7 @@ export function AccountGridItem({
     void updateAccountPositions(account.id, positionId, positionPresets);
   };
 
-  const selectDrawerSetting = (key: keyof DrawerSettings, value: string | number) => {
+  const selectDrawerSetting = (key: keyof AccountQuickSettings, value: string | number) => {
     if (isSelectionMode) {
       onSchemeMemberChange?.(account.id, {
         graphics_configured: true,
@@ -359,7 +296,7 @@ export function AccountGridItem({
       });
       return;
     }
-    saveDrawerSetting(key, value);
+    updateDrawerSettings({ [key]: value });
   };
 
   const commitPosition = async () => {
@@ -423,7 +360,7 @@ export function AccountGridItem({
       return;
     }
     if (!account.initialized) return;
-    if (!expanded) loadDrawerSettings();
+    if (!expanded) void loadDrawerSettings().catch(() => undefined);
     setExpanded(!expanded);
   };
 
@@ -878,9 +815,9 @@ export function AccountGridItem({
         <div style={{ overflow: "hidden", minHeight: 0 }}>
           <div className="drawer-body">
             <div className="drawer-grid">
-              {isSelectionMode && drawerLoadError && (
+              {drawerLoadError && (
                 <div className="scheme-settings-error hig-badge hig-badge-red" title={drawerLoadError}>
-                  画质配置读取失败，请检查 Settings.json
+                  画质配置{drawerLoaded ? "保存" : "读取"}失败，请检查 Settings.json
                 </div>
               )}
               <div className="drawer-resolution-fps-row">
@@ -889,7 +826,9 @@ export function AccountGridItem({
                   <select
                     value={effectiveResolution}
                     onChange={e => selectDrawerSetting("resolution", e.target.value)}
+                    onBlur={() => void flushDrawerSettings().catch(() => undefined)}
                     onClick={stop}
+                    disabled={drawerLoading}
                     className="line-select w-full px-2.5"
                   >
                     {effectiveResOptions.map(r => <option key={r} value={r}>{r}</option>)}
@@ -907,6 +846,8 @@ export function AccountGridItem({
                       value={effectiveFps}
                       onClick={stop}
                       onChange={e => selectDrawerSetting("fps", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
+                      onBlur={() => void flushDrawerSettings().catch(() => undefined)}
+                      disabled={drawerLoading}
                     />
                     <datalist id={`fps-options-${account.id}`}>
                       {fpsOptions.map(f => <option key={f} value={f}>{f === 0 ? "无限制" : `${f} FPS`}</option>)}
