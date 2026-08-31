@@ -1682,6 +1682,43 @@ mod validation_tests {
     }
 }
 
+#[cfg(test)]
+mod contract_tests {
+    use super::{GlobalConfig, LegacyPathMigration};
+
+    #[test]
+    fn rust_and_typescript_global_config_fields_stay_in_sync() {
+        let typescript_contract = include_str!("../../../src/store/globalConfigContract.ts");
+        let declaration = typescript_contract
+            .split_once("export const GLOBAL_CONFIG_FIELDS = ")
+            .expect("TypeScript config field declaration is missing")
+            .1;
+        let end = declaration
+            .find("] as const")
+            .expect("TypeScript config field declaration has an unexpected format");
+        let mut typescript_fields: Vec<String> =
+            serde_json::from_str(&declaration[..=end]).expect("config field list must be JSON");
+
+        let config = GlobalConfig {
+            // This compatibility marker is normally omitted when absent. Set
+            // it here so the serialized schema exposes every supported field.
+            legacy_path_migration: Some(LegacyPathMigration::default()),
+            ..GlobalConfig::default()
+        };
+        let serialized = serde_json::to_value(config).expect("default config must serialize");
+        let mut rust_fields: Vec<String> = serialized
+            .as_object()
+            .expect("global config must serialize as an object")
+            .keys()
+            .cloned()
+            .collect();
+
+        typescript_fields.sort();
+        rust_fields.sort();
+        assert_eq!(rust_fields, typescript_fields);
+    }
+}
+
 /// 窗口几何信息（位置+尺寸持久化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowGeometry {
