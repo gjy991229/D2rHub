@@ -1095,7 +1095,12 @@ pub fn delete_account(
         }
         let removed_from_launch_group = cfg.remove_account_from_launch_groups(&account_id);
         let removed_from_room_rotation = cfg.remove_account_from_room_rotation(&account_id);
-        if cleared_audio_target || removed_from_launch_group || removed_from_room_rotation {
+        let removed_from_standby_pool = cfg.remove_account_from_standby_pool(&account_id);
+        if cleared_audio_target
+            || removed_from_launch_group
+            || removed_from_room_rotation
+            || removed_from_standby_pool
+        {
             cfg.save(&state.app_data_dir)?;
             Some(cfg.clone())
         } else {

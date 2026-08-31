@@ -2,47 +2,28 @@ import React from "react";
 import { Zap } from "lucide-react";
 import type { AccountMeta } from "../../store/types";
 import {
-  DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent,
-} from "@dnd-kit/core";
-import {
   SortableContext, rectSortingStrategy,
 } from "@dnd-kit/sortable";
 
 interface AccountGridProps {
   accounts: AccountMeta[];
-  onReorder: (orderedIds: string[]) => Promise<void>;
   children: React.ReactNode;
   isSelectionMode?: boolean;
+  isDropTarget?: boolean;
+  embedded?: boolean;
 }
 
-export function AccountGrid({ accounts, onReorder, children, isSelectionMode }: AccountGridProps) {
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: isSelectionMode ? 99999 : 5 } })
-  );
-
-  const handleDragEnd = (event: DragEndEvent) => {
-    if (isSelectionMode) return;
-    const { active, over } = event;
-    if (over && active.id !== over.id) {
-      const oldIndex = accounts.findIndex(a => a.id === active.id);
-      const newIndex = accounts.findIndex(a => a.id === over.id);
-      if (oldIndex === -1 || newIndex === -1) return;
-      const reordered = [...accounts];
-      const [moved] = reordered.splice(oldIndex, 1);
-      reordered.splice(newIndex, 0, moved);
-      onReorder(reordered.map(a => a.id));
-    }
-  };
-
+export function AccountGrid({ accounts, children, isSelectionMode, isDropTarget, embedded }: AccountGridProps) {
   return (
-    <div className="flex-1 overflow-auto px-5 pb-5">
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={accounts.map(a => a.id)} strategy={rectSortingStrategy}>
-          <div className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
-            {children}
-          </div>
-        </SortableContext>
-      </DndContext>
+    <div className={embedded ? "" : "h-full overflow-auto px-5 pb-4"}>
+      <SortableContext items={accounts.map(a => a.id)} strategy={rectSortingStrategy}>
+        <div
+          className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}
+          data-drop-target={isDropTarget ? "true" : undefined}
+        >
+          {children}
+        </div>
+      </SortableContext>
     </div>
   );
 }

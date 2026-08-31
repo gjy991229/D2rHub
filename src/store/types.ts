@@ -135,6 +135,7 @@ export interface GlobalConfig {
   agent_threshold?: number;
   launch_groups: LaunchGroup[];
   room_rotation?: RoomRotationConfig;
+  standby_account_ids?: string[];
 }
 
 // ── 数据统计 ──

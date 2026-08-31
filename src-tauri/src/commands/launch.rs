@@ -1859,12 +1859,12 @@ async fn launch_single(
     };
     let expected_game_path = context.installation.game_executable.clone();
 
-    // Battle.net 模式并行使用 ETW 与兼容性 TCP。ETW 是增强信号而非硬依赖：
+    // Battle.net 模式并行使用 ETW 与 TCP 1119 大厅连接。ETW 是增强信号而非硬依赖：
     // 权限不足或监听启动失败时继续使用 TCP，不阻断游戏启动。
     emit(
         "connect",
         "running",
-        "正在启动 WEB_TOKEN ETW 监听（与兼容性 TCP 并行）...",
+        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119 并行）...",
     );
     let mut token_read_monitor = match WebTokenReadMonitor::start() {
         Ok(monitor) => Some(monitor),
@@ -1872,7 +1872,7 @@ async fn launch_single(
             emit(
                 "connect",
                 "warning",
-                &format!("{error}；将继续使用兼容性 TCP 检测"),
+                &format!("{error}；将继续使用 TCP 1119 大厅检测"),
             );
             None
         }
@@ -2289,11 +2289,11 @@ async fn launch_single(
         })
     };
 
-    // ── Step 8: ETW 与兼容性 TCP 并行竞争，任一命中即停止另一检测 ──
+    // ── Step 8: ETW 与 TCP 1119 大厅检测并行竞争，任一命中即停止另一检测 ──
     emit(
         "connect",
         "running",
-        "正在跳过动画，并行等待 ETW 或兼容性 TCP 就绪...",
+        "正在跳过动画，并行等待 ETW 或 TCP 1119 大厅连接就绪...",
     );
     emit("mutex", "running", "后台监控互斥句柄中...");
 
@@ -2348,7 +2348,7 @@ async fn launch_single(
                 BattleNetReadinessSource::Tcp => emit(
                     "connect",
                     "ok",
-                    "兼容性 TCP 检测到游戏网络已稳定，停止 ETW 与跳过按键检测",
+                    "TCP 1119 检测到游戏大厅连接已稳定，停止 ETW 与跳过按键检测",
                 ),
             }
             break;
@@ -2374,7 +2374,7 @@ async fn launch_single(
 
     if readiness_source.is_none() {
         let error = format!(
-            "等待游戏登录就绪超时：ETW 未命中（{etw_diagnostics}）；兼容性 TCP 未连续两次检测到目标 D2R 连接"
+            "等待游戏登录就绪超时：ETW 未命中（{etw_diagnostics}）；TCP 1119 未连续两次检测到目标 D2R 大厅连接"
         );
         emit("connect", "error", &error);
         mutex_task.abort();

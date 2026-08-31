@@ -488,17 +488,16 @@ const AF_INET: u32 = 2;
 const AF_INET6: u32 = 23;
 const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
 const MIB_TCP_STATE_ESTAB: u32 = 5;
+const BATTLE_NET_LOBBY_PORT: u16 = 1119;
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
 fn tcp_connection_indicates_online_readiness(
     target_pid: u32,
     owning_pid: u32,
     state: u32,
-    _remote_port: u16,
+    remote_port: u16,
 ) -> bool {
-    // 服务器端口会变化，加速器也可能将连接终结在本机。这里只使用目标进程和
-    // ESTABLISHED 状态作为联网信号；调用方会通过连续采样过滤瞬时连接。
-    owning_pid == target_pid && state == MIB_TCP_STATE_ESTAB
+    owning_pid == target_pid && state == MIB_TCP_STATE_ESTAB && remote_port == BATTLE_NET_LOBBY_PORT
 }
 
 struct TcpTableSnapshot {
@@ -605,8 +604,8 @@ fn tcp6_indicates_online_readiness(pid: u32) -> bool {
     })
 }
 
-/// 检查目标进程是否已建立网络连接。
-/// 不假设固定服务器端口，并同时覆盖 IPv4、IPv6 与本机加速器代理。
+/// 检查目标进程是否已建立 TCP 1119 连接（Battle.net 游戏大厅）。
+/// IPv4 和 IPv6 都会检查，但不再将目标进程的其他 TCP 连接视为大厅就绪。
 #[tauri::command]
 pub fn check_game_connected(pid: u32) -> bool {
     tcp4_indicates_online_readiness(pid) || tcp6_indicates_online_readiness(pid)
@@ -614,37 +613,21 @@ pub fn check_game_connected(pid: u32) -> bool {
 
 #[cfg(test)]
 mod network_readiness_tests {
-    use super::{check_game_connected, tcp_connection_indicates_online_readiness};
+    use super::tcp_connection_indicates_online_readiness;
 
     #[test]
-    fn established_game_connection_is_not_tied_to_battle_net_port() {
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 443));
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 52_123));
+    fn established_game_connection_requires_battle_net_lobby_port() {
+        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 1119));
+        assert!(!tcp_connection_indicates_online_readiness(42, 42, 5, 443));
+        assert!(!tcp_connection_indicates_online_readiness(
+            42, 42, 5, 52_123
+        ));
     }
 
     #[test]
     fn readiness_rejects_other_processes_and_non_established_connections() {
-        assert!(!tcp_connection_indicates_online_readiness(42, 7, 5, 443));
-        assert!(!tcp_connection_indicates_online_readiness(42, 42, 2, 443));
-    }
-
-    #[test]
-    fn process_owned_loopback_connection_is_observed() {
-        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
-        let client = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
-        let (server, _) = listener.accept().unwrap();
-
-        let observed = (0..20).any(|_| {
-            if check_game_connected(std::process::id()) {
-                true
-            } else {
-                std::thread::sleep(std::time::Duration::from_millis(25));
-                false
-            }
-        });
-
-        assert!(observed);
-        drop((client, server));
+        assert!(!tcp_connection_indicates_online_readiness(42, 7, 5, 1119));
+        assert!(!tcp_connection_indicates_online_readiness(42, 42, 2, 1119));
     }
 }
 

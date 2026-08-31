@@ -1,7 +1,19 @@
 import React, { useState, useEffect, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
-import { Play, RotateCw, Sliders, Trash2, FolderOpen, AlertTriangle, X, Locate, Globe2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Archive,
+  ArchiveRestore,
+  FolderOpen,
+  Globe2,
+  Locate,
+  Play,
+  RotateCw,
+  Sliders,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
@@ -20,6 +32,7 @@ import {
   isInternationalRegion,
   requiresTokenMigration,
 } from "../../utils/regionPaths";
+import { getAccountTokenStatus } from "../../utils/accountTokenStatus";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
@@ -45,34 +58,9 @@ interface GridItemProps {
   getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
-}
-
-/** Token 有效期: 720 小时（30 天） */
-const TOKEN_VALID_HOURS = 720;
-
-function getTokenStatus(lastResetAt: string | null | undefined): {
-  expired: boolean;
-  warning: boolean;
-  remainingHours: number;
-  label: string;
-} {
-  if (!lastResetAt) {
-    return { expired: false, warning: false, remainingHours: 0, label: "" };
-  }
-  const reset = new Date(lastResetAt);
-  const now = new Date();
-  const elapsedHours = (now.getTime() - reset.getTime()) / (1000 * 60 * 60);
-  const remaining = Math.max(0, TOKEN_VALID_HOURS - elapsedHours);
-
-  if (remaining <= 0) {
-    return { expired: true, warning: true, remainingHours: 0, label: "过期" };
-  }
-  if (remaining <= 48) {
-    const h = Math.floor(remaining);
-    return { expired: false, warning: true, remainingHours: remaining, label: h + "h" };
-  }
-  const days = Math.floor(remaining / 24);
-  return { expired: false, warning: false, remainingHours: remaining, label: days + "d" };
+  isStandby?: boolean;
+  onToggleStandby?: (id: string) => void;
+  standbyChanging?: boolean;
 }
 
 function fmtRelative(iso: string): string {
@@ -181,7 +169,8 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
+  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
+  isStandby, onToggleStandby, standbyChanging,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -488,7 +477,7 @@ export function AccountGridItem({
   };
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
-  const tokenStatus = account.initialized ? getTokenStatus(account.last_reset_at) : null;
+  const tokenStatus = account.initialized ? getAccountTokenStatus(account.last_reset_at) : null;
   const regionLabel = accountRegionLabel(account.region);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"
@@ -618,6 +607,7 @@ export function AccountGridItem({
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
       data-scheme-edit={isSelectionMode ? "true" : undefined}
+      data-standby={isStandby ? "true" : undefined}
       style={{
         cursor: isSelectionMode
           ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
@@ -644,6 +634,7 @@ export function AccountGridItem({
                     className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                   />
                   {selected && <span className="scheme-context-label">方案配置</span>}
+                  {isStandby && <span className="scheme-context-label">全局待机</span>}
                 </>
               ) : (
                 <span className="tile-index index">{String(account.order + 1).padStart(2, "0")} / {account.initialized ? "READY" : "ATTENTION"}</span>
@@ -796,7 +787,23 @@ export function AccountGridItem({
               )}
             </div>
           </div>
-          <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
+          <div className="tile-state-actions">
+            {isSelectionMode && onToggleStandby && (
+              <button
+                type="button"
+                className="standby-card-toggle"
+                disabled={standbyChanging}
+                onClick={event => { stop(event); onToggleStandby(account.id); }}
+                title={isStandby ? "移到启动台；不会改变当前策略成员" : "移入全局待机池；不会改变当前策略成员"}
+              >
+                {isStandby
+                  ? <ArchiveRestore size={12} strokeWidth={1.8} aria-hidden="true" />
+                  : <Archive size={12} strokeWidth={1.8} aria-hidden="true" />}
+                {isStandby ? "移出待机" : "移入待机"}
+              </button>
+            )}
+            <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
+          </div>
 
         </div>
 
@@ -871,6 +878,18 @@ export function AccountGridItem({
               )}
               {account.initialized && (
                 <>
+                  {onToggleStandby && (
+                    <button
+                      onClick={event => { stop(event); onToggleStandby(account.id); }}
+                      disabled={standbyChanging}
+                      className="mini-action icon-btn disabled:opacity-40"
+                      title={isStandby ? "移到启动台" : "移入待机池，不参与默认启动"}
+                    >
+                      {isStandby
+                        ? <ArchiveRestore size={12} strokeWidth={1.8} aria-hidden="true" />
+                        : <Archive size={12} strokeWidth={1.8} aria-hidden="true" />}
+                    </button>
+                  )}
                   <button onClick={e => { stop(e); onConfigure(account); }} className="mini-action icon-btn relative" title="高级设置">
                     <Sliders size={12} strokeWidth={1.8} />
                   </button>
@@ -1076,7 +1095,8 @@ export function AccountGridItem({
 export function SortableAccountCard({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
+  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
+  isStandby, onToggleStandby, standbyChanging,
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
@@ -1115,6 +1135,9 @@ export function SortableAccountCard({
         getPositionSchemeUsage={getPositionSchemeUsage}
         onUpdateToken={onUpdateToken}
         config={config}
+        isStandby={isStandby}
+        onToggleStandby={onToggleStandby}
+        standbyChanging={standbyChanging}
       />
     </div>
   );
