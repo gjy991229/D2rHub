@@ -11,8 +11,6 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 
 import type {
   AccountMeta,
@@ -41,7 +39,7 @@ const stepLabels: Record<string, string> = {
   mutex: "互斥", connect: "连接", cleanup: "收尾", done: "完成",
 };
 
-interface GridItemProps {
+export interface GridItemProps {
   account: AccountMeta;
   onRename: (id: string, name: string) => Promise<boolean>;
   onDelete: (id: string) => void;
@@ -981,63 +979,6 @@ export function AccountGridItem({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-export function SortableAccountCard({
-  account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
-  isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
-}: GridItemProps) {
-  const {
-    attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({
-    id: account.id,
-    disabled: isSelectionMode,
-  });
-  const { progress } = useLaunch();
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : undefined,
-    width: "100%",
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...(isSelectionMode ? {} : attributes)}
-      {...(isSelectionMode ? {} : listeners)}
-      onKeyDown={isSelectionMode ? undefined : event => {
-        // dnd-kit uses Space to start a keyboard drag. Only let the sortable
-        // wrapper itself activate it; Space inside inputs and buttons belongs
-        // to that control and must not bubble into a card drag.
-        if (event.target !== event.currentTarget) return;
-        listeners?.onKeyDown?.(event);
-      }}
-    >
-      <AccountGridItem
-        account={account}
-        onRename={onRename}
-        onDelete={onDelete}
-        onConfigure={onConfigure}
-        onLaunch={onLaunch}
-        onBattleNetOnly={onBattleNetOnly}
-        progress={progress[account.id] || null}
-        isSelectionMode={isSelectionMode}
-        selected={selected}
-        onToggleSelect={onToggleSelect}
-        schemeMember={schemeMember}
-        onSchemeMemberChange={onSchemeMemberChange}
-        getModSchemeUsage={getModSchemeUsage}
-        getPositionSchemeUsage={getPositionSchemeUsage}
-        onUpdateToken={onUpdateToken}
-        config={config}
-      />
     </div>
   );
 }
