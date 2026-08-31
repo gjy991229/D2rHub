@@ -55,6 +55,7 @@ import {
   setAuxiliaryWindowVisible,
   type AuxiliaryWindowLabel,
 } from "../../utils/windowPlacement";
+import { SettingsPathsTab } from "./SettingsPathsTab";
 
 // Helper for quadratic opacity mapping
 // Map slider value s (0..100) to stored percentage p (10..100)
@@ -167,132 +168,6 @@ const AGGREGATE_ITEM_FILTERS = [
   { id: "organs", label: "器官", detail: "角、眼、脑作为一整项" },
   { id: "essences", label: "精华与徽章", detail: "四种精华及赦免徽章" },
 ] as const;
-type InstallationPathField =
-  | "cn_battle_net_path"
-  | "cn_game_path"
-  | "cn_saved_games_path"
-  | "global_game_path"
-  | "global_saved_games_path";
-
-interface InstallationProfileFieldsProps {
-  edition: "CN" | "Global";
-  config: GlobalConfig;
-  settingsAvailable: boolean | null;
-  detectedSavedGames: string | null;
-  updateConfig: (updater: (config: GlobalConfig) => void) => void;
-  pickFile: (field: keyof GlobalConfig, title: string, extensions?: string[]) => Promise<void>;
-  pickFolder: (field: keyof GlobalConfig, title: string) => Promise<void>;
-  applyDetectedPath: (field: keyof GlobalConfig, value: string | null) => void;
-}
-
-function InstallationProfileFields({
-  edition,
-  config,
-  settingsAvailable,
-  detectedSavedGames,
-  updateConfig,
-  pickFile,
-  pickFolder,
-  applyDetectedPath,
-}: InstallationProfileFieldsProps) {
-  const isCn = edition === "CN";
-  const label = isCn ? "国服" : "国际服";
-  const fields: Record<"game" | "savedGames", InstallationPathField> = isCn
-    ? {
-        game: "cn_game_path",
-        savedGames: "cn_saved_games_path",
-      }
-    : {
-        game: "global_game_path",
-        savedGames: "global_saved_games_path",
-      };
-  const hasConfiguration = Object.values(fields).some((field) => config[field])
-    || (isCn && Boolean(config.cn_battle_net_path));
-  const profileComplete = Boolean(config[fields.game].trim());
-
-  const clearProfile = () => {
-    updateConfig((next) => {
-      if (isCn) next.cn_battle_net_path = "";
-      next[fields.game] = "";
-      next[fields.savedGames] = "";
-    });
-  };
-
-  return (
-    <div className="space-y-2 border-t border-border-default/50 pt-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-semibold text-text-secondary">{label}</p>
-          <p className="text-2xs text-text-muted mt-0.5">
-            {isCn
-              ? "游戏目录可支撑核心启动；战网认证还需客户端路径，存档目录仅供画质覆盖。"
-              : "亚/美/欧服共用，仅支持 Token 直启；存档目录仅供画质覆盖。"}
-          </p>
-        </div>
-        {hasConfiguration && <Button size="sm" onClick={clearProfile}>清除此版本</Button>}
-      </div>
-
-      {hasConfiguration && !profileComplete && (
-        <p className="text-xs text-text-muted leading-relaxed">
-          当前版本尚未配置游戏安装目录；不会开放该版本的账号创建与启动。
-        </p>
-      )}
-
-      {isCn && (
-        <>
-          <label className="text-xs text-text-muted block">国服战网客户端 (Battle.net.exe)</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={config.cn_battle_net_path}
-              readOnly
-              className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-            />
-            <Button size="sm" onClick={() => pickFile("cn_battle_net_path", "国服 Battle.net.exe", ["exe"])}>浏览</Button>
-          </div>
-        </>
-      )}
-
-      <label className="text-xs text-text-muted block">游戏安装目录</label>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={config[fields.game]}
-          readOnly
-          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-        />
-        <Button size="sm" onClick={() => pickFolder(fields.game, `${label}游戏安装目录`)}>浏览</Button>
-      </div>
-
-      <label className="text-xs text-text-muted block">
-        存档目录（可选） · Diablo II Resurrected{isCn ? " (CN)" : ""}
-      </label>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={config[fields.savedGames]}
-          readOnly
-          className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-        />
-        <Button size="sm" onClick={() => pickFolder(fields.savedGames, `${label}存档目录`)}>浏览</Button>
-        <Button size="sm" onClick={() => applyDetectedPath(fields.savedGames, detectedSavedGames)}>自动探测</Button>
-      </div>
-
-      {settingsAvailable === false && (
-        <div
-          className="flex items-start gap-2 px-3 py-2.5 rounded-lg"
-          style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}
-        >
-          <ShieldAlert size={14} className="text-warning shrink-0 mt-0.5" />
-          <p className="text-xs text-text-secondary leading-relaxed">
-            {label}存档目录中未检测到 Settings.json，账号独立画质快照与覆盖暂不可用。
-          </p>
-        </div>
-      )}
-    </div>
-  );
-}
-
 type TabType =
   | "paths"
   | "accounts"
@@ -1223,93 +1098,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto py-2 pr-1">
             {/* 1. Paths Tab */}
             {activeTab === "paths" && config && (
-              <div className="settings-content-grid">
-                <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">核心程序路径</h3>
-                  <InstallationProfileFields
-                    edition="CN"
-                    config={config}
-                    settingsAvailable={settingsJsonAvailable.CN}
-                    detectedSavedGames={detectedPaths.cnSavedGames}
-                    updateConfig={updateConfig}
-                    pickFile={pickFile}
-                    pickFolder={pickFolder}
-                    applyDetectedPath={applyDetectedPath}
-                  />
-                  <InstallationProfileFields
-                    edition="Global"
-                    config={config}
-                    settingsAvailable={settingsJsonAvailable.Global}
-                    detectedSavedGames={detectedPaths.globalSavedGames}
-                    updateConfig={updateConfig}
-                    pickFile={pickFile}
-                    pickFolder={pickFolder}
-                    applyDetectedPath={applyDetectedPath}
-                  />
-                </div>
-
-                <div className="spatial-panel p-3 space-y-2">
-                  <h3 className="text-xs font-bold text-text-primary">国服战网/浏览器辅助路径</h3>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">战网进程 Agent.exe 目录</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.program_data_agent_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFolder("program_data_agent_path", "Agent 目录")}>浏览</Button>
-                      <Button size="sm" onClick={() => applyDetectedPath("program_data_agent_path", detectedPaths.agent)}>自动探测</Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">战网 Roaming AppData 目录</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.app_data_roaming_bnet_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFolder("app_data_roaming_bnet_path", "Roaming 战网目录")}>浏览</Button>
-                      <Button size="sm" onClick={() => applyDetectedPath("app_data_roaming_bnet_path", detectedPaths.roaming)}>自动探测</Button>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-xs text-text-muted block">独立隔离浏览器程序 (Edge/Chrome.exe)</label>
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        value={config.browser_path}
-                        readOnly
-                        className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary"
-                      />
-                      <Button size="sm" onClick={() => pickFile("browser_path", "chrome.exe/msedge.exe", ["exe"])}>浏览</Button>
-                      <Button size="sm" onClick={() => applyDetectedPath("browser_path", detectedPaths.browser)}>自动探测</Button>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <div>
-                      <span className="text-sm font-semibold text-text-secondary">隔离浏览器类型</span>
-                      <p className="text-2xs text-text-muted">当前选择的沙箱浏览器品牌</p>
-                    </div>
-                    <select
-                      value={config.browser_type}
-                      onChange={e => updateConfig(c => { c.browser_type = e.target.value; })}
-                      className="h-7 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-                    >
-                      <option value="">未指定</option>
-                      <option value="chrome">Google Chrome</option>
-                      <option value="edge">Microsoft Edge</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
+              <SettingsPathsTab
+                config={config}
+                settingsAvailable={settingsJsonAvailable}
+                detectedPaths={detectedPaths}
+                updateConfig={updateConfig}
+                pickFile={pickFile}
+                pickFolder={pickFolder}
+                applyDetectedPath={applyDetectedPath}
+              />
             )}
 
             {/* 2. Accounts & Launch Tab */}
