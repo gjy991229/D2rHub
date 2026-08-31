@@ -348,7 +348,7 @@ fn fill_credentials(
             flow.ui_profile.join_password_field,
         )
     };
-    // The r5 Mod uses the same toolbar button to open and close a form. Normal
+    // The r6 Mod uses the same toolbar button to open and close a form. Normal
     // rotations open it here, while a duplicate-name retry keeps the create
     // form open after dismissing the dialog and must not toggle it closed.
     if input.open_form {

@@ -16,8 +16,8 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 5;
-const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v3";
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 6;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v4";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
 
 #[derive(Debug, Clone, Serialize)]
@@ -484,38 +484,36 @@ fn validate_in_game_room_tool_layouts(
         ("D2RHubOpenJoinGamehd.json", "JoinGamePanel"),
     ] {
         let opener = read_room_tool_layout(&layout_directory, name)?;
-        if !layout_has_child_message(
-            &opener,
-            "message",
-            &format!("PanelManager:TogglePanel:{target}"),
-        ) {
+        if opener.get("fields").is_some()
+            || !layout_has_child_message(
+                &opener,
+                "message",
+                &format!("PanelManager:TogglePanel:{target}"),
+            )
+        {
             return Err(format!("局内房间工具无法切换 {target}"));
         }
     }
 
-    for (name, panel_name, default_widget, input_names) in [
+    let form_specs: [(&str, &str, &[&str]); 2] = [
         (
             "creategamepanelhd.json",
             "CreateGamePanel",
-            "GameNameInput",
-            ["GameNameInput", "PasswordInput"],
+            &["GameNameInput", "PasswordInput", "DescriptionInput"],
         ),
         (
             "joingamepanelhd.json",
             "JoinGamePanel",
-            "NameInput",
-            ["NameInput", "PasswordInput"],
+            &["NameInput", "PasswordInput"],
         ),
-    ] {
+    ];
+    for (name, panel_name, input_names) in form_specs {
         let form = read_room_tool_layout(&layout_directory, name)?;
         if form
             .pointer("/fields/priority")
             .and_then(serde_json::Value::as_u64)
             != Some(2)
-            || form
-                .pointer("/fields/defaultWidget")
-                .and_then(serde_json::Value::as_str)
-                != Some(default_widget)
+            || form.pointer("/fields/defaultWidget").is_some()
             || form
                 .pointer("/fields/isDismissable")
                 .and_then(serde_json::Value::as_bool)
@@ -528,10 +526,16 @@ fn validate_in_game_room_tool_layouts(
             return Err(format!("局内房间表单未正确加工：{name}"));
         }
         if input_names.iter().any(|input_name| {
-            find_layout_node(&form, input_name)
-                .and_then(|node| node.pointer("/fields/imeEnabled"))
+            let Some(node) = find_layout_node(&form, input_name) else {
+                return true;
+            };
+            node.pointer("/fields/imeEnabled")
                 .and_then(serde_json::Value::as_bool)
                 != Some(true)
+                || node
+                    .pointer("/fields/alwaysAcceptsKeyInput")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
@@ -1547,13 +1551,13 @@ mod tests {
                 serde_json::json!({
                     "fields": {
                         "priority": 2,
-                        "defaultWidget": "GameNameInput",
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "GameNameInput", "fields": {"imeEnabled": true}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
+                        {"name": "GameNameInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
+                        {"name": "DescriptionInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
                     ]
                 }),
@@ -1563,13 +1567,12 @@ mod tests {
                 serde_json::json!({
                     "fields": {
                         "priority": 2,
-                        "defaultWidget": "NameInput",
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "NameInput", "fields": {"imeEnabled": true}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
+                        {"name": "NameInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
                     ]
                 }),
@@ -1604,6 +1607,23 @@ mod tests {
         write_test_room_tool_layouts(&root, name);
         validate_in_game_room_tool_layouts(&validated, name).unwrap();
 
+        let create_form_path = root
+            .join(name)
+            .join(format!("{name}.mpq"))
+            .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+            .join("creategamepanelhd.json");
+        let mut create_form: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&create_form_path).unwrap()).unwrap();
+        create_form["children"][0]["fields"]
+            .as_object_mut()
+            .unwrap()
+            .remove("alwaysAcceptsKeyInput");
+        std::fs::write(&create_form_path, serde_json::to_vec(&create_form).unwrap()).unwrap();
+        assert!(validate_in_game_room_tool_layouts(&validated, name)
+            .unwrap_err()
+            .contains("捕获键盘输入"));
+
+        write_test_room_tool_layouts(&root, name);
         std::fs::write(
             root.join(name)
                 .join(format!("{name}.mpq"))
