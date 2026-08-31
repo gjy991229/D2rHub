@@ -11,6 +11,7 @@ use tauri::{Emitter, Manager};
 const STATUS_EVENT: &str = "room-rotation-status";
 const MAX_GAME_NAME_LENGTH: usize = 15;
 const INPUT_TEST_PREVIEW_MS: u64 = 1_000;
+const PRODUCTION_TEXT_STRATEGY: &str = "post_ctrl_v";
 
 fn client_coordinate(length: i32, permille: u16) -> i32 {
     let last_pixel = length.saturating_sub(1).max(0);
@@ -137,7 +138,7 @@ fn room_name(config: &RoomRotationConfig, sequence: u32) -> Result<String, Strin
         sequence,
         width = usize::from(config.sequence_width)
     );
-    if value.len() > MAX_GAME_NAME_LENGTH {
+    if value.chars().count() > MAX_GAME_NAME_LENGTH {
         return Err(format!(
             "房间名“{value}”超过 D2R 的 {MAX_GAME_NAME_LENGTH} 字符限制"
         ));
@@ -317,7 +318,6 @@ struct RoomFormInput<'a> {
     open_form: bool,
     name: &'a str,
     password: &'a str,
-    text_strategy: &'a str,
 }
 
 #[cfg(target_os = "windows")]
@@ -348,7 +348,7 @@ fn fill_credentials(
             flow.ui_profile.join_password_field,
         )
     };
-    // The r7 Mod uses the same toolbar button to open and close a form. Normal
+    // The r8 Mod uses the same toolbar button to open and close a form. Normal
     // rotations open it here, while a duplicate-name retry keeps the create
     // form open after dismissing the dialog and must not toggle it closed.
     if input.open_form {
@@ -361,7 +361,7 @@ fn fill_credentials(
         app,
         input.name,
         flow.character_delay_ms,
-        input.text_strategy,
+        PRODUCTION_TEXT_STRATEGY,
     )?;
     sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     if update_password {
@@ -371,7 +371,7 @@ fn fill_credentials(
             app,
             input.password,
             flow.character_delay_ms,
-            input.text_strategy,
+            PRODUCTION_TEXT_STRATEGY,
         )?;
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     }
@@ -382,7 +382,7 @@ fn fill_credentials(
         form.click(password_field)?;
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     }
-    form.key(win::VK_RETURN, input.text_strategy)?;
+    form.key(win::VK_RETURN, PRODUCTION_TEXT_STRATEGY)?;
     if update_password {
         remember_applied_password(input.account_id, input.pid, input.create, input.password);
     }
@@ -440,7 +440,6 @@ fn run_primary_workflow(
             open_form: retry_sequence.is_none(),
             name: &candidate,
             password: &config.password,
-            text_strategy: &config.background_text_strategy,
         },
         generation,
     )?;
@@ -488,7 +487,6 @@ fn run_one_follower(
             open_form: true,
             name: &room_name,
             password: &config.password,
-            text_strategy: &config.background_text_strategy,
         },
         generation,
     )
@@ -892,11 +890,6 @@ pub fn test_room_rotation_input(
                 form.click(game_name_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 let value = sample.unwrap_or_else(|| "d2rtest123".to_string());
-                if !value.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
-                }) {
-                    return Err("测试文字只能包含英文字母、数字、短横线和下划线".to_string());
-                }
                 form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
                 std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
                 form.click(tab)?;
@@ -921,11 +914,6 @@ pub fn test_room_rotation_input(
                 form.click(password_field)?;
                 std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
                 let value = sample.unwrap_or_else(|| config.password.clone());
-                if !value.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || character == '-' || character == '_'
-                }) {
-                    return Err("测试密码只能包含英文字母、数字、短横线和下划线".to_string());
-                }
                 form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
                 std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
                 form.click(tab)?;
@@ -1784,13 +1772,14 @@ mod win {
     }
 
     fn validate_text_value(value: &str) -> Result<(), String> {
-        if value.len() > MAX_GAME_NAME_LENGTH {
+        if value.chars().count() > MAX_GAME_NAME_LENGTH {
             return Err("输入内容超过 15 个字符".to_string());
         }
-        if !value.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        }) {
-            return Err("输入内容只能包含英文字母、数字、短横线和下划线".to_string());
+        if !value
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
+        {
+            return Err("输入内容只能包含中英文字母、数字、短横线和下划线".to_string());
         }
         Ok(())
     }
@@ -1952,6 +1941,23 @@ mod tests {
         };
         assert_eq!(room_name(&config, 7).unwrap(), "chaos-007");
         assert_eq!(room_name(&config, 1234).unwrap(), "chaos-1234");
+    }
+
+    #[test]
+    fn room_name_supports_a_unicode_prefix_with_character_counting() {
+        let config = RoomRotationConfig {
+            name_prefix: "巴尔-".to_string(),
+            sequence_width: 3,
+            ..RoomRotationConfig::default()
+        };
+        assert_eq!(room_name(&config, 7).unwrap(), "巴尔-007");
+
+        let config = RoomRotationConfig {
+            name_prefix: "巴尔巴尔巴尔巴尔巴尔-".to_string(),
+            sequence_width: 3,
+            ..RoomRotationConfig::default()
+        };
+        assert_eq!(room_name(&config, 7).unwrap().chars().count(), 14);
     }
 
     #[test]

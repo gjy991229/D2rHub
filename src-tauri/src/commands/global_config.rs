@@ -83,9 +83,9 @@ pub struct RoomRotationUiProfile {
     /// Legacy compatibility; the in-game flow no longer opens the pause menu.
     pub save_and_exit: RoomRotationPoint,
     pub character_select_lobby: RoomRotationPoint,
-    /// D2RHub r7 in-game room toolbar create button.
+    /// D2RHub r8 in-game room toolbar create button.
     pub create_tab: RoomRotationPoint,
-    /// D2RHub r7 in-game room toolbar join button.
+    /// D2RHub r8 in-game room toolbar join button.
     pub join_tab: RoomRotationPoint,
     pub game_name_field: RoomRotationPoint,
     #[serde(default = "default_room_rotation_password_field")]
@@ -236,7 +236,7 @@ pub struct RoomRotationConfig {
     /// Pure background mouse delivery: post_top, send_top, post_child, or send_child.
     #[serde(default = "default_room_rotation_background_click_strategy")]
     pub background_click_strategy: String,
-    /// Background text delivery. Fast key messages are the default; paste variants remain diagnostic.
+    /// Text delivery. The default briefly focuses the target and pastes one complete Unicode value.
     #[serde(default = "default_room_rotation_background_text_strategy")]
     pub background_text_strategy: String,
     /// How long the guarded global cursor stays at the click target.
@@ -287,7 +287,7 @@ impl Default for RoomRotationConfig {
             follower_exit_delay_ms: default_room_rotation_follower_exit_delay_ms(),
             duplicate_retries: default_room_rotation_duplicate_retries(),
             ui_profile: RoomRotationUiProfile::default(),
-            strategy_version: 5,
+            strategy_version: 6,
             standard_flow: default_room_rotation_standard_flow(),
             direct_lobby_flow: default_room_rotation_direct_lobby_flow(),
             account_flow_bindings: std::collections::HashMap::new(),
@@ -330,7 +330,7 @@ fn default_room_rotation_sequence_width() -> u8 {
 }
 
 fn default_room_rotation_input_mode() -> String {
-    "cursor_guard".to_string()
+    "focus".to_string()
 }
 
 fn default_room_rotation_background_click_strategy() -> String {
@@ -338,7 +338,7 @@ fn default_room_rotation_background_click_strategy() -> String {
 }
 
 fn default_room_rotation_background_text_strategy() -> String {
-    "post_keys_paced".to_string()
+    "post_ctrl_v".to_string()
 }
 
 fn default_room_rotation_cursor_lease_ms() -> u64 {
@@ -691,12 +691,9 @@ mod validation_tests {
 
         let config: GlobalConfig = serde_json::from_value(value).unwrap();
 
-        assert_eq!(config.room_rotation.input_mode, "cursor_guard");
+        assert_eq!(config.room_rotation.input_mode, "focus");
         assert_eq!(config.room_rotation.background_click_strategy, "post_top");
-        assert_eq!(
-            config.room_rotation.background_text_strategy,
-            "post_keys_paced"
-        );
+        assert_eq!(config.room_rotation.background_text_strategy, "post_ctrl_v");
         assert_eq!(config.room_rotation.cursor_lease_ms, 16);
     }
 
@@ -721,7 +718,7 @@ mod validation_tests {
     }
 
     #[test]
-    fn legacy_background_room_rotation_mode_migrates_to_cursor_guard() {
+    fn legacy_background_room_rotation_mode_migrates_to_reliable_focus() {
         let mut config = GlobalConfig {
             room_rotation: RoomRotationConfig {
                 input_mode: "background".to_string(),
@@ -731,7 +728,7 @@ mod validation_tests {
         };
 
         assert!(config.normalize_room_rotation());
-        assert_eq!(config.room_rotation.input_mode, "cursor_guard");
+        assert_eq!(config.room_rotation.input_mode, "focus");
     }
 
     #[test]
@@ -752,7 +749,7 @@ mod validation_tests {
         };
 
         assert!(config.normalize_room_rotation());
-        assert_eq!(config.room_rotation.strategy_version, 5);
+        assert_eq!(config.room_rotation.strategy_version, 6);
         assert_eq!(
             config.room_rotation.standard_flow.ui_profile.save_and_exit,
             legacy_point
@@ -799,10 +796,7 @@ mod validation_tests {
                 .ui_profile
                 .game_name_field
         );
-        assert_eq!(
-            config.room_rotation.background_text_strategy,
-            "post_keys_paced"
-        );
+        assert_eq!(config.room_rotation.background_text_strategy, "post_ctrl_v");
         assert!(!config.room_rotation.standard_flow.click_lobby_after_exit);
         assert_eq!(config.room_rotation.standard_flow.lobby_load_ms, 0);
         assert!(
@@ -845,11 +839,8 @@ mod validation_tests {
         assert_eq!(profile.join_password_field, password);
         assert_eq!(profile.create_submit_button, submit);
         assert_eq!(profile.join_submit_button, submit);
-        assert_eq!(config.room_rotation.strategy_version, 5);
-        assert_eq!(
-            config.room_rotation.background_text_strategy,
-            "post_keys_paced"
-        );
+        assert_eq!(config.room_rotation.strategy_version, 6);
+        assert_eq!(config.room_rotation.background_text_strategy, "post_ctrl_v");
         assert_eq!(config.room_rotation.standard_flow.character_delay_ms, 10);
         assert_eq!(
             config.room_rotation.direct_lobby_flow.character_delay_ms,
@@ -2485,9 +2476,9 @@ impl GlobalConfig {
         config.duplicate_retries = config.duplicate_retries.clamp(0, 9);
         // D2R ignores the coordinates carried by synthetic background mouse
         // messages on affected clients. Migrate that legacy automatic mode to
-        // the guarded cursor path so E/F/G tests and shortcuts behave alike.
+        // the current reliable focus-and-paste path.
         if !matches!(config.input_mode.as_str(), "cursor_guard" | "focus") {
-            config.input_mode = "cursor_guard".to_string();
+            config.input_mode = default_room_rotation_input_mode();
         }
         if !matches!(
             config.background_click_strategy.as_str(),
@@ -2568,6 +2559,15 @@ impl GlobalConfig {
             config.ui_profile.join_tab = default_room_rotation_join_button();
             config.strategy_version = 5;
         }
+        if config.strategy_version < 6 {
+            // Regular in-game text boxes cannot outrank D2R's configured skill
+            // hotkeys. Migrate production entry to a real Ctrl+V transaction:
+            // focus the target briefly, paste one complete Unicode value, then
+            // restore the window that was active before the transaction.
+            config.input_mode = default_room_rotation_input_mode();
+            config.background_text_strategy = default_room_rotation_background_text_strategy();
+            config.strategy_version = 6;
+        }
         normalize_room_rotation_flow(&mut config.standard_flow);
         normalize_room_rotation_flow(&mut config.direct_lobby_flow);
         for strategy in config.account_flow_bindings.values_mut() {
@@ -2596,11 +2596,13 @@ impl GlobalConfig {
         if !config.enabled {
             return Ok(());
         }
-        if !config.name_prefix.chars().all(|character| {
-            character.is_ascii_alphanumeric() || character == '-' || character == '_'
-        }) {
+        if !config
+            .name_prefix
+            .chars()
+            .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
+        {
             return Err(AppError::ConfigWriteError(
-                "换房名称前缀只能包含英文字母、数字、短横线和下划线".to_string(),
+                "换房名称前缀只能包含中英文字母、数字、短横线和下划线".to_string(),
             ));
         }
         if config.name_prefix.is_empty() {
@@ -2608,13 +2610,13 @@ impl GlobalConfig {
                 "换房名称前缀不能为空".to_string(),
             ));
         }
-        if config.password.len() > 15
+        if config.password.chars().count() > 15
             || !config.password.chars().all(|character| {
-                character.is_ascii_alphanumeric() || character == '-' || character == '_'
+                character.is_alphanumeric() || character == '-' || character == '_'
             })
         {
             return Err(AppError::ConfigWriteError(
-                "房间密码最多 15 个字符，且只能包含英文字母、数字、短横线和下划线".to_string(),
+                "房间密码最多 15 个字符，且只能包含中英文字母、数字、短横线和下划线".to_string(),
             ));
         }
         let preview = format!(
@@ -2623,7 +2625,7 @@ impl GlobalConfig {
             config.next_sequence,
             width = usize::from(config.sequence_width)
         );
-        if preview.len() > 15 {
+        if preview.chars().count() > 15 {
             return Err(AppError::ConfigWriteError(format!(
                 "换房名称“{preview}”超过 D2R 的 15 字符限制"
             )));

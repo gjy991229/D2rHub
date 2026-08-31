@@ -16,9 +16,11 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 7;
-const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v5";
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 8;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v6";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+const ROOM_FORM_INPUT_PRIORITY: i64 = 1_999_999_999;
+const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 258;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
@@ -442,7 +444,10 @@ fn validate_in_game_room_tool_layouts(
         .pointer("/fields/tooltipString")
         .and_then(serde_json::Value::as_str)
         .is_none_or(|tooltip| tooltip.is_empty() || tooltip.starts_with('@'))
-        || next_game.pointer("/fields/tooltipOffset").is_some()
+        || next_game
+            .pointer("/fields/tooltipOffset/y")
+            .and_then(serde_json::Value::as_i64)
+            != Some(NEXT_GAME_TOOLTIP_OFFSET_Y)
     {
         return Err("局内“下一局”第一层提示位置或文字无效".to_string());
     }
@@ -511,8 +516,8 @@ fn validate_in_game_room_tool_layouts(
         let form = read_room_tool_layout(&layout_directory, name)?;
         if form
             .pointer("/fields/priority")
-            .and_then(serde_json::Value::as_u64)
-            != Some(2)
+            .and_then(serde_json::Value::as_i64)
+            != Some(ROOM_FORM_INPUT_PRIORITY)
             || form.pointer("/fields/defaultWidget").is_some()
             || form
                 .pointer("/fields/isDismissable")
@@ -532,10 +537,7 @@ fn validate_in_game_room_tool_layouts(
             node.pointer("/fields/imeEnabled")
                 .and_then(serde_json::Value::as_bool)
                 != Some(true)
-                || node
-                    .pointer("/fields/alwaysAcceptsKeyInput")
-                    .and_then(serde_json::Value::as_bool)
-                    != Some(true)
+                || node.pointer("/fields/alwaysAcceptsKeyInput").is_some()
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
@@ -1475,7 +1477,8 @@ mod tests {
         generated_audio_mod_name, has_txt_argument, installed_mods, replace_audio_mod_directory,
         resolve_source_directory, validate_audio_mod, validate_in_game_room_tool_layouts,
         AREA_CATALOG_FILE_NAME, IN_GAME_ROOM_TOOLS_CAPABILITY, ITEM_CATALOG_FILE_NAME,
-        PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_LAYOUT_DIRECTORY,
+        NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+        ROOM_FORM_INPUT_PRIORITY, ROOM_TOOL_LAYOUT_DIRECTORY,
     };
 
     fn write_test_audio_mod(
@@ -1518,6 +1521,7 @@ mod tests {
                 serde_json::json!({"children": [
                     {"name": "D2RHubNextGame", "fields": {
                         "tooltipString": "首次点击只打开确认条；再次确认才会离开当前房间，4 秒后自动取消。",
+                        "tooltipOffset": {"y": NEXT_GAME_TOOLTIP_OFFSET_Y},
                         "onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"
                     }},
                     {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"}},
@@ -1550,14 +1554,14 @@ mod tests {
                 "creategamepanelhd.json",
                 serde_json::json!({
                     "fields": {
-                        "priority": 2,
+                        "priority": ROOM_FORM_INPUT_PRIORITY,
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "GameNameInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
-                        {"name": "DescriptionInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
+                        {"name": "GameNameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
+                        {"name": "DescriptionInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
                     ]
                 }),
@@ -1566,13 +1570,13 @@ mod tests {
                 "joingamepanelhd.json",
                 serde_json::json!({
                     "fields": {
-                        "priority": 2,
+                        "priority": ROOM_FORM_INPUT_PRIORITY,
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "NameInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": true, "alwaysAcceptsKeyInput": true}},
+                        {"name": "NameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
                     ]
                 }),
@@ -1617,7 +1621,7 @@ mod tests {
         create_form["children"][0]["fields"]
             .as_object_mut()
             .unwrap()
-            .remove("alwaysAcceptsKeyInput");
+            .insert("alwaysAcceptsKeyInput".to_string(), serde_json::json!(true));
         std::fs::write(&create_form_path, serde_json::to_vec(&create_form).unwrap()).unwrap();
         assert!(validate_in_game_room_tool_layouts(&validated, name)
             .unwrap_err()

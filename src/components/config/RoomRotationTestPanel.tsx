@@ -94,9 +94,9 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
   password: "",
   next_sequence: 1,
   sequence_width: 3,
-  input_mode: "cursor_guard",
+  input_mode: "focus",
   background_click_strategy: "post_top",
-  background_text_strategy: "post_keys_paced",
+  background_text_strategy: "post_ctrl_v",
   cursor_lease_ms: 16,
   frontend_timeout_ms: 12_000,
   create_timeout_ms: 10_000,
@@ -104,7 +104,7 @@ const DEFAULT_CONFIG: RoomRotationConfig = {
   follower_exit_delay_ms: 2_200,
   duplicate_retries: 3,
   ui_profile: DEFAULT_UI_PROFILE,
-  strategy_version: 5,
+  strategy_version: 6,
   standard_flow: DEFAULT_STANDARD_FLOW,
   direct_lobby_flow: DEFAULT_DIRECT_FLOW,
   account_flow_bindings: {},
@@ -265,11 +265,11 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
     if (rotation.shortcut && rotation.shortcut.toLowerCase() === rotation.join_shortcut.toLowerCase()) {
       problems.push("两个快捷键不能相同");
     }
-    if (!/^[A-Za-z0-9_-]+$/.test(rotation.name_prefix)) problems.push("房间前缀含无效字符");
-    if (!/^[A-Za-z0-9_-]*$/.test(rotation.password) || rotation.password.length > 15) {
+    if (!/^[\p{L}\p{N}_-]+$/u.test(rotation.name_prefix)) problems.push("房间前缀含无效字符");
+    if (!/^[\p{L}\p{N}_-]*$/u.test(rotation.password) || Array.from(rotation.password).length > 15) {
       problems.push("密码格式无效");
     }
-    if (preview.length > 15) problems.push("房间名预览超过 15 个字符");
+    if (Array.from(preview).length > 15) problems.push("房间名预览超过 15 个字符");
     return problems;
   }, [preview, rotation]);
 
@@ -352,7 +352,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
       patchRotation({ input_mode: "cursor_guard", cursor_lease_ms: testedLease });
     }
     if (textVariant) {
-      patchRotation({ input_mode: "cursor_guard", background_text_strategy: textVariant });
+      patchRotation({ background_text_strategy: textVariant });
     }
     setTestBusy(busyKey);
     try {
@@ -480,7 +480,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-text-secondary">参与账号</span>
-          <span className="text-2xs text-text-muted">所有账号需使用 r7 及以上加工 Mod</span>
+          <span className="text-2xs text-text-muted">所有账号需使用 r8 及以上加工 Mod</span>
         </div>
         {rotation.primary_account_id && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-2.5 py-2">
@@ -560,7 +560,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
         </label>
         <label className="space-y-1 md:col-span-2">
           <span className="text-2xs text-text-muted">本轮房间</span>
-          <div className={`flex h-8 items-center rounded-lg border px-2.5 font-mono text-xs ${preview.length > 15 ? "border-error text-error" : "border-success/30 bg-success/10 text-success"}`}>
+          <div className={`flex h-8 items-center rounded-lg border px-2.5 font-mono text-xs ${Array.from(preview).length > 15 ? "border-error text-error" : "border-success/30 bg-success/10 text-success"}`}>
             {preview}{rotation.password ? ` / ${rotation.password}` : " / 无密码"}
           </div>
         </label>
@@ -574,8 +574,8 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             onChange={event => patchRotation({ input_mode: event.target.value as RoomRotationConfig["input_mode"] })}
             className="h-8 w-full rounded-lg border border-border-default bg-surface-hover px-2.5 text-xs text-text-primary"
           >
-            <option value="cursor_guard">受保护光标租约（推荐）</option>
-            <option value="focus">短暂聚焦回退</option>
+            <option value="focus">短暂聚焦 + 整段粘贴（推荐）</option>
+            <option value="cursor_guard">后台光标租约（兼容测试）</option>
           </select>
         </label>
         <label className="space-y-1">
@@ -612,7 +612,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
         </div>
       </div>
       <p className="text-2xs leading-relaxed text-text-secondary">
-        不再发送 Esc、点击“保存并退出”或等待大厅。受保护光标模式只短暂占用局内按钮和输入框坐标；密码仅在该账号当前进程的创建/加入表单首次使用或配置变化时重写。
+        不再发送 Esc、点击“保存并退出”或等待大厅。推荐模式会短暂聚焦目标窗口，把完整 Unicode 房名/密码一次粘贴后恢复原窗口，不会逐字触发技能快捷键；密码仅在该账号当前进程的创建/加入表单首次使用或配置变化时重写。
       </p>
 
       <div className={`rounded-xl border px-3 py-2.5 ${status?.running ? "border-accent/25 bg-accent/10" : status?.last_error ? "border-error/25 bg-error/10" : "border-border-default bg-surface-hover"}`}>
@@ -673,7 +673,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
               </label>
             ))}
             <label className="space-y-1">
-              <span className="text-2xs text-text-muted">字符释放间隔（毫秒）</span>
+              <span className="text-2xs text-text-muted">逐字兼容间隔（毫秒）</span>
               <input
                 type="number"
                 min={5}
@@ -688,7 +688,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             </label>
           </div>
           <p className="text-2xs leading-relaxed text-text-secondary">
-            当前顺序：点击局内创建/加入 → 填写房间名 → 当前表单首次使用或密码变化时填写密码 → Enter。每轮都会重新点击局内按钮；不会缓存按钮状态，也不会回主界面或大厅。
+            当前顺序：点击局内创建/加入 → 整段粘贴房间名 → 当前表单首次使用或密码变化时整段粘贴密码 → Enter。每轮都会重新点击局内按钮；不会缓存按钮状态，也不会回主界面或大厅。
           </p>
         </div>
       </details>
@@ -732,7 +732,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
             </Button>
           </div>
           <p className="text-2xs leading-relaxed text-warning">
-            四个填字测试都会点击 Mod 顶部的局内创建/加入按钮，填写后停留 1 秒，再次点击同一按钮关闭表单；不会按 Enter，也不会把测试内容记作“密码已更新”。默认 L 方案不使用剪贴板，每键保持 30ms 并按当前流程设置留出释放间隔；H–K 仅保留用于兼容性诊断。
+            四个填字测试都会点击 Mod 顶部的局内创建/加入按钮，以推荐的整段粘贴填写后停留 1 秒，再次点击同一按钮关闭表单；不会按 Enter，也不会把测试内容记作“密码已更新”。下方 L–K 仅保留用于后台兼容性诊断。
           </p>
           <p className="text-2xs leading-relaxed text-text-secondary">
             坐标相对 D2R 客户区：左上角 X 0%、Y 0%，右下角 X 100%、Y 100%。窗口移动、缩放或位于不同显示器时无需换算屏幕坐标。
