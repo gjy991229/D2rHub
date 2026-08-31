@@ -1,7 +1,53 @@
-import { useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useGlobalConfig } from "./store/globalConfig";
 
 type Lang = "zh-CN" | "en-US";
+
+const keyedMessages = {
+  "launch.scheme.label": { zh: "启动方案", en: "Launch Schemes" },
+  "launch.scheme.subtitle": { zh: "按账号独立配置启动", en: "Launch with per-account settings" },
+  "launch.scheme.count": { zh: "{count} 个方案", en: "{count} schemes" },
+  "launch.scheme.empty.title": { zh: "还没有启动方案", en: "No Launch Schemes Yet" },
+  "launch.scheme.empty.body": {
+    zh: "保存账号、Mod 和位置组合，之后可以直接启动。",
+    en: "Save account, Mod, and position combinations for direct launching.",
+  },
+  "launch.scheme.status.empty": { zh: "尚未选择账号", en: "No accounts selected" },
+  "launch.scheme.status.unavailable": { zh: "{count} 个账号不可用", en: "{count} accounts unavailable" },
+  "launch.scheme.status.ready": { zh: "{count} 个账号 · 配置完整", en: "{count} accounts · Ready" },
+  "launch.scheme.editFirst": { zh: "请先编辑并选择账号", en: "Edit the scheme and select accounts first" },
+  "launch.scheme.launchTitle": { zh: "启动“{name}”", en: "Launch “{name}”" },
+  "launch.scheme.editLabel": { zh: "编辑启动方案“{name}”", en: "Edit launch scheme “{name}”" },
+  "launch.scheme.editTitle": { zh: "编辑“{name}”", en: "Edit “{name}”" },
+  "launch.scheme.create": { zh: "新建启动方案", en: "New Launch Scheme" },
+  "launch.favorite.groupLabel": { zh: "常用启动方案", en: "Favorite Launch Schemes" },
+  "launch.favorite.addLabel": { zh: "设为常用启动方案“{name}”", en: "Add launch scheme “{name}” to favorites" },
+  "launch.favorite.removeLabel": { zh: "取消常用启动方案“{name}”", en: "Remove launch scheme “{name}” from favorites" },
+  "launch.favorite.addTitle": { zh: "添加到主界面，点击即可启动", en: "Add to the main action bar for direct launch" },
+  "launch.favorite.removeTitle": { zh: "从主界面移除", en: "Remove from the main action bar" },
+  "launch.favorite.launchTitle": { zh: "启动常用方案“{name}”", en: "Launch favorite scheme “{name}”" },
+  "launch.favorite.emptyReason": { zh: "方案尚未选择账号", en: "No accounts selected" },
+} as const;
+
+export type I18nKey = keyof typeof keyedMessages;
+type I18nValues = Record<string, string | number>;
+
+export function translateKey(key: I18nKey, language: string, values: I18nValues = {}): string {
+  let message: string = isEnglishLanguage(language) ? keyedMessages[key].en : keyedMessages[key].zh;
+  for (const [name, value] of Object.entries(values)) {
+    message = message.replaceAll(`{${name}}`, String(value));
+  }
+  return message;
+}
+
+export function useI18n() {
+  const language = useGlobalConfig(state => state.config?.app_language || "zh-CN");
+  const t = useCallback(
+    (key: I18nKey, values?: I18nValues) => translateKey(key, language, values),
+    [language],
+  );
+  return { language, t };
+}
 
 const textMap: Record<string, string> = {
   "正在加载...": "Loading...",
@@ -1003,12 +1049,15 @@ export function I18nRuntime() {
     const observer = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         if (mutation.type === "characterData") {
-          translateTree(mutation.target, language);
+          const parent = mutation.target.parentElement;
+          if (parent && !shouldSkipElement(parent)) {
+            translateTextNode(mutation.target as Text, language);
+          }
         } else if (mutation.type === "attributes") {
-          translateTree(mutation.target, language);
+          const element = mutation.target as Element;
+          if (!shouldSkipElement(element)) translateElementAttributes(element, language);
         } else {
           mutation.addedNodes.forEach(node => translateTree(node, language));
-          translateTree(mutation.target, language);
         }
       }
     });

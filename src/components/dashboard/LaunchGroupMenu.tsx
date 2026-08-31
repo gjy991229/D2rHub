@@ -17,6 +17,7 @@ import {
   launchGroupAccountIds,
   launchGroupIssueDetails,
 } from "../../utils/launchGroups";
+import { useI18n } from "../../i18n";
 
 interface LaunchGroupMenuProps {
   groups: LaunchGroup[];
@@ -50,6 +51,7 @@ export function LaunchGroupMenu({
   onEdit,
   onToggleFavorite,
 }: LaunchGroupMenuProps) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -141,7 +143,7 @@ export function LaunchGroupMenu({
         onKeyDown={handleTriggerKeyDown}
       >
         <ListChecks size={13} strokeWidth={1.9} aria-hidden="true" />
-        <span>启动方案</span>
+        <span>{t("launch.scheme.label")}</span>
         {groups.length > 0 && <span className="launch-group-trigger-count">{groups.length}</span>}
         <ChevronDown className="launch-group-trigger-chevron" size={11} strokeWidth={2} aria-hidden="true" />
       </button>
@@ -151,7 +153,7 @@ export function LaunchGroupMenu({
           ref={menuRef}
           id={menuId}
           role="dialog"
-          aria-label="启动方案"
+          aria-label={t("launch.scheme.label")}
           className="launch-group-menu"
           data-placement={menuPosition.opensUpward ? "top" : "bottom"}
           style={{ left: menuPosition.left, top: menuPosition.top }}
@@ -160,10 +162,10 @@ export function LaunchGroupMenu({
         >
           <div className="launch-group-menu-header">
             <div>
-              <p>启动方案</p>
-              <span>按账号独立配置启动</span>
+              <p>{t("launch.scheme.label")}</p>
+              <span>{t("launch.scheme.subtitle")}</span>
             </div>
-            <span>{groups.length} 个方案</span>
+            <span>{t("launch.scheme.count", { count: groups.length })}</span>
           </div>
 
           <div className="launch-group-list">
@@ -171,8 +173,8 @@ export function LaunchGroupMenu({
               <div className="launch-group-empty">
                 <ListChecks size={18} strokeWidth={1.6} aria-hidden="true" />
                 <div>
-                  <p>还没有启动方案</p>
-                  <span>保存账号、Mod 和位置组合，之后可以直接启动。</span>
+                  <p>{t("launch.scheme.empty.title")}</p>
+                  <span>{t("launch.scheme.empty.body")}</span>
                 </div>
               </div>
             ) : groups.map(group => {
@@ -181,11 +183,11 @@ export function LaunchGroupMenu({
               const empty = memberCount === 0;
               const unavailable = availability.issues.length > 0;
               const status = empty
-                ? "尚未选择账号"
+                ? t("launch.scheme.status.empty")
                 : unavailable
-                  ? `${availability.issues.length} 个账号不可用`
-                  : `${memberCount} 个账号 · 配置完整`;
-              const title = empty ? "请先编辑并选择账号" : launchGroupIssueDetails(availability.issues);
+                  ? t("launch.scheme.status.unavailable", { count: availability.issues.length })
+                  : t("launch.scheme.status.ready", { count: memberCount });
+              const title = empty ? t("launch.scheme.editFirst") : launchGroupIssueDetails(availability.issues);
               const isFavorite = favoriteGroupIds.includes(group.id);
               return (
                 <div
@@ -197,7 +199,7 @@ export function LaunchGroupMenu({
                     type="button"
                     className="launch-group-launch"
                     disabled={!availability.can_launch}
-                    title={title || `启动“${group.name}”`}
+                    title={title || t("launch.scheme.launchTitle", { name: group.name })}
                     onClick={() => {
                       closeMenu();
                       onLaunch(group);
@@ -209,7 +211,7 @@ export function LaunchGroupMenu({
                         : <AlertTriangle size={12} strokeWidth={1.8} />}
                     </span>
                     <span className="launch-group-copy">
-                      <strong>{group.name}</strong>
+                      <strong data-i18n-skip>{group.name}</strong>
                       <span>{status}</span>
                     </span>
                   </button>
@@ -217,8 +219,11 @@ export function LaunchGroupMenu({
                     type="button"
                     className="launch-group-favorite"
                     data-active={isFavorite ? "true" : undefined}
-                    aria-label={`${isFavorite ? "取消常用" : "设为常用"}启动方案“${group.name}”`}
-                    title={isFavorite ? "从主界面移除" : "添加到主界面，点击即可启动"}
+                    aria-label={t(
+                      isFavorite ? "launch.favorite.removeLabel" : "launch.favorite.addLabel",
+                      { name: group.name },
+                    )}
+                    title={t(isFavorite ? "launch.favorite.removeTitle" : "launch.favorite.addTitle")}
                     onClick={() => onToggleFavorite(group)}
                   >
                     <Star
@@ -231,8 +236,8 @@ export function LaunchGroupMenu({
                   <button
                     type="button"
                     className="launch-group-edit"
-                    aria-label={`编辑启动方案“${group.name}”`}
-                    title={`编辑“${group.name}”`}
+                    aria-label={t("launch.scheme.editLabel", { name: group.name })}
+                    title={t("launch.scheme.editTitle", { name: group.name })}
                     onClick={() => {
                       closeMenu();
                       onEdit(group);
@@ -254,7 +259,7 @@ export function LaunchGroupMenu({
             }}
           >
             <Plus size={13} strokeWidth={2} aria-hidden="true" />
-            新建启动方案
+            {t("launch.scheme.create")}
           </button>
         </div>,
         document.body,

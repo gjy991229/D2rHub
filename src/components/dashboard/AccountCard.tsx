@@ -586,7 +586,7 @@ export function AccountGridItem({
                     setEditingName(true);
                   }}
                 >
-                  {display}
+                  <span data-i18n-skip>{display}</span>
                 </button>
               )}
 
