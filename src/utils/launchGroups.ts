@@ -28,6 +28,54 @@ export interface LaunchGroupAvailability {
   issues: LaunchGroupMemberIssue[];
 }
 
+export function launchGroupIssueReason(issue: LaunchGroupMemberIssue): string {
+  if (issue.reason === "missing") return "账号已删除";
+  if (issue.reason === "not_initialized") return "尚未初始化";
+  if (issue.reason === "token_migration") return "需要迁移 Token";
+  if (issue.reason === "missing_mod") return "Mod 已删除";
+  return "位置已删除";
+}
+
+export function launchGroupIssueDetails(issues: readonly LaunchGroupMemberIssue[]): string {
+  return issues.map(issue => `${issue.account_name}：${launchGroupIssueReason(issue)}`).join("；");
+}
+
+export function normalizeFavoriteLaunchGroupIds(
+  groups: readonly LaunchGroup[],
+  favoriteIds: readonly string[] | null | undefined,
+): string[] {
+  const existingIds = new Set(groups.map(group => group.id));
+  const seen = new Set<string>();
+  return (favoriteIds ?? [])
+    .map(id => id.trim())
+    .filter(id => {
+      if (id.length === 0 || !existingIds.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+}
+
+export function favoriteLaunchGroups(
+  groups: readonly LaunchGroup[],
+  favoriteIds: readonly string[] | null | undefined,
+): LaunchGroup[] {
+  const groupsById = new Map(groups.map(group => [group.id, group]));
+  return normalizeFavoriteLaunchGroupIds(groups, favoriteIds)
+    .map(id => groupsById.get(id))
+    .filter((group): group is LaunchGroup => !!group);
+}
+
+export function toggleFavoriteLaunchGroupId(
+  groups: readonly LaunchGroup[],
+  favoriteIds: readonly string[] | null | undefined,
+  groupId: string,
+): string[] {
+  const normalized = normalizeFavoriteLaunchGroupIds(groups, favoriteIds);
+  return normalized.includes(groupId)
+    ? normalized.filter(id => id !== groupId)
+    : normalizeFavoriteLaunchGroupIds(groups, [...normalized, groupId]);
+}
+
 export function launchGroupAccountIds(group: LaunchGroup): string[] {
   const source = group.members?.length
     ? group.members.map(member => member.account_id)

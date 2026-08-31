@@ -26,7 +26,6 @@ const settingsTab = params.get("settingsTab");
 const audioModState = params.get("audioModState");
 const seedSampleDrops = params.get("drops") === "sample";
 const seedManyAccounts = params.get("accounts") === "many";
-const seedAllStandby = params.get("standby") === "all";
 const currentWindowLabel =
   surface === "overlay"
     ? "overlay"
@@ -274,11 +273,7 @@ const baseConfig: GlobalConfig = {
     },
     { id: "uber-team", name: "火炬队", account_ids: ["sorc-01", "pala-03"] },
   ],
-  standby_account_ids: seedAllStandby
-    ? accounts.map(account => account.id)
-    : seedManyAccounts
-    ? accounts.filter((_, index) => index % 3 === 1).map(account => account.id)
-    : ["barb-02", "new-04"],
+  favorite_launch_group_ids: ["farm-core"],
 };
 
 const accountSettings: SettingsMap = {

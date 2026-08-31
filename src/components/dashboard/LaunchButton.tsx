@@ -11,7 +11,7 @@ export function LaunchButton({ count, loading, onClick }: {
       className="primary-cta"
     >
       <Zap size={13} strokeWidth={2} />
-      默认启动 ({count})
+      启动全部 ({count})
     </button>
   );
 }

@@ -3,8 +3,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import {
   AlertTriangle,
-  Archive,
-  ArchiveRestore,
   FolderOpen,
   Globe2,
   Locate,
@@ -57,9 +55,6 @@ interface GridItemProps {
   getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
-  isStandby?: boolean;
-  onToggleStandby?: (id: string) => void;
-  standbyChanging?: boolean;
 }
 
 function fmtRelative(iso: string): string {
@@ -169,7 +164,6 @@ export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
-  isStandby, onToggleStandby, standbyChanging,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -605,7 +599,6 @@ export function AccountGridItem({
       data-expanded={expanded ? "true" : "false"}
       data-selected={selected ? "true" : "false"}
       data-scheme-edit={isSelectionMode ? "true" : undefined}
-      data-standby={isStandby ? "true" : undefined}
       style={{
         cursor: isSelectionMode
           ? (selected || (account.initialized && !tokenMigrationRequired) ? "pointer" : "not-allowed")
@@ -632,7 +625,6 @@ export function AccountGridItem({
                     className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                   />
                   {selected && <span className="scheme-context-label">方案配置</span>}
-                  {isStandby && <span className="scheme-context-label">全局待机</span>}
                 </>
               ) : (
                 <span className="tile-index index">{String(account.order + 1).padStart(2, "0")} / {account.initialized ? "READY" : "ATTENTION"}</span>
@@ -785,23 +777,7 @@ export function AccountGridItem({
               )}
             </div>
           </div>
-          <div className="tile-state-actions">
-            {isSelectionMode && onToggleStandby && (
-              <button
-                type="button"
-                className="standby-card-toggle"
-                disabled={standbyChanging}
-                onClick={event => { stop(event); onToggleStandby(account.id); }}
-                title={isStandby ? "移到启动台；不会改变当前策略成员" : "移入全局待机池；不会改变当前策略成员"}
-              >
-                {isStandby
-                  ? <ArchiveRestore size={12} strokeWidth={1.8} aria-hidden="true" />
-                  : <Archive size={12} strokeWidth={1.8} aria-hidden="true" />}
-                {isStandby ? "移出待机" : "移入待机"}
-              </button>
-            )}
-            <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
-          </div>
+          <span className={account.initialized && !tokenMigrationRequired ? "state-dot state" : "state-dot state warn"} />
 
         </div>
 
@@ -866,18 +842,6 @@ export function AccountGridItem({
               )}
               {account.initialized && (
                 <>
-                  {onToggleStandby && (
-                    <button
-                      onClick={event => { stop(event); onToggleStandby(account.id); }}
-                      disabled={standbyChanging}
-                      className="mini-action icon-btn disabled:opacity-40"
-                      title={isStandby ? "移到启动台" : "移入待机池，不参与默认启动"}
-                    >
-                      {isStandby
-                        ? <ArchiveRestore size={12} strokeWidth={1.8} aria-hidden="true" />
-                        : <Archive size={12} strokeWidth={1.8} aria-hidden="true" />}
-                    </button>
-                  )}
                   <button onClick={e => { stop(e); onConfigure(account); }} className="mini-action icon-btn relative" title="高级设置">
                     <Sliders size={12} strokeWidth={1.8} />
                   </button>
@@ -1084,13 +1048,11 @@ export function SortableAccountCard({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
-  isStandby, onToggleStandby, standbyChanging,
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
   } = useSortable({
     id: account.id,
-    data: { container: isStandby ? "standby" : "active" },
     disabled: isSelectionMode,
   });
   const { progress } = useLaunch();
@@ -1109,6 +1071,13 @@ export function SortableAccountCard({
       style={style}
       {...(isSelectionMode ? {} : attributes)}
       {...(isSelectionMode ? {} : listeners)}
+      onKeyDown={isSelectionMode ? undefined : event => {
+        // dnd-kit uses Space to start a keyboard drag. Only let the sortable
+        // wrapper itself activate it; Space inside inputs and buttons belongs
+        // to that control and must not bubble into a card drag.
+        if (event.target !== event.currentTarget) return;
+        listeners?.onKeyDown?.(event);
+      }}
     >
       <AccountGridItem
         account={account}
@@ -1127,9 +1096,6 @@ export function SortableAccountCard({
         getPositionSchemeUsage={getPositionSchemeUsage}
         onUpdateToken={onUpdateToken}
         config={config}
-        isStandby={isStandby}
-        onToggleStandby={onToggleStandby}
-        standbyChanging={standbyChanging}
       />
     </div>
   );

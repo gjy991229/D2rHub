@@ -9,23 +9,25 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, ChevronDown, ListChecks, Pencil, Play, Plus } from "lucide-react";
+import { AlertTriangle, ChevronDown, ListChecks, Pencil, Play, Plus, Star } from "lucide-react";
 
 import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
 import {
   inspectLaunchGroup,
   launchGroupAccountIds,
-  type LaunchGroupMemberIssue,
+  launchGroupIssueDetails,
 } from "../../utils/launchGroups";
 
 interface LaunchGroupMenuProps {
   groups: LaunchGroup[];
   accounts: AccountMeta[];
   config: GlobalConfig | null;
+  favoriteGroupIds?: string[];
   disabled?: boolean;
   onLaunch: (group: LaunchGroup) => void;
   onCreate: () => void;
   onEdit: (group: LaunchGroup) => void;
+  onToggleFavorite: (group: LaunchGroup) => void;
 }
 
 interface MenuPosition {
@@ -37,26 +39,16 @@ interface MenuPosition {
 const MENU_WIDTH = 320;
 const VIEWPORT_PADDING = 8;
 
-function issueReason(issue: LaunchGroupMemberIssue): string {
-  if (issue.reason === "missing") return "账号已删除";
-  if (issue.reason === "not_initialized") return "尚未初始化";
-  if (issue.reason === "token_migration") return "需要迁移 Token";
-  if (issue.reason === "missing_mod") return "Mod 已删除";
-  return "位置已删除";
-}
-
-function issueDetails(issues: LaunchGroupMemberIssue[]): string {
-  return issues.map(issue => `${issue.account_name}：${issueReason(issue)}`).join("；");
-}
-
 export function LaunchGroupMenu({
   groups,
   accounts,
   config,
+  favoriteGroupIds = [],
   disabled = false,
   onLaunch,
   onCreate,
   onEdit,
+  onToggleFavorite,
 }: LaunchGroupMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null);
@@ -193,7 +185,8 @@ export function LaunchGroupMenu({
                 : unavailable
                   ? `${availability.issues.length} 个账号不可用`
                   : `${memberCount} 个账号 · 配置完整`;
-              const title = empty ? "请先编辑并选择账号" : issueDetails(availability.issues);
+              const title = empty ? "请先编辑并选择账号" : launchGroupIssueDetails(availability.issues);
+              const isFavorite = favoriteGroupIds.includes(group.id);
               return (
                 <div
                   key={group.id}
@@ -219,6 +212,21 @@ export function LaunchGroupMenu({
                       <strong>{group.name}</strong>
                       <span>{status}</span>
                     </span>
+                  </button>
+                  <button
+                    type="button"
+                    className="launch-group-favorite"
+                    data-active={isFavorite ? "true" : undefined}
+                    aria-label={`${isFavorite ? "取消常用" : "设为常用"}启动方案“${group.name}”`}
+                    title={isFavorite ? "从主界面移除" : "添加到主界面，点击即可启动"}
+                    onClick={() => onToggleFavorite(group)}
+                  >
+                    <Star
+                      size={13}
+                      fill={isFavorite ? "currentColor" : "none"}
+                      strokeWidth={1.8}
+                      aria-hidden="true"
+                    />
                   </button>
                   <button
                     type="button"

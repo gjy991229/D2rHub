@@ -2,28 +2,53 @@ import React from "react";
 import { Zap } from "lucide-react";
 import type { AccountMeta } from "../../store/types";
 import {
-  SortableContext, rectSortingStrategy,
+  closestCenter,
+  DndContext,
+  type DragEndEvent,
+  KeyboardSensor,
+  MouseSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  rectSortingStrategy,
+  sortableKeyboardCoordinates,
+  SortableContext,
 } from "@dnd-kit/sortable";
 
 interface AccountGridProps {
   accounts: AccountMeta[];
   children: React.ReactNode;
   isSelectionMode?: boolean;
-  isDropTarget?: boolean;
-  embedded?: boolean;
+  onReorder: (accountIds: string[]) => void | Promise<void>;
 }
 
-export function AccountGrid({ accounts, children, isSelectionMode, isDropTarget, embedded }: AccountGridProps) {
+export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: AccountGridProps) {
+  const sensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (isSelectionMode || !over || active.id === over.id) return;
+    const oldIndex = accounts.findIndex(account => account.id === active.id);
+    const newIndex = accounts.findIndex(account => account.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    void onReorder(arrayMove(accounts, oldIndex, newIndex).map(account => account.id));
+  };
+
   return (
-    <div className={embedded ? "" : "h-full overflow-auto px-5 pb-4"}>
-      <SortableContext items={accounts.map(a => a.id)} strategy={rectSortingStrategy}>
-        <div
-          className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}
-          data-drop-target={isDropTarget ? "true" : undefined}
-        >
-          {children}
-        </div>
-      </SortableContext>
+    <div className="flex-1 overflow-auto px-5 pb-5">
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={accounts.map(account => account.id)} strategy={rectSortingStrategy}>
+          <div className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
+            {children}
+          </div>
+        </SortableContext>
+      </DndContext>
     </div>
   );
 }

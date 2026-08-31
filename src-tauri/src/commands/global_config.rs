@@ -181,9 +181,9 @@ pub struct GlobalConfig {
     /// 可复用的账号启动组合。账号启动顺序由账号卡片当前排序决定。
     #[serde(default)]
     pub launch_groups: Vec<LaunchGroup>,
-    /// 全局待机账号池。池内账号不会参与“默认启动”，但启动方案始终忽略该状态。
+    /// 固定在主界面操作栏上的常用启动方案，顺序即展示顺序。
     #[serde(default)]
-    pub standby_account_ids: Vec<String>,
+    pub favorite_launch_group_ids: Vec<String>,
 }
 
 fn default_font_scale() -> String {
@@ -636,22 +636,34 @@ mod validation_tests {
     }
 
     #[test]
-    fn standby_pool_is_global_ordered_and_case_insensitively_unique() {
+    fn favorite_launch_groups_are_ordered_unique_and_must_exist() {
         let mut config = GlobalConfig {
-            standby_account_ids: vec![
-                " account-b ".to_string(),
-                "ACCOUNT-B".to_string(),
-                "account-a".to_string(),
+            launch_groups: vec![
+                LaunchGroup {
+                    id: "group-a".to_string(),
+                    name: "A".to_string(),
+                    account_ids: Vec::new(),
+                    members: Vec::new(),
+                },
+                LaunchGroup {
+                    id: "group-b".to_string(),
+                    name: "B".to_string(),
+                    account_ids: Vec::new(),
+                    members: Vec::new(),
+                },
+            ],
+            favorite_launch_group_ids: vec![
+                " group-b ".to_string(),
+                "group-b".to_string(),
+                "missing".to_string(),
+                "group-a".to_string(),
                 " ".to_string(),
             ],
             ..GlobalConfig::default()
         };
 
-        assert!(config.normalize_standby_account_ids());
-        assert_eq!(config.standby_account_ids, ["account-b", "account-a"]);
-        assert!(config.remove_account_from_standby_pool("ACCOUNT-B"));
-        assert_eq!(config.standby_account_ids, ["account-a"]);
-        assert!(!config.remove_account_from_standby_pool("missing"));
+        assert!(config.normalize_favorite_launch_group_ids());
+        assert_eq!(config.favorite_launch_group_ids, ["group-b", "group-a"]);
     }
 
     #[test]
@@ -1466,25 +1478,22 @@ mod validation_tests {
     }
 
     #[test]
-    fn v8_config_migrates_to_an_empty_standby_pool() {
-        let root = temp_dir("v8_standby_pool");
+    fn removed_standby_field_is_tolerated_as_an_unknown_legacy_field() {
+        let root = temp_dir("removed_standby_field");
         let config_path = root.join("global_config.json");
         let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
-        legacy["version"] = serde_json::json!(8);
+        legacy["version"] = serde_json::json!(CURRENT_CONFIG_VERSION);
+        legacy["standby_account_ids"] = serde_json::json!(["account-a"]);
         legacy
             .as_object_mut()
             .unwrap()
-            .remove("standby_account_ids");
+            .remove("favorite_launch_group_ids");
         std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
         let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
-        assert!(loaded.standby_account_ids.is_empty());
-        let persisted: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
-        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
-        assert_eq!(persisted["standby_account_ids"], serde_json::json!([]));
+        assert!(loaded.favorite_launch_group_ids.is_empty());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1700,7 +1709,7 @@ impl Default for GlobalConfig {
             agent_delay_secs: 1.0,
             agent_threshold: 5,
             launch_groups: Vec::new(),
-            standby_account_ids: Vec::new(),
+            favorite_launch_group_ids: Vec::new(),
         }
     }
 }
@@ -1722,13 +1731,6 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
 }
 
 impl GlobalConfig {
-    pub(crate) fn remove_account_from_standby_pool(&mut self, account_id: &str) -> bool {
-        let previous_len = self.standby_account_ids.len();
-        self.standby_account_ids
-            .retain(|candidate| !candidate.eq_ignore_ascii_case(account_id));
-        previous_len != self.standby_account_ids.len()
-    }
-
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
@@ -1746,18 +1748,23 @@ impl GlobalConfig {
         removed
     }
 
-    fn normalize_standby_account_ids(&mut self) -> bool {
-        let original = self.standby_account_ids.clone();
-        let mut seen = std::collections::HashSet::new();
-        self.standby_account_ids = self
-            .standby_account_ids
+    fn normalize_favorite_launch_group_ids(&mut self) -> bool {
+        let original = self.favorite_launch_group_ids.clone();
+        let launch_group_ids: std::collections::HashSet<&str> = self
+            .launch_groups
             .iter()
-            .map(|account_id| account_id.trim())
-            .filter(|account_id| !account_id.is_empty())
-            .filter(|account_id| seen.insert(account_id.to_ascii_lowercase()))
+            .map(|group| group.id.as_str())
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        self.favorite_launch_group_ids = self
+            .favorite_launch_group_ids
+            .iter()
+            .map(|group_id| group_id.trim())
+            .filter(|group_id| launch_group_ids.contains(group_id))
+            .filter(|group_id| seen.insert((*group_id).to_string()))
             .map(str::to_string)
             .collect();
-        original != self.standby_account_ids
+        original != self.favorite_launch_group_ids
     }
 
     fn normalize_launch_groups(&mut self) -> bool {
@@ -2186,7 +2193,7 @@ impl GlobalConfig {
         if config.normalize_launch_groups() {
             migrated = true;
         }
-        if config.normalize_standby_account_ids() {
+        if config.normalize_favorite_launch_group_ids() {
             migrated = true;
         }
 
@@ -2699,7 +2706,7 @@ pub fn save_global_config(
         );
     cfg.normalize_launch_groups();
     cfg.validate_launch_groups()?;
-    cfg.normalize_standby_account_ids();
+    cfg.normalize_favorite_launch_group_ids();
 
     if should_validate_installation_paths(previous.as_ref(), &cfg) {
         validate_installation_paths(&cfg)?;

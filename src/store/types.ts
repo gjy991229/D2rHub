@@ -76,7 +76,7 @@ export interface GlobalConfig {
   agent_delay_secs?: number;
   agent_threshold?: number;
   launch_groups: LaunchGroup[];
-  standby_account_ids?: string[];
+  favorite_launch_group_ids?: string[];
 }
 
 // ── 数据统计 ──

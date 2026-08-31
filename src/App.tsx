@@ -24,13 +24,14 @@ import {
 import UpdateConfirmModal from "./components/ui/UpdateConfirmModal";
 import {
   Dashboard,
-  AccountWorkspace,
+  AccountGrid,
   SortableAccountCard,
   AccountGridLoading,
   AccountGridEmpty,
   ActionBar,
   LaunchButton,
   LaunchGroupMenu,
+  FavoriteLaunchGroups,
 } from "./components/dashboard";
 import { useLaunch } from "./store/launch";
 import { LaunchProgressView } from "./components/Launch/LaunchProgress";
@@ -60,12 +61,8 @@ import {
   launchGroupNameExists,
   materializeLaunchGroupMembers,
   nextLaunchGroupName,
+  toggleFavoriteLaunchGroupId,
 } from "./utils/launchGroups";
-import {
-  completeWorkspaceOrder,
-  insertAccountId,
-  partitionAccountWorkspace,
-} from "./utils/standbyPool";
 
 type View =
   | { type: "loading" }
@@ -141,8 +138,6 @@ function App() {
   const [launchGroupDraft, setLaunchGroupDraft] = useState<LaunchGroupDraft | null>(null);
   const [launchGroupPendingDelete, setLaunchGroupPendingDelete] = useState<LaunchGroup | null>(null);
   const [tokenUpdateAccount, setTokenUpdateAccount] = useState<AccountMeta | null>(null);
-  const [optimisticStandbyIds, setOptimisticStandbyIds] = useState<string[] | null>(null);
-  const [standbySaving, setStandbySaving] = useState(false);
 
   const createLaunchGroup = () => {
     setLaunchGroupDraft({
@@ -276,12 +271,28 @@ function App() {
       await save({
         ...config,
         launch_groups: config.launch_groups.filter(candidate => candidate.id !== group.id),
+        favorite_launch_group_ids: (config.favorite_launch_group_ids ?? [])
+          .filter(groupId => groupId !== group.id),
       });
       if (launchGroupDraft?.id === group.id) setLaunchGroupDraft(null);
       setLaunchGroupPendingDelete(null);
       showToast("success", `启动方案“${group.name}”已删除`);
     } catch (error) {
       showToast("error", `删除启动方案失败: ${error}`);
+    }
+  };
+
+  const toggleFavoriteLaunchGroup = async (group: LaunchGroup) => {
+    if (!config || configSaving) return;
+    const favoriteIds = toggleFavoriteLaunchGroupId(
+      config.launch_groups,
+      config.favorite_launch_group_ids,
+      group.id,
+    );
+    try {
+      await save({ ...config, favorite_launch_group_ids: favoriteIds });
+    } catch (error) {
+      showToast("error", `更新常用启动方案失败: ${error}`);
     }
   };
 
@@ -444,72 +455,10 @@ function App() {
 
   // ── main ──
   const sortedAccounts = sortAccountsByCardOrder(accounts);
-  const workspace = partitionAccountWorkspace(
-    sortedAccounts,
-    optimisticStandbyIds ?? config?.standby_account_ids ?? [],
-  );
-  const standbySet = new Set(workspace.standbyIds);
-  const gridAccounts = launchGroupDraft ? sortedAccounts : workspace.active;
-  const defaultLaunchAccountIds = workspace.active.filter(
+  const launchableAccountIds = sortedAccounts.filter(
     account => account.initialized
       && !requiresTokenMigration(account.auth_mode, account.region, config),
   ).map(account => account.id);
-  const workspaceChanging = standbySaving || configSaving || launching;
-
-  const persistStandbyWorkspace = async (
-    standbyIds: string[],
-    orderedAccountIds?: string[],
-  ) => {
-    if (!config || standbySaving || configSaving) return;
-    const previousStandbyIds = workspace.standbyIds;
-    setStandbySaving(true);
-    setOptimisticStandbyIds(standbyIds);
-    try {
-      await save({ ...config, standby_account_ids: standbyIds });
-      if (orderedAccountIds) await reorderAccounts(orderedAccountIds);
-    } catch (error) {
-      setOptimisticStandbyIds(previousStandbyIds);
-      showToast("error", `更新待机池失败: ${error}`);
-    } finally {
-      setOptimisticStandbyIds(null);
-      setStandbySaving(false);
-    }
-  };
-
-  const moveToStandby = (accountId: string, beforeId?: string | null) => {
-    if (workspaceChanging || standbySet.has(accountId)) return;
-    const nextStandbyIds = insertAccountId(workspace.standbyIds, accountId, beforeId);
-    void persistStandbyWorkspace(nextStandbyIds);
-  };
-
-  const moveToLaunchpad = (accountId: string, beforeId?: string | null) => {
-    if (workspaceChanging || !standbySet.has(accountId)) return;
-    const nextStandbyIds = workspace.standbyIds.filter(candidate => candidate !== accountId);
-    const nextActiveIds = insertAccountId(
-      workspace.active.map(account => account.id),
-      accountId,
-      beforeId,
-    );
-    void persistStandbyWorkspace(
-      nextStandbyIds,
-      completeWorkspaceOrder(nextActiveIds, nextStandbyIds),
-    );
-  };
-
-  const toggleStandby = (accountId: string) => {
-    if (standbySet.has(accountId)) moveToLaunchpad(accountId);
-    else moveToStandby(accountId);
-  };
-
-  const reorderActiveWorkspace = (activeIds: string[]) => {
-    if (workspaceChanging) return;
-    void reorderAccounts(completeWorkspaceOrder(activeIds, workspace.standbyIds));
-  };
-
-  const reorderStandbyWorkspace = (standbyIds: string[]) => {
-    if (workspaceChanging) return;
-    void persistStandbyWorkspace(standbyIds);
-  };
 
   return (
     <>
@@ -629,18 +578,28 @@ function App() {
             ) : (
               <div className="flex items-center gap-2">
                 <LaunchButton
-                  count={defaultLaunchAccountIds.length}
+                  count={launchableAccountIds.length}
                   loading={launching}
-                  onClick={() => startLaunch(defaultLaunchAccountIds)}
+                  onClick={() => startLaunch(launchableAccountIds)}
                 />
                 <LaunchGroupMenu
                   groups={config?.launch_groups ?? []}
                   accounts={accounts}
                   config={config}
+                  favoriteGroupIds={config?.favorite_launch_group_ids}
                   disabled={launching || configSaving}
                   onLaunch={launchSavedGroup}
                   onCreate={createLaunchGroup}
                   onEdit={editLaunchGroup}
+                  onToggleFavorite={group => void toggleFavoriteLaunchGroup(group)}
+                />
+                <FavoriteLaunchGroups
+                  groups={config?.launch_groups ?? []}
+                  favoriteGroupIds={config?.favorite_launch_group_ids}
+                  accounts={accounts}
+                  config={config}
+                  disabled={launching || configSaving}
+                  onLaunch={launchSavedGroup}
                 />
                 <button
                   onClick={() => setShowKillConfirm(true)}
@@ -705,25 +664,12 @@ function App() {
             <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
           ) : (
             <>
-              <AccountWorkspace
-                activeAccounts={workspace.active}
-                standbyAccounts={workspace.standby}
-                gridAccounts={gridAccounts}
-                config={config}
+              <AccountGrid
+                accounts={sortedAccounts}
                 isSelectionMode={!!launchGroupDraft}
-                disabled={workspaceChanging}
-                onReorderActive={reorderActiveWorkspace}
-                onReorderStandby={reorderStandbyWorkspace}
-                onMoveToStandby={moveToStandby}
-                onMoveToLaunchpad={moveToLaunchpad}
-                onLaunchStandby={id => startLaunch([id])}
-                onConfigure={account => {
-                  setShowSettings(true);
-                  setSettingsTab("accounts");
-                  setSettingsAccountId(account.id);
-                }}
+                onReorder={reorderAccounts}
               >
-                {gridAccounts.map(a => {
+                {sortedAccounts.map(a => {
                   const schemeMember = launchGroupDraft?.members.find(member => member.account_id === a.id);
                   return <SortableAccountCard
                     key={a.id}
@@ -752,12 +698,9 @@ function App() {
                       .map(group => group.name)}
                     onUpdateToken={setTokenUpdateAccount}
                     config={config}
-                    isStandby={standbySet.has(a.id)}
-                    onToggleStandby={toggleStandby}
-                    standbyChanging={workspaceChanging}
                   />;
                 })}
-              </AccountWorkspace>
+              </AccountGrid>
 
               <LaunchProgressView
                 accounts={accounts}
