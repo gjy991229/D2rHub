@@ -13,6 +13,7 @@ import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, horizontalListSortingStrategy, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { AccountMeta, GlobalConfig } from "../../store/types";
+import { getAccountTokenStatus } from "../../utils/accountTokenStatus";
 import { accountRegionLabel, requiresTokenMigration } from "../../utils/regionPaths";
 
 export const STANDBY_POOL_DROP_ID = "standby-pool-drop-zone";
@@ -62,8 +63,25 @@ function StandbyPreviewCard({
   onRequestClose: () => void;
 }) {
   const displayName = account.display_name || account.id;
+  const tokenStatus = account.initialized
+    ? getAccountTokenStatus(account.last_reset_at)
+    : null;
+  const tokenExpired = account.auth_mode !== "token" && !!tokenStatus?.expired;
   const launchable = account.initialized
-    && !requiresTokenMigration(account.auth_mode, account.region, config);
+    && !requiresTokenMigration(account.auth_mode, account.region, config)
+    && !tokenExpired;
+  const authBadgeClass = tokenExpired
+    ? "hig-badge hig-badge-red"
+    : account.auth_mode === "token"
+      ? "hig-badge hig-badge-violet"
+      : "hig-badge hig-badge-blue";
+  const authLabel = tokenExpired
+    ? "Token 已过期"
+    : account.auth_mode === "token"
+      ? "网页 Token"
+      : account.auth_mode
+        ? "战网认证"
+        : "待配置";
   const stopPointer = (event: PointerEvent<HTMLButtonElement>) => event.stopPropagation();
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== "Escape") return;
@@ -97,9 +115,7 @@ function StandbyPreviewCard({
         <span className="hig-badge hig-badge-neutral">
           {accountRegionLabel(account.region) || "未选区服"}
         </span>
-        <span className={account.auth_mode === "token" ? "hig-badge hig-badge-violet" : "hig-badge hig-badge-blue"}>
-          {account.auth_mode === "token" ? "网页 Token" : account.auth_mode ? "战网认证" : "待配置"}
-        </span>
+        <span className={authBadgeClass}>{authLabel}</span>
       </div>
 
       <div className="standby-preview-actions">
@@ -117,6 +133,7 @@ function StandbyPreviewCard({
           type="button"
           className="control-btn"
           disabled={!launchable || account.is_running}
+          title={tokenExpired ? "Token 已过期，请重新初始化" : undefined}
           onPointerDown={stopPointer}
           onClick={() => onLaunch(account.id)}
         >
@@ -177,16 +194,23 @@ function SortableStandbyDockItem({
     if (itemRef.current && !isDragging) onInspect(account.id, itemRef.current);
   };
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (isDragging) {
+      listeners?.onKeyDown?.(event);
+      return;
+    }
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
       inspect();
+      return;
     }
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
       onDismiss();
+      return;
     }
+    listeners?.onKeyDown?.(event);
   };
 
   return (

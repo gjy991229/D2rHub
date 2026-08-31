@@ -1199,7 +1199,7 @@ html, body, #root {
   background: var(--surface-control);
   color: var(--text-secondary);
   cursor: grab;
-  touch-action: none;
+  touch-action: pan-x;
   user-select: none;
   transition: transform 180ms var(--ease-out-expo),
               background var(--duration-fast) var(--ease-out-expo),

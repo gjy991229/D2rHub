@@ -32,6 +32,7 @@ import {
   isInternationalRegion,
   requiresTokenMigration,
 } from "../../utils/regionPaths";
+import { getAccountTokenStatus } from "../../utils/accountTokenStatus";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
@@ -60,34 +61,6 @@ interface GridItemProps {
   isStandby?: boolean;
   onToggleStandby?: (id: string) => void;
   standbyChanging?: boolean;
-}
-
-/** Token 有效期: 720 小时（30 天） */
-const TOKEN_VALID_HOURS = 720;
-
-function getTokenStatus(lastResetAt: string | null | undefined): {
-  expired: boolean;
-  warning: boolean;
-  remainingHours: number;
-  label: string;
-} {
-  if (!lastResetAt) {
-    return { expired: false, warning: false, remainingHours: 0, label: "" };
-  }
-  const reset = new Date(lastResetAt);
-  const now = new Date();
-  const elapsedHours = (now.getTime() - reset.getTime()) / (1000 * 60 * 60);
-  const remaining = Math.max(0, TOKEN_VALID_HOURS - elapsedHours);
-
-  if (remaining <= 0) {
-    return { expired: true, warning: true, remainingHours: 0, label: "过期" };
-  }
-  if (remaining <= 48) {
-    const h = Math.floor(remaining);
-    return { expired: false, warning: true, remainingHours: remaining, label: h + "h" };
-  }
-  const days = Math.floor(remaining / 24);
-  return { expired: false, warning: false, remainingHours: remaining, label: days + "d" };
 }
 
 function fmtRelative(iso: string): string {
@@ -504,7 +477,7 @@ export function AccountGridItem({
   };
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
-  const tokenStatus = account.initialized ? getTokenStatus(account.last_reset_at) : null;
+  const tokenStatus = account.initialized ? getAccountTokenStatus(account.last_reset_at) : null;
   const regionLabel = accountRegionLabel(account.region);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"

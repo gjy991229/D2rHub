@@ -1466,6 +1466,29 @@ mod validation_tests {
     }
 
     #[test]
+    fn v8_config_migrates_to_an_empty_standby_pool() {
+        let root = temp_dir("v8_standby_pool");
+        let config_path = root.join("global_config.json");
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        legacy["version"] = serde_json::json!(8);
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("standby_account_ids");
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
+        assert!(loaded.standby_account_ids.is_empty());
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(persisted["standby_account_ids"], serde_json::json!([]));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn real_v1_shape_migrates_without_requiring_modern_fields() {
         let root = temp_dir("real_v1_shape");
         let config_path = root.join("global_config.json");

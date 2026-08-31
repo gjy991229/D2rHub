@@ -3,7 +3,8 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
-  PointerSensor,
+  MouseSensor,
+  TouchSensor,
   closestCenter,
   pointerWithin,
   useDroppable,
@@ -17,6 +18,7 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { ArchiveRestore, GripVertical } from "lucide-react";
 import type { AccountMeta, GlobalConfig } from "../../store/types";
+import { moveIdWithinList } from "../../utils/standbyPool";
 import { AccountGrid } from "./AccountGrid";
 import { StandbyPool, STANDBY_POOL_DROP_ID } from "./StandbyPool";
 
@@ -54,7 +56,12 @@ export function AccountWorkspace({
   onConfigure,
 }: AccountWorkspaceProps) {
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: isSelectionMode ? 99999 : 6 } }),
+    useSensor(MouseSensor, { activationConstraint: { distance: isSelectionMode ? 99999 : 6 } }),
+    useSensor(TouchSensor, {
+      activationConstraint: isSelectionMode
+        ? { delay: 60_000, tolerance: 0 }
+        : { delay: 180, tolerance: 8 },
+    }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
   const { setNodeRef: setLaunchpadRef, isOver: launchpadIsOver } = useDroppable({
@@ -117,25 +124,11 @@ export function AccountWorkspace({
       return;
     }
     if (source === "active" && target === "active" && activeId !== overId) {
-      const next = [...activeIds];
-      const oldIndex = next.indexOf(activeId);
-      const newIndex = next.indexOf(overId);
-      if (oldIndex >= 0 && newIndex >= 0) {
-        const [moved] = next.splice(oldIndex, 1);
-        next.splice(newIndex, 0, moved);
-        onReorderActive(next);
-      }
+      onReorderActive(moveIdWithinList(activeIds, activeId, overId));
       return;
     }
     if (source === "standby" && target === "standby" && activeId !== overId && standbyIds.includes(overId)) {
-      const next = [...standbyIds];
-      const oldIndex = next.indexOf(activeId);
-      const newIndex = next.indexOf(overId);
-      if (oldIndex >= 0 && newIndex >= 0) {
-        const [moved] = next.splice(oldIndex, 1);
-        next.splice(newIndex, 0, moved);
-        onReorderStandby(next);
-      }
+      onReorderStandby(moveIdWithinList(standbyIds, activeId, overId));
     }
   };
 

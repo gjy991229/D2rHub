@@ -846,6 +846,8 @@ const phraseMap: Record<string, string> = {
   "Token 账号 ": "Token account ",
   " 初始化完成！": " initialized.",
   "Token 已过期": "Token expired",
+  "Token 已过期，请重新初始化": "Token expired. Reinitialize the account.",
+  "Token 已过期，需重新初始化": "Token expired. Reinitialize the account.",
   "即将过期": "expiring soon",
   "，剩余": ", remaining",
   "位置 #": "Position #",
