@@ -21,6 +21,7 @@ import {
   shouldCleanupOnDialogClose,
   shouldStartBnetInitialization,
 } from "../../utils/accountInitLifecycle";
+import { extractBattleNetToken } from "../../utils/battleNetToken";
 
 interface Props {
   open: boolean;
@@ -433,7 +434,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   };
 
   const tokenStepPasteNext = async () => {
-    if (!token.trim()) { setError("请粘贴 Token"); return; }
+    const extractedToken = extractBattleNetToken(token);
+    if (!extractedToken) {
+      setError("未找到完整 Token，请粘贴包含 ST=...& 的完整链接");
+      return;
+    }
     setError(null);
     const id = accountIdRef.current;
     if (id) {
@@ -441,7 +446,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
         await invoke("update_account_meta", {
           accountId: id,
           authMode: "token",
-          token: token.trim() || null,
+          token: extractedToken,
           region,
           language,
           voicelanguage,
@@ -671,24 +676,21 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
             </div>
           )}
 
-          {/* Step 5: Paste token */}
+          {/* Step 5: Paste the complete redirect URL and extract its ST value. */}
           {tokenWizard === "token_paste" && (
             <>
               <div>
-                <p className="text-md text-text-secondary mb-1.5">粘贴 Token</p>
+                <p className="text-md text-text-secondary mb-1.5">粘贴完整链接</p>
                 <Input value={token} onChange={e => {
-                  let val = e.target.value;
-                  const match = val.match(/([A-Z]{2,3}-[A-Za-z0-9]+-[A-Za-z0-9]+)/i);
-                  if (match) val = match[1];
-                  setToken(val);
+                  const pasted = e.target.value;
+                  setToken(extractBattleNetToken(pasted) ?? pasted);
                   setError(null);
-                }} placeholder={
-                  region === "CN"
-                    ? "格式: CN-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxxxxxxx"
-                    : `格式: ${getTokenPrefix(region)}-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx-xxxxxxxxx`
-                } autoFocus />
+                }} placeholder={`粘贴包含 ST=${getTokenPrefix(region)}-...& 的完整链接`} autoFocus autoComplete="off" spellCheck={false} />
+                <p className="text-xs text-text-muted mt-2 leading-relaxed">
+                  软件会自动提取 ST= 与下一个 &amp; 之间的 Token；复制内容中夹带中文说明也可以识别。
+                </p>
               </div>
-              <Button variant="primary" size="sm" onClick={tokenStepPasteNext} disabled={!token.trim()}>确认完成</Button>
+              <Button variant="primary" size="sm" onClick={tokenStepPasteNext} disabled={!extractBattleNetToken(token)}>确认完成</Button>
             </>
           )}
         </div>
@@ -740,15 +742,15 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       {showGuide && createPortal(
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(18,24,34,0.38)] backdrop-blur-[5px]" onClick={(e) => { e.stopPropagation(); handleGuideClose(); }}>
           <div className="relative bg-surface-elevated rounded-modal p-6 max-w-3xl w-[95vw] mx-4 shadow-elevated border border-border-default" onClick={e => e.stopPropagation()}>
-            <p className="text-xl font-bold text-text-primary mb-4 text-center">🔍 请在浏览器中按指引复制 Token</p>
-            <img src="/token-copy-guide.png" alt="Token 获取指引" className="w-full rounded-xl border border-border-default" style={{ maxHeight: "80vh", objectFit: "contain" }} />
-            <p className="text-sm text-text-muted mt-4 text-center">复制完成后关闭此弹窗，在下一步粘贴 Token</p>
+            <p className="text-xl font-bold text-text-primary mb-4 text-center">🔍 请在浏览器中复制完整链接</p>
+            <img src="/token-copy-guide.png" alt="完整链接复制指引" className="w-full rounded-xl border border-border-default" style={{ maxHeight: "80vh", objectFit: "contain" }} />
+            <p className="text-sm text-text-muted mt-4 text-center">复制完成后关闭此弹窗，在下一步粘贴完整链接</p>
             <div className="flex gap-2 mt-4">
               <Button variant="secondary" size="sm" className="flex-1" onClick={handleOpenTokenWeb}>
-                手动打开token网页
+                手动打开 Token 网页
               </Button>
               <Button variant="primary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); handleGuideClose(); }}>
-                已成功复制token
+                已复制完整链接
               </Button>
             </div>
           </div>
