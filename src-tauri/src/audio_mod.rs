@@ -16,8 +16,8 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 6;
-const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v4";
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 7;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v5";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
 
 #[derive(Debug, Clone, Serialize)]
