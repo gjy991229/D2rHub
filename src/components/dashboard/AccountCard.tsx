@@ -28,6 +28,7 @@ import {
   requiresTokenMigration,
 } from "../../utils/regionPaths";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
+import { AccountModEditor } from "./AccountModEditor";
 import {
   type AccountQuickSettings,
   useAccountQuickSettings,
@@ -70,15 +71,6 @@ function fmtRelative(iso: string): string {
     if (days < 7) return `${days} 天前`;
     return d.toLocaleDateString("zh-CN");
   } catch { return ""; }
-}
-
-function getModChipLabel(mod: string): string {
-  const tokens = mod.match(/"[^"]*"|'[^']*'|\S+/g) || [];
-  const names = tokens
-    .map(token => token.replace(/^(['"])(.*)\1$/, "$2"))
-    .filter(token => token && !token.startsWith("-"));
-
-  return names.join(" ") || mod;
 }
 
 function createPositionId(): string {
@@ -170,19 +162,14 @@ export function AccountGridItem({
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(display);
   const [confirmDel, setConfirmDel] = useState(false);
-  const [modDelConfirmIdx, setModDelConfirmIdx] = useState<number | null>(null);
   const [reinit, setReinit] = useState(false);
-  const [modEditing, setModEditing] = useState(false);
-  const [modDraft, setModDraft] = useState(account.mod_args || "");
   const [positionEditing, setPositionEditing] = useState(false);
   const [positionNameDraft, setPositionNameDraft] = useState("");
   const [positionXDraft, setPositionXDraft] = useState("0");
   const [positionYDraft, setPositionYDraft] = useState("0");
   const [positionDelConfirmId, setPositionDelConfirmId] = useState<string | null>(null);
   const {
-    addAccountMod,
     reinitializeAccount,
-    updateAccountMods,
     updateAccountPositions,
   } = useAccounts();
 
@@ -199,25 +186,7 @@ export function AccountGridItem({
     update: updateDrawerSettings,
     flush: flushDrawerSettings,
   } = useAccountQuickSettings(account.id, quickSettingsEnabled);
-  const modRowDragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    scrollLeft: number;
-    moved: boolean;
-    captured: boolean;
-  } | null>(null);
-  const suppressModClickRef = useRef(false);
-  const suppressModClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modCommitInFlightRef = useRef(false);
   const nameCommitInFlightRef = useRef(false);
-
-  useEffect(() => { setModDraft(account.mod_args || ""); }, [account.mod_args]);
-
-  useEffect(() => () => {
-    if (suppressModClickTimerRef.current) {
-      clearTimeout(suppressModClickTimerRef.current);
-    }
-  }, []);
 
   useEffect(() => {
     if (!isSelectionMode || !selected || !schemeMember || !drawerLoaded
@@ -237,38 +206,6 @@ export function AccountGridItem({
     schemeMember,
     selected,
   ]);
-
-  const commitMod = async () => {
-    if (modCommitInFlightRef.current) return;
-    setModEditing(false);
-    const v = modDraft.trim();
-    if (!v) return;
-
-    modCommitInFlightRef.current = true;
-    try {
-      if (isSelectionMode) {
-        const existing = (account.mod_list || []).find(mod => mod.trim() === v);
-        if (existing) {
-          onSchemeMemberChange?.(account.id, { mod_args: existing });
-          showToast("info", "已有完全相同的 Mod 配置，已为当前方案选中");
-          return;
-        }
-        const saved = await updateAccountMods(
-          account.id,
-          account.mod_args,
-          [...(account.mod_list || []), v],
-        );
-        if (saved) onSchemeMemberChange?.(account.id, { mod_args: v });
-        return;
-      }
-      const added = await addAccountMod(account.id, v);
-      if (added === false) {
-        showToast("info", "已有完全相同的 Mod 配置，已跳过添加");
-      }
-    } finally {
-      modCommitInFlightRef.current = false;
-    }
-  };
 
   const positionPresets = account.position_presets || [];
   const selectedPositionId = isSelectionMode
@@ -419,7 +356,6 @@ export function AccountGridItem({
   const configModeLabel = isSelectionMode
     ? "方案画质"
     : account.has_customized_settings ? "独立配置" : "系统配置";
-  const activeMod = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
@@ -429,103 +365,6 @@ export function AccountGridItem({
     : [effectiveResolution, ...resOptions];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  const handleModWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    if (delta === 0) return;
-
-    const maxScrollLeft = row.scrollWidth - row.clientWidth;
-    const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, row.scrollLeft + delta));
-    if (nextScrollLeft === row.scrollLeft) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollLeft = nextScrollLeft;
-  };
-
-  const handleModPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    if (event.button !== 0 || (event.target as HTMLElement).closest("input")) return;
-
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    suppressModClickRef.current = false;
-    modRowDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      scrollLeft: row.scrollLeft,
-      moved: false,
-      captured: false,
-    };
-  };
-
-  const handleModPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = modRowDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const distance = event.clientX - drag.startX;
-    if (!drag.moved && Math.abs(distance) >= 4) {
-      drag.moved = true;
-      drag.captured = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.currentTarget.dataset.dragging = "true";
-    }
-    if (!drag.moved) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.scrollLeft = drag.scrollLeft - distance;
-  };
-
-  const finishModPointerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = modRowDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const row = event.currentTarget;
-    modRowDragRef.current = null;
-    delete row.dataset.dragging;
-    if (drag.captured && row.hasPointerCapture(event.pointerId)) {
-      row.releasePointerCapture(event.pointerId);
-    }
-    event.stopPropagation();
-
-    if (drag.moved) {
-      suppressModClickRef.current = true;
-      if (suppressModClickTimerRef.current) clearTimeout(suppressModClickTimerRef.current);
-      suppressModClickTimerRef.current = setTimeout(() => {
-        suppressModClickRef.current = false;
-        suppressModClickTimerRef.current = null;
-      }, 0);
-    }
-  };
-
-  const handleModClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!suppressModClickRef.current) return;
-    suppressModClickRef.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const handleModKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    let nextScrollLeft: number | null = null;
-    if (event.key === "ArrowLeft") nextScrollLeft = row.scrollLeft - 72;
-    if (event.key === "ArrowRight") nextScrollLeft = row.scrollLeft + 72;
-    if (event.key === "Home") nextScrollLeft = 0;
-    if (event.key === "End") nextScrollLeft = row.scrollWidth;
-    if (nextScrollLeft === null) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollTo({ left: nextScrollLeft, behavior: "smooth" });
-  };
 
   return (
     <div
@@ -591,124 +430,13 @@ export function AccountGridItem({
               )}
 
               {(!isSelectionMode || selected) && (
-                <div
-                  className="mod-row inline-mod-row"
-                  role="group"
-                  aria-label="Mod 配置，横向滚动查看更多"
-                  tabIndex={0}
-                  onWheel={handleModWheel}
-                  onPointerDown={handleModPointerDown}
-                  onPointerMove={handleModPointerMove}
-                  onPointerUp={finishModPointerDrag}
-                  onPointerCancel={finishModPointerDrag}
-                  onLostPointerCapture={finishModPointerDrag}
-                  onClickCapture={handleModClickCapture}
-                  onKeyDown={handleModKeyDown}
-                >
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation();
-                      if (activeMod === "") return;
-                      if (isSelectionMode) {
-                        onSchemeMemberChange?.(account.id, { mod_args: "" });
-                      } else {
-                        void updateAccountMods(account.id, "", account.mod_list || []);
-                      }
-                    }}
-                    className={`hig-badge mod-chip shrink-0 active:scale-[0.97] ${activeMod === "" ? "mod-chip-active" : ""}`}
-                    title={activeMod === "" ? "当前不使用 Mod" : "不使用 Mod"}
-                  >
-                    无 Mod
-                  </button>
-                  {(account.mod_list || []).map((mod, idx) => {
-                    const isActive = activeMod === mod;
-                    const isConfirming = modDelConfirmIdx === idx;
-                    const modLabel = getModChipLabel(mod);
-                    return (
-                      <div key={idx} className="group/mod relative flex items-center" onMouseLeave={() => setModDelConfirmIdx(null)}>
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (!isActive) {
-                              if (isSelectionMode) {
-                                onSchemeMemberChange?.(account.id, { mod_args: mod });
-                              } else {
-                                void updateAccountMods(account.id, mod, account.mod_list || []);
-                              }
-                            }
-                          }}
-                          className={`hig-badge mod-chip max-w-[118px] truncate font-mono active:scale-[0.97] ${isActive ? "mod-chip-active" : ""}`}
-                          title={isActive ? `${mod}（当前生效）` : `${mod}（点击生效）`}
-                        >
-                          {modLabel}
-                        </button>
-                        <button
-                          className={`absolute -right-1.5 -top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
-                            isConfirming
-                              ? "scale-110 text-white opacity-100"
-                              : "text-text-muted opacity-0 hover:scale-110 group-hover/mod:opacity-100"
-                          }`}
-                          style={{ background: isConfirming ? "var(--error)" : "var(--surface-glass)", border: "1px solid var(--border-default)" }}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (isConfirming) {
-                              const usedBy = getModSchemeUsage?.(account.id, mod) ?? [];
-                              if (usedBy.length > 0) {
-                                showToast("warning", `Mod“${modLabel}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
-                                setModDelConfirmIdx(null);
-                                return;
-                              }
-                              const newMods = (account.mod_list || []).filter((_, i) => i !== idx);
-                              const nextActive = account.mod_args === mod ? (newMods[0] || "") : account.mod_args;
-                              void updateAccountMods(account.id, nextActive, newMods).then(saved => {
-                                if (saved && isSelectionMode && isActive) {
-                                  onSchemeMemberChange?.(account.id, { mod_args: "" });
-                                }
-                              });
-                              setModDelConfirmIdx(null);
-                            } else {
-                              setModDelConfirmIdx(idx);
-                            }
-                          }}
-                          title={isConfirming ? "确认删除" : "删除配置"}
-                        >
-                          <X size={9} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {(modEditing ? (
-                    <input
-                      className="line-input h-[24px] w-28 px-2 font-mono text-xs"
-                      value={modDraft}
-                      onChange={e => setModDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") {
-                          e.stopPropagation();
-                          void commitMod();
-                        }
-                        if (e.key === "Escape") {
-                          e.stopPropagation();
-                          setModDraft("");
-                          setModEditing(false);
-                        }
-                      }}
-                      onBlur={() => { void commitMod(); }}
-                      onClick={e => e.stopPropagation()}
-                      placeholder="-mod xxx"
-                      autoFocus
-                    />
-                  ) : (
-                    <button
-                      onClick={e => { e.stopPropagation(); setModDraft(""); setModEditing(true); }}
-                      className="hig-badge mod-chip w-[24px] justify-center px-0"
-                      title="添加 mod"
-                    >
-                      +
-                    </button>
-                  ))}
-                </div>
+                <AccountModEditor
+                  account={account}
+                  isSelectionMode={isSelectionMode}
+                  schemeMember={schemeMember}
+                  onSchemeMemberChange={onSchemeMemberChange}
+                  getModSchemeUsage={getModSchemeUsage}
+                />
               )}
             </div>
           </div>
