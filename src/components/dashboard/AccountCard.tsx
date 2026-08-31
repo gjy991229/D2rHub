@@ -32,7 +32,6 @@ import {
   isInternationalRegion,
   requiresTokenMigration,
 } from "../../utils/regionPaths";
-import { getAccountTokenStatus } from "../../utils/accountTokenStatus";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
@@ -477,7 +476,6 @@ export function AccountGridItem({
   };
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
-  const tokenStatus = account.initialized ? getAccountTokenStatus(account.last_reset_at) : null;
   const regionLabel = accountRegionLabel(account.region);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"
@@ -824,14 +822,6 @@ export function AccountGridItem({
             <span className="hig-badge hig-badge-blue">战网认证</span>
           )}
           {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
-          {tokenStatus && tokenStatus.label && account.auth_mode !== "token" && !tokenMigrationRequired && (
-            <span
-              className={`hig-badge ${tokenStatus.expired ? "hig-badge-red" : tokenStatus.warning ? "hig-badge-gold" : "hig-badge-green"}`}
-              title={tokenStatus.expired ? "Token 已过期，需重新初始化" : `Token ${tokenStatus.warning ? "即将过期" : "有效"}，剩余 ${tokenStatus.label}`}
-            >
-              {tokenStatus.expired ? "过期" : tokenStatus.label}
-            </span>
-          )}
           {account.auth_mode === "token" && <span className="hig-badge hig-badge-green">长期</span>}
           {!account.initialized && <span className="hig-badge hig-badge-red">未初始化</span>}
         </div>
@@ -862,12 +852,10 @@ export function AccountGridItem({
               ) : account.initialized && (
                 <button
                   onClick={e => { stop(e); onLaunch(account.id); }}
-                  disabled={account.auth_mode !== "token" && tokenStatus?.expired}
-                  className={(account.auth_mode !== "token" && tokenStatus?.expired) ? "danger-cta" : "primary-cta"}
-                  title={(account.auth_mode !== "token" && tokenStatus?.expired) ? "Token 已过期，请重新初始化" : undefined}
+                  className="primary-cta"
                 >
-                  {(account.auth_mode !== "token" && tokenStatus?.expired) ? <AlertTriangle size={12} /> : <Play size={12} />}
-                  {(account.auth_mode !== "token" && tokenStatus?.expired) ? "重置" : "启动"}
+                  <Play size={12} />
+                  启动
                 </button>
               )}
             <div className="spatial-tools account-card-tools tools">
@@ -1100,7 +1088,11 @@ export function SortableAccountCard({
 }: GridItemProps) {
   const {
     attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: account.id, disabled: isSelectionMode });
+  } = useSortable({
+    id: account.id,
+    data: { container: isStandby ? "standby" : "active" },
+    disabled: isSelectionMode,
+  });
   const { progress } = useLaunch();
 
   const style = {

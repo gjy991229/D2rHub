@@ -18,7 +18,11 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { ArchiveRestore, GripVertical } from "lucide-react";
 import type { AccountMeta, GlobalConfig } from "../../store/types";
-import { moveIdWithinList } from "../../utils/standbyPool";
+import {
+  moveIdWithinList,
+  prioritizeWorkspaceCollisionIds,
+  workspaceContainerForId,
+} from "../../utils/standbyPool";
 import { AccountGrid } from "./AccountGrid";
 import { StandbyPool, STANDBY_POOL_DROP_ID } from "./StandbyPool";
 
@@ -86,19 +90,30 @@ export function AccountWorkspace({
 
   const collisionStrategy: CollisionDetection = args => {
     const pointerCollisions = pointerWithin(args);
-    const itemCollision = pointerCollisions.find(collision => {
-      const id = String(collision.id);
-      return activeIds.includes(id) || standbyIds.includes(id);
-    });
-    if (itemCollision) return [itemCollision];
-    return pointerCollisions.length > 0 ? pointerCollisions : closestCenter(args);
+    if (pointerCollisions.length === 0) {
+      return closestCenter(args).filter(collision => String(collision.id) !== String(args.active.id));
+    }
+    const rankedIds = prioritizeWorkspaceCollisionIds(
+      String(args.active.id),
+      pointerCollisions.map(collision => String(collision.id)),
+      activeIds,
+      standbyIds,
+      LAUNCHPAD_DROP_ID,
+      STANDBY_POOL_DROP_ID,
+    );
+    const collisionById = new Map(pointerCollisions.map(collision => [String(collision.id), collision]));
+    return rankedIds
+      .map(id => collisionById.get(id))
+      .filter((collision): collision is NonNullable<typeof collision> => !!collision);
   };
 
-  const containerFor = (id: string): "active" | "standby" | null => {
-    if (id === LAUNCHPAD_DROP_ID || activeIds.includes(id)) return "active";
-    if (id === STANDBY_POOL_DROP_ID || standbyIds.includes(id)) return "standby";
-    return null;
-  };
+  const containerFor = (id: string) => workspaceContainerForId(
+    id,
+    activeIds,
+    standbyIds,
+    LAUNCHPAD_DROP_ID,
+    STANDBY_POOL_DROP_ID,
+  );
 
   const handleDragStart = ({ active }: DragStartEvent) => {
     setDraggingId(String(active.id));

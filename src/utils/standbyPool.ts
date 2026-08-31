@@ -6,6 +6,61 @@ export interface AccountWorkspacePartition {
   standbyIds: string[];
 }
 
+export type AccountWorkspaceContainer = "active" | "standby";
+
+export function workspaceContainerForId(
+  id: string,
+  activeIds: readonly string[],
+  standbyIds: readonly string[],
+  launchpadDropId: string,
+  standbyDropId: string,
+): AccountWorkspaceContainer | null {
+  if (id === launchpadDropId || activeIds.includes(id)) return "active";
+  if (id === standbyDropId || standbyIds.includes(id)) return "standby";
+  return null;
+}
+
+export function prioritizeWorkspaceCollisionIds(
+  draggedId: string,
+  collisionIds: readonly string[],
+  activeIds: readonly string[],
+  standbyIds: readonly string[],
+  launchpadDropId: string,
+  standbyDropId: string,
+): string[] {
+  const source = workspaceContainerForId(
+    draggedId,
+    activeIds,
+    standbyIds,
+    launchpadDropId,
+    standbyDropId,
+  );
+  const uniqueCandidates = collisionIds.filter((id, index) => (
+    id !== draggedId && collisionIds.indexOf(id) === index
+  ));
+  if (!source) return uniqueCandidates;
+
+  const target: AccountWorkspaceContainer = source === "active" ? "standby" : "active";
+  const isContainerDropZone = (id: string) => id === launchpadDropId || id === standbyDropId;
+  const inContainer = (id: string, container: AccountWorkspaceContainer) => (
+    workspaceContainerForId(id, activeIds, standbyIds, launchpadDropId, standbyDropId) === container
+  );
+
+  return [
+    ...uniqueCandidates.filter(id => inContainer(id, target) && !isContainerDropZone(id)),
+    ...uniqueCandidates.filter(id => inContainer(id, target) && isContainerDropZone(id)),
+    ...uniqueCandidates.filter(id => inContainer(id, source) && !isContainerDropZone(id)),
+    ...uniqueCandidates.filter(id => inContainer(id, source) && isContainerDropZone(id)),
+    ...uniqueCandidates.filter(id => !workspaceContainerForId(
+      id,
+      activeIds,
+      standbyIds,
+      launchpadDropId,
+      standbyDropId,
+    )),
+  ];
+}
+
 export function partitionAccountWorkspace(
   orderedAccounts: readonly AccountMeta[],
   configuredStandbyIds: readonly string[],

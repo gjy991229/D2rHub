@@ -727,13 +727,6 @@ fn preflight_account_meta(
         }
         AuthMode::BattleNet => {
             validate_bnet_snapshot(config, meta, context.installation.edition)?;
-            if purpose == ContextPurpose::LaunchGame
-                && crate::commands::account::is_token_expired(&meta.last_reset_at)
-            {
-                return Err(AppError::ConfigReadError(format!(
-                    "账号 {account_id} 的认证已超过 30 天，请重新初始化账号"
-                )));
-            }
         }
     }
     Ok(())
@@ -1803,19 +1796,6 @@ async fn launch_single(
             Ok(context) => context,
             Err(error) => return account_path_error(account_id, error),
         };
-
-    // ── Token 过期检查（仅战网模式）──
-    if preflight_context.auth_mode == AuthMode::BattleNet
-        && crate::commands::account::is_token_expired(&meta.last_reset_at)
-    {
-        return LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
-            error: Some("Token 已过期（超过30天），请重新初始化账号".to_string()),
-            mutex_killed: false,
-        };
-    }
 
     if preflight_context.auth_mode == AuthMode::Token {
         return launch_single_token(

@@ -4,6 +4,8 @@ import {
   insertAccountId,
   moveIdWithinList,
   partitionAccountWorkspace,
+  prioritizeWorkspaceCollisionIds,
+  workspaceContainerForId,
 } from "./standbyPool";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -38,3 +40,45 @@ assert(insertAccountId(["a", "c"], "b", "c").join(",") === "a,b,c", "cross-pool 
 assert(insertAccountId(["a", "b"], "a").join(",") === "b,a", "insertion removes the previous occurrence");
 assert(moveIdWithinList(["a", "b", "c"], "a", "c").join(",") === "b,c,a", "same-pool dragging reorders cards");
 assert(completeWorkspaceOrder(["b", "a"], ["d", "c"]).join(",") === "b,a,d,c", "persisted order keeps both workspace sections complete");
+
+const launchpadDropId = "launchpad";
+const standbyDropId = "standby";
+const activeIds = ["a", "b"];
+const standbyIds = ["c", "d"];
+assert(
+  workspaceContainerForId("c", activeIds, standbyIds, launchpadDropId, standbyDropId) === "standby",
+  "workspace items resolve to their owning container",
+);
+assert(
+  prioritizeWorkspaceCollisionIds(
+    "c",
+    ["c", launchpadDropId],
+    activeIds,
+    standbyIds,
+    launchpadDropId,
+    standbyDropId,
+  ).join(",") === launchpadDropId,
+  "dragging out of the dock ignores the translated source item and reaches the launchpad",
+);
+assert(
+  prioritizeWorkspaceCollisionIds(
+    "c",
+    [launchpadDropId, "b"],
+    activeIds,
+    standbyIds,
+    launchpadDropId,
+    standbyDropId,
+  ).join(",") === `b,${launchpadDropId}`,
+  "an active card is preferred over its launchpad parent for precise insertion",
+);
+assert(
+  prioritizeWorkspaceCollisionIds(
+    "a",
+    [standbyDropId, "d"],
+    activeIds,
+    standbyIds,
+    launchpadDropId,
+    standbyDropId,
+  ).join(",") === `d,${standbyDropId}`,
+  "a dock card is preferred over the dock parent for precise insertion",
+);

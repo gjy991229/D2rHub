@@ -3528,18 +3528,6 @@ fn sync_back_to_account_inner(
     pending.commit()
 }
 
-/// 检查 token 是否已过期（720小时/30天有效期）
-/// 返回 true 表示已过期，需要重新初始化
-pub fn is_token_expired(last_reset_at: &Option<String>) -> bool {
-    if let Some(ts) = last_reset_at {
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-            let elapsed = chrono::Utc::now().signed_duration_since(dt);
-            return elapsed.num_hours() > 720;
-        }
-    }
-    false
-}
-
 /// 强制确保 Battle.net.config 中 SingleInstance 为 "true"
 pub fn enforce_single_instance(config_path: &Path) -> Result<(), AppError> {
     if !config_path.exists() {
