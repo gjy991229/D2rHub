@@ -324,6 +324,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::global_config::get_global_config,
             commands::global_config::save_global_config,
+            commands::global_config::patch_global_config,
             commands::global_config::save_window_geometry,
             commands::global_config::load_window_geometry,
             commands::global_config::save_overlay_geometry,

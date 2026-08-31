@@ -95,7 +95,7 @@ function createLaunchGroupMember(account: AccountMeta): LaunchGroupMember {
 }
 
 function App() {
-  const { config, initialLoading, saving: configSaving, error: configError, load, save } = useGlobalConfig();
+  const { config, initialLoading, saving: configSaving, error: configError, load, patch } = useGlobalConfig();
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
@@ -256,7 +256,7 @@ function App() {
       ? config.launch_groups.map(group => group.id === launchGroupDraft.id ? savedGroup : group)
       : [...config.launch_groups, savedGroup];
     try {
-      await save({ ...config, launch_groups: nextGroups });
+      await patch({ launch_groups: nextGroups });
       setLaunchGroupDraft(null);
       showToast("success", `启动方案“${name}”已保存`);
     } catch (error) {
@@ -268,8 +268,7 @@ function App() {
     if (!config || !launchGroupPendingDelete || configSaving) return;
     const group = launchGroupPendingDelete;
     try {
-      await save({
-        ...config,
+      await patch({
         launch_groups: config.launch_groups.filter(candidate => candidate.id !== group.id),
         favorite_launch_group_ids: (config.favorite_launch_group_ids ?? [])
           .filter(groupId => groupId !== group.id),
@@ -290,7 +289,7 @@ function App() {
       group.id,
     );
     try {
-      await save({ ...config, favorite_launch_group_ids: favoriteIds });
+      await patch({ favorite_launch_group_ids: favoriteIds });
     } catch (error) {
       showToast("error", `更新常用启动方案失败: ${error}`);
     }
@@ -373,7 +372,7 @@ function App() {
     setAutoUpdateUrl(url);
     setShowAutoUpdateConfirm(true);
   });
-  useFirstLaunch(initialLoading, config, save);
+  useFirstLaunch(initialLoading, config, patch);
 
   useEffect(() => {
     if (initialLoading || !config?.rune_audio_enabled) {

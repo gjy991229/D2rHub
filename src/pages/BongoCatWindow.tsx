@@ -22,7 +22,7 @@ interface ActiveDrop {
 }
 
 export function BongoCatWindow() {
-  const { config, save, load } = useGlobalConfig();
+  const { config, patch, load } = useGlobalConfig();
   const [clickCount, setClickCount] = useState(0);
   const placementRestoredRef = useRef(false);
   const markPlacementInteraction = useWindowPlacementSave({
@@ -213,7 +213,7 @@ export function BongoCatWindow() {
 
       // Special: unlock Mage skin
       if (!config?.bongo_cat_unlocked_skins?.includes("mage")) {
-        save({ ...config!, bongo_cat_unlocked_skins: [...(config?.bongo_cat_unlocked_skins || []), "mage"] });
+        void patch({ bongo_cat_unlocked_skins: [...(config?.bongo_cat_unlocked_skins || []), "mage"] });
       }
     } else if (rand < 0.0004) { // 0.03% Unique/Gold (暗金色)
       rolledQuality = "gold";
@@ -385,7 +385,7 @@ export function BongoCatWindow() {
             选择皮肤
           </div>
           <button              onClick={() => {
-                save({ ...config!, bongo_cat_skin: "original" });
+                void patch({ bongo_cat_skin: "original" });
                 setMenuPos(null);
               }}
               className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded text-xs hover:bg-neutral-800 text-neutral-200"
@@ -397,7 +397,7 @@ export function BongoCatWindow() {
             <button
               onClick={() => {
                 if (config?.bongo_cat_unlocked_skins?.includes("mage")) {
-                  save({ ...config!, bongo_cat_skin: "mage" });
+                  void patch({ bongo_cat_skin: "mage" });
                 }
                 setMenuPos(null);
               }}

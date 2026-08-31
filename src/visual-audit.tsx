@@ -276,6 +276,8 @@ const baseConfig: GlobalConfig = {
   favorite_launch_group_ids: ["farm-core"],
 };
 
+let persistedGlobalConfig: GlobalConfig = { ...baseConfig };
+
 const accountSettings: SettingsMap = {
   "Window Mode": 0,
   "Screen Resolution (Windowed)": "1280x720",
@@ -342,9 +344,17 @@ function installIpcMock() {
 
     switch (cmd) {
       case "get_global_config":
-        return { ...baseConfig, first_run_complete: surface !== "setup" };
-      case "save_global_config":
-        return (payload as { config?: GlobalConfig } | undefined)?.config ?? baseConfig;
+        return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
+      case "save_global_config": {
+        persistedGlobalConfig = (payload as { config?: GlobalConfig } | undefined)?.config
+          ?? persistedGlobalConfig;
+        return persistedGlobalConfig;
+      }
+      case "patch_global_config": {
+        const patch = (payload as { patch?: Partial<GlobalConfig> } | undefined)?.patch ?? {};
+        persistedGlobalConfig = { ...persistedGlobalConfig, ...patch };
+        return persistedGlobalConfig;
+      }
       case "list_accounts":
         return accounts;
       case "refresh_account_running_state":

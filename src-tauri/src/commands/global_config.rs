@@ -667,6 +667,34 @@ mod validation_tests {
     }
 
     #[test]
+    fn user_patch_changes_only_requested_fields_on_the_latest_config() {
+        let latest = GlobalConfig {
+            theme: "light".to_string(),
+            font_scale: "large".to_string(),
+            ..GlobalConfig::default()
+        };
+
+        let patched = latest
+            .apply_user_patch(serde_json::json!({ "theme": "onyx" }))
+            .unwrap();
+
+        assert_eq!(patched.theme, "onyx");
+        assert_eq!(patched.font_scale, "large");
+    }
+
+    #[test]
+    fn user_patch_rejects_unknown_and_server_managed_fields() {
+        let config = GlobalConfig::default();
+
+        assert!(config
+            .apply_user_patch(serde_json::json!({ "unknown_field": true }))
+            .is_err());
+        assert!(config
+            .apply_user_patch(serde_json::json!({ "accounts_dir": "stale" }))
+            .is_err());
+    }
+
+    #[test]
     fn enabled_rune_audio_requires_a_selected_account() {
         let config = GlobalConfig {
             rune_audio_enabled: true,
@@ -1731,6 +1759,35 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
 }
 
 impl GlobalConfig {
+    fn apply_user_patch(&self, patch: serde_json::Value) -> Result<Self, AppError> {
+        let patch = patch
+            .as_object()
+            .ok_or_else(|| AppError::ConfigWriteError("配置补丁必须是 JSON 对象".to_string()))?;
+        let mut merged = serde_json::to_value(self)?;
+        let merged_object = merged.as_object_mut().ok_or_else(|| {
+            AppError::ConfigWriteError("当前配置无法转换为 JSON 对象".to_string())
+        })?;
+
+        for (key, value) in patch {
+            if matches!(
+                key.as_str(),
+                "version" | "accounts_dir" | "legacy_path_migration"
+            ) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "配置字段 {key} 由程序管理，不能通过补丁修改"
+                )));
+            }
+            if !merged_object.contains_key(key) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "未知的全局配置字段: {key}"
+                )));
+            }
+            merged_object.insert(key.clone(), value.clone());
+        }
+
+        serde_json::from_value(merged).map_err(Into::into)
+    }
+
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
@@ -2672,11 +2729,6 @@ pub fn save_global_config(
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
     let _config_io = state.config_io.lock();
-    if config.legacy_path_migration.is_some() {
-        return Err(AppError::ConfigWriteError(
-            "请先确认旧版路径属于国服还是国际服".to_string(),
-        ));
-    }
     let existing_config_artifact = GlobalConfig::config_path(&state.app_data_dir).exists()
         || GlobalConfig::config_backup_path(&state.app_data_dir).exists()
         || GlobalConfig::config_staging_path(&state.app_data_dir).exists();
@@ -2687,7 +2739,34 @@ pub fn save_global_config(
         ));
     }
     let previous = state.config.read().clone();
-    let mut cfg = config.clone();
+    persist_global_config_locked(state.inner(), previous, config)
+}
+
+#[tauri::command]
+pub fn patch_global_config(
+    state: tauri::State<'_, SharedState>,
+    patch: serde_json::Value,
+) -> Result<GlobalConfig, AppError> {
+    let _config_io = state.config_io.lock();
+    let previous = state
+        .config
+        .read()
+        .clone()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+    let patched = previous.apply_user_patch(patch)?;
+    persist_global_config_locked(state.inner(), Some(previous), patched)
+}
+
+fn persist_global_config_locked(
+    state: &SharedState,
+    previous: Option<GlobalConfig>,
+    mut cfg: GlobalConfig,
+) -> Result<GlobalConfig, AppError> {
+    if cfg.legacy_path_migration.is_some() {
+        return Err(AppError::ConfigWriteError(
+            "请先确认旧版路径属于国服还是国际服".to_string(),
+        ));
+    }
     cfg.version = CURRENT_CONFIG_VERSION;
     // 保留旧字段作为向后兼容总状态，新代码只读取两个独立开关。
     cfg.enable_overlay = cfg.enable_tz_overlay || cfg.enable_stats_overlay;

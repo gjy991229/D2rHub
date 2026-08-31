@@ -43,6 +43,7 @@ import {
 import type { AudioModSetupState, GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
+import { diffGlobalConfig } from "../../utils/globalConfigPatch";
 import {
   AUDIO_MOD_NAME_MAX_LENGTH,
   validateAudioModName,
@@ -303,7 +304,7 @@ type TabType =
   | "advanced";
 
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
-  const { config, save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
   const { theme, setTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
@@ -647,21 +648,25 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   };
 
   // Global Config Save
-  const handleSaveGlobal = async (quiet = false) => {
-    if (!config) return true;
-    if (installationPathEditsAreInvalid(originalConfig, config)) {
+  const persistGlobalDraft = async (draft: GlobalConfig, quiet = false) => {
+    if (installationPathEditsAreInvalid(originalConfig, draft)) {
       if (!quiet) showToast("error", "请至少配置一组国服或国际服的游戏安装目录；存档目录仅影响画质覆盖");
-      return false;
+      return null;
     }
     try {
-      await save(config);
-      setOriginalConfig(JSON.parse(JSON.stringify(config)));
+      const saved = await patchConfig(diffGlobalConfig(originalConfig, draft));
+      setOriginalConfig(JSON.parse(JSON.stringify(saved)));
       if (!quiet) showToast("success", "全局设置已成功保存");
-      return true;
+      return saved;
     } catch (e) {
       showToast("error", `保存全局设置失败: ${e}`);
-      return false;
+      return null;
     }
+  };
+
+  const handleSaveGlobal = async (quiet = false) => {
+    if (!config) return true;
+    return (await persistGlobalDraft(config, quiet)) !== null;
   };
 
   // Selected Account Config Save (includes basic metadata and game settings file)
@@ -834,8 +839,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       rune_audio_enabled: enabled,
     };
     useGlobalConfig.setState({ config: next });
-    await save(next);
-    setOriginalConfig(JSON.parse(JSON.stringify(next)));
+    await persistGlobalDraft(next, true);
   };
 
   const handleAudioTargetChange = async (accountId: string) => {
@@ -1633,7 +1637,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                         const language = e.target.value;
                         updateConfig(c => { c.app_language = language; });
                         const cur = useGlobalConfig.getState().config;
-                        if (cur) await save({ ...cur, app_language: language });
+                        if (cur) await persistGlobalDraft({ ...cur, app_language: language }, true);
                       }}
                       className="h-8 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
                     >
@@ -1683,7 +1687,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                           onClick={async () => {
                             updateConfig(c => { c.theme_overlay = t.id; });
                             const cur = useGlobalConfig.getState().config;
-                            if (cur) await save({ ...cur, theme_overlay: t.id });
+                            if (cur) await persistGlobalDraft({ ...cur, theme_overlay: t.id }, true);
                           }}
                           className="flex flex-col items-start gap-1 p-3 rounded-xl border transition-all text-left"
                           style={{
@@ -1794,7 +1798,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                             try { localStorage.setItem("d2rhub-font-scale", id); } catch {}
                             updateConfig(c => { c.font_scale = id; });
                             const cur = useGlobalConfig.getState().config;
-                            if (cur) save({ ...cur, font_scale: id });
+                            if (cur) void persistGlobalDraft({ ...cur, font_scale: id }, true);
                             setFontScaleKey(k => k + 1);
                           }}
                           className={`flex flex-col items-center gap-0.5 py-2.5 px-2 rounded-xl border transition-all ${
@@ -1839,11 +1843,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                             c.enable_overlay = v || c.enable_stats_overlay;
                           });
                           const cur = useGlobalConfig.getState().config;
-                          if (cur) await save({
+                          if (cur) await persistGlobalDraft({
                             ...cur,
                             enable_tz_overlay: v,
                             enable_overlay: v || cur.enable_stats_overlay,
-                          });
+                          }, true);
                           try {
                             await setAuxiliaryWindowVisible("overlay", v);
                           } catch (e) {
@@ -1879,11 +1883,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                             c.enable_overlay = c.enable_tz_overlay || v;
                           });
                           const cur = useGlobalConfig.getState().config;
-                          if (cur) await save({
+                          if (cur) await persistGlobalDraft({
                             ...cur,
                             enable_stats_overlay: v,
                             enable_overlay: cur.enable_tz_overlay || v,
-                          });
+                          }, true);
                           try {
                             await setAuxiliaryWindowVisible("stats-overlay", v);
                           } catch (e) {
@@ -2381,8 +2385,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                           size="md"
                           onClick={async () => {
                             try {
-                              await save(config);
-                              setOriginalConfig(JSON.parse(JSON.stringify(config)));
+                              await persistGlobalDraft(config, true);
                               await invoke("restart_rune_audio_monitor");
                               showToast("success", "声纹监控已用新配置重启");
                             } catch (e) {
@@ -2638,7 +2641,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                         onChange={async v => {
                           updateConfig(c => { c.enable_bongo_cat = v; });
                           const cur = useGlobalConfig.getState().config;
-                          if (cur) await save({ ...cur, enable_bongo_cat: v });
+                          if (cur) await persistGlobalDraft({ ...cur, enable_bongo_cat: v }, true);
                           try {
                             await setAuxiliaryWindowVisible("bongo-cat", v);
                           } catch (e) {
@@ -2677,7 +2680,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                               const val = parseFloat(e.target.value) / 10;
                               updateConfig(c => { c.bongo_cat_scale = val; });
                               try {
-                                await save({ ...config, bongo_cat_scale: val });
+                                const cur = useGlobalConfig.getState().config;
+                                if (cur) await persistGlobalDraft({ ...cur, bongo_cat_scale: val }, true);
                               } catch (err) {
                                 console.error("保存猫咪缩放失败", err);
                               }

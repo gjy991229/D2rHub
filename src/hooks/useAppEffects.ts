@@ -4,9 +4,9 @@ import { listen } from "@tauri-apps/api/event";
 import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
 import { useAccounts } from "../store/accounts";
-import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
+import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
 import { validateTrackingTarget } from "../utils/trackingTarget";
 import { setAuxiliaryWindowVisible } from "../utils/windowPlacement";
 
@@ -244,7 +244,7 @@ export function useAutoUpdate(
 export function useFirstLaunch(
   loading: boolean,
   config: GlobalConfig | null,
-  saveConfig: (cfg: GlobalConfig) => Promise<void>
+  patchConfig: (patch: GlobalConfigPatch) => Promise<GlobalConfig>
 ) {
   const firstLaunchOpenedRef = useRef(false);
 
@@ -260,16 +260,12 @@ export function useFirstLaunch(
         await invoke("open_user_guide");
       } catch {}
       try {
-        // 从 store 取最新 config，避免闭包过期覆盖其他字段
-        const latestCfg = useGlobalConfig.getState().config;
-        if (latestCfg) {
-          await saveConfig({ ...latestCfg, first_launch: false });
-        }
+        await patchConfig({ first_launch: false });
       } catch {}
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [loading, config?.first_launch, config?.first_run_complete, saveConfig]);
+  }, [loading, config?.first_launch, config?.first_run_complete, patchConfig]);
 }
 
 export function usePreventDragRegionDoubleClick() {

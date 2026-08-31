@@ -2,6 +2,16 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import { emit, listen } from "@tauri-apps/api/event";
 import type { GlobalConfig } from "./types";
+import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
+
+let mutationQueue: Promise<unknown> = Promise.resolve();
+let pendingMutations = 0;
+
+function enqueueMutation<T>(mutation: () => Promise<T>): Promise<T> {
+  const result = mutationQueue.then(mutation, mutation);
+  mutationQueue = result.then(() => undefined, () => undefined);
+  return result;
+}
 
 interface GlobalConfigState {
   config: GlobalConfig | null;
@@ -10,7 +20,8 @@ interface GlobalConfigState {
   error: string | null;
 
   load: () => Promise<void>;
-  save: (config: GlobalConfig) => Promise<void>;
+  save: (config: GlobalConfig) => Promise<GlobalConfig>;
+  patch: (patch: GlobalConfigPatch) => Promise<GlobalConfig>;
   detectSavedGamesPath: () => Promise<string | null>;
   detectGlobalSavedGamesPath: () => Promise<string | null>;
   detectProgramDataAgentPath: () => Promise<string | null>;
@@ -18,7 +29,7 @@ interface GlobalConfigState {
   detectBrowserPath: () => Promise<[string, string] | null>;
 }
 
-export const useGlobalConfig = create<GlobalConfigState>((set) => ({
+export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
   config: null,
   initialLoading: true,
   saving: false,
@@ -35,15 +46,46 @@ export const useGlobalConfig = create<GlobalConfigState>((set) => ({
   },
 
   save: async (config: GlobalConfig) => {
+    pendingMutations += 1;
     set({ saving: true, error: null });
-    try {
-      const saved = await invoke<GlobalConfig>("save_global_config", { config });
-      set({ config: saved, saving: false });
-      await emit("global-config-updated", saved);
-    } catch (e) {
-      set({ error: String(e), saving: false });
-      throw e;
+    return enqueueMutation(async () => {
+      try {
+        const saved = await invoke<GlobalConfig>("save_global_config", { config });
+        set({ config: saved });
+        await emit("global-config-updated", saved);
+        return saved;
+      } catch (e) {
+        set({ error: String(e) });
+        throw e;
+      } finally {
+        pendingMutations -= 1;
+        set({ saving: pendingMutations > 0 });
+      }
+    });
+  },
+
+  patch: async (patch: GlobalConfigPatch) => {
+    if (Object.keys(patch).length === 0) {
+      const current = get().config;
+      if (!current) throw new Error("全局配置尚未加载");
+      return current;
     }
+    pendingMutations += 1;
+    set({ saving: true, error: null });
+    return enqueueMutation(async () => {
+      try {
+        const saved = await invoke<GlobalConfig>("patch_global_config", { patch });
+        set({ config: saved });
+        await emit("global-config-updated", saved);
+        return saved;
+      } catch (e) {
+        set({ error: String(e) });
+        throw e;
+      } finally {
+        pendingMutations -= 1;
+        set({ saving: pendingMutations > 0 });
+      }
+    });
   },
 
 
