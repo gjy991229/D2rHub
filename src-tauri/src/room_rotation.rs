@@ -10,6 +10,7 @@ use tauri::{Emitter, Manager};
 
 const STATUS_EVENT: &str = "room-rotation-status";
 const MAX_GAME_NAME_LENGTH: usize = 15;
+const INPUT_TEST_PREVIEW_MS: u64 = 1_000;
 
 fn client_coordinate(length: i32, permille: u16) -> i32 {
     let last_pixel = length.saturating_sub(1).max(0);
@@ -347,7 +348,7 @@ fn fill_credentials(
             flow.ui_profile.join_password_field,
         )
     };
-    // The r4 Mod uses the same toolbar button to open and close a form. Normal
+    // The r5 Mod uses the same toolbar button to open and close a form. Normal
     // rotations open it here, while a duplicate-name retry keeps the create
     // form open after dismissing the dialog and must not toggle it closed.
     if input.open_form {
@@ -789,6 +790,7 @@ pub fn test_room_rotation_input(
     #[cfg(target_os = "windows")]
     {
         let state = app.state::<SharedState>();
+        crate::audio_mod::validate_in_game_room_tools_for_account(&state, &account_id)?;
         let (config, pid) = {
             let stored = state.config.read();
             let config = stored
@@ -896,6 +898,8 @@ pub fn test_room_rotation_input(
                     return Err("测试文字只能包含英文字母、数字、短横线和下划线".to_string());
                 }
                 form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
+                std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
+                form.click(tab)?;
                 text_report = Some(win::background_text_strategy_label(text_strategy));
             }
             "create_password_text" | "join_password_text" | "password_text" => {
@@ -923,6 +927,8 @@ pub fn test_room_rotation_input(
                     return Err("测试密码只能包含英文字母、数字、短横线和下划线".to_string());
                 }
                 form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
+                std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
+                form.click(tab)?;
                 text_report = Some(win::background_text_strategy_label(text_strategy));
             }
             _ => return Err("未知的后台输入测试动作".to_string()),

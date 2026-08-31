@@ -480,7 +480,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-text-secondary">参与账号</span>
-          <span className="text-2xs text-text-muted">所有账号需使用 r4 及以上加工 Mod</span>
+          <span className="text-2xs text-text-muted">所有账号需使用 r5 及以上加工 Mod</span>
         </div>
         {rotation.primary_account_id && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-2.5 py-2">
@@ -694,7 +694,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
       </details>
 
       <details className="rounded-xl border border-border-default bg-surface-card px-3 py-2.5">
-        <summary className="cursor-pointer text-xs font-semibold text-text-secondary">当前策略的坐标与单步测试</summary>
+        <summary className="cursor-pointer text-xs font-semibold text-text-secondary">局内工具坐标与单步测试</summary>
         <div className="mt-3 space-y-3">
           <div className="flex flex-wrap items-end gap-2">
             <label className="min-w-[180px] flex-1 space-y-1">
@@ -719,20 +719,20 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
               <Keyboard size={11} />发送 Esc
             </Button>
             <Button size="sm" loading={testBusy === "create_name"} onClick={() => void runInputTest("create_name")}>
-              <Keyboard size={11} />创建页填字
+              <Keyboard size={11} />局内创建并填房名
             </Button>
             <Button size="sm" loading={testBusy === "join_name"} onClick={() => void runInputTest("join_name")}>
-              <Keyboard size={11} />加入页填字
+              <Keyboard size={11} />局内加入并填房名
             </Button>
             <Button size="sm" loading={testBusy === "create_password_text"} onClick={() => void runInputTest("create_password_text")}>
-              <Keyboard size={11} />创建页密码
+              <Keyboard size={11} />局内创建并填密码
             </Button>
             <Button size="sm" loading={testBusy === "join_password_text"} onClick={() => void runInputTest("join_password_text")}>
-              <Keyboard size={11} />加入页密码
+              <Keyboard size={11} />局内加入并填密码
             </Button>
           </div>
           <p className="text-2xs leading-relaxed text-warning">
-            填字测试不会按 Enter，也不会把测试内容记作“密码已更新”。受保护光标模式不会主动激活目标窗口。默认 L 方案不使用剪贴板，每键保持 30ms 并按当前流程设置留出释放间隔；H–K 仅保留用于兼容性诊断。
+            四个填字测试都会点击 Mod 顶部的局内创建/加入按钮，填写后停留 1 秒，再次点击同一按钮关闭表单；不会按 Enter，也不会把测试内容记作“密码已更新”。默认 L 方案不使用剪贴板，每键保持 30ms 并按当前流程设置留出释放间隔；H–K 仅保留用于兼容性诊断。
           </p>
           <p className="text-2xs leading-relaxed text-text-secondary">
             坐标相对 D2R 客户区：左上角 X 0%、Y 0%，右下角 X 100%、Y 100%。窗口移动、缩放或位于不同显示器时无需换算屏幕坐标。

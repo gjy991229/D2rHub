@@ -83,9 +83,9 @@ pub struct RoomRotationUiProfile {
     /// Legacy compatibility; the in-game flow no longer opens the pause menu.
     pub save_and_exit: RoomRotationPoint,
     pub character_select_lobby: RoomRotationPoint,
-    /// D2RHub r4 in-game room toolbar create button.
+    /// D2RHub r5 in-game room toolbar create button.
     pub create_tab: RoomRotationPoint,
-    /// D2RHub r4 in-game room toolbar join button.
+    /// D2RHub r5 in-game room toolbar join button.
     pub join_tab: RoomRotationPoint,
     pub game_name_field: RoomRotationPoint,
     #[serde(default = "default_room_rotation_password_field")]

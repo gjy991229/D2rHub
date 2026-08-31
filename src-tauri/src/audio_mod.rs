@@ -16,8 +16,8 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 4;
-const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v2";
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 5;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v3";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
 
 #[derive(Debug, Clone, Serialize)]
@@ -436,6 +436,16 @@ fn validate_in_game_room_tool_layouts(
             return Err("局内房间工具栏按钮不完整".to_string());
         }
     }
+    let next_game = find_layout_node(&toolbar, "D2RHubNextGame")
+        .ok_or_else(|| "局内“下一局”按钮不完整".to_string())?;
+    if next_game
+        .pointer("/fields/tooltipString")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|tooltip| tooltip.is_empty() || tooltip.starts_with('@'))
+        || next_game.pointer("/fields/tooltipOffset").is_some()
+    {
+        return Err("局内“下一局”第一层提示位置或文字无效".to_string());
+    }
 
     let confirmation =
         read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateConfirmhd.json")?;
@@ -521,9 +531,9 @@ fn validate_in_game_room_tool_layouts(
             find_layout_node(&form, input_name)
                 .and_then(|node| node.pointer("/fields/imeEnabled"))
                 .and_then(serde_json::Value::as_bool)
-                != Some(false)
+                != Some(true)
         }) {
-            return Err(format!("局内房间表单没有固定为英文数字输入：{name}"));
+            return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
         if find_layout_node(&form, "D2RHubCloseRoomForm")
             .and_then(|node| node.pointer("/fields/onClickMessage"))
@@ -1502,7 +1512,10 @@ mod tests {
             (
                 "D2RHubRoomToolbarhd.json",
                 serde_json::json!({"children": [
-                    {"fields": {"onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"}},
+                    {"name": "D2RHubNextGame", "fields": {
+                        "tooltipString": "首次点击只打开确认条；再次确认才会离开当前房间，4 秒后自动取消。",
+                        "onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"
+                    }},
                     {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"}},
                     {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenJoinGame"}}
                 ]}),
@@ -1539,8 +1552,8 @@ mod tests {
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "GameNameInput", "fields": {"imeEnabled": false}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": false}},
+                        {"name": "GameNameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
                     ]
                 }),
@@ -1555,8 +1568,8 @@ mod tests {
                         "acceptsEscKeyEverywhere": true
                     },
                     "children": [
-                        {"name": "NameInput", "fields": {"imeEnabled": false}},
-                        {"name": "PasswordInput", "fields": {"imeEnabled": false}},
+                        {"name": "NameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
                     ]
                 }),
