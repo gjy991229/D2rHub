@@ -4,6 +4,7 @@ export { ActionBar } from "./ActionBar";
 export { LaunchButton } from "./LaunchButton";
 export { LaunchGroupMenu } from "./LaunchGroupMenu";
 export { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
+export { MainActionBar } from "./MainActionBar";
 export { AccountGrid, AccountGridLoading, AccountGridEmpty } from "./AccountGrid";
 export { AccountGridItem } from "./AccountCard";
 export { SortableAccountCard } from "./SortableAccountCard";
