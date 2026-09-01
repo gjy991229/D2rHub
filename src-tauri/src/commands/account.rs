@@ -704,7 +704,7 @@ pub fn create_account(
     let nickname = validated_account_display_name(&nickname)?;
     // 锁序固定为 Catalog -> Account。名称检查与目录提交必须处于同一临界区，
     // 防止两个并发创建请求同时通过判重。
-    let _catalog_guard = state.account_catalog_write_lock.lock();
+    let _catalog_guard = state.multi_instance().catalog_leases().acquire();
     ensure_account_display_name_available(&cfg.accounts_dir, &nickname, None)?;
     let id = AccountManager::next_id(&cfg.accounts_dir);
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &id)?;
@@ -852,7 +852,7 @@ pub fn delete_account(
     // Catalog -> account -> configuration is the shared lifecycle lock order.
     // Holding the catalog lease prevents create/import from reusing a display
     // name while a failed deletion is still able to roll its directory back.
-    let catalog_guard = state.account_catalog_write_lock.lock();
+    let catalog_guard = state.multi_instance().catalog_leases().acquire();
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let staged_deletion = RefCell::new(None);
     let post_commit_outcome = RefCell::new(None);
@@ -977,7 +977,7 @@ pub fn rename_account(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let new_name = validated_account_display_name(&new_name)?;
-    let _catalog_guard = state.account_catalog_write_lock.lock();
+    let _catalog_guard = state.multi_instance().catalog_leases().acquire();
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     ensure_account_display_name_available(&cfg.accounts_dir, &new_name, Some(&account_id))?;
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;

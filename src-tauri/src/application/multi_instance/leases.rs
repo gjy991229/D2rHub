@@ -1,4 +1,4 @@
-use parking_lot::Mutex;
+use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -27,6 +27,17 @@ pub struct AccountOperationLease {
 /// Dropping it releases every account even after an early workflow failure.
 pub struct AccountOperationLeases {
     _leases: Vec<AccountOperationLease>,
+}
+
+/// Serializes writes whose invariants span multiple account directories, such
+/// as display-name uniqueness and import/create/delete catalog updates.
+#[derive(Default)]
+pub struct AccountCatalogLeaseManager {
+    state: Mutex<()>,
+}
+
+pub(crate) struct AccountCatalogLease<'a> {
+    _guard: MutexGuard<'a, ()>,
 }
 
 fn account_key(account_id: &str) -> String {
@@ -99,6 +110,21 @@ impl AccountLeaseManager {
     }
 }
 
+impl AccountCatalogLeaseManager {
+    pub fn acquire(&self) -> AccountCatalogLease<'_> {
+        AccountCatalogLease {
+            _guard: self.state.lock(),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn try_acquire(&self) -> Option<AccountCatalogLease<'_>> {
+        self.state
+            .try_lock()
+            .map(|guard| AccountCatalogLease { _guard: guard })
+    }
+}
+
 impl Drop for AccountOperationLease {
     fn drop(&mut self) {
         self.state.active.lock().remove(&self.account_id);
@@ -107,7 +133,7 @@ impl Drop for AccountOperationLease {
 
 #[cfg(test)]
 mod tests {
-    use super::AccountLeaseManager;
+    use super::{AccountCatalogLeaseManager, AccountLeaseManager};
 
     #[test]
     fn account_aliases_share_one_core_lease() {
@@ -148,5 +174,14 @@ mod tests {
         assert!(manager.try_acquire("").is_err());
         assert!(manager.try_acquire_many(["account-a", "  "]).is_err());
         assert!(manager.try_acquire("account-a").is_ok());
+    }
+
+    #[test]
+    fn catalog_lease_is_exclusive_and_released_on_drop() {
+        let manager = AccountCatalogLeaseManager::default();
+        let lease = manager.acquire();
+        assert!(manager.try_acquire().is_none());
+        drop(lease);
+        assert!(manager.try_acquire().is_some());
     }
 }

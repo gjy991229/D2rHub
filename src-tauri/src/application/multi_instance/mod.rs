@@ -22,7 +22,9 @@ pub use account_settings::AccountSettingsPreferenceService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
 pub use instances::{InstanceRegistry, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
-pub use leases::{AccountLeaseManager, AccountOperationLease, AccountOperationLeases};
+pub use leases::{
+    AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,
+};
 pub use ports::{
     AccountCatalog, AccountModRepository, AccountRepository, AccountRuntimePort,
     AccountSettingsRepository, GameWindowIdentity, GameWindowPort, InstanceStatusPort,
@@ -34,6 +36,7 @@ pub struct MultiInstanceRuntime {
     instances: InstanceRegistry,
     launches: LaunchOrchestrator,
     account_leases: AccountLeaseManager,
+    catalog_leases: AccountCatalogLeaseManager,
 }
 
 impl MultiInstanceRuntime {
@@ -47,5 +50,9 @@ impl MultiInstanceRuntime {
 
     pub fn account_leases(&self) -> &AccountLeaseManager {
         &self.account_leases
+    }
+
+    pub fn catalog_leases(&self) -> &AccountCatalogLeaseManager {
+        &self.catalog_leases
     }
 }
