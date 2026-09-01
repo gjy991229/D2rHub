@@ -39,8 +39,19 @@ export interface AudioModFeatureSelection {
   includeRoomTools: boolean;
 }
 
+export type AudioModProcessingPurpose = "recognition" | "room-tools" | "manage";
+
 export const AUDIO_TELEMETRY_FEATURE_ID = "audio_telemetry";
 export const IN_GAME_ROOM_TOOLS_FEATURE_ID = "in_game_room_tools";
+
+export function audioModFeatureDefaultsForPurpose(
+  purpose: AudioModProcessingPurpose,
+): AudioModFeatureSelection {
+  return {
+    includeAudioTelemetry: purpose === "recognition",
+    includeRoomTools: purpose === "recognition" || purpose === "room-tools",
+  };
+}
 
 export function audioModFeatureInvokeOptions(
   selection: AudioModFeatureSelection,

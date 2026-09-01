@@ -6,6 +6,7 @@ import type { AccountMeta, AudioModSetupState, GlobalConfig } from "../../store/
 import { validateAudioModName } from "../../utils/audioModName";
 import {
   AUDIO_TELEMETRY_FEATURE_ID,
+  audioModFeatureDefaultsForPurpose,
   audioModFeatureInvokeOptions,
   audioSetupDefaults,
   hasAudioTelemetry,
@@ -53,8 +54,8 @@ export function useAudioModuleController({
   const [audioSetupMode, setAudioSetupMode] = useState<AudioSetupMode>("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
-  const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
-  const [includeRoomTools, setIncludeRoomTools] = useState(true);
+  const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(false);
+  const [includeRoomTools, setIncludeRoomTools] = useState(false);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
@@ -116,6 +117,12 @@ export function useAudioModuleController({
     setAudioSetupName(defaults.name);
   };
 
+  const applyFeatureDefaults = (purpose: ModProcessingPurpose) => {
+    const defaults = audioModFeatureDefaultsForPurpose(purpose);
+    setIncludeAudioTelemetry(defaults.includeAudioTelemetry);
+    setIncludeRoomTools(defaults.includeRoomTools);
+  };
+
   const cacheState = (accountId: string, next: AudioModSetupState) => {
     const scannedAt = Date.now();
     cacheRef.current.set(accountId, { state: next, scannedAt });
@@ -171,8 +178,8 @@ export function useAudioModuleController({
         cacheState(setupAccountId, next);
         applySetupDefaults(next);
         if (!next.ready && config?.rune_audio_enabled) {
-          setIncludeAudioTelemetry(true);
-          setIncludeRoomTools(true);
+          applyFeatureDefaults("recognition");
+          setAudioSetupPurpose("recognition");
           setAudioSetupOpen(true);
         }
       })
@@ -236,8 +243,6 @@ export function useAudioModuleController({
     });
     setAudioSetupOpen(false);
     setAudioSetupName("");
-    setIncludeAudioTelemetry(true);
-    setIncludeRoomTools(true);
     setAudioModStateLoading(true);
     try {
       const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
@@ -246,6 +251,7 @@ export function useAudioModuleController({
       if (wasEnabled && next.ready) {
         await persistAudioEnabledState(accountId, true);
       } else if (wasEnabled) {
+        applyFeatureDefaults("recognition");
         setAudioSetupPurpose("recognition");
         setAudioSetupOpen(true);
         setActiveTab("mod-processing");
@@ -309,8 +315,7 @@ export function useAudioModuleController({
         current.rune_audio_target_account = accountId;
         current.rune_audio_enabled = false;
       });
-      setIncludeAudioTelemetry(true);
-      setIncludeRoomTools(true);
+      applyFeatureDefaults("recognition");
       setAudioSetupPurpose("recognition");
       setAudioSetupOpen(true);
       setActiveTab("mod-processing");
@@ -323,8 +328,7 @@ export function useAudioModuleController({
 
   const handleOpenAudioSetup = (purpose: ModProcessingPurpose = "manage") => {
     if (audioModState) applySetupDefaults(audioModState);
-    setIncludeAudioTelemetry(true);
-    setIncludeRoomTools(true);
+    applyFeatureDefaults(purpose);
     setAudioSetupPurpose(purpose);
     setAudioSetupOpen(true);
   };
@@ -343,8 +347,7 @@ export function useAudioModuleController({
     cacheRef.current.delete(accountId);
     setModProcessingTargetId(accountId);
     setAudioSetupPurpose(purpose);
-    setIncludeAudioTelemetry(purpose === "recognition");
-    setIncludeRoomTools(purpose === "room-tools");
+    applyFeatureDefaults(purpose);
     setAudioSetupOpen(true);
     if (autoStart) setAutoPrepareRequest((request) => request + 1);
     setActiveTab("mod-processing");

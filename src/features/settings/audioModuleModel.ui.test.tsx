@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  audioModFeatureDefaultsForPurpose,
   audioModFeatureInvokeOptions,
   hasAudioTelemetry,
   hasSelectedAudioModFeature,
@@ -7,6 +8,21 @@ import {
 } from "./audioModuleModel";
 
 describe("audio feature group truth", () => {
+  it("chooses feature defaults from the processing entry point", () => {
+    expect(audioModFeatureDefaultsForPurpose("recognition")).toEqual({
+      includeAudioTelemetry: true,
+      includeRoomTools: true,
+    });
+    expect(audioModFeatureDefaultsForPurpose("room-tools")).toEqual({
+      includeAudioTelemetry: false,
+      includeRoomTools: true,
+    });
+    expect(audioModFeatureDefaultsForPurpose("manage")).toEqual({
+      includeAudioTelemetry: false,
+      includeRoomTools: false,
+    });
+  });
+
   it("maps every selection to the camelCase Tauri command arguments", () => {
     expect(audioModFeatureInvokeOptions({
       includeAudioTelemetry: false,
