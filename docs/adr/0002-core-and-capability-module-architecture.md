@@ -41,7 +41,7 @@ does not load arbitrary DLLs or scripts into the elevated process.
      supervision.
    - These services are not user-facing modules and cannot be disabled.
 3. **Capability modules** (independently switchable)
-   - Overlay, Terror Zone, statistics, audio telemetry, shortcuts, desktop pet,
+   - Overlay, Terror Zone, statistics, audio telemetry, desktop pet,
      and automation, including room-follow and room-rotation functionality.
    - A disabled module owns no background task, global listener, window, or
      machine resource.
@@ -114,12 +114,11 @@ failure, but do not create an unbounded automatic restart loop. Recovery is an
 explicit, supervised reconciliation and module-specific retry policy may add a
 bounded backoff later.
 
-The desktop pet is the first managed capability (`desktop-pet`). Its existing
-`enable_bongo_cat` field remains compatible, but the worker, input forwarding,
-window visibility, health, and shutdown are now owned by its lifecycle driver.
-Other optional features continue to expose configuration intent as
-"configured" until their actual runtime is supervised; configuration alone is
-never presented as proof that a module is running.
+All built-in optional features are managed capabilities. Existing configuration
+fields remain compatible, while workers, input forwarding, windows, health,
+and shutdown are owned by lifecycle drivers. Configuration intent and observed
+runtime state remain separate, so a requested module is never presented as
+healthy merely because its switch is enabled.
 
 ## Configuration compatibility
 

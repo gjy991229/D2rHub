@@ -47,8 +47,8 @@ Set-Location ..
 # 从相邻的独立仓库构建并更新随安装包分发的生成器 sidecar
 npm run sync:audio-mod
 
-# 构建桌面安装包
-npm run build:desktop
+# 构建桌面安装包（正式 RC 命令）
+npm run tauri build
 
 # 仅构建 NSIS 安装包
 npm run build:nsis
@@ -75,7 +75,8 @@ D2RHub 是模块化单体，不在提权进程中加载第三方 DLL 或脚本�
 
 辅助 WebView 在 `tauri.conf.json` 中保留完整窗口规格，但使用 `create: false`，避免未启用模块在
 启动时创建 renderer。启动阶段只为已启用功能创建对应窗口；运行期间第一次启用时通过统一窗口
-工厂创建，后续停用只隐藏并在本次进程内复用。窗口创建、位置恢复和 capability worker 的生命周期
+工厂创建，停用时销毁 renderer 和原生窗口，再次启用时按静态规格重建。窗口位置保存在独立的
+版本化文件中。窗口创建、位置恢复和 capability worker 的生命周期
 必须保持独立，不能由前端绕过原生可见性服务直接创建窗口。
 
 ## 项目结构

@@ -19,6 +19,7 @@
     "sync:audio-mod": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/sync-audio-mod.ps1",
     "build:desktop": "tauri build",
     "build:nsis": "tauri build --bundles nsis",
+    "baseline:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/measure-release-baseline.ps1",
     "test": "node scripts/run-tests.cjs && vitest run",
     "test:logic": "node scripts/run-tests.cjs",
     "test:ui": "vitest run",
