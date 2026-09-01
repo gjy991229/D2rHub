@@ -27,6 +27,7 @@
             },
             {
                 "label": "overlay",
+                "create": false,
                 "title": "D2RHub Terror Zone Overlay",
                 "url": "overlay.html",
                 "width": 280,
@@ -46,6 +47,7 @@
             },
             {
                 "label": "stats-overlay",
+                "create": false,
                 "title": "D2RHub Statistics Overlay",
                 "url": "overlay.html",
                 "width": 280,
@@ -65,6 +67,7 @@
             },
             {
                 "label": "bongo-cat",
+                "create": false,
                 "title": "D2RHub Bongo Cat",
                 "url": "bongo-cat.html",
                 "width": 240,

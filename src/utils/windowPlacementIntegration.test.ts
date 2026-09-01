@@ -22,6 +22,7 @@ export function runTests() {
   const overlay = source("src", "pages", "Overlay.tsx");
   const cat = source("src", "pages", "BongoCatWindow.tsx");
   const native = source("src-tauri", "src", "lib.rs");
+  const auxiliaryWindows = source("src-tauri", "src", "auxiliary_windows.rs");
   const tray = source("src-tauri", "src", "tray.rs");
   const i18n = source("src", "i18n.tsx");
 
@@ -30,6 +31,13 @@ export function runTests() {
       && !effects.includes("await overlayWin.show()")
       && !effects.includes("await catWin.show()"),
     "automatic overlay visibility is routed through the native safe-show service",
+  );
+  assert(
+    auxiliaryWindows.includes("WebviewWindowBuilder::from_config")
+      && auxiliaryWindows.includes("create_configured_windows")
+      && auxiliaryWindows.includes("ensure_window")
+      && native.includes("AuxiliaryWindowLifecycle::default()"),
+    "auxiliary WebViews are created from their native config on startup demand and first use",
   );
   assert(
     overlay.includes('await restoreWindowPlacement("overlay", saved);')

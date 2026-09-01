@@ -1,7 +1,7 @@
 use crate::application::capability::{CapabilityDriver, CapabilityFailure, CapabilityHealth};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
 
 const WINDOW_LABEL: &str = "bongo-cat";
 const ORIGINAL_WINDOW_WIDTH: f64 = 240.0;
@@ -49,9 +49,15 @@ impl WindowGeometry {
 type GeometryCache = Arc<Mutex<WindowGeometry>>;
 
 pub(crate) struct BongoCatCapability {
+    app: AppHandle,
+    window: Mutex<Option<BongoCatWindow>>,
+    worker: Mutex<Option<BongoCatWorker>>,
+}
+
+#[derive(Clone)]
+struct BongoCatWindow {
     window: WebviewWindow,
     geometry: GeometryCache,
-    worker: Mutex<Option<BongoCatWorker>>,
 }
 
 struct BongoCatWorker {
@@ -61,12 +67,32 @@ struct BongoCatWorker {
 
 impl BongoCatCapability {
     pub(crate) fn install(app: &tauri::App) -> Result<Arc<Self>, CapabilityFailure> {
-        let window = app.get_webview_window(WINDOW_LABEL).ok_or_else(|| {
+        Ok(Arc::new(Self {
+            app: app.handle().clone(),
+            window: Mutex::new(None),
+            worker: Mutex::new(None),
+        }))
+    }
+
+    fn ensure_window(&self) -> Result<BongoCatWindow, CapabilityFailure> {
+        let mut state = self.window.lock().map_err(|_| {
             CapabilityFailure::new(
-                "window-unavailable",
-                "the desktop pet window was not created",
+                "window-state-poisoned",
+                "desktop pet window state is poisoned",
             )
         })?;
+        if self.app.get_webview_window(WINDOW_LABEL).is_some() {
+            if let Some(window) = state.as_ref() {
+                return Ok(window.clone());
+            }
+        } else {
+            // A native close outside the normal hide-only lifecycle invalidates
+            // the cached handle. Rebuild and attach fresh geometry listeners.
+            *state = None;
+        }
+
+        let window = crate::auxiliary_windows::ensure_window(&self.app, WINDOW_LABEL)
+            .map_err(|error| CapabilityFailure::new("window-create-failed", error.to_string()))?;
         let geometry = Arc::new(Mutex::new(WindowGeometry::capture(&window)));
 
         let geometry_for_events = Arc::clone(&geometry);
@@ -89,11 +115,9 @@ impl BongoCatCapability {
             _ => {}
         });
 
-        Ok(Arc::new(Self {
-            window,
-            geometry,
-            worker: Mutex::new(None),
-        }))
+        let window = BongoCatWindow { window, geometry };
+        *state = Some(window.clone());
+        Ok(window)
     }
 
     fn run_cursor_worker(
@@ -159,8 +183,9 @@ impl CapabilityDriver for BongoCatCapability {
             let _ = finished.handle.join();
         }
 
+        let window = self.ensure_window()?;
         crate::window_placement::set_auxiliary_window_visible_for_app(
-            self.window.app_handle(),
+            &self.app,
             WINDOW_LABEL,
             true,
             None,
@@ -169,15 +194,16 @@ impl CapabilityDriver for BongoCatCapability {
         crate::input_listener::set_bongo_cat_input_enabled(true);
 
         let (stop, stop_rx) = std::sync::mpsc::sync_channel(1);
-        let window = self.window.clone();
-        let geometry = Arc::clone(&self.geometry);
+        let app = self.app.clone();
+        let cursor_window = window.window.clone();
+        let geometry = Arc::clone(&window.geometry);
         let handle = std::thread::Builder::new()
             .name("desktop-pet-cursor-policy".to_string())
-            .spawn(move || Self::run_cursor_worker(window, geometry, stop_rx))
+            .spawn(move || Self::run_cursor_worker(cursor_window, geometry, stop_rx))
             .map_err(|error| {
                 crate::input_listener::set_bongo_cat_input_enabled(false);
                 let _ = crate::window_placement::set_auxiliary_window_visible_for_app(
-                    self.window.app_handle(),
+                    &app,
                     WINDOW_LABEL,
                     false,
                     None,
@@ -209,7 +235,7 @@ impl CapabilityDriver for BongoCatCapability {
             Ok(())
         };
         let window_result = crate::window_placement::set_auxiliary_window_visible_for_app(
-            self.window.app_handle(),
+            &self.app,
             WINDOW_LABEL,
             false,
             None,
@@ -228,7 +254,13 @@ impl CapabilityDriver for BongoCatCapability {
                     .as_ref()
                     .is_some_and(|worker| !worker.handle.is_finished()) =>
             {
-                match self.window.is_visible() {
+                let Some(window) = self.app.get_webview_window(WINDOW_LABEL) else {
+                    return CapabilityHealth::Degraded(CapabilityFailure::new(
+                        "window-unavailable",
+                        "desktop pet window is unavailable",
+                    ));
+                };
+                match window.is_visible() {
                     Ok(true) => CapabilityHealth::Healthy,
                     Ok(false) => CapabilityHealth::Degraded(CapabilityFailure::new(
                         "window-hidden",

@@ -73,6 +73,11 @@ D2RHub 是模块化单体，不在提权进程中加载第三方 DLL 或脚本�
 不能直接访问其他模块的命令实现或私有状态。完整约束及取舍见
 [ADR 0002](adr/0002-core-and-capability-module-architecture.md)。
 
+辅助 WebView 在 `tauri.conf.json` 中保留完整窗口规格，但使用 `create: false`，避免未启用模块在
+启动时创建 renderer。启动阶段只为已启用功能创建对应窗口；运行期间第一次启用时通过统一窗口
+工厂创建，后续停用只隐藏并在本次进程内复用。窗口创建、位置恢复和 capability worker 的生命周期
+必须保持独立，不能由前端绕过原生可见性服务直接创建窗口。
+
 ## 项目结构
 
 - `src/features/`：按功能组织的 React 面板、类型化文案、验证和前端用例。

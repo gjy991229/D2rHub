@@ -1,3 +1,4 @@
+use crate::auxiliary_windows::{self, AUXILIARY_WINDOW_LABELS};
 use crate::commands::global_config::WindowGeometry;
 use crate::error::AppError;
 use crate::state::SharedState;
@@ -7,8 +8,6 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, LogicalPosition, Manager, Monitor, PhysicalPosition, WebviewWindow};
 
 const PLACEMENT_VERSION: u32 = 2;
-const AUXILIARY_LABELS: [&str; 3] = ["overlay", "stats-overlay", "bongo-cat"];
-
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PhysicalRect {
@@ -85,7 +84,7 @@ struct ResolvedPlacement {
 }
 
 fn validate_label(label: &str) -> Result<(), AppError> {
-    if AUXILIARY_LABELS.contains(&label) {
+    if AUXILIARY_WINDOW_LABELS.contains(&label) {
         Ok(())
     } else {
         Err(AppError::Unknown(format!("不支持的悬浮窗标签: {label}")))
@@ -722,13 +721,12 @@ pub fn set_auxiliary_window_visible_for_app(
     target: Option<&str>,
 ) -> Result<PlacementOutcome, AppError> {
     validate_label(label)?;
-    let window = app
-        .get_webview_window(label)
-        .ok_or_else(|| AppError::Unknown(format!("悬浮窗尚未创建: {label}")))?;
     if !visible {
-        window
-            .hide()
-            .map_err(|error| AppError::Unknown(format!("隐藏悬浮窗失败: {error}")))?;
+        if let Some(window) = app.get_webview_window(label) {
+            window
+                .hide()
+                .map_err(|error| AppError::Unknown(format!("隐藏悬浮窗失败: {error}")))?;
+        }
         if label == "bongo-cat" {
             crate::input_listener::set_bongo_cat_input_visible(false);
         }
@@ -741,6 +739,7 @@ pub fn set_auxiliary_window_visible_for_app(
         });
     }
 
+    let window = auxiliary_windows::ensure_window(app, label)?;
     let outcome = match target.filter(|target| *target != "preserve") {
         Some(target) => force_to_target_impl(app, label, target)?,
         None => restore_impl(app, label, None, false)?,
@@ -777,7 +776,7 @@ pub fn recover_auxiliary_windows_for_app(
         _ => false,
     };
     let mut recovered = Vec::new();
-    for label in AUXILIARY_LABELS {
+    for label in AUXILIARY_WINDOW_LABELS {
         if !enabled(label) {
             continue;
         }

@@ -1,5 +1,6 @@
 mod application;
 mod audio_mod;
+mod auxiliary_windows;
 mod battle_net_config;
 mod capabilities;
 mod commands;
@@ -109,6 +110,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state.clone())
+        .manage(auxiliary_windows::AuxiliaryWindowLifecycle::default())
         .setup(move |app| {
             let mut apply_default = true;
             if let Some(g) = &geo {
@@ -137,6 +139,10 @@ pub fn run() {
                 }
             }
             window_placement::ensure_main_window_visible(app.handle());
+
+            if let Some(config) = app.state::<state::SharedState>().configuration().snapshot() {
+                auxiliary_windows::create_configured_windows(app.handle(), &config)?;
+            }
 
             capabilities::install(app);
 
