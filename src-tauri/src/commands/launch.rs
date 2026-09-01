@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
 use crate::application::multi_instance::{
-    CancellationTicket, GameWindowIdentity, GameWindowPort, WindowPosition,
+    launch_queue_can_continue, CancellationTicket, GameWindowIdentity, GameWindowPort,
+    LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride, WindowPosition,
 };
 use crate::battle_net_config::update_mod_args;
 use crate::commands::account::{
@@ -33,31 +34,6 @@ pub struct LaunchResult {
     pub d2r_pid: Option<u32>,
     pub error: Option<String>,
     pub mutex_killed: bool,
-}
-
-/// 一次启动的账号级覆盖配置。它只存在于本次启动上下文，不会写回 account.json。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LaunchAccountOverrides {
-    pub mod_args: String,
-    #[serde(default)]
-    pub position_preset_id: Option<String>,
-    /// 旧方案缺失时继续继承账号当前画质；新版方案会同时提供这两个字段。
-    #[serde(default)]
-    pub resolution: Option<String>,
-    #[serde(default)]
-    pub fps: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LaunchAccountEntry {
-    pub account_id: String,
-    pub overrides: LaunchAccountOverrides,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LaunchGraphicsOverride {
-    resolution: String,
-    fps: u32,
 }
 
 #[derive(Default)]
@@ -172,10 +148,6 @@ fn stop_optional_web_token_monitor(monitor: &mut Option<WebTokenReadMonitor>, ac
     }
 }
 
-fn launch_queue_can_continue(success: bool, mutex_closed: bool) -> bool {
-    success && mutex_closed
-}
-
 #[derive(Default)]
 struct MutexRemovalState {
     closed: std::sync::atomic::AtomicBool,
@@ -215,49 +187,6 @@ impl MutexRemovalState {
         last_error
             .map(|error| format!("已检测到但未能确认清除 ({error})"))
             .unwrap_or_else(|| "已检测到但未能确认清除".to_string())
-    }
-}
-
-fn validate_launch_account_ids(account_ids: &[String]) -> Result<(), AppError> {
-    crate::application::multi_instance::LaunchOrchestrator::validate_account_ids(account_ids)
-}
-
-fn launch_graphics_override(
-    overrides: &LaunchAccountOverrides,
-) -> Result<Option<LaunchGraphicsOverride>, AppError> {
-    match (overrides.resolution.as_deref(), overrides.fps) {
-        (None, None) => Ok(None),
-        (Some(resolution), Some(fps)) => {
-            let resolution = resolution.trim();
-            let Some((width, height)) = resolution.split_once('x') else {
-                return Err(AppError::ConfigReadError(
-                    "方案分辨率格式无效，应为 宽x高".to_string(),
-                ));
-            };
-            let width = width.parse::<u32>().map_err(|_| {
-                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
-            })?;
-            let height = height.parse::<u32>().map_err(|_| {
-                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
-            })?;
-            if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
-                return Err(AppError::ConfigReadError(
-                    "方案分辨率超出支持范围".to_string(),
-                ));
-            }
-            if fps > 500 {
-                return Err(AppError::ConfigReadError(
-                    "方案 FPS 必须在 0 到 500 之间".to_string(),
-                ));
-            }
-            Ok(Some(LaunchGraphicsOverride {
-                resolution: resolution.to_string(),
-                fps,
-            }))
-        }
-        _ => Err(AppError::ConfigReadError(
-            "方案分辨率与 FPS 必须同时配置".to_string(),
-        )),
     }
 }
 
@@ -368,53 +297,6 @@ fn apply_temporary_graphics_override_at_path(
         ))
     })?;
     Ok(TemporarySettingsOverride { path, original })
-}
-
-fn apply_launch_overrides(
-    mut meta: AccountMeta,
-    overrides: &LaunchAccountOverrides,
-) -> Result<AccountMeta, AppError> {
-    launch_graphics_override(overrides)?;
-    let mod_args = overrides.mod_args.trim().to_string();
-    if !mod_args.is_empty()
-        && !meta
-            .mod_list
-            .iter()
-            .any(|configuration| configuration.trim() == mod_args)
-    {
-        return Err(AppError::ConfigReadError(format!(
-            "账号 {} 的方案 Mod 已从胶囊库删除，请先修复启动方案",
-            meta.id
-        )));
-    }
-    meta.mod_args = mod_args;
-
-    let position_id = overrides
-        .position_preset_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if let Some(position_id) = position_id {
-        let preset = meta
-            .position_presets
-            .iter()
-            .find(|preset| preset.id == position_id)
-            .ok_or_else(|| {
-                AppError::ConfigReadError(format!(
-                    "账号 {} 的方案位置已从胶囊库删除，请先修复启动方案",
-                    meta.id
-                ))
-            })?;
-        meta.window_x = Some(preset.x);
-        meta.window_y = Some(preset.y);
-        meta.active_position_id = Some(preset.id.clone());
-    } else {
-        meta.window_x = None;
-        meta.window_y = None;
-        meta.active_position_id = None;
-    }
-
-    Ok(meta)
 }
 
 fn persist_window_position(
@@ -876,11 +758,12 @@ pub async fn launch_battle_net_only(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    if account_ids.is_empty() {
+    let plan = LaunchBatchPlan::from_request(Some(account_ids), None)?;
+    if plan.is_empty() {
         return Ok(Vec::new());
     }
+    let account_ids = plan.account_ids();
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
-    validate_launch_account_ids(&account_ids)?;
     let config = state
         .configuration()
         .snapshot()
@@ -1472,50 +1355,25 @@ pub async fn launch_accounts(
     account_ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    let (account_ids, overrides_by_account) = match (account_ids, entries) {
-        (Some(_), Some(_)) => {
-            return Err(AppError::ConfigReadError(
-                "启动请求不能同时包含默认账号列表和方案配置".to_string(),
-            ));
-        }
-        (Some(account_ids), None) => (account_ids, std::collections::HashMap::new()),
-        (None, Some(entries)) => {
-            let account_ids = entries
-                .iter()
-                .map(|entry| entry.account_id.clone())
-                .collect::<Vec<_>>();
-            let overrides = entries
-                .into_iter()
-                .map(|entry| (entry.account_id, entry.overrides))
-                .collect::<std::collections::HashMap<_, _>>();
-            (account_ids, overrides)
-        }
-        (None, None) => (Vec::new(), std::collections::HashMap::new()),
-    };
-    if account_ids.is_empty() {
+    let plan = LaunchBatchPlan::from_request(account_ids, entries)?;
+    if plan.is_empty() {
         return Ok(Vec::new());
     }
+    let account_ids = plan.account_ids();
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
-    // 此处只校验批次，不提前占用账号租约。每个账号会在同名窗口检查之后单独
-    // 获取租约；提前持有再逐项获取会让启动流程被自己的租约误判为并发操作。
-    validate_launch_account_ids(&account_ids)?;
     let config = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
-    if !overrides_by_account.is_empty() {
-        for account_id in &account_ids {
+    if plan.has_overrides() {
+        for account_id in account_ids {
             let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
-            let overrides = overrides_by_account.get(account_id).ok_or_else(|| {
-                AppError::ConfigReadError(format!("账号 {account_id} 缺少方案启动配置"))
-            })?;
-            let effective_meta = apply_launch_overrides(meta, overrides)?;
+            let (effective_meta, graphics) = plan.apply_for(account_id, meta)?;
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
             let context =
                 LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
-            let graphics = launch_graphics_override(overrides)?;
             preflight_launch_graphics(&config, &effective_meta, &context, graphics.as_ref())?;
         }
     }
@@ -1573,28 +1431,14 @@ pub async fn launch_accounts(
                 continue;
             }
         };
-        let preserved_default_mod_args = overrides_by_account
-            .get(account_id)
-            .map(|_| meta.mod_args.clone());
-        let graphics_override = match overrides_by_account.get(account_id) {
-            Some(overrides) => match launch_graphics_override(overrides) {
-                Ok(graphics) => graphics,
-                Err(error) => {
-                    results.push(account_path_error(account_id, error));
-                    continue;
-                }
-            },
-            None => None,
-        };
-        let meta = match overrides_by_account.get(account_id) {
-            Some(overrides) => match apply_launch_overrides(meta, overrides) {
-                Ok(meta) => meta,
-                Err(error) => {
-                    results.push(account_path_error(account_id, error));
-                    continue;
-                }
-            },
-            None => meta,
+        let preserved_default_mod_args =
+            plan.override_for(account_id).map(|_| meta.mod_args.clone());
+        let (meta, graphics_override) = match plan.apply_for(account_id, meta) {
+            Ok(effective) => effective,
+            Err(error) => {
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
         };
         if let Some(result) =
             skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
@@ -1688,8 +1532,7 @@ pub async fn launch_accounts(
 
         // 当前账号的生命周期租约保证本次启动期间元数据稳定。
         // 只有默认启动且明确选择了位置胶囊时，才把用户后续拖动写回该胶囊。
-        let persist_position_changes =
-            !overrides_by_account.contains_key(account_id) && meta.active_position_id.is_some();
+        let persist_position_changes = plan.should_persist_position_changes_for(account_id, &meta);
         let result = launch_single(
             &app,
             &config,
@@ -3051,15 +2894,13 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_launch_overrides, apply_temporary_graphics_override_at_path,
-        battle_net_launch_argument, battle_net_readiness_source, launch_graphics_override,
-        launch_queue_can_continue, parse_windows_command_line, persist_window_position,
-        preflight_accounts, record_network_readiness_sample, replace_bnet_roaming_snapshot,
-        token_launch_is_ready, unique_account_window_executable, validate_launch_account_ids,
-        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchAccountOverrides,
-        LaunchGraphicsOverride,
+        apply_temporary_graphics_override_at_path, battle_net_launch_argument,
+        battle_net_readiness_source, launch_queue_can_continue, parse_windows_command_line,
+        persist_window_position, preflight_accounts, record_network_readiness_sample,
+        replace_bnet_roaming_snapshot, token_launch_is_ready, unique_account_window_executable,
+        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchGraphicsOverride,
     };
-    use crate::commands::account::{AccountManager, AccountMeta, WindowPositionPreset};
+    use crate::commands::account::{AccountManager, AccountMeta};
     use crate::domain::config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
@@ -3109,93 +2950,6 @@ mod tests {
     }
 
     #[test]
-    fn scheme_overrides_create_an_effective_copy_without_changing_account_defaults() {
-        let mut defaults = AccountMeta::new("acount1");
-        defaults.mod_args = "-mod default".to_string();
-        defaults.mod_list = vec!["-mod default".to_string(), "-mod scheme".to_string()];
-        defaults.window_x = Some(10);
-        defaults.window_y = Some(20);
-        defaults.position_presets = vec![WindowPositionPreset {
-            id: "scheme-position".to_string(),
-            name: "右侧".to_string(),
-            x: 800,
-            y: 120,
-        }];
-
-        let effective = apply_launch_overrides(
-            defaults.clone(),
-            &LaunchAccountOverrides {
-                mod_args: "-mod scheme".to_string(),
-                position_preset_id: Some("scheme-position".to_string()),
-                resolution: Some("1920x1080".to_string()),
-                fps: Some(144),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(effective.mod_args, "-mod scheme");
-        assert_eq!(
-            (effective.window_x, effective.window_y),
-            (Some(800), Some(120))
-        );
-        assert_eq!(defaults.mod_args, "-mod default");
-        assert_eq!((defaults.window_x, defaults.window_y), (Some(10), Some(20)));
-    }
-
-    #[test]
-    fn scheme_overrides_fail_closed_when_a_capsule_was_deleted() {
-        let mut defaults = AccountMeta::new("acount1");
-        defaults.mod_list = vec!["-mod available".to_string()];
-
-        let missing_mod = apply_launch_overrides(
-            defaults.clone(),
-            &LaunchAccountOverrides {
-                mod_args: "-mod deleted".to_string(),
-                position_preset_id: None,
-                resolution: None,
-                fps: None,
-            },
-        )
-        .unwrap_err();
-        assert!(missing_mod.to_string().contains("方案 Mod 已从胶囊库删除"));
-
-        let missing_position = apply_launch_overrides(
-            defaults,
-            &LaunchAccountOverrides {
-                mod_args: String::new(),
-                position_preset_id: Some("deleted-position".to_string()),
-                resolution: None,
-                fps: None,
-            },
-        )
-        .unwrap_err();
-        assert!(missing_position
-            .to_string()
-            .contains("方案位置已从胶囊库删除"));
-    }
-
-    #[test]
-    fn scheme_graphics_are_validated_as_an_atomic_pair() {
-        let partial = launch_graphics_override(&LaunchAccountOverrides {
-            mod_args: String::new(),
-            position_preset_id: None,
-            resolution: Some("1920x1080".to_string()),
-            fps: None,
-        })
-        .unwrap_err();
-        assert!(partial.to_string().contains("必须同时配置"));
-
-        let invalid = launch_graphics_override(&LaunchAccountOverrides {
-            mod_args: String::new(),
-            position_preset_id: None,
-            resolution: Some("not-a-resolution".to_string()),
-            fps: Some(60),
-        })
-        .unwrap_err();
-        assert!(invalid.to_string().contains("分辨率格式无效"));
-    }
-
-    #[test]
     fn temporary_scheme_graphics_restore_the_exact_system_settings() {
         let root = std::env::temp_dir().join(format!(
             "d2rhub_scheme_settings_{}_{}",
@@ -3236,37 +2990,6 @@ mod tests {
     #[test]
     fn battle_net_launch_argument_quotes_only_the_exec_value() {
         assert_eq!(battle_net_launch_argument("OSI"), r#"--exec="launch OSI""#);
-    }
-
-    #[test]
-    fn launch_batch_rejects_uuid_case_aliases() {
-        let state = std::sync::Arc::new(AppState::new());
-        let account_ids = vec![
-            "ABCDEF01-2345-6789-ABCD-EF0123456789".to_string(),
-            "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
-        ];
-
-        assert!(validate_launch_account_ids(&account_ids).is_err());
-        assert!(state.multi_instance().account_leases().is_empty());
-    }
-
-    #[test]
-    fn launch_batch_validation_does_not_reserve_account_lifecycle() {
-        let state = std::sync::Arc::new(AppState::new());
-        let account_ids = vec!["acount1".to_string(), "acount2".to_string()];
-
-        validate_launch_account_ids(&account_ids).unwrap();
-        assert!(state.multi_instance().account_leases().is_empty());
-
-        for account_id in account_ids {
-            let lease = AccountLifecycleLease::try_acquire(&state, &account_id).unwrap();
-            assert!(state
-                .multi_instance()
-                .account_leases()
-                .contains(&account_id));
-            drop(lease);
-        }
-        assert!(state.multi_instance().account_leases().is_empty());
     }
 
     #[test]

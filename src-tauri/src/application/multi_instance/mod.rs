@@ -10,6 +10,7 @@ mod account_settings;
 mod facade;
 mod instances;
 mod launch;
+mod launch_plan;
 mod leases;
 mod ports;
 
@@ -28,6 +29,9 @@ pub use account_settings::AccountSettingsPreferenceService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
 pub use instances::{InstanceRegistry, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
+pub use launch_plan::{
+    launch_queue_can_continue, LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride,
+};
 pub use leases::{
     AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,
 };
