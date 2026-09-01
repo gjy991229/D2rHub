@@ -134,10 +134,8 @@ fn configured_account(
     account_id: &str,
 ) -> Result<(GlobalConfig, AccountMeta, LaunchContext), String> {
     let config = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let account = AccountManager::load_meta(&config.accounts_dir, account_id)
         .map_err(|error| error.to_string())?;

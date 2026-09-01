@@ -1,7 +1,8 @@
 import { create } from "zustand";
-import { emitEvent, invokeCommand, listenEvent } from "../platform/tauri";
+import { invokeCommand, listenEvent } from "../platform/tauri";
 import type { GlobalConfig } from "./types";
 import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
+import { shouldApplyConfigCommandResponse } from "./configCommitOrdering";
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
 let pendingMutations = 0;
@@ -36,9 +37,14 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
 
   load: async () => {
     set({ initialLoading: true, error: null });
+    const snapshotBeforeRequest = get().config;
     try {
       const config = await invokeCommand<GlobalConfig>("get_global_config");
-      set({ config, initialLoading: false });
+      if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
+        set({ config, initialLoading: false });
+      } else {
+        set({ initialLoading: false });
+      }
     } catch (e) {
       set({ error: String(e), initialLoading: false });
     }
@@ -49,9 +55,14 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     set({ saving: true, error: null });
     return enqueueMutation(async () => {
       try {
+        const snapshotBeforeRequest = get().config;
         const saved = await invokeCommand<GlobalConfig>("save_global_config", { config });
-        set({ config: saved });
-        await emitEvent("global-config-updated", saved);
+        // The backend publishes committed snapshots in transaction order. Only
+        // fall back to the command response when no event crossed this request;
+        // otherwise a delayed response could overwrite a newer event.
+        if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
+          set({ config: saved });
+        }
         return saved;
       } catch (e) {
         set({ error: String(e) });
@@ -73,9 +84,11 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     set({ saving: true, error: null });
     return enqueueMutation(async () => {
       try {
+        const snapshotBeforeRequest = get().config;
         const saved = await invokeCommand<GlobalConfig>("patch_global_config", { patch });
-        set({ config: saved });
-        await emitEvent("global-config-updated", saved);
+        if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
+          set({ config: saved });
+        }
         return saved;
       } catch (e) {
         set({ error: String(e) });
@@ -138,5 +151,18 @@ export async function initConfigListener(): Promise<() => void> {
   } catch (err) {
     console.error("Failed to listen to global-config-updated:", err);
     return () => {};
+  }
+}
+
+/** Registers the commit stream before reading the initial snapshot, closing
+ * the bootstrap gap between a command response and cross-window events. */
+export async function initConfigSync(): Promise<() => void> {
+  const stopListening = await initConfigListener();
+  try {
+    await useGlobalConfig.getState().load();
+    return stopListening;
+  } catch (error) {
+    stopListening();
+    throw error;
   }
 }

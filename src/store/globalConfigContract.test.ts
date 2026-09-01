@@ -17,4 +17,8 @@ assert(
   GLOBAL_CONFIG_FIELDS.includes("favorite_launch_group_ids"),
   "favorite launch groups are part of the contract",
 );
+assert(
+  !(GLOBAL_CONFIG_FIELDS as readonly string[]).includes("room_rotation"),
+  "room automation config stays in a versioned module sidecar instead of the v9 envelope",
+);
 console.log("global config TypeScript contract tests passed");

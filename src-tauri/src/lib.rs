@@ -88,13 +88,10 @@ pub fn run() {
 
     let app_state = Arc::new(AppState::new());
 
-    // Load global config on startup to populate state and shortcut map cache early
-    match GlobalConfig::load(&app_state.app_data_dir) {
-        Ok(cfg) => {
-            commands::global_config::update_shortcut_map(&app_state, &cfg);
-            let mut config_guard = app_state.config.write();
-            *config_guard = Some(cfg);
-        }
+    // Load global config through the application transaction runtime so startup,
+    // commands and background consumers all observe the same committed snapshot.
+    match commands::global_config::load_global_config_into_state(&app_state) {
+        Ok(_) => {}
         Err(error) => logger::log_msg(
             "ERROR",
             "Config",

@@ -125,6 +125,29 @@ future-additive JSON. Tests assert deserialization, defaults, normalization,
 and repeat-load stability. A schema version is not considered a migration by
 itself; the observable values and side effects are the contract.
 
+### Configuration transaction contract
+
+- `ConfigurationRuntime` is the only owner of the global configuration cache
+  and write transaction. Patch operations read their base while holding that
+  transaction, and the cache changes only after directory preparation and the
+  atomic staging/backup write both succeed.
+- Committed runtime projections and `global-config-updated` are published by a
+  backend observer before the transaction is released. Frontend windows
+  subscribe before reading their initial snapshot and never rebroadcast a
+  command response as a commit event.
+- Same-version fields unknown to the current binary are retained opaquely and
+  cannot be changed through typed full saves or patches. This is downgrade and
+  in-flight-branch protection, not a module extension API; older schema
+  envelopes still pass through explicit migrations and discard retired fields.
+- Cross-resource operations use recoverable journals. Account deletion follows
+  the lock order catalog -> account -> configuration, installs its committed
+  marker before removing staged data, and is completed or rolled back
+  idempotently during startup recovery.
+- Stable account IDs retired in the current process are tombstoned so a queued
+  stale full save cannot reintroduce their typed audio or launch-group
+  references. Module-owned sidecars must implement the equivalent cleanup in
+  their own account lifecycle adapter.
+
 ## Settings composition
 
 The settings shell owns only:

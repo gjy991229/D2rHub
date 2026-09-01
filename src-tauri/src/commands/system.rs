@@ -1111,7 +1111,7 @@ pub fn refresh_account_running_state(
         }
 
         // 3. 为每个账号解析完整的 Edition-specific D2R.exe 身份。
-        let config = state.config.read();
+        let config = state.configuration().snapshot();
         let cfg = config
             .as_ref()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;

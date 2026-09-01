@@ -2,7 +2,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
-import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
+import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
 import { useStats, isHighRune, getSessionRunKey, MANUAL_FINISH_SCENE } from "../store/stats";
 import { invokeCommand, listenEvent } from "../platform/tauri";
 import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
@@ -345,7 +345,7 @@ export function Overlay() {
   const overlayWindowLabel = getCurrentWindow().label;
   const isStatsOverlay = overlayWindowLabel === "stats-overlay";
   const supportsCompactMode = !isStatsOverlay;
-  const { config, load } = useGlobalConfig();
+  const { config } = useGlobalConfig();
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
   const stats = useStats();
@@ -1140,11 +1140,9 @@ export function Overlay() {
 
   // Sync theme on startup / changes
   useEffect(() => {
-    load();
-    // Start config listener for live updates from main window
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then((stopListening) => {
+    initConfigSync().then((stopListening) => {
       if (cancelled) stopListening();
       else unlisten = stopListening;
     });
@@ -1152,7 +1150,7 @@ export function Overlay() {
       cancelled = true;
       unlisten?.();
     };
-  }, [load]);
+  }, []);
 
   // Sync theme from global config (config as source of truth)
   useEffect(() => {

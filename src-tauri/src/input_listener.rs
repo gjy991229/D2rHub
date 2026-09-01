@@ -222,10 +222,16 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
         if let Some(app) = &*guard {
             if let Some(state) = app.try_state::<SharedState>() {
                 let combo_lower = combo.to_lowercase();
-                let shortcut_map = state.shortcut_map.read();
-                if let Some(&pos) = shortcut_map.get(&combo_lower) {
-                    let config = state.config.read();
-                    if let Some(cfg) = config.as_ref() {
+                // Do not hold the shortcut-map lock while reading the
+                // configuration snapshot. Configuration updates rebuild the
+                // shortcut map, so overlapping both locks would invert that
+                // writer's lock order.
+                let position = {
+                    let shortcut_map = state.shortcut_map.read();
+                    shortcut_map.get(&combo_lower).copied()
+                };
+                if let Some(pos) = position {
+                    if let Some(cfg) = state.configuration().snapshot() {
                         let accounts_dir = cfg.accounts_dir.clone();
                         let app_clone = app.clone();
                         let combo_clone = combo.clone();
@@ -351,8 +357,8 @@ unsafe extern "system" fn mouse_hook_proc(
 pub fn start_input_listener(app_handle: AppHandle) {
     if let Some(state) = app_handle.try_state::<SharedState>() {
         let enabled = state
-            .config
-            .read()
+            .configuration()
+            .snapshot()
             .as_ref()
             .map(|c| c.enable_bongo_cat)
             .unwrap_or(false);

@@ -200,6 +200,7 @@ const roomAutomationModule = path.join(rustRoot, "capabilities", "room_automatio
 
 const domainFiles = collectRustFiles(domainRoot);
 const applicationFiles = collectRustFiles(applicationRoot);
+const rustFiles = collectRustFiles(rustRoot);
 const roomAutomationFiles = [
   ...collectRustFiles(roomAutomationRoot),
   ...(fs.existsSync(roomAutomationModule) ? [roomAutomationModule] : []),
@@ -264,9 +265,23 @@ const roomAutomationRules: readonly BoundaryRule[] = [
   },
 ];
 
+const configurationRules: readonly BoundaryRule[] = [
+  {
+    id: "RUST-CONFIG-001",
+    label: "legacy global configuration I/O lock",
+    pattern: /\bconfig_io\b/,
+  },
+  {
+    id: "RUST-CONFIG-002",
+    label: "direct global configuration cache lock access",
+    pattern: /\.\s*config\s*\.\s*(?:read|write)\s*\(/,
+  },
+];
+
 const domainViolations = findViolations(domainFiles, domainRules);
 const applicationViolations = findViolations(applicationFiles, applicationRules);
 const roomAutomationViolations = findViolations(roomAutomationFiles, roomAutomationRules);
+const configurationViolations = findViolations(rustFiles, configurationRules);
 
 assert(
   domainViolations.length === 0,
@@ -280,6 +295,63 @@ assert(
   roomAutomationViolations.length === 0,
   `Room automation uses application ports instead of global state, config locks, private modules, or direct task spawning (violations: ${describeViolations(roomAutomationViolations)})`,
 );
+assert(
+  configurationViolations.length === 0,
+  `Global configuration access stays behind ConfigurationRuntime snapshots and transactions (violations: ${describeViolations(configurationViolations)})`,
+);
+
+const domainConfigFile = path.join(domainRoot, "config.rs");
+const domainConfigSource = maskRustCommentsAndStrings(fs.readFileSync(domainConfigFile, "utf8"));
+const typedRoomRotationField = /\broom_rotation\b/.exec(domainConfigSource);
+assert(
+  typedRoomRotationField === null,
+  typedRoomRotationField === null
+    ? "[RUST-ROOM-015] room automation config stays in a versioned module sidecar"
+    : `[RUST-ROOM-015] ${relativePath(domainConfigFile)}:${lineAt(domainConfigSource, typedRoomRotationField.index)} must not add room_rotation to the v9 global envelope`,
+);
+
+const stateFile = path.join(rustRoot, "state.rs");
+const stateSource = maskRustCommentsAndStrings(fs.readFileSync(stateFile, "utf8"));
+const publicConfigurationLock = /\bpub(?:\s*\([^)]*\))?\s+(?:config|config_io)\s*:/.exec(stateSource);
+assert(
+  publicConfigurationLock === null,
+  publicConfigurationLock === null
+    ? "[RUST-CONFIG-003] AppState does not expose raw configuration locks"
+    : `[RUST-CONFIG-003] ${relativePath(stateFile)}:${lineAt(stateSource, publicConfigurationLock.index)} exposes a raw configuration lock`,
+);
+
+const configurationRuntimeFile = path.join(applicationRoot, "configuration.rs");
+const configurationRuntimeSource = maskRustCommentsAndStrings(
+  fs.readFileSync(configurationRuntimeFile, "utf8"),
+);
+const publicRuntimeLock = /\bpub(?:\s*\([^)]*\))?\s+(?:transaction|cache)\s*:/.exec(
+  configurationRuntimeSource,
+);
+assert(
+  publicRuntimeLock === null,
+  publicRuntimeLock === null
+    ? "[RUST-CONFIG-004] ConfigurationRuntime keeps its transaction and cache private"
+    : `[RUST-CONFIG-004] ${relativePath(configurationRuntimeFile)}:${lineAt(configurationRuntimeSource, publicRuntimeLock.index)} exposes configuration synchronization internals`,
+);
+
+const frontendConfigStoreFile = path.join(g.process.cwd(), "src", "store", "globalConfig.ts");
+const frontendConfigStoreSource = fs.readFileSync(frontendConfigStoreFile, "utf8");
+assert(
+  !/emitEvent\s*\(\s*["']global-config-updated["']/.test(frontendConfigStoreSource),
+  "[CONFIG-EVENT-001] only the backend transaction observer publishes global config commits",
+);
+
+for (const entryFile of [
+  path.join(g.process.cwd(), "src", "App.tsx"),
+  path.join(g.process.cwd(), "src", "pages", "Overlay.tsx"),
+  path.join(g.process.cwd(), "src", "pages", "BongoCatWindow.tsx"),
+]) {
+  const entrySource = fs.readFileSync(entryFile, "utf8");
+  assert(
+    entrySource.includes("initConfigSync") && !entrySource.includes("initConfigListener"),
+    `[CONFIG-EVENT-002] ${relativePath(entryFile)} subscribes before loading its config snapshot`,
+  );
+}
 
 const legacyRoomFile = path.join(rustRoot, "room_rotation.rs");
 assert(
@@ -349,6 +421,24 @@ assert(
   ["RUST-ROOM-013", "RUST-ROOM-014"]
     .every((ruleId) => registryEscapeRuleIds.includes(ruleId)),
   "[RUST-SCAN-004] room automation cannot access or mutate the concrete instance registry",
+);
+
+const configurationEscapeFixture = `
+let _io = state.config_io.lock();
+let config = shared_state
+  .config
+  .write();
+`;
+const configurationEscapeRuleIds = configurationRules
+  .filter((rule) => {
+    rule.pattern.lastIndex = 0;
+    return rule.pattern.test(configurationEscapeFixture);
+  })
+  .map((rule) => rule.id);
+assert(
+  ["RUST-CONFIG-001", "RUST-CONFIG-002"]
+    .every((ruleId) => configurationEscapeRuleIds.includes(ruleId)),
+  "[RUST-SCAN-005] configuration rules catch the legacy I/O and cache locks",
 );
 
 export {};

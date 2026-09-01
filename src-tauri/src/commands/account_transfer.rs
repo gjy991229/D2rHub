@@ -598,10 +598,8 @@ pub fn export_accounts(
     }
 
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let mut lease_ids = account_ids.clone();
     lease_ids.sort_by_key(|id| id.to_ascii_lowercase());
@@ -696,10 +694,8 @@ pub fn import_accounts(
     }
 
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     // 与新建、重命名共用账号清单锁，确保导入生成名称期间唯一性不被并发绕过。
     let _catalog_guard = state.account_catalog_write_lock.lock();

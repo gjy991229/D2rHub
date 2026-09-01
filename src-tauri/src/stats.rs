@@ -1514,12 +1514,10 @@ pub fn open_stats_page(
         .unwrap_or_else(|| "null".to_string());
     let preferences_json = escape_json_for_html_script(&preferences_json);
     let stats_theme = state
-        .config
-        .read()
-        .as_ref()
-        .map(|config| config.theme.as_str())
-        .unwrap_or("light")
-        .to_string();
+        .configuration()
+        .snapshot()
+        .map(|config| config.theme)
+        .unwrap_or_else(|| "light".to_string());
     let html = render_stats_template(
         &template,
         &stats_json,

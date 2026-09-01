@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { invokeCommand } from "./platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertTriangle } from "lucide-react";
-import { useGlobalConfig, initConfigListener } from "./store/globalConfig";
+import { useGlobalConfig, initConfigSync } from "./store/globalConfig";
 import { useAccounts } from "./store/accounts";
 import { syncThemeFromConfig } from "./store/theme";
 import { useWindowGeometrySave } from "./hooks/useWindowGeometrySave";
@@ -58,7 +58,7 @@ type View =
   | { type: "main"; };
 
 function App() {
-  const { config, initialLoading, saving: configSaving, error: configError, load, patch } = useGlobalConfig();
+  const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
@@ -146,15 +146,19 @@ function App() {
     }
   }, []);
 
-  // Load configuration, accounts, and start config listener
+  // Subscribe before loading so no cross-window configuration commit is lost.
   useEffect(() => {
-    (async () => { await load(); await loadAccounts(); })();
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then(fn => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
+    void (async () => {
+      const stopListening = await initConfigSync();
+      if (cancelled) {
+        stopListening();
+        return;
+      }
+      unlisten = stopListening;
+      await loadAccounts();
+    })();
     return () => {
       cancelled = true;
       unlisten?.();

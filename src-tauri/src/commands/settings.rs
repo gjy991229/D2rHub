@@ -68,10 +68,8 @@ pub fn get_account_settings(
 ) -> Result<HashMap<String, Value>, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -98,10 +96,8 @@ pub fn save_account_settings(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     save_account_settings_with_config(&cfg, &account_id, &settings)
@@ -115,10 +111,8 @@ pub fn snapshot_system_settings_to_account(
 ) -> Result<HashMap<String, Value>, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -143,10 +137,8 @@ pub fn get_game_settings(
 ) -> Result<HashMap<String, Value>, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;

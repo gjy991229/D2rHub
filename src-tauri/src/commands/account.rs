@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
+use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
     AccountCatalog, AccountQueryService, AccountRuntimePort, CancellationTicket, WindowPosition,
 };
@@ -605,14 +607,14 @@ pub(crate) fn copy_account_settings_to_system(
 /// 获取所有账号列表
 #[tauri::command]
 pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<AccountMeta>, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let account_catalog = AccountManagerCatalog::new(cfg);
+    let account_catalog = AccountManagerCatalog::new(&cfg);
     let account_runtime = AccountManagerRuntime::new(state.inner());
-    AccountQueryService::new(&account_catalog, &account_runtime).list(cfg)
+    AccountQueryService::new(&account_catalog, &account_runtime).list(&cfg)
 }
 
 /// 重新排序账号（更新 order 字段）
@@ -678,10 +680,8 @@ pub fn reorder_accounts(
         .map(|id| AccountLifecycleLease::try_acquire(state.inner(), id))
         .collect::<Result<_, _>>()?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     apply_account_order(&cfg.accounts_dir, &ordered_ids)
@@ -693,9 +693,9 @@ pub fn open_account_dir(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
 
@@ -726,9 +726,9 @@ pub fn get_account_dir_path(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<String, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
     Ok(dir.to_string_lossy().to_string())
@@ -740,11 +740,11 @@ pub fn get_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<AccountMeta, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    let account_catalog = AccountManagerCatalog::new(cfg);
+    let account_catalog = AccountManagerCatalog::new(&cfg);
     let account_runtime = AccountManagerRuntime::new(state.inner());
     AccountQueryService::new(&account_catalog, &account_runtime).get(&account_id)
 }
@@ -761,10 +761,8 @@ pub fn create_account(
     voicelanguage: Option<String>,
 ) -> Result<String, AppError> {
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let nickname = validated_account_display_name(&nickname)?;
@@ -864,10 +862,8 @@ pub fn update_account_meta(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -981,9 +977,8 @@ pub fn update_account_region(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let accounts_dir = state
-        .config
-        .read()
-        .as_ref()
+        .configuration()
+        .snapshot()
         .map(|config| config.accounts_dir.clone())
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
@@ -999,56 +994,102 @@ pub fn delete_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
+    // Catalog -> account -> configuration is the shared lifecycle lock order.
+    // Holding the catalog lease prevents create/import from reusing a display
+    // name while a failed deletion is still able to roll its directory back.
+    let catalog_guard = state.account_catalog_write_lock.lock();
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let accounts_dir = {
-        let config = state.config.read();
-        config
-            .as_ref()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-            .accounts_dir
-            .clone()
+    let staged_deletion = RefCell::new(None);
+    let post_commit_outcome = RefCell::new(None);
+    let deleted_account_id = RefCell::new(None);
+    let mutation_result =
+        crate::commands::global_config::mutate_loaded_global_config_with_post_commit(
+            state.inner(),
+            &app,
+            |cfg| {
+                let stored_account_id = AccountManager::list_ids(&cfg.accounts_dir)
+                    .into_iter()
+                    .find(|stored_id| stored_id.eq_ignore_ascii_case(&account_id))
+                    .ok_or_else(|| AppError::AccountNotFound(account_id.clone()))?;
+                let dir =
+                    AccountManager::account_dir_checked(&cfg.accounts_dir, &stored_account_id)?;
+                let had_configuration_references =
+                    config_references_account(cfg, &stored_account_id);
+                *staged_deletion.borrow_mut() = Some(stage_account_directory_for_deletion(
+                    &dir,
+                    &stored_account_id,
+                    had_configuration_references,
+                )?);
+                *deleted_account_id.borrow_mut() = Some(stored_account_id.clone());
+                let cleared_audio_target = cfg
+                    .rune_audio_target_account
+                    .trim()
+                    .eq_ignore_ascii_case(&stored_account_id);
+                if cleared_audio_target {
+                    cfg.rune_audio_enabled = false;
+                    cfg.rune_audio_target_account.clear();
+                }
+                let removed_from_launch_group =
+                    cfg.remove_account_from_launch_groups(&stored_account_id);
+                Ok(cleared_audio_target || removed_from_launch_group)
+            },
+            |_| {
+                let mut staged_deletion = staged_deletion.borrow_mut();
+                let outcome = match staged_deletion.as_mut() {
+                    None => Err(AppError::FileError(
+                        "账号删除事务未能创建目录暂存记录".to_string(),
+                    )),
+                    Some(staged_deletion) => {
+                        let completion =
+                            complete_staged_account_deletion_after_config_commit(staged_deletion);
+                        if completion.should_retire_account_id {
+                            if let Some(account_id) = deleted_account_id.borrow().as_deref() {
+                                state.retire_account_id(account_id);
+                            }
+                        }
+                        completion.result
+                    }
+                };
+                *post_commit_outcome.borrow_mut() = Some(outcome);
+            },
+        );
+    let staged_deletion = staged_deletion.into_inner();
+    let mutation = match mutation_result {
+        Ok(mutation) => mutation,
+        Err(error) => {
+            return Err(match staged_deletion.as_ref() {
+                Some(staged_deletion) => rollback_staged_account_deletion(staged_deletion, error),
+                None => error,
+            });
+        }
     };
-
-    let dir = AccountManager::account_dir_checked(&accounts_dir, &account_id)?;
-    if !dir.exists() {
-        return Err(AppError::AccountNotFound(account_id));
+    match mutation {
+        ConfigurationMutation::Missing => {
+            return Err(AppError::ConfigReadError("尚未完成首次配置".to_string()));
+        }
+        ConfigurationMutation::Unchanged | ConfigurationMutation::Updated => {}
     }
-    remove_account_directory_without_resurrection(&dir)?;
-    if let Err(error) = crate::commands::browser::remove_browser_profiles_for_account(&account_id) {
+    let deleted_account_id = deleted_account_id
+        .into_inner()
+        .ok_or_else(|| AppError::FileError("账号删除事务未记录实际账号 ID".to_string()))?;
+
+    post_commit_outcome
+        .into_inner()
+        .ok_or_else(|| AppError::FileError("账号删除事务未执行提交后目录处理".to_string()))??;
+    drop(catalog_guard);
+    if let Err(error) =
+        crate::commands::browser::remove_browser_profiles_for_account(&deleted_account_id)
+    {
         log::warn!(
             "账号 {} 已删除，但浏览器 Profile 清理失败（可能仍被浏览器占用）: {}",
-            account_id,
+            deleted_account_id,
             error
         );
     }
-    state.multi_instance().instances().remove(&account_id);
-
-    let updated_config = {
-        let _config_io = state.config_io.lock();
-        let mut config = state.config.write();
-        let cfg = config
-            .as_mut()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-        let cleared_audio_target = cfg.rune_audio_target_account.trim() == account_id;
-        if cleared_audio_target {
-            cfg.rune_audio_enabled = false;
-            cfg.rune_audio_target_account.clear();
-        }
-        let removed_from_launch_group = cfg.remove_account_from_launch_groups(&account_id);
-        if cleared_audio_target || removed_from_launch_group {
-            cfg.save(&state.app_data_dir)?;
-            Some(cfg.clone())
-        } else {
-            None
-        }
-    };
-
-    if let Some(config) = updated_config {
-        if config.rune_audio_target_account.is_empty() {
-            crate::rune_audio::monitor::stop_rune_audio_monitor();
-        }
-        let _ = app.emit("global-config-updated", config);
-    }
+    state
+        .multi_instance()
+        .instances()
+        .remove(&deleted_account_id);
 
     Ok(())
 }
@@ -1061,10 +1102,8 @@ pub fn rename_account(
     new_name: String,
 ) -> Result<AccountMeta, AppError> {
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let new_name = validated_account_display_name(&new_name)?;
@@ -1147,10 +1186,8 @@ pub fn add_account_mod(
 ) -> Result<bool, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -1183,10 +1220,8 @@ pub(crate) fn update_account_mods_inner(
 ) -> Result<AccountMeta, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state, &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -1220,9 +1255,9 @@ pub fn mark_settings_customized(
     account_id: String,
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -1242,9 +1277,9 @@ pub fn set_settings_customized(
     customized: bool,
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -1267,9 +1302,9 @@ pub fn set_account_window_position(
     window_y: Option<i32>,
 ) -> Result<AccountMeta, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -1324,9 +1359,9 @@ pub fn update_account_positions(
     position_presets: Vec<WindowPositionPreset>,
 ) -> Result<AccountMeta, AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let mut normalized = Vec::with_capacity(position_presets.len());
@@ -1396,16 +1431,20 @@ fn cleanup_after_snapshot() -> Result<(), AppError> {
 mod settings_json_tests {
     use super::{
         append_unique_mod_configuration, apply_account_order, commit_account_settings_transaction,
+        complete_staged_account_deletion_after_config_commit, config_references_account,
         copy_account_settings_to_system, copy_system_settings_to_account_if_available,
         ensure_account_display_name_available, ensure_unique_account_ids,
-        hydrate_meta_from_runtime_snapshot, normalize_mod_configuration,
-        normalized_account_display_name, prepare_battle_net_runtime_directory,
-        recover_account_transactions, remove_account_directory_without_resurrection,
-        replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
-        resolve_account_runtime_snapshot, stage_account_directory,
-        switch_international_account_region, validate_runtime_snapshot_root, AccountManager,
-        AccountMeta, BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        hydrate_meta_from_runtime_snapshot, mark_account_deletion_committed,
+        normalize_mod_configuration, normalized_account_display_name,
+        prepare_battle_net_runtime_directory, recover_account_transactions,
+        remove_account_directory_without_resurrection, replace_battle_net_snapshot,
+        replace_path_with_backup, replace_registry_snapshot_with, resolve_account_runtime_snapshot,
+        restore_staged_account_deletion, sibling_with_suffix, stage_account_directory,
+        stage_account_directory_for_deletion, switch_international_account_region,
+        validate_runtime_snapshot_root, AccountDeletionPhase, AccountManager, AccountMeta,
+        BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
+    use crate::domain::config::GlobalConfig;
     use crate::error::AppError;
     use crate::launch_context::ClientEdition;
     use std::path::PathBuf;
@@ -1952,7 +1991,7 @@ mod settings_json_tests {
         std::fs::write(backup.join("account.json"), "old").unwrap();
         std::fs::write(staged.join("account.json"), "new").unwrap();
 
-        recover_account_transactions(accounts.to_str().unwrap());
+        recover_account_transactions(accounts.to_str().unwrap(), None);
 
         assert_eq!(
             std::fs::read_to_string(accounts.join("acount1").join("account.json")).unwrap(),
@@ -2020,13 +2059,312 @@ mod settings_json_tests {
             std::fs::write(directory.join("account.json"), "{}").unwrap();
         }
 
-        remove_account_directory_without_resurrection(&account).unwrap();
-        recover_account_transactions(accounts.to_str().unwrap());
+        remove_account_directory_without_resurrection(&account, "acount1").unwrap();
+        recover_account_transactions(accounts.to_str().unwrap(), None);
 
         assert!(!account.exists());
         assert!(!staged.exists());
         assert!(!backup.exists());
         assert!(AccountManager::list_ids(accounts.to_str().unwrap()).is_empty());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn staged_account_deletion_can_be_rolled_back_before_commit() {
+        let accounts = temp_dir("delete_transaction_rollback");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        assert!(!account.exists());
+        assert!(staged.staged_dir.is_dir());
+
+        restore_staged_account_deletion(&staged).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.staged_dir.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn deletion_rollback_preserves_conflicting_directories_and_journal() {
+        let accounts = temp_dir("delete_transaction_conflict");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "original").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "conflict").unwrap();
+
+        let error = restore_staged_account_deletion(&staged).unwrap_err();
+
+        assert!(error.to_string().contains("恢复冲突"));
+        assert!(account.is_dir());
+        assert!(staged.staged_dir.is_dir());
+        assert!(staged.journal_path.is_file());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn deletion_reference_matching_accepts_uuid_case_aliases() {
+        let stored_id = "550e8400-e29b-41d4-a716-446655440000";
+        let requested_id = stored_id.to_ascii_uppercase();
+        let audio_config = GlobalConfig {
+            rune_audio_target_account: stored_id.to_string(),
+            ..GlobalConfig::default()
+        };
+        assert!(config_references_account(&audio_config, &requested_id));
+
+        let group_config = GlobalConfig {
+            launch_groups: vec![crate::commands::global_config::LaunchGroup {
+                id: "group".to_string(),
+                name: "Group".to_string(),
+                account_ids: Vec::new(),
+                members: vec![crate::commands::global_config::LaunchGroupMember {
+                    account_id: stored_id.to_string(),
+                    ..crate::commands::global_config::LaunchGroupMember::default()
+                }],
+            }],
+            ..GlobalConfig::default()
+        };
+        assert!(config_references_account(&group_config, &requested_id));
+    }
+
+    #[test]
+    fn startup_recovers_an_interrupted_account_deletion() {
+        let accounts = temp_dir("delete_transaction_startup_recovery");
+        let staged = accounts.join("acount1.deleting");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::write(staged.join("account.json"), "recoverable").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(accounts.join("acount1").join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn startup_cleans_orphaned_deletion_journal_artifacts() {
+        let accounts = temp_dir("delete_transaction_orphan_journal");
+        let temporary = accounts.join("acount1.delete.json.tmp");
+        let backup = accounts.join("acount1.delete.json.bak");
+        std::fs::write(&temporary, "prepared").unwrap();
+        std::fs::write(&backup, "older").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_deletion_journal_finishes_cleanup_after_restart() {
+        let accounts = temp_dir("delete_transaction_committed_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn uninstalled_committed_temporary_journal_does_not_cross_commit_point() {
+        let accounts = temp_dir("delete_transaction_uninstalled_commit");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let mut committed = staged.journal.clone();
+        committed.phase = AccountDeletionPhase::Committed;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&committed).unwrap()).unwrap();
+
+        // The durable linearization point is installing `.tmp` as the primary
+        // journal. While the old Prepared primary still exists, recovery must
+        // roll back even if a fully written Committed temporary is present.
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!temporary.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_temporary_journal_wins_after_primary_rotation() {
+        let accounts = temp_dir("delete_transaction_rotated_primary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        let mut committed = staged.journal.clone();
+        committed.phase = AccountDeletionPhase::Committed;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&committed).unwrap()).unwrap();
+        std::fs::rename(&staged.journal_path, &backup).unwrap();
+
+        // Once the Prepared primary has been rotated away, the committed
+        // temporary is the leading valid candidate and deletion must finish.
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_config_with_marker_failure_preserves_staged_account_evidence() {
+        let accounts = temp_dir("delete_transaction_marker_failure");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "preserved").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let original_journal = staged.journal_path.clone();
+        staged.journal_path = accounts.join("missing-parent").join("acount1.delete.json");
+
+        let completion = complete_staged_account_deletion_after_config_commit(&mut staged);
+        let error = completion.result.unwrap_err();
+
+        assert!(completion.should_retire_account_id);
+        assert!(error.to_string().contains("已保留完整账号目录"));
+        assert!(!account.exists());
+        assert!(staged.staged_dir.is_dir());
+        assert!(original_journal.is_file());
+        assert_eq!(
+            std::fs::read_to_string(staged.staged_dir.join("account.json")).unwrap(),
+            "preserved"
+        );
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn startup_recovery_preserves_conflicting_account_directories_and_journal() {
+        let accounts = temp_dir("delete_transaction_startup_conflict");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "original").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "conflict").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "conflict"
+        );
+        assert_eq!(
+            std::fs::read_to_string(staged.staged_dir.join("account.json")).unwrap(),
+            "original"
+        );
+        assert!(staged.journal_path.is_file());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn valid_committed_backup_survives_a_corrupt_primary_journal() {
+        let accounts = temp_dir("delete_transaction_corrupt_primary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        std::fs::copy(&staged.journal_path, &backup).unwrap();
+        std::fs::write(&staged.journal_path, "corrupt").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn valid_committed_backup_survives_a_corrupt_temporary_journal() {
+        let accounts = temp_dir("delete_transaction_corrupt_temporary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        std::fs::copy(&staged.journal_path, &backup).unwrap();
+        std::fs::remove_file(&staged.journal_path).unwrap();
+        std::fs::write(&temporary, "corrupt").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn prepared_deletion_restores_when_config_still_references_account() {
+        let accounts = temp_dir("delete_transaction_precommit_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let config = GlobalConfig {
+            rune_audio_target_account: "acount1".to_string(),
+            ..GlobalConfig::default()
+        };
+
+        recover_account_transactions(accounts.to_str().unwrap(), Some(&config));
+
+        assert!(account.is_dir());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn prepared_deletion_finishes_when_config_commit_removed_references() {
+        let accounts = temp_dir("delete_transaction_postcommit_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let committed_config = GlobalConfig::default();
+
+        recover_account_transactions(accounts.to_str().unwrap(), Some(&committed_config));
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
         let _ = std::fs::remove_dir_all(accounts);
     }
 
@@ -2462,14 +2800,11 @@ fn run_bnet_initialization_transaction(
     // 锁序固定为 Account -> Config snapshot -> Host，禁止反向取得。
     let _account_lease = AccountLifecycleLease::try_acquire(state, account_id)?;
 
-    // 只在复制配置时持读锁，不能让最长 120 秒的登录等待阻塞设置写入。
-    let cfg = {
-        let config = state.config.read();
-        config
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    // 只取得不可变配置快照，不能让最长 120 秒的登录等待阻塞设置写入。
+    let cfg = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // Initialization owns only its generation snapshot. It must never clear the
     // shared launch flag before acquiring the host lease, otherwise a rejected
@@ -2763,14 +3098,232 @@ pub(crate) fn sibling_with_suffix(path: &Path, suffix: &str) -> Result<PathBuf, 
     Ok(path.with_file_name(file_name))
 }
 
-/// 永久删除账号时，先清理所有可被启动恢复逻辑识别的事务目录，最后再删除真实账号。
-/// 若清理中途失败，真实账号仍保留；一旦真实账号被删除，就不再有 `.bak` 可将其复活。
-fn remove_account_directory_without_resurrection(account_dir: &Path) -> Result<(), AppError> {
-    let staged = sibling_with_suffix(account_dir, ".tmp")?;
+const ACCOUNT_DELETION_JOURNAL_SCHEMA: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AccountDeletionPhase {
+    Prepared,
+    Committed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AccountDeletionJournal {
+    schema_version: u32,
+    account_id: String,
+    phase: AccountDeletionPhase,
+    had_configuration_references: bool,
+}
+
+struct StagedAccountDeletion {
+    account_dir: PathBuf,
+    staged_dir: PathBuf,
+    journal_path: PathBuf,
+    journal: AccountDeletionJournal,
+}
+
+fn config_references_account(config: &GlobalConfig, account_id: &str) -> bool {
+    config
+        .rune_audio_target_account
+        .trim()
+        .eq_ignore_ascii_case(account_id)
+        || config.launch_groups.iter().any(|group| {
+            group
+                .account_ids
+                .iter()
+                .any(|member_id| member_id.eq_ignore_ascii_case(account_id))
+                || group
+                    .members
+                    .iter()
+                    .any(|member| member.account_id.eq_ignore_ascii_case(account_id))
+        })
+}
+
+fn account_deletion_journal_path(account_dir: &Path) -> Result<PathBuf, AppError> {
+    sibling_with_suffix(account_dir, ".delete.json")
+}
+
+fn write_account_deletion_journal(
+    journal_path: &Path,
+    journal: &AccountDeletionJournal,
+) -> Result<(), AppError> {
+    let temporary = sibling_with_suffix(journal_path, ".tmp")?;
+    let backup = sibling_with_suffix(journal_path, ".bak")?;
+    remove_path_if_exists(&temporary)?;
+    let bytes = serde_json::to_vec_pretty(journal)?;
+    std::fs::write(&temporary, bytes).map_err(|error| {
+        AppError::FileError(format!(
+            "写入账号删除事务 {} 失败: {}",
+            temporary.display(),
+            error
+        ))
+    })?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&temporary)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| {
+            AppError::FileError(format!(
+                "同步账号删除事务 {} 失败: {}",
+                temporary.display(),
+                error
+            ))
+        })?;
+    replace_path_with_backup(&temporary, journal_path, &backup)
+}
+
+fn cleanup_account_deletion_journal(journal_path: &Path) -> Result<(), AppError> {
+    remove_path_if_exists(journal_path)?;
+    remove_path_if_exists(&sibling_with_suffix(journal_path, ".tmp")?)?;
+    remove_path_if_exists(&sibling_with_suffix(journal_path, ".bak")?)
+}
+
+/// Prepares a recoverable account deletion while the configuration transaction
+/// is held. The journal lets startup distinguish rollback from committed cleanup.
+fn stage_account_directory_for_deletion(
+    account_dir: &Path,
+    account_id: &str,
+    had_configuration_references: bool,
+) -> Result<StagedAccountDeletion, AppError> {
+    let temporary = sibling_with_suffix(account_dir, ".tmp")?;
     let backup = sibling_with_suffix(account_dir, ".bak")?;
-    remove_path_if_exists(&staged)?;
+    let staged_deletion = sibling_with_suffix(account_dir, ".deleting")?;
+    let journal_path = account_deletion_journal_path(account_dir)?;
+    remove_path_if_exists(&temporary)?;
     remove_path_if_exists(&backup)?;
-    remove_path_if_exists(account_dir)
+    if path_exists(&staged_deletion)? {
+        return Err(AppError::FileError(format!(
+            "账号存在未完成的删除事务，请重启 D2RHub 自动恢复后重试: {}",
+            staged_deletion.display()
+        )));
+    }
+    if path_exists(&journal_path)? {
+        cleanup_account_deletion_journal(&journal_path)?;
+    }
+    let journal = AccountDeletionJournal {
+        schema_version: ACCOUNT_DELETION_JOURNAL_SCHEMA,
+        account_id: account_id.to_string(),
+        phase: AccountDeletionPhase::Prepared,
+        had_configuration_references,
+    };
+    write_account_deletion_journal(&journal_path, &journal)?;
+    if let Err(error) = std::fs::rename(account_dir, &staged_deletion) {
+        let _ = cleanup_account_deletion_journal(&journal_path);
+        return Err(AppError::FileError(format!(
+            "暂存待删除账号 {} 失败: {}",
+            account_dir.display(),
+            error
+        )));
+    }
+    Ok(StagedAccountDeletion {
+        account_dir: account_dir.to_path_buf(),
+        staged_dir: staged_deletion,
+        journal_path,
+        journal,
+    })
+}
+
+fn mark_account_deletion_committed(
+    staged_deletion: &mut StagedAccountDeletion,
+) -> Result<(), AppError> {
+    staged_deletion.journal.phase = AccountDeletionPhase::Committed;
+    write_account_deletion_journal(&staged_deletion.journal_path, &staged_deletion.journal)
+}
+
+struct AccountDeletionCompletion {
+    should_retire_account_id: bool,
+    result: Result<(), AppError>,
+}
+
+fn complete_staged_account_deletion_after_config_commit(
+    staged_deletion: &mut StagedAccountDeletion,
+) -> AccountDeletionCompletion {
+    match mark_account_deletion_committed(staged_deletion) {
+        Ok(()) => AccountDeletionCompletion {
+            should_retire_account_id: true,
+            result: finalize_staged_account_deletion(staged_deletion).map_err(|error| {
+                AppError::FileError(format!(
+                    "账号配置已提交，但目录清理尚未完成；数据保留在删除事务中，重启 D2RHub 将自动继续: {error}"
+                ))
+            }),
+        },
+        Err(error) if !staged_deletion.journal.had_configuration_references => {
+            AccountDeletionCompletion {
+                should_retire_account_id: false,
+                result: Err(rollback_staged_account_deletion(staged_deletion, error)),
+            }
+        }
+        Err(error) => AccountDeletionCompletion {
+            should_retire_account_id: true,
+            result: Err(AppError::FileError(format!(
+                "账号配置已提交，但删除事务标记写入失败；已保留完整账号目录，重启 D2RHub 将根据配置自动恢复: {error}"
+            ))),
+        },
+    }
+}
+
+fn finalize_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+) -> Result<(), AppError> {
+    remove_path_if_exists(&staged_deletion.staged_dir)?;
+    if let Err(error) = cleanup_account_deletion_journal(&staged_deletion.journal_path) {
+        crate::logger::log_msg(
+            "WARN",
+            "AccountDelete",
+            &format!("账号目录已删除，但事务日志清理失败，将在下次启动重试: {error}"),
+        );
+    }
+    Ok(())
+}
+
+fn restore_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+) -> Result<(), AppError> {
+    if path_exists(&staged_deletion.account_dir)? {
+        return Err(AppError::FileError(format!(
+            "账号删除恢复冲突：正式目录 {} 与暂存目录 {} 同时存在，已保留两者和事务日志等待人工检查",
+            staged_deletion.account_dir.display(),
+            staged_deletion.staged_dir.display()
+        )));
+    }
+    if !path_exists(&staged_deletion.staged_dir)? {
+        return Err(AppError::FileError(format!(
+            "待恢复的账号删除暂存目录不存在: {}",
+            staged_deletion.staged_dir.display()
+        )));
+    }
+    std::fs::rename(&staged_deletion.staged_dir, &staged_deletion.account_dir).map_err(
+        |error| {
+            AppError::FileError(format!(
+                "恢复待删除账号 {} 失败: {}",
+                staged_deletion.account_dir.display(),
+                error
+            ))
+        },
+    )?;
+    cleanup_account_deletion_journal(&staged_deletion.journal_path)
+}
+
+fn rollback_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+    original_error: AppError,
+) -> AppError {
+    match restore_staged_account_deletion(staged_deletion) {
+        Ok(()) => original_error,
+        Err(rollback_error) => AppError::FileError(format!(
+            "账号删除事务失败: {original_error}；恢复账号目录也失败: {rollback_error}"
+        )),
+    }
+}
+
+#[cfg(test)]
+fn remove_account_directory_without_resurrection(
+    account_dir: &Path,
+    account_id: &str,
+) -> Result<(), AppError> {
+    let mut staged_deletion = stage_account_directory_for_deletion(account_dir, account_id, false)?;
+    mark_account_deletion_committed(&mut staged_deletion)?;
+    finalize_staged_account_deletion(&staged_deletion)
 }
 
 pub(crate) fn recover_interrupted_replacement(target: &Path) -> Result<(), AppError> {
@@ -2820,9 +3373,143 @@ fn recover_interrupted_account_directories(accounts_dir: &Path) {
     }
 }
 
-/// 仅在应用启动、尚无账号事务运行时调用；优先回滚到 `.bak`，丢弃未提交 `.tmp`。
-pub(crate) fn recover_account_transactions(accounts_dir: &str) {
+fn load_account_deletion_journal(
+    journal_path: &Path,
+    expected_account_id: &str,
+) -> Result<AccountDeletionJournal, AppError> {
+    let candidates = [
+        journal_path.to_path_buf(),
+        sibling_with_suffix(journal_path, ".tmp")?,
+        sibling_with_suffix(journal_path, ".bak")?,
+    ];
+    let mut failures = Vec::new();
+    for candidate in candidates {
+        if !path_exists(&candidate)? {
+            continue;
+        }
+        let parsed = std::fs::read(&candidate)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                serde_json::from_slice::<AccountDeletionJournal>(&bytes)
+                    .map_err(|error| error.to_string())
+            });
+        match parsed {
+            Ok(journal)
+                if journal.schema_version == ACCOUNT_DELETION_JOURNAL_SCHEMA
+                    && journal.account_id == expected_account_id =>
+            {
+                return Ok(journal);
+            }
+            Ok(_) => failures.push(format!("{}: schema 或账号 ID 不匹配", candidate.display())),
+            Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(AppError::ConfigReadError(format!(
+        "账号删除事务没有可用日志候选: {}",
+        if failures.is_empty() {
+            journal_path.display().to_string()
+        } else {
+            failures.join("；")
+        }
+    )))
+}
+
+fn recover_interrupted_account_deletions(root: &Path, config: Option<&GlobalConfig>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(account_id) = name.strip_suffix(".deleting") else {
+            continue;
+        };
+        if !AccountManager::is_valid_account_id(account_id) || !entry.path().is_dir() {
+            continue;
+        }
+        let account_dir = root.join(account_id);
+        if account_dir.exists() {
+            crate::logger::log_msg(
+                "WARN",
+                "AccountDelete",
+                &format!(
+                    "账号 {} 同时存在正式目录和删除暂存目录，已保留两者等待人工检查",
+                    account_id
+                ),
+            );
+            continue;
+        }
+        let Ok(journal_path) = account_deletion_journal_path(&account_dir) else {
+            continue;
+        };
+        let loaded_journal = match load_account_deletion_journal(&journal_path, account_id) {
+            Ok(journal) => Some(journal),
+            Err(error) => {
+                crate::logger::log_msg(
+                    "WARN",
+                    "AccountDelete",
+                    &format!("账号删除事务 {account_id} 的日志不可用，将优先恢复账号目录: {error}"),
+                );
+                None
+            }
+        };
+        let should_finalize = loaded_journal.as_ref().is_some_and(|journal| {
+            journal.phase == AccountDeletionPhase::Committed
+                || (journal.had_configuration_references
+                    && config.is_some_and(|config| !config_references_account(config, account_id)))
+        });
+        let journal = loaded_journal.unwrap_or(AccountDeletionJournal {
+            schema_version: ACCOUNT_DELETION_JOURNAL_SCHEMA,
+            account_id: account_id.to_string(),
+            phase: AccountDeletionPhase::Prepared,
+            had_configuration_references: false,
+        });
+        let staged_deletion = StagedAccountDeletion {
+            account_dir,
+            staged_dir: entry.path(),
+            journal_path,
+            journal,
+        };
+        let result = if should_finalize {
+            finalize_staged_account_deletion(&staged_deletion)
+        } else {
+            restore_staged_account_deletion(&staged_deletion)
+        };
+        if let Err(error) = result {
+            crate::logger::log_msg(
+                "WARN",
+                "AccountDelete",
+                &format!("恢复账号删除事务 {account_id} 失败: {error}"),
+            );
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let account_id = name
+            .strip_suffix(".delete.json")
+            .or_else(|| name.strip_suffix(".delete.json.tmp"))
+            .or_else(|| name.strip_suffix(".delete.json.bak"));
+        let Some(account_id) = account_id else {
+            continue;
+        };
+        if !AccountManager::is_valid_account_id(account_id)
+            || root.join(format!("{account_id}.deleting")).exists()
+        {
+            continue;
+        }
+        let _ = cleanup_account_deletion_journal(&root.join(format!("{account_id}.delete.json")));
+    }
+}
+
+/// 仅在应用启动、尚无账号事务运行时调用；先恢复或完成删除日志，再回滚
+/// 账号快照的 `.bak` 并丢弃未提交的 `.tmp`。
+pub(crate) fn recover_account_transactions(accounts_dir: &str, config: Option<&GlobalConfig>) {
     let root = Path::new(accounts_dir);
+    recover_interrupted_account_deletions(root, config);
+
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -3566,9 +4253,9 @@ pub fn move_game_window(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;

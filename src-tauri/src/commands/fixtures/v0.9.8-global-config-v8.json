@@ -1,0 +1,61 @@
+{
+  "version": 8,
+  "cn_battle_net_path": "C:\\Program Files (x86)\\Battle.net\\Battle.net.exe",
+  "cn_game_path": "",
+  "cn_saved_games_path": "",
+  "global_game_path": "D:\\Games\\Diablo II Resurrected",
+  "global_saved_games_path": "C:\\Users\\tester\\Saved Games\\Diablo II Resurrected",
+  "program_data_agent_path": "C:\\ProgramData\\Battle.net\\Agent",
+  "app_data_roaming_bnet_path": "C:\\Users\\tester\\AppData\\Roaming\\Battle.net",
+  "accounts_dir": "D:\\Portable\\D2RHub\\accounts",
+  "first_run_complete": false,
+  "browser_path": "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+  "browser_type": "chrome",
+  "enable_bongo_cat": true,
+  "bongo_cat_chatterbox": false,
+  "bongo_cat_scale": 1.25,
+  "bongo_cat_skin": "original",
+  "bongo_cat_unlocked_skins": ["original"],
+  "enable_overlay": true,
+  "enable_tz_overlay": true,
+  "enable_stats_overlay": false,
+  "theme": "onyx",
+  "theme_overlay": "light",
+  "auto_close_browser": false,
+  "enable_auto_update": true,
+  "first_launch": false,
+  "rune_audio_enabled": false,
+  "rune_audio_target_account": "",
+  "rune_audio_detection_threshold": 0.61,
+  "rune_audio_tracked_categories": ["runes", "charms"],
+  "rune_audio_min_rune_number": 20,
+  "rune_audio_min_gem_level": 3,
+  "rune_audio_tracked_charm_codes": ["cm1", "cm3"],
+  "shortcut_bindings_json": "{\"1\":\"Ctrl+1\"}",
+  "overlay_opacity": 88,
+  "main_opacity": 92,
+  "font_scale": "large",
+  "separate_game_taskbar_icons": true,
+  "app_language": "en-US",
+  "agent_mode": 2,
+  "agent_delay_secs": 1.5,
+  "agent_threshold": 7,
+  "launch_groups": [
+    {
+      "id": "release-group",
+      "name": "Release Group",
+      "account_ids": ["acount1"],
+      "members": [
+        {
+          "account_id": "acount1",
+          "mod_args": "-mod release -txt",
+          "position_preset_id": "primary",
+          "position_configured": true,
+          "graphics_configured": true,
+          "resolution": "1920x1080",
+          "fps": 60
+        }
+      ]
+    }
+  ]
+}

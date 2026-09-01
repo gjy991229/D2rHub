@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tauri::{Emitter, Manager};
 
+use crate::application::configuration::{
+    ConfigurationMutation, ConfigurationObserver, ConfigurationPolicy, ConfigurationRepository,
+};
 use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
 use crate::domain::config::{default_enable_overlay, CURRENT_CONFIG_VERSION};
 use crate::error::AppError;
@@ -30,6 +34,103 @@ struct LegacyBattleNetPathMigration {
 
 fn app_accounts_dir(app_data_dir: &str) -> PathBuf {
     Path::new(app_data_dir).join("accounts")
+}
+
+fn sync_configuration_staging(path: &Path) -> Result<(), AppError> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
+    file.sync_all()
+        .map_err(|error| AppError::ConfigWriteError(error.to_string()))
+}
+
+struct GlobalConfigRepository<'a> {
+    app_data_dir: &'a str,
+}
+
+impl<'a> GlobalConfigRepository<'a> {
+    fn new(app_data_dir: &'a str) -> Self {
+        Self { app_data_dir }
+    }
+}
+
+impl ConfigurationRepository for GlobalConfigRepository<'_> {
+    fn load(&self) -> Result<GlobalConfig, AppError> {
+        GlobalConfig::load(self.app_data_dir)
+    }
+
+    fn save(&self, config: &GlobalConfig) -> Result<(), AppError> {
+        config.save(self.app_data_dir)
+    }
+
+    fn artifacts_exist(&self) -> bool {
+        GlobalConfig::config_path(self.app_data_dir).exists()
+            || GlobalConfig::config_backup_path(self.app_data_dir).exists()
+            || GlobalConfig::config_staging_path(self.app_data_dir).exists()
+    }
+
+    fn ensure_directories(&self, config: &GlobalConfig) -> Result<(), AppError> {
+        config.ensure_dirs()
+    }
+}
+
+struct GlobalConfigPolicy<'a> {
+    state: &'a SharedState,
+}
+
+impl<'a> GlobalConfigPolicy<'a> {
+    fn new(state: &'a SharedState) -> Self {
+        Self { state }
+    }
+}
+
+impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
+    fn apply_patch(
+        &self,
+        current: &GlobalConfig,
+        patch: serde_json::Value,
+    ) -> Result<GlobalConfig, AppError> {
+        current.apply_user_patch(patch)
+    }
+
+    fn prepare(
+        &self,
+        previous: Option<&GlobalConfig>,
+        candidate: GlobalConfig,
+    ) -> Result<GlobalConfig, AppError> {
+        let retired_account_ids = self.state.retired_account_ids_snapshot();
+        prepare_global_config_with_retired_accounts(
+            &self.state.app_data_dir,
+            previous,
+            candidate,
+            &retired_account_ids,
+        )
+    }
+}
+
+struct RuntimeConfigurationObserver<'a> {
+    state: &'a SharedState,
+    app: Option<&'a tauri::AppHandle>,
+}
+
+impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
+    fn publish(&self, config: &GlobalConfig) {
+        update_shortcut_map(self.state, config);
+        crate::input_listener::set_bongo_cat_input_enabled(config.enable_bongo_cat);
+        if !config.rune_audio_enabled || config.rune_audio_target_account.trim().is_empty() {
+            crate::rune_audio::monitor::stop_rune_audio_monitor();
+        }
+        if let Some(app) = self.app {
+            if let Err(error) = app.emit("global-config-updated", config) {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Config",
+                    &format!("发布全局配置提交事件失败: {error}"),
+                );
+            }
+        }
+    }
 }
 
 fn saved_games_settings_exists(path: &Path) -> bool {
@@ -80,9 +181,10 @@ fn should_validate_installation_paths(
 #[cfg(test)]
 mod validation_tests {
     use super::{
+        prepare_global_config, prepare_global_config_with_retired_accounts,
         saved_games_settings_exists, should_validate_installation_paths,
-        validate_installation_paths, GlobalConfig, LaunchGroup, LaunchGroupMember,
-        LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        sync_configuration_staging, validate_installation_paths, GlobalConfig, LaunchGroup,
+        LaunchGroupMember, LegacyPathMigration, CURRENT_CONFIG_VERSION,
     };
     use crate::commands::account::{AccountManager, AccountMeta};
 
@@ -117,6 +219,17 @@ mod validation_tests {
         };
 
         assert!(validate_installation_paths(&config).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn staging_sync_open_failure_is_not_treated_as_a_successful_commit() {
+        let root = temp_dir("config_staging_sync_failure");
+        let directory_instead_of_file = root.join("global_config.json.tmp");
+        std::fs::create_dir_all(&directory_instead_of_file).unwrap();
+
+        assert!(sync_configuration_staging(&directory_instead_of_file).is_err());
+
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -390,7 +503,7 @@ mod validation_tests {
             ..GlobalConfig::default()
         };
 
-        assert!(config.remove_account_from_launch_groups("account-a"));
+        assert!(config.remove_account_from_launch_groups("ACCOUNT-A"));
         assert_eq!(config.launch_groups.len(), 2);
         assert!(config.launch_groups[0].account_ids.is_empty());
         assert_eq!(
@@ -400,6 +513,41 @@ mod validation_tests {
         assert_eq!(config.launch_groups[1].members.len(), 1);
         assert_eq!(config.launch_groups[1].members[0].account_id, "account-b");
         assert!(!config.remove_account_from_launch_groups("missing"));
+    }
+
+    #[test]
+    fn stale_full_save_cannot_reintroduce_a_retired_account() {
+        let root = temp_dir("retired_account_stale_save");
+        let retired_id = "acount1".to_string();
+        let previous = GlobalConfig::default();
+        let stale_candidate = GlobalConfig {
+            rune_audio_enabled: true,
+            rune_audio_target_account: retired_id.clone(),
+            launch_groups: vec![LaunchGroup {
+                id: "stale".to_string(),
+                name: "陈旧方案".to_string(),
+                account_ids: vec![retired_id.clone()],
+                members: vec![LaunchGroupMember {
+                    account_id: retired_id.clone(),
+                    ..LaunchGroupMember::default()
+                }],
+            }],
+            ..GlobalConfig::default()
+        };
+
+        let prepared = prepare_global_config_with_retired_accounts(
+            root.to_str().unwrap(),
+            Some(&previous),
+            stale_candidate,
+            &[retired_id],
+        )
+        .unwrap();
+
+        assert!(!prepared.rune_audio_enabled);
+        assert!(prepared.rune_audio_target_account.is_empty());
+        assert!(prepared.launch_groups[0].account_ids.is_empty());
+        assert!(prepared.launch_groups[0].members.is_empty());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1273,22 +1421,110 @@ mod validation_tests {
     }
 
     #[test]
-    fn removed_standby_field_is_tolerated_as_an_unknown_legacy_field() {
-        let root = temp_dir("removed_standby_field");
+    fn released_v0_9_8_v8_fixture_migrates_without_losing_user_settings() {
+        let root = temp_dir("released_v0_9_8_v8_fixture");
         let config_path = root.join("global_config.json");
-        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
-        legacy["version"] = serde_json::json!(CURRENT_CONFIG_VERSION);
-        legacy["standby_account_ids"] = serde_json::json!(["account-a"]);
-        legacy
-            .as_object_mut()
-            .unwrap()
-            .remove("favorite_launch_group_ids");
-        std::fs::write(&config_path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+        std::fs::write(
+            &config_path,
+            include_bytes!("fixtures/v0.9.8-global-config-v8.json"),
+        )
+        .unwrap();
 
         let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
 
         assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(loaded.theme, "onyx");
+        assert_eq!(loaded.theme_overlay, "light");
+        assert_eq!(loaded.app_language, "en-US");
+        assert_eq!(loaded.overlay_opacity, 88);
+        assert_eq!(loaded.main_opacity, 92);
+        assert_eq!(loaded.rune_audio_min_rune_number, 20);
+        assert_eq!(loaded.rune_audio_tracked_categories, ["runes", "charms"]);
+        assert_eq!(loaded.launch_groups.len(), 1);
+        assert_eq!(
+            loaded.launch_groups[0].members[0].resolution.as_deref(),
+            Some("1920x1080")
+        );
+        assert_eq!(loaded.launch_groups[0].members[0].fps, Some(60));
         assert!(loaded.favorite_launch_group_ids.is_empty());
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(persisted["theme"], "onyx");
+        assert_eq!(persisted["launch_groups"][0]["members"][0]["fps"], 60);
+        assert_eq!(
+            persisted["favorite_launch_group_ids"],
+            serde_json::json!([])
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn same_version_branch_extensions_survive_unrelated_patch_and_full_save() {
+        let root = temp_dir("same_version_branch_extensions");
+        let config_path = root.join("global_config.json");
+        let room_extension = serde_json::json!({
+            "enabled": true,
+            "primary_account_id": "account-a",
+            "follower_account_ids": ["account-b"],
+            "shortcut": "Ctrl+Alt+R",
+            "name_prefix": "run-",
+            "next_sequence": 17,
+            "strategy_version": 6,
+            "standard_flow": {
+                "character_delay_ms": 10,
+                "ui_profile": { "create_tab": { "x": 730, "y": 20 } }
+            }
+        });
+        let standby_extension = serde_json::json!(["account-b"]);
+        let mut branch_config = serde_json::to_value(GlobalConfig::default()).unwrap();
+        branch_config["version"] = serde_json::json!(CURRENT_CONFIG_VERSION);
+        branch_config["room_rotation"] = room_extension.clone();
+        branch_config["standby_account_ids"] = standby_extension.clone();
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&branch_config).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        assert_eq!(
+            loaded.preserved_unknown_fields["room_rotation"],
+            room_extension
+        );
+        assert_eq!(
+            loaded.preserved_unknown_fields["standby_account_ids"],
+            standby_extension
+        );
+
+        let patched = loaded
+            .apply_user_patch(serde_json::json!({ "theme": "onyx" }))
+            .unwrap();
+        assert_eq!(
+            patched.preserved_unknown_fields,
+            loaded.preserved_unknown_fields
+        );
+
+        // Simulate a typed frontend that sends only fields it understands. The
+        // backend policy must restore opaque fields from the latest snapshot.
+        let mut frontend_candidate = patched;
+        frontend_candidate.preserved_unknown_fields.clear();
+        frontend_candidate.preserved_unknown_fields.insert(
+            "untrusted_extension".to_string(),
+            serde_json::json!({ "enabled": true }),
+        );
+        let prepared =
+            prepare_global_config(root.to_str().unwrap(), Some(&loaded), frontend_candidate)
+                .unwrap();
+        prepared.save(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(persisted["room_rotation"], room_extension);
+        assert_eq!(persisted["standby_account_ids"], standby_extension);
+        assert_eq!(persisted["theme"], "onyx");
+        assert!(persisted.get("untrusted_extension").is_none());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1530,6 +1766,11 @@ impl GlobalConfig {
                     "配置字段 {key} 由程序管理，不能通过补丁修改"
                 )));
             }
+            if self.preserved_unknown_fields.contains_key(key) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "配置字段 {key} 由兼容层保留，当前版本不能修改"
+                )));
+            }
             if !merged_object.contains_key(key) {
                 return Err(AppError::ConfigWriteError(format!(
                     "未知的全局配置字段: {key}"
@@ -1547,12 +1788,12 @@ impl GlobalConfig {
             let previous_len = group.account_ids.len();
             group
                 .account_ids
-                .retain(|member_id| member_id != account_id);
+                .retain(|member_id| !member_id.eq_ignore_ascii_case(account_id));
             removed |= group.account_ids.len() != previous_len;
             let previous_member_len = group.members.len();
             group
                 .members
-                .retain(|member| member.account_id != account_id);
+                .retain(|member| !member.account_id.eq_ignore_ascii_case(account_id));
             removed |= group.members.len() != previous_member_len;
         }
         removed
@@ -1968,6 +2209,11 @@ impl GlobalConfig {
         });
 
         if config.version != CURRENT_CONFIG_VERSION {
+            // Historical unknown fields belonged to removed legacy features.
+            // Same-version extensions are preserved below, but older envelopes
+            // continue through their explicit migrations without retaining
+            // obsolete keys forever.
+            config.preserved_unknown_fields.clear();
             config.version = CURRENT_CONFIG_VERSION;
             migrated = true;
         }
@@ -1984,7 +2230,7 @@ impl GlobalConfig {
         }
 
         // 声纹目标依赖账号目录。必须先回滚中断的账号目录交换，再判断目标是否有效。
-        recover_account_transactions(&config.accounts_dir);
+        recover_account_transactions(&config.accounts_dir, Some(&config));
 
         // 迁移：从未配置过快捷键的旧用户，自动写入默认值
         if config.shortcut_bindings_json.is_empty() {
@@ -2236,10 +2482,7 @@ impl GlobalConfig {
                 .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
         }
         std::fs::write(&staging, content).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
-        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&staging) {
-            file.sync_all()
-                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
-        }
+        sync_configuration_staging(&staging)?;
 
         let had_primary = path.exists();
         if had_primary {
@@ -2453,67 +2696,119 @@ pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
     }
 }
 
+/// Loads the global configuration through the shared application transaction
+/// runtime. Startup and command callers therefore publish the same snapshot.
+pub(crate) fn load_global_config_into_state(state: &SharedState) -> Result<GlobalConfig, AppError> {
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let observer = RuntimeConfigurationObserver { state, app: None };
+    let loaded = state.configuration().get_or_load(&repository, &observer)?;
+    Ok(loaded.config)
+}
+
+/// Applies a copy-on-write mutation only when configuration is already loaded.
+/// `Missing` remains observable so account lifecycle callers can preserve their
+/// historical no-configuration behavior without triggering an implicit load.
+pub(crate) fn mutate_loaded_global_config<F>(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    mutate: F,
+) -> Result<ConfigurationMutation, AppError>
+where
+    F: FnOnce(&mut GlobalConfig) -> Result<bool, AppError>,
+{
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state);
+    let observer = RuntimeConfigurationObserver {
+        state,
+        app: Some(app),
+    };
+    let mutation =
+        state
+            .configuration()
+            .mutate_if_loaded(&repository, &policy, &observer, mutate)?;
+    Ok(mutation)
+}
+
+pub(crate) fn mutate_loaded_global_config_with_post_commit<F, P>(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    mutate: F,
+    post_commit: P,
+) -> Result<ConfigurationMutation, AppError>
+where
+    F: FnOnce(&mut GlobalConfig) -> Result<bool, AppError>,
+    P: FnOnce(&GlobalConfig),
+{
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state);
+    let observer = RuntimeConfigurationObserver {
+        state,
+        app: Some(app),
+    };
+    state.configuration().mutate_if_loaded_with_post_commit(
+        &repository,
+        &policy,
+        &observer,
+        mutate,
+        post_commit,
+    )
+}
+
 // ── Tauri Commands ──
 
 #[tauri::command]
 pub fn get_global_config(state: tauri::State<'_, SharedState>) -> Result<GlobalConfig, AppError> {
-    let config = state.config.read();
-    match &*config {
-        Some(c) => Ok(c.clone()),
-        None => {
-            // 首次调用，尝试从磁盘加载
-            drop(config);
-            let _config_io = state.config_io.lock();
-            if let Some(loaded) = state.config.read().clone() {
-                return Ok(loaded);
-            }
-            let loaded = GlobalConfig::load(&state.app_data_dir)?;
-            let mut cfg = state.config.write();
-            *cfg = Some(loaded.clone());
-            update_shortcut_map(&state, &loaded);
-            Ok(loaded)
-        }
-    }
+    load_global_config_into_state(state.inner())
 }
 
 #[tauri::command]
 pub fn save_global_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
-    let _config_io = state.config_io.lock();
-    let existing_config_artifact = GlobalConfig::config_path(&state.app_data_dir).exists()
-        || GlobalConfig::config_backup_path(&state.app_data_dir).exists()
-        || GlobalConfig::config_staging_path(&state.app_data_dir).exists();
-    if state.config.read().is_none() && existing_config_artifact {
-        return Err(AppError::ConfigWriteError(
-            "现有配置未能安全加载，已阻止用新配置覆盖；请先检查日志和 global_config.json"
-                .to_string(),
-        ));
-    }
-    let previous = state.config.read().clone();
-    persist_global_config_locked(state.inner(), previous, config)
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state.inner());
+    let observer = RuntimeConfigurationObserver {
+        state: state.inner(),
+        app: Some(&app),
+    };
+    state
+        .configuration()
+        .save_candidate(&repository, &policy, &observer, config)
 }
 
 #[tauri::command]
 pub fn patch_global_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     patch: serde_json::Value,
 ) -> Result<GlobalConfig, AppError> {
-    let _config_io = state.config_io.lock();
-    let previous = state
-        .config
-        .read()
-        .clone()
-        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    let patched = previous.apply_user_patch(patch)?;
-    persist_global_config_locked(state.inner(), Some(previous), patched)
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state.inner());
+    let observer = RuntimeConfigurationObserver {
+        state: state.inner(),
+        app: Some(&app),
+    };
+    state
+        .configuration()
+        .patch_current(&repository, &policy, &observer, patch)
 }
 
-fn persist_global_config_locked(
-    state: &SharedState,
-    previous: Option<GlobalConfig>,
+#[cfg(test)]
+fn prepare_global_config(
+    app_data_dir: &str,
+    previous: Option<&GlobalConfig>,
+    cfg: GlobalConfig,
+) -> Result<GlobalConfig, AppError> {
+    prepare_global_config_with_retired_accounts(app_data_dir, previous, cfg, &[])
+}
+
+fn prepare_global_config_with_retired_accounts(
+    app_data_dir: &str,
+    previous: Option<&GlobalConfig>,
     mut cfg: GlobalConfig,
+    retired_account_ids: &[String],
 ) -> Result<GlobalConfig, AppError> {
     if cfg.legacy_path_migration.is_some() {
         return Err(AppError::ConfigWriteError(
@@ -2521,11 +2816,15 @@ fn persist_global_config_locked(
         ));
     }
     cfg.version = CURRENT_CONFIG_VERSION;
+    // Opaque same-version extensions are never owned by this build. A full save
+    // must keep exactly the latest committed values: callers may neither erase,
+    // replace nor inject fields that only a future module can interpret.
+    cfg.preserved_unknown_fields = previous
+        .map(|previous| previous.preserved_unknown_fields.clone())
+        .unwrap_or_default();
     // 保留旧字段作为向后兼容总状态，新代码只读取两个独立开关。
     cfg.enable_overlay = cfg.enable_tz_overlay || cfg.enable_stats_overlay;
-    cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
-        .to_string_lossy()
-        .to_string();
+    cfg.accounts_dir = app_accounts_dir(app_data_dir).to_string_lossy().to_string();
     cfg.rune_audio_tracked_categories =
         crate::rune_audio::item_catalog::normalize_tracked_categories(
             &cfg.rune_audio_tracked_categories,
@@ -2537,20 +2836,25 @@ fn persist_global_config_locked(
             &cfg.rune_audio_tracked_charm_codes,
         );
     cfg.normalize_launch_groups();
+    for account_id in retired_account_ids {
+        if cfg
+            .rune_audio_target_account
+            .trim()
+            .eq_ignore_ascii_case(account_id)
+        {
+            cfg.rune_audio_target_account.clear();
+            cfg.rune_audio_enabled = false;
+        }
+        cfg.remove_account_from_launch_groups(account_id);
+    }
     cfg.validate_launch_groups()?;
     cfg.normalize_favorite_launch_group_ids();
 
-    if should_validate_installation_paths(previous.as_ref(), &cfg) {
+    if should_validate_installation_paths(previous, &cfg) {
         validate_installation_paths(&cfg)?;
     }
     cfg.resolve_rune_audio_target_account()?;
 
-    cfg.save(&state.app_data_dir)?;
-    cfg.ensure_dirs()?;
-    let mut stored = state.config.write();
-    *stored = Some(cfg.clone());
-    update_shortcut_map(state, &cfg);
-    crate::input_listener::set_bongo_cat_input_enabled(cfg.enable_bongo_cat);
     Ok(cfg)
 }
 
@@ -2580,8 +2884,7 @@ pub fn load_window_geometry(
 pub fn get_global_config_ext(app: &tauri::AppHandle) -> Option<GlobalConfig> {
     use tauri::Manager;
     if let Some(state) = app.try_state::<SharedState>() {
-        let config_lock = state.config.read();
-        return config_lock.clone();
+        return state.configuration().snapshot();
     }
     None
 }
@@ -2627,15 +2930,14 @@ pub fn save_theme(
     theme: String,
     window: tauri::Window,
 ) -> Result<(), AppError> {
-    let _config_io = state.config_io.lock();
-    let mut config_lock = state.config.write();
-    if let Some(ref mut cfg) = *config_lock {
-        if window.label() == "overlay" {
+    let is_overlay = window.label() == "overlay";
+    let _ = mutate_loaded_global_config(state.inner(), window.app_handle(), move |cfg| {
+        if is_overlay {
             cfg.theme_overlay = theme;
         } else {
             cfg.theme = theme;
         }
-        cfg.save(&state.app_data_dir)?;
-    }
+        Ok(true)
+    })?;
     Ok(())
 }

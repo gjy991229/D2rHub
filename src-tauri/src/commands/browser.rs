@@ -244,10 +244,8 @@ pub fn launch_browser_for_account(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let config = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
 
     // 在启动浏览器之前，收集现有的 Chrome/Edge 窗口句柄列表
@@ -334,10 +332,8 @@ pub fn open_url_in_browser(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let config = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
 
     #[cfg(target_os = "windows")]

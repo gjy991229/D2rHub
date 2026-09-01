@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { listenEvent } from "../platform/tauri";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
+import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
 import { Lock, Check } from "lucide-react";
 import { DROPS, WHITE_DROPS_COMMON, WHITE_DROPS_THEMED } from "./catDropsData";
 import { useWindowPlacementSave } from "../hooks/useWindowPlacementSave";
@@ -22,7 +22,7 @@ interface ActiveDrop {
 }
 
 export function BongoCatWindow() {
-  const { config, patch, load } = useGlobalConfig();
+  const { config, patch } = useGlobalConfig();
   const [clickCount, setClickCount] = useState(0);
   const placementRestoredRef = useRef(false);
   const markPlacementInteraction = useWindowPlacementSave({
@@ -32,7 +32,6 @@ export function BongoCatWindow() {
 
   // Load config on mount
   useEffect(() => {
-    load();
     // Apply font scale on startup
     try {
       const saved = localStorage.getItem("d2rhub-font-scale");
@@ -44,10 +43,10 @@ export function BongoCatWindow() {
     } catch {
       document.documentElement.dataset.fontScale = "default";
     }
-    // Start config listener for live updates from main window
+    // Subscribe before loading so no main-window commit is missed.
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then(fn => {
+    initConfigSync().then(fn => {
       if (cancelled) fn();
       else unlisten = fn;
     });
@@ -55,7 +54,7 @@ export function BongoCatWindow() {
       cancelled = true;
       unlisten?.();
     };
-  }, [load]);
+  }, []);
 
   // Sync font scale from config changes
   useEffect(() => {

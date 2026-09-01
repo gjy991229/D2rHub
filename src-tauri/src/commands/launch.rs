@@ -879,11 +879,10 @@ pub async fn launch_battle_net_only(
     }
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     validate_launch_account_ids(&account_ids)?;
-    let config = {
-        let cfg = state.config.read();
-        cfg.clone()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let mut results = Vec::new();
     let total = account_ids.len();
     let mut host_runtime_lease: Option<HostRuntimeLease> = None;
@@ -1498,11 +1497,10 @@ pub async fn launch_accounts(
     // 此处只校验批次，不提前占用账号租约。每个账号会在同名窗口检查之后单独
     // 获取租约；提前持有再逐项获取会让启动流程被自己的租约误判为并发操作。
     validate_launch_account_ids(&account_ids)?;
-    let config = {
-        let cfg = state.config.read();
-        cfg.clone()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
     if !overrides_by_account.is_empty() {

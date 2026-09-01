@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// Current on-disk configuration schema version.
 ///
@@ -182,6 +184,11 @@ pub struct GlobalConfig {
     /// 固定在主界面操作栏上的常用启动方案，顺序即展示顺序。
     #[serde(default)]
     pub favorite_launch_group_ids: Vec<String>,
+    /// Same-version fields owned by a branch or optional module that this build
+    /// does not understand yet. Flattening keeps unrelated saves lossless until
+    /// the owning module can import them into its versioned sidecar.
+    #[serde(default, flatten)]
+    pub(crate) preserved_unknown_fields: BTreeMap<String, Value>,
 }
 
 fn default_font_scale() -> String {
@@ -321,6 +328,7 @@ impl Default for GlobalConfig {
             agent_threshold: 5,
             launch_groups: Vec::new(),
             favorite_launch_group_ids: Vec::new(),
+            preserved_unknown_fields: BTreeMap::new(),
         }
     }
 }
@@ -355,6 +363,10 @@ mod tests {
             ["runes", "gems", "charms", "jewels", "keys", "organs", "essences"]
         );
         assert_eq!(config.rune_audio_tracked_charm_codes, ["cm1", "cm2", "cm3"]);
+        assert_eq!(
+            config.preserved_unknown_fields["future_optional_module"],
+            serde_json::json!({ "enabled": true })
+        );
     }
 
     #[test]
@@ -375,7 +387,7 @@ mod tests {
         let second_serialized = serde_json::to_value(&second).unwrap();
 
         assert_eq!(first_serialized, second_serialized);
-        assert!(first_serialized.get("unknown_legacy_marker").is_none());
+        assert_eq!(first_serialized["unknown_legacy_marker"], "ignored");
         assert!(first_serialized.get("legacy_path_migration").is_none());
     }
 }

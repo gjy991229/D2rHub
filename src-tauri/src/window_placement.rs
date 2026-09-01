@@ -760,7 +760,7 @@ pub fn recover_auxiliary_windows_for_app(
     target: &str,
 ) -> Result<Vec<String>, AppError> {
     let state = state_from_app(app)?;
-    let config = state.config.read().clone();
+    let config = state.configuration().snapshot();
     let enabled = |label: &str| match label {
         "overlay" => config
             .as_ref()

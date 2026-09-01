@@ -291,15 +291,15 @@ fn finish_diagnostic_recording() -> Result<Option<String>, String> {
 fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, String> {
     let state = app.state::<crate::state::SharedState>();
     let (config, account) = {
-        let guard = state.config.read();
-        let config = guard
-            .as_ref()
+        let config = state
+            .configuration()
+            .snapshot()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
         let account = config
             .resolve_rune_audio_target_account()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "符文声纹识别尚未启用".to_string())?;
-        (config.clone(), account)
+        (config, account)
     };
     let instance = state.multi_instance().instances().get(&account.id);
     let target_pid = instance
