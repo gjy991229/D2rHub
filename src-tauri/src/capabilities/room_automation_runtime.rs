@@ -23,6 +23,7 @@ use crate::application::capability::{
 use crate::application::multi_instance::{
     AccountLeaseManager, AccountOperationLeases, RunningInstance,
 };
+use crate::application::task_runtime::{TaskHandle, TaskRequest};
 use crate::commands::account::AccountManager;
 use crate::commands::utils::shared_system;
 use crate::domain::config::GlobalConfig;
@@ -546,10 +547,105 @@ trait RuntimeBridge: Send + Sync {
 struct TauriRuntimeBridge {
     app: tauri::AppHandle,
     state: SharedState,
+    unified_task: Mutex<Option<UnifiedWorkflowTask>>,
+}
+
+struct UnifiedWorkflowTask {
+    workflow_id: WorkflowTaskId,
+    handle: TaskHandle,
+}
+
+impl TauriRuntimeBridge {
+    fn publish_unified_task(&self, status: &WorkflowStatus) {
+        let Some(workflow_id) = status.task_id else {
+            return;
+        };
+        let mut active = self.unified_task.lock();
+        if active
+            .as_ref()
+            .is_some_and(|task| task.workflow_id != workflow_id)
+        {
+            if let Some(previous) = active.take() {
+                let _ = previous.handle.cancelled("房间工作流已由新的重试任务替代");
+            }
+        }
+
+        if active.is_none() && !status.phase.is_terminal() {
+            let request = TaskRequest::new("room-automation")
+                .with_conflict_key("room-automation-workflow")
+                .with_initial_status("primary", "自动跟房工作流已启动");
+            match self.state.tasks().begin(match status.room_name.as_deref() {
+                Some(room_name) => request.for_subject(room_name),
+                None => request,
+            }) {
+                Ok(handle) => {
+                    *active = Some(UnifiedWorkflowTask {
+                        workflow_id,
+                        handle,
+                    });
+                }
+                Err(error) => {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("登记统一任务失败，工作流继续按原状态机运行: {error}"),
+                    );
+                    return;
+                }
+            }
+        }
+
+        let Some(current) = active.as_ref() else {
+            return;
+        };
+        if current.workflow_id != workflow_id {
+            return;
+        }
+        match status.phase {
+            WorkflowPhase::Primary => {
+                let _ = current.handle.update(20, "primary", "主号正在创建房间");
+            }
+            WorkflowPhase::Waiting => {
+                let message = match status.waiting_mode {
+                    Some(WaitingMode::Automatic { .. }) => "等待自动启动小号跟进",
+                    _ => "等待确认并启动小号跟进",
+                };
+                let _ = current.handle.update(45, "waiting", message);
+            }
+            WorkflowPhase::Followers => {
+                let total = status.follower_account_ids.len().max(1);
+                let completed = status.completed_follower_account_ids.len().min(total);
+                let progress = 50 + ((completed * 45) / total) as u8;
+                let _ = current.handle.update(
+                    progress,
+                    "followers",
+                    &format!("小号跟进 {completed}/{total}"),
+                );
+            }
+            WorkflowPhase::Complete => {
+                if let Some(completed) = active.take() {
+                    let _ = completed.handle.succeed("自动跟房工作流完成");
+                }
+            }
+            WorkflowPhase::Cancelled => {
+                if let Some(cancelled) = active.take() {
+                    let _ = cancelled.handle.cancelled("自动跟房工作流已取消");
+                }
+            }
+            WorkflowPhase::Error => {
+                if let Some(failed) = active.take() {
+                    let message = status.last_error.as_deref().unwrap_or("自动跟房工作流失败");
+                    let _ = failed.handle.fail("room-automation-failed", message);
+                }
+            }
+            WorkflowPhase::Idle => {}
+        }
+    }
 }
 
 impl RuntimeBridge for TauriRuntimeBridge {
     fn publish_status(&self, status: &WorkflowStatus) {
+        self.publish_unified_task(status);
         if let Err(error) = self.app.emit(STATUS_EVENT, status) {
             crate::logger::log_msg(
                 "WARN",
@@ -708,6 +804,7 @@ impl RoomAutomationManager {
             let bridge: Arc<dyn RuntimeBridge> = Arc::new(TauriRuntimeBridge {
                 app: app.handle().clone(),
                 state: state.clone(),
+                unified_task: Mutex::new(None),
             });
             let leases = state.multi_instance().account_leases().clone();
             Ok(Self::new(

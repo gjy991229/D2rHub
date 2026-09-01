@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use crate::application::task_runtime::{
     TaskObserver, TaskRuntimeError, TaskSnapshot, TaskTimelineEntry,
@@ -64,6 +64,7 @@ pub fn get_task_timeline(
 
 #[tauri::command]
 pub fn cancel_task(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     task_id: u64,
 ) -> Result<TaskSnapshot, AppError> {
@@ -79,6 +80,17 @@ pub fn cancel_task(
         "account-initialize" | "account-reinitialize" | "account-launch" | "battle-net-launch"
     ) {
         state.multi_instance().facade().cancel_current_operation();
+    }
+    if snapshot.kind == "room-automation" {
+        if let Some(command_state) = app.try_state::<
+            crate::capabilities::room_automation_runtime::RoomAutomationCommandState,
+        >() {
+            command_state
+                .manager()
+                .map_err(AppError::Unknown)?
+                .cancel()
+                .map_err(AppError::Unknown)?;
+        }
     }
     Ok(snapshot)
 }
