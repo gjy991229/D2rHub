@@ -120,6 +120,12 @@ interface AudioModPrepareResult {
   mod_directory: string;
   launch_arguments: string;
   source_mod_name: string | null;
+  feature_groups: Array<{
+    id: string;
+    recipe_version: number;
+    fingerprint: string;
+    reused_from_source: boolean;
+  }>;
 }
 
 function audioSetupDefaults(state: AudioModSetupState): {
@@ -322,6 +328,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
+  const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
+  const [includeRoomTools, setIncludeRoomTools] = useState(true);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
@@ -337,7 +345,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
   const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
-  const audioPrepareBlockedReason = !isAudioModUpgrade && audioSetupNameError
+  const selectedAudioSetupSource = audioModState?.installed_mods.find(
+    mod => mod.name === audioSetupSource,
+  );
+  const audioPrepareBlockedReason = !includeAudioTelemetry && !includeRoomTools
+    ? "请至少选择一个要加工的功能"
+    : !isAudioModUpgrade && audioSetupNameError
     ? audioSetupNameError
     : audioSetupMode === "existing" && !audioSetupSource
       ? "请选择一个要保留功能的原始 Mod"
@@ -460,6 +473,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         ));
         setAudioSetupMode(defaults.mode);
         setAudioSetupName(defaults.name);
+        setIncludeAudioTelemetry(true);
+        setIncludeRoomTools(true);
         if (!next.ready && config?.rune_audio_enabled) setAudioSetupOpen(true);
       })
       .catch((error) => {
@@ -855,6 +870,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       setAudioSetupSource(defaults.source);
       setAudioSetupMode(defaults.mode);
       setAudioSetupName(defaults.name);
+      setIncludeAudioTelemetry(true);
+      setIncludeRoomTools(true);
       if (wasEnabled && next.ready) {
         await persistAudioEnabledState(accountId, true);
       } else if (wasEnabled) {
@@ -903,6 +920,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       setAudioSetupSource(defaults.source);
       setAudioSetupMode(defaults.mode);
       setAudioSetupName(defaults.name);
+      setIncludeAudioTelemetry(true);
+      setIncludeRoomTools(true);
       updateConfig(current => {
         current.rune_audio_target_account = accountId;
         current.rune_audio_enabled = false;
@@ -940,6 +959,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         const next = await invoke<AudioModSetupState>("upgrade_audio_mod", {
           accountId,
           sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+          includeAudioTelemetry,
+          includeRoomTools,
         });
         setAudioModState(next);
         await persistAudioEnabledState(accountId, wasEnabled);
@@ -951,6 +972,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         accountId,
         modName: normalizedAudioSetupName,
         sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+        includeAudioTelemetry,
+        includeRoomTools,
       });
       const next = await invoke<AudioModSetupState>("apply_audio_mod_to_account", {
         accountId,
@@ -958,16 +981,27 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       });
       await loadAccounts();
       setAudioModState(next);
-      await persistAudioEnabledState(accountId, true);
+      const preparedAudio = result.feature_groups.some(group => group.id === "audio_telemetry");
+      await persistAudioEnabledState(accountId, preparedAudio);
       setAudioSetupOpen(false);
       setAudioSetupName("");
       if (next.restart_required) {
-        showToast("warning", "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别");
+        showToast("warning", "Mod 功能已准备完成。当前游戏需重启一次后生效");
       } else {
-        showToast("success", "声纹识别已准备完成，下次启动会自动生效");
+        const reusedAudio = result.feature_groups.some(
+          group => group.id === "audio_telemetry" && group.reused_from_source,
+        );
+        showToast(
+          "success",
+          reusedAudio
+            ? "功能已补充完成；现有声纹未变化，已直接复用"
+            : preparedAudio
+              ? "所选 Mod 功能已准备完成，下次启动自动生效"
+              : "局内房间工具已准备完成，下次启动自动生效",
+        );
       }
     } catch (error) {
-      showToast("error", `准备识别 Mod 失败：${error}`);
+      showToast("error", `Mod 功能加工失败：${error}`);
     } finally {
       setAudioPreparing(false);
     }
@@ -2122,6 +2156,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                               setAudioSetupMode(defaults.mode);
                               setAudioSetupSource(defaults.source);
                               setAudioSetupName(defaults.name);
+                              setIncludeAudioTelemetry(true);
+                              setIncludeRoomTools(true);
                               setAudioSetupOpen(true);
                             }}
                             className="shrink-0 text-2xs font-medium text-text-secondary hover:text-text-primary"
@@ -2135,17 +2171,54 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                             <Package size={16} className="mt-0.5 shrink-0 text-accent" />
                             <div>
                               <p className="text-xs font-semibold text-text-primary">
-                                {audioModState?.update_required ? "更新识别 Mod" : "准备识别 Mod"}
+                                {audioModState?.update_required ? "更新 Mod 功能" : "Mod 功能加工"}
                               </p>
                               <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
                                 {audioModState?.update_required
                                   ? `关闭该账号游戏后，D2RHub 会先完整生成并校验新版，再原位替换“${audioModState.current_mod_name}”；名称和启动参数不变。`
-                                  : "选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。"}
+                                  : "按需选择功能组；以后补充其他组时，未变化的已有功能会直接复用。"}
                               </p>
                             </div>
                           </div>
 
-                          <div className="mt-3 flex gap-2" role="radiogroup" aria-label="识别 Mod 类型">
+                          <div className="mt-3 grid grid-cols-2 gap-2" aria-label="选择要加工的功能">
+                            <button
+                              type="button"
+                              role="checkbox"
+                              aria-checked={includeAudioTelemetry}
+                              disabled={audioPreparing}
+                              onClick={() => setIncludeAudioTelemetry(value => !value)}
+                              className={`audio-mod-choice text-left ${includeAudioTelemetry ? "is-selected" : ""}`}
+                            >
+                              <span className="flex items-center justify-between gap-2 text-xs font-semibold">
+                                <span>声纹识别</span>
+                                <span aria-hidden="true">{includeAudioTelemetry ? "✓" : ""}</span>
+                              </span>
+                              <span className="mt-0.5 block text-2xs text-text-muted">场景、掉落与恐怖区域识别</span>
+                            </button>
+                            <button
+                              type="button"
+                              role="checkbox"
+                              aria-checked={includeRoomTools}
+                              disabled={audioPreparing}
+                              onClick={() => setIncludeRoomTools(value => !value)}
+                              className={`audio-mod-choice text-left ${includeRoomTools ? "is-selected" : ""}`}
+                            >
+                              <span className="flex items-center justify-between gap-2 text-xs font-semibold">
+                                <span>局内房间工具</span>
+                                <span aria-hidden="true">{includeRoomTools ? "✓" : ""}</span>
+                              </span>
+                              <span className="mt-0.5 block text-2xs text-text-muted">快速重开、创建与加入</span>
+                            </button>
+                          </div>
+
+                          {audioSetupMode === "existing" && includeAudioTelemetry && selectedAudioSetupSource?.audio_reusable && (
+                            <p className="mt-2 rounded-lg bg-success/10 px-2.5 py-2 text-2xs leading-relaxed text-success">
+                              该源 Mod 已记录可复用声纹；若版本和参数未变化，本次不会重新生成声纹文件。
+                            </p>
+                          )}
+
+                          <div className="mt-3 flex gap-2" role="radiogroup" aria-label="Mod 来源类型">
                             <button
                               type="button"
                               role="radio"
@@ -2179,7 +2252,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                                 onChange={event => setAudioSetupSource(event.target.value)}
                                 className="h-8 w-full rounded-lg border border-border-default bg-surface-card px-2.5 text-xs text-text-primary"
                               >
-                                <option value="" disabled>请选择未经加工的原始 Mod</option>
+                                <option value="" disabled>请选择作为加工来源的 Mod</option>
                                 {!audioModState?.installed_mods.some((mod) => mod.source_eligible) && (
                                   <option value="">未找到可用的原始 Mod</option>
                                 )}
@@ -2285,12 +2358,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                                 ? audioSetupNameError === "请输入新 Mod 名称"
                                   ? "填写 Mod 名称后即可准备"
                                   : "完成上方配置后即可准备"
-                                : audioModState?.update_required ? "同名更新并替换旧版" : "一键准备并开启"}
+                                : audioModState?.update_required ? "同名更新并替换旧版" : "开始加工所选功能"}
                           </Button>
                           <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
                             {isAudioModUpgrade
-                              ? "不会拿旧版识别 Mod 再加工；会从原版或所选原始 Mod 重建，校验成功后才替换旧目录。"
-                              : "不修改源 Mod；账号参数固定配置为 -mod 名称 -txt -assettestmode 1。"}
+                              ? "先完整生成并校验，再替换旧目录；已有且未变化的功能组会直接复用。"
+                              : "不修改源 Mod；可把已加工的 Mod 作为来源，继续补充其他功能组。"}
                           </p>
                         </div>
                       ) : (
@@ -2302,6 +2375,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                               setAudioSetupMode(defaults.mode);
                               setAudioSetupSource(defaults.source);
                               setAudioSetupName(defaults.name);
+                              setIncludeAudioTelemetry(true);
+                              setIncludeRoomTools(true);
                             }
                             setAudioSetupOpen(true);
                           }}

@@ -273,6 +273,8 @@ export interface InstalledAudioMod {
   audio_ready: boolean;
   update_required: boolean;
   source_eligible: boolean;
+  feature_groups: string[];
+  audio_reusable: boolean;
 }
 
 export interface AudioModSetupState {

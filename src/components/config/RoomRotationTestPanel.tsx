@@ -440,7 +440,7 @@ export function RoomRotationTestPanel({ config, accounts, updateConfig }: Props)
       <div className="space-y-2">
         <div className="flex items-center justify-between gap-2">
           <span className="text-xs font-semibold text-text-secondary">参与账号</span>
-          <span className="text-2xs text-text-muted">所有账号需使用 r21 加工 Mod</span>
+          <span className="text-2xs text-text-muted">所有账号需使用含 r22 房间工具组的 Mod</span>
         </div>
         {rotation.primary_account_id && (
           <div className="flex flex-wrap items-center gap-2 rounded-lg border border-accent/25 bg-accent/10 px-2.5 py-2">
