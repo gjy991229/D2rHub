@@ -1,4 +1,4 @@
-import { Download, FolderOpen, Settings, ShieldAlert, Upload } from "lucide-react";
+import { Download, FileArchive, FolderOpen, Settings, ShieldAlert, Upload } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
 import type { AccountMeta } from "../../../store/types";
@@ -16,6 +16,8 @@ interface MaintenancePanelProps {
   onExport: () => void | Promise<void>;
   onImport: () => void | Promise<void>;
   onOpenLogs: () => void | Promise<void>;
+  diagnosticBusy: boolean;
+  onExportDiagnostics: () => void | Promise<void>;
   onRunSetup: () => void;
 }
 export function MaintenancePanel({
@@ -31,6 +33,8 @@ export function MaintenancePanel({
   onExport,
   onImport,
   onOpenLogs,
+  diagnosticBusy,
+  onExportDiagnostics,
   onRunSetup,
 }: MaintenancePanelProps) {
   return (
@@ -45,6 +49,17 @@ export function MaintenancePanel({
           <Button size="sm" onClick={onOpenLogs}>
             <FolderOpen size={11} className="mr-1" />
             打开日志
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between gap-3 py-1 border-t border-border-default/50 pt-3">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">导出隐私脱敏诊断包</span>
+            <p className="text-2xs text-text-muted">包含模块健康、任务时间线、配置摘要与脱敏日志，不导出 Token、账号名或用户目录</p>
+          </div>
+          <Button size="sm" loading={diagnosticBusy} onClick={onExportDiagnostics}>
+            <FileArchive size={11} className="mr-1" />
+            {diagnosticBusy ? "正在导出" : "导出诊断包"}
           </Button>
         </div>
 

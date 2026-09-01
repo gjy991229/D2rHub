@@ -24,6 +24,7 @@ export const TAURI_COMMANDS = [
   "detect_program_data_agent_path",
   "detect_saved_games_path",
   "export_accounts",
+  "export_diagnostic_bundle",
   "get_account_settings",
   "get_app_version",
   "get_audio_mod_setup_state",

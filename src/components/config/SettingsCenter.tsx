@@ -348,6 +348,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [exportAccountIds, setExportAccountIds] = useState<string[]>([]);
   const [exportPlaintextRiskAcknowledged, setExportPlaintextRiskAcknowledged] = useState(false);
   const [accountTransferBusy, setAccountTransferBusy] = useState<"export" | "import" | null>(null);
+  const [diagnosticExportBusy, setDiagnosticExportBusy] = useState(false);
 
   // Auto initialize selected account and active tab
   // Backup config for rollback when modal opens
@@ -1006,6 +1007,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
+  const handleExportDiagnostics = async () => {
+    setDiagnosticExportBusy(true);
+    try {
+      const path = await invokeCommand<string>("export_diagnostic_bundle");
+      showToast("success", `隐私脱敏诊断包已保存：${path}`);
+    } catch (error) {
+      showToast("error", `导出诊断包失败: ${error}`);
+    } finally {
+      setDiagnosticExportBusy(false);
+    }
+  };
+
   // Keyboard shortcut listener
   const handleShortcutKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, pos: string) => {
     if (e.key === "Tab") {
@@ -1358,6 +1371,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onExport={handleExportAccounts}
                 onImport={handleImportAccounts}
                 onOpenLogs={handleOpenLogs}
+                diagnosticBusy={diagnosticExportBusy}
+                onExportDiagnostics={handleExportDiagnostics}
                 onRunSetup={() => {
                   onClose();
                   onReconfigure();

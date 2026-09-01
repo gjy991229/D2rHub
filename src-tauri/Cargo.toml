@@ -51,6 +51,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 open = "5"
 hound = "3.5.1"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 ferrisetw = "1.2"

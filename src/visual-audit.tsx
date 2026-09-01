@@ -550,6 +550,8 @@ function installIpcMock() {
             finished_at_ms: Date.now() - 200_000,
           },
         ] : [];
+      case "export_diagnostic_bundle":
+        return "C:\\Users\\Player\\AppData\\Roaming\\D2RHub\\diagnostics\\D2RHub-diagnostics.zip";
       case "get_task_timeline":
         return [
           {
