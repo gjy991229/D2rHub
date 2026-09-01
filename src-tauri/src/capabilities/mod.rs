@@ -6,6 +6,7 @@
 
 mod bongo_cat;
 mod overlay_windows;
+mod room_chat_binding;
 pub(crate) mod room_automation;
 pub(crate) mod room_automation_config;
 mod supervisor;
