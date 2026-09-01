@@ -47,6 +47,7 @@ pub struct ModCapsule {
     pub default_launch_arguments: Option<String>,
     pub feature_groups: Vec<String>,
     pub processed: bool,
+    pub source_eligible: bool,
     pub update_required: bool,
     pub ready: bool,
     pub deletable: bool,
@@ -292,7 +293,7 @@ fn capsule_feature_metadata(
     scanned: &[ScannedMod],
     edition: &str,
     arguments: &str,
-) -> (Vec<String>, bool, bool) {
+) -> (Vec<String>, bool, bool, bool) {
     let active_name = active_mod_name(arguments).ok().flatten();
     let related = active_name.as_deref().and_then(|name| {
         scanned.iter().find(|entry| {
@@ -300,7 +301,7 @@ fn capsule_feature_metadata(
         })
     });
     related.map_or_else(
-        || (Vec::new(), false, false),
+        || (Vec::new(), false, false, false),
         |entry| {
             let processed =
                 !entry.installed.feature_groups.is_empty() || entry.installed.update_required;
@@ -308,6 +309,7 @@ fn capsule_feature_metadata(
                 entry.installed.feature_groups.clone(),
                 processed,
                 entry.installed.update_required,
+                entry.installed.source_eligible,
             )
         },
     )
@@ -333,6 +335,7 @@ fn build_pool(
                 default_launch_arguments: Some(entry.default_arguments.clone()),
                 feature_groups: entry.installed.feature_groups.clone(),
                 processed,
+                source_eligible: entry.installed.source_eligible,
                 update_required: entry.installed.update_required,
                 ready: true,
                 deletable: false,
@@ -341,7 +344,7 @@ fn build_pool(
         })
         .collect::<Vec<_>>();
     capsules.extend(payload.custom_entries.iter().map(|entry| {
-        let (feature_groups, processed, update_required) =
+        let (feature_groups, processed, update_required, source_eligible) =
             capsule_feature_metadata(scanned, &entry.edition, &entry.launch_arguments);
         ModCapsule {
             id: entry.id.clone(),
@@ -352,6 +355,7 @@ fn build_pool(
             default_launch_arguments: None,
             feature_groups,
             processed,
+            source_eligible,
             update_required,
             ready: true,
             deletable: true,

@@ -665,6 +665,10 @@
 }
 .recognition-capsule-copy { min-width: 0; overflow: hidden; color: var(--text-muted); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .recognition-capsule-select { min-width: 0; height: 32px; font-size: var(--text-xs); }
+.recognition-capsule-select[data-required="true"] {
+  border-color: color-mix(in srgb, var(--warning) 48%, var(--border-default));
+  background: color-mix(in srgb, var(--warning) 6%, var(--surface-card));
+}
 .recognition-monitor { padding-top: 12px; border-top: 1px solid var(--border-default); }
 .recognition-side { display: flex; flex-direction: column; gap: 10px; }
 .recognition-filters > summary { padding: 14px; }
@@ -685,6 +689,8 @@
   gap: 18px;
   padding: 2px 2px 4px;
 }
+
+.room-automation-header-actions { display: flex; align-items: center; gap: 10px; }
 
 .room-automation-header h2 {
   color: var(--text-primary);
@@ -781,7 +787,7 @@
 
 .room-automation-section,
 .room-automation-advanced {
-  padding: 11px 12px;
+  padding: 13px 14px;
 }
 
 .room-automation-section {
@@ -794,12 +800,10 @@
   display: grid;
   grid-template-columns: minmax(300px, 0.95fr) minmax(380px, 1.05fr);
   align-items: start;
-  overflow: hidden;
+  gap: 10px;
 }
 
-.room-automation-pane + .room-automation-pane {
-  border-left: 1px solid var(--border-default);
-}
+.room-automation-pane { min-width: 0; }
 
 .room-automation-section-heading {
   display: flex;
@@ -950,14 +954,15 @@
 .room-automation-account-name { color: var(--text-primary); font-weight: 650; }
 
 .room-automation-capsules {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
   padding-top: 4px;
   border-top: 1px solid var(--border-default);
 }
 
 .room-automation-capsules-heading {
+  grid-column: 1 / -1;
   padding: 7px 0 6px;
 }
 
@@ -980,11 +985,13 @@
 
 .room-automation-capsule-row {
   display: grid;
-  grid-template-columns: minmax(74px, 0.55fr) minmax(130px, 1fr);
+  grid-template-columns: minmax(64px, 0.65fr) minmax(110px, 1fr);
   align-items: center;
   gap: 6px 8px;
-  padding: 7px 0;
-  border-top: 1px solid color-mix(in srgb, var(--border-default) 64%, transparent);
+  padding: 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-hover);
 }
 
 .room-automation-capsule-row .settings-input {
@@ -1003,7 +1010,7 @@
 }
 
 .room-automation-capsule-state {
-  grid-column: 2;
+  grid-column: 1 / -1;
   color: var(--warning);
   font-size: var(--text-2xs);
   line-height: 1.35;
@@ -1103,20 +1110,6 @@
   font-size: var(--text-2xs);
   line-height: 1.4;
 }
-
-.room-automation-command-bar {
-  display: grid;
-  grid-template-columns: minmax(150px, 1fr) auto auto;
-  align-items: center;
-  gap: 8px;
-  padding-top: 2px;
-}
-
-.room-automation-command-bar > div { min-width: 0; }
-.room-automation-command-bar strong,
-.room-automation-command-bar span { display: block; }
-.room-automation-command-bar strong { color: var(--text-primary); font-size: var(--text-xs); }
-.room-automation-command-bar span { margin-top: 2px; color: var(--text-muted); font-size: var(--text-2xs); line-height: 1.35; }
 
 .room-automation-actions {
   display: flex;
@@ -1354,8 +1347,7 @@
   white-space: nowrap;
 }
 
-.mod-catalog-state { display: none; }
-.mod-catalog-state span { color: var(--success); font-size: var(--text-2xs); font-weight: 750; }
+.mod-catalog-state { display: none; color: var(--success); font-size: var(--text-2xs); font-weight: 750; }
 .mod-catalog-state small { overflow: hidden; color: var(--text-muted); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .mod-catalog-row[data-processed="true"] .mod-catalog-state,
 .mod-catalog-row[data-assigned="true"] .mod-catalog-state { display: flex; flex-direction: column; gap: 2px; }
@@ -1612,7 +1604,7 @@
   .room-automation-shortcuts,
   .room-automation-room-name-fields,
   .room-automation-password-row,
-  .room-automation-command-bar { grid-template-columns: minmax(0, 1fr); }
+  .room-automation-capsules { grid-template-columns: minmax(0, 1fr); }
   .mod-processing-source-options,
   .mod-processing-features { grid-template-columns: minmax(0, 1fr); }
   .recognition-capsule-selector { grid-template-columns: minmax(0, 1fr); }
@@ -1622,7 +1614,6 @@
   .appearance-settings-grid > * { grid-column: 1; grid-row: auto; }
   .recognition-layout { grid-template-columns: minmax(0, 1fr); }
   .room-automation-setup { grid-template-columns: minmax(0, 1fr); }
-  .room-automation-pane + .room-automation-pane { border-left: 0; border-top: 1px solid var(--border-default); }
   .mod-processing-panel { grid-template-columns: minmax(0, 1fr); }
   .mod-processing-header,
   .mod-processing-target,
@@ -1647,6 +1638,7 @@
 
 @media (max-width: 430px) {
   .room-automation-header { align-items: flex-start; }
+  .room-automation-header-actions { align-items: flex-end; flex-direction: column-reverse; }
   .room-automation-title-line { display: block; }
   .room-automation-semantic-status { margin-top: 6px; }
   .room-automation-binding-status { align-items: stretch; flex-direction: column; }

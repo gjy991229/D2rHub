@@ -1,7 +1,9 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AudioModSetupState, GlobalConfig } from "../../../store/types";
+import type { AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
+import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { ModProcessingPanel } from "./ModProcessingPanel";
 
 const readyAudioOnlyMod: AudioModSetupState = {
@@ -86,6 +88,38 @@ function baseProps(
 afterEach(cleanup);
 
 describe("ModProcessingPanel feature inheritance", () => {
+  it("opens the exact Mod selected from management instead of the target account's previous Mod", async () => {
+    const user = userEvent.setup();
+    const catalogPool: ModCapsulePool = {
+      generation: 1,
+      scanned_at: "2026-09-02T00:00:00+08:00",
+      capsules: [{
+        id: "scan:cn:mdk", edition: "CN", name: "MDK", origin: "scanned",
+        launch_arguments: "-mod MDK -txt -assettestmode 1",
+        default_launch_arguments: "-mod MDK -txt -assettestmode 1",
+        feature_groups: [], processed: false, source_eligible: true, update_required: false,
+        ready: true, deletable: false, assigned_account_ids: [],
+      }],
+      accounts: [{ account_id: "one", account_name: "Leader", edition: "CN", selected_capsule_id: null, legacy_mod_arguments: "", issue: null }],
+    };
+    const assign = vi.fn(async () => catalogPool);
+    const catalog = {
+      pool: catalogPool, loading: false, assigningAccountId: null, error: null,
+      refresh: vi.fn(async () => catalogPool), scan: vi.fn(async () => catalogPool),
+      add: vi.fn(async () => catalogPool), update: vi.fn(async () => catalogPool),
+      remove: vi.fn(async () => catalogPool), assign,
+    } as ModCapsuleController;
+    const onTargetChange = vi.fn(async () => undefined);
+    const setAudioSetupSource = vi.fn();
+    render(<ModProcessingPanel {...baseProps({ purpose: "manage", modCatalog: catalog,
+      modCapsulePool: catalogPool, onTargetChange, setAudioSetupSource })} />);
+
+    await user.click(screen.getByRole("button", { name: "加工" }));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("one", "scan:cn:mdk"));
+    expect(onTargetChange).toHaveBeenCalledWith("one");
+    expect(setAudioSetupSource).toHaveBeenCalledWith("MDK");
+  });
+
   it("locks recognition when processing was opened to enable recognition", () => {
     render(<ModProcessingPanel {...baseProps({
       audioSetupMode: "original",

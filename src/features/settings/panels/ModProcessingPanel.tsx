@@ -12,6 +12,7 @@ import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
+import { capsuleFeatureLabels } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
@@ -60,6 +61,8 @@ interface ModProcessingPanelProps {
   onPrepare: () => Promise<void>;
   onRefresh: () => Promise<void>;
   onBackToRecognition: () => void;
+  autoPrepareRequest?: number;
+  onAutoPrepareConsumed?: () => void;
 }
 
 export function ModProcessingPanel({
@@ -97,6 +100,8 @@ export function ModProcessingPanel({
   onPrepare,
   onRefresh,
   onBackToRecognition,
+  autoPrepareRequest = 0,
+  onAutoPrepareConsumed,
 }: ModProcessingPanelProps) {
   const [workspace, setWorkspace] = useState<"catalog" | "processing">(purpose === "manage" ? "catalog" : "processing");
   useEffect(() => {
@@ -119,7 +124,14 @@ export function ModProcessingPanel({
   const scannedLabel = audioModScannedAt
     ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : null;
-  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => capsule.ready) ?? [];
+  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => capsule.ready && capsule.processed) ?? [];
+  useEffect(() => {
+    if (!autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
+      || !trackingTarget.valid || audioModState?.account_id !== trackingTarget.account.id) return;
+    onAutoPrepareConsumed?.();
+    void onPrepare();
+  }, [audioModState?.account_id, audioPrepareBlockedReason, audioModStateLoading, audioPreparing,
+    autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget]);
 
   if (workspace === "catalog" && modCatalog) {
     return (
@@ -135,6 +147,7 @@ export function ModProcessingPanel({
             showToast("warning", `没有可用于加工${capsule.edition === "CN" ? "国服" : "国际服"} Mod 的已初始化账号`);
             return;
           }
+          await modCatalog.assign(target.account_id, capsule.id);
           await onTargetChange(target.account_id);
           setAudioSetupMode("existing");
           setAudioSetupSource(capsule.name);
@@ -208,9 +221,9 @@ export function ModProcessingPanel({
           {!modCapsulePoolLoading && readyCapsules.length > 0 && (
             <div className="mod-capsule-pool-list">
               {readyCapsules.map((capsule) => (
-                <span key={capsule.id} title={`${capsule.edition} · ${capsule.feature_groups.join(", ")}`}>
+                <span key={capsule.id} title={`${capsule.edition} · ${capsuleFeatureLabels(capsule).join("、")}`}>
                   <b>{capsule.name}</b>
-                  <em>{capsule.assigned_account_ids.length}</em>
+                  <em>{capsuleFeatureLabels(capsule).join("+") || "待更新"}</em>
                 </span>
               ))}
             </div>

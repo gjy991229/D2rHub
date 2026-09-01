@@ -4,6 +4,7 @@ import { Check, ChevronDown, PackagePlus } from "lucide-react";
 
 import type { AccountMeta, LaunchGroupMember, ModCapsulePool } from "../../store/types";
 import {
+  capsuleFeatureLabels,
   capsuleSelectionForAccount,
   compatibleCapsulesForAccount,
 } from "../../features/modCapsules/model";
@@ -50,7 +51,7 @@ export function AccountModEditor({
     if (!trigger) return;
     const rect = trigger.getBoundingClientRect();
     const width = 330;
-    const height = Math.min(360, 104 + Math.max(1, capsules.length) * 52);
+    const height = Math.min(280, 118 + Math.ceil(Math.max(1, capsules.length) / 3) * 34);
     const gap = 6;
     const padding = 8;
     const opensUpward = window.innerHeight - rect.bottom < height + gap + padding
@@ -113,7 +114,7 @@ export function AccountModEditor({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title={`当前 Mod：${activeLabel}；点击选择共享 Mod`}
+        title={`当前 Mod：${activeLabel}；点击选择 Mod`}
         onClick={() => setOpen((current) => !current)}
       >
         <span>{activeLabel}</span>
@@ -132,45 +133,48 @@ export function AccountModEditor({
           ref={menuRef}
           id={menuId}
           role="menu"
-          aria-label={`${account.display_name || account.id} 选择共享 Mod`}
+          aria-label={`${account.display_name || account.id} 选择 Mod`}
           className="account-mod-picker"
           data-placement={position.opensUpward ? "top" : "bottom"}
           style={{ left: position.left, top: position.top }}
         >
           <div className="account-mod-picker-heading">
-            <div><strong>选择共享 Mod</strong><span>{selection?.edition ?? "版本未确定"}</span></div>
+            <div><strong>选择 Mod</strong><span>{selection?.edition ?? "版本未确定"}</span></div>
             <button type="button" onClick={() => { close(); onOpenModManager?.(); }}>管理</button>
           </div>
-          <button
-            type="button"
-            role="menuitemradio"
-            aria-checked={!activeArguments.trim()}
-            className="account-mod-picker-option"
-            onClick={() => void choose(null, "")}
-          >
-            <span><strong>原版游戏</strong><small>不使用 Mod，也不保存“无 Mod”胶囊</small></span>
-            {!activeArguments.trim() && <Check size={13} aria-hidden="true" />}
-          </button>
-          {capsules.map((capsule) => {
-            const active = capsule.launch_arguments.trim() === activeArguments.trim();
-            return (
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={active}
-                className="account-mod-picker-option"
-                data-processed={capsule.processed ? "true" : undefined}
-                key={capsule.id}
-                onClick={() => void choose(capsule.id, capsule.launch_arguments)}
-              >
-                <span>
-                  <strong>{capsule.name}</strong>
-                  <small>{capsule.origin === "scanned" ? "游戏目录预设" : "自定义共享参数"} · {capsule.launch_arguments}</small>
-                </span>
-                {active ? <Check size={13} aria-hidden="true" /> : capsule.processed ? <em>已加工</em> : null}
-              </button>
-            );
-          })}
+          <div className="account-mod-picker-capsules">
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={!activeArguments.trim()}
+              className="account-mod-picker-capsule"
+              data-active={!activeArguments.trim() ? "true" : undefined}
+              onClick={() => void choose(null, "")}
+            >
+              原版游戏
+              {!activeArguments.trim() && <Check size={11} aria-hidden="true" />}
+            </button>
+            {capsules.map((capsule) => {
+              const active = capsule.launch_arguments.trim() === activeArguments.trim();
+              const features = capsuleFeatureLabels(capsule);
+              return (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={active}
+                  className="account-mod-picker-capsule"
+                  data-active={active ? "true" : undefined}
+                  data-processed={capsule.processed ? "true" : undefined}
+                  key={capsule.id}
+                  title={`${capsule.name}${features.length ? ` · ${features.join("、")}` : ""}`}
+                  onClick={() => void choose(capsule.id, capsule.launch_arguments)}
+                >
+                  <span>{capsule.name}</span>
+                  {active && <Check size={11} aria-hidden="true" />}
+                </button>
+              );
+            })}
+          </div>
           {capsules.length === 0 && <p className="account-mod-picker-empty">当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。</p>}
         </div>,
         document.body,

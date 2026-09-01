@@ -144,6 +144,7 @@ const capsulePool: ModCapsulePool = {
     default_launch_arguments: "-mod Rooms -txt -assettestmode 1",
     feature_groups: ["in_game_room_tools"],
     processed: true,
+    source_eligible: true,
     update_required: false,
     ready: true,
     deletable: false,
@@ -181,7 +182,31 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByText("局内房间工具是必要条件")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "启用自动跟房模块" }));
     expect(screen.queryByRole("heading", { name: "启用自动跟房" })).toBeNull();
-    expect(onRequireRoomTools).toHaveBeenCalledWith("two");
+    expect(onRequireRoomTools).toHaveBeenCalledWith("two", undefined, false);
+  });
+
+  it("aligns the room primary with an enabled recognition target while preserving participants", async () => {
+    const { gateway, saveConfig } = makeGateway();
+    const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
+    gateway.startSync = vi.fn(async (handlers) => {
+      handlers.onConfig(disabledSnapshot);
+      handlers.onStatus(idleStatus);
+      return () => undefined;
+    });
+    const readyPool: ModCapsulePool = {
+      ...capsulePool,
+      capsules: [{ ...capsulePool.capsules[0], assigned_account_ids: ["one", "two"] }],
+      accounts: capsulePool.accounts.map((entry) => ({ ...entry, selected_capsule_id: "cn:rooms" })),
+    };
+    const user = userEvent.setup();
+    render(<RoomAutomationPanel accounts={accounts} gateway={gateway} modCapsulePool={readyPool}
+      recognitionEnabled recognitionAccountId="two" />);
+
+    await user.click(await screen.findByRole("switch", { name: "启用自动跟房模块" }));
+    await waitFor(() => expect(saveConfig).toHaveBeenCalled());
+    const saved = saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
+    expect(saved.primary_account_id).toBe("two");
+    expect(saved.follower_account_ids).toEqual(["one"]);
   });
 
   it("keeps module copy local, shows a room preview, and saves with generation CAS", async () => {
@@ -198,55 +223,12 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
   });
 
-  it("keeps manual waiting active while allowing the next-sequence primary action", async () => {
-    const waitingStatus: RoomAutomationWorkflowStatus = {
-      ...idleStatus,
-      revision: 8,
-      task_id: 12,
-      running: false,
-      phase: "waiting",
-      recovery_action: null,
-      waiting_mode: { mode: "manual" },
-      room_name: "run-007",
-      room_sequence: 7,
-      attempt: 1,
-      primary_account_id: "one",
-      follower_account_ids: ["two"],
-    };
-    const { gateway } = makeGateway(waitingStatus);
-    const user = userEvent.setup();
+  it("removes the redundant manual room action bar", async () => {
+    const { gateway } = makeGateway();
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
-
-    expect(await screen.findByText(/手动模式下可反复创建新房/)).toBeTruthy();
-    expect((screen.getByLabelText("房名开头") as HTMLInputElement).disabled).toBe(false);
-    expect(screen.queryByRole("button", { name: /应用配置/ })).toBeNull();
-    const nextPrimary = screen.getByRole("button", { name: /主账号创建房间/ });
-    expect((nextPrimary as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole("button", { name: /让跟随账号加入/ }) as HTMLButtonElement).disabled).toBe(false);
-    expect(screen.queryByText("本次任务")).toBeNull();
-    await user.click(nextPrimary);
-    await waitFor(() => expect(gateway.startPrimary).toHaveBeenCalledTimes(1));
-  });
-
-  it("does not allow manual actions during automatic waiting", async () => {
-    const automaticStatus: RoomAutomationWorkflowStatus = {
-      ...idleStatus,
-      revision: 9,
-      task_id: 13,
-      running: true,
-      phase: "waiting",
-      waiting_mode: { mode: "automatic", delay_secs: 5 },
-      room_name: "run-007",
-      room_sequence: 7,
-      primary_account_id: "one",
-      follower_account_ids: ["two"],
-    };
-    const { gateway } = makeGateway(automaticStatus);
-    render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
-
     expect(await screen.findByRole("heading", { name: "自动跟房" })).toBeTruthy();
-    expect((screen.getByRole("button", { name: /主账号创建房间/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /让跟随账号加入/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /主账号创建房间/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /让跟随账号加入/ })).toBeNull();
   });
 
   it("installs the F13 binding automatically when an enabled module needs it", async () => {

@@ -361,6 +361,7 @@ const modCapsulePool: ModCapsulePool = {
     default_launch_arguments: "-mod jcy-tz -txt -assettestmode 1",
     feature_groups: ["audio_telemetry", "in_game_room_tools"],
     processed: true,
+    source_eligible: true,
     update_required: false,
     ready: true,
     deletable: false,

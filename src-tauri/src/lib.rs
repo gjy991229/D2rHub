@@ -131,8 +131,8 @@ pub fn run() {
                         let scale_factor = monitor.scale_factor();
                         let size = monitor.size();
                         let logical_width = (size.width as f64) / scale_factor;
-                        let default_width = logical_width * 0.625;
-                        let default_height = default_width * 0.656;
+                        let default_width = logical_width * 0.618;
+                        let default_height = default_width * 0.618;
                         use tauri::LogicalSize;
                         let _ = win.set_size(LogicalSize::new(default_width, default_height));
                         let _ = win.center();

@@ -58,6 +58,7 @@ export function useAudioModuleController({
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
+  const [autoPrepareRequest, setAutoPrepareRequest] = useState(0);
   const cacheRef = useRef(new Map<string, { state: AudioModSetupState; scannedAt: number }>());
   const setupAccountId = activeTab === "mod-processing"
     ? modProcessingTargetId || trackingTargetId
@@ -262,14 +263,9 @@ export function useAudioModuleController({
     setAudioSetupName("");
     setAudioModStateLoading(true);
     try {
-      const cached = cacheRef.current.get(accountId);
-      const next = cached?.state
-        ?? await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
-      if (!cached) cacheState(accountId, next);
-      else {
-        setAudioModState(next);
-        setAudioModScannedAt(cached.scannedAt);
-      }
+      cacheRef.current.delete(accountId);
+      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      cacheState(accountId, next);
       applySetupDefaults(next);
     } catch (error) {
       showToast("error", `无法检查账号的加工 Mod：${error}`);
@@ -278,7 +274,7 @@ export function useAudioModuleController({
     }
   };
 
-  const handleAudioToggle = async (enabled: boolean) => {
+  const handleAudioToggle = async (enabled: boolean, preferredAccountId?: string) => {
     if (!enabled) {
       if (trackingTargetId) await persistAudioEnabledState(trackingTargetId, false);
       else updateConfig((next) => { next.rune_audio_enabled = false; });
@@ -286,7 +282,7 @@ export function useAudioModuleController({
       await invokeCommand("stop_rune_audio_monitor").catch(() => undefined);
       return;
     }
-    const accountId = trackingTargetId || initializedAccounts[0]?.id;
+    const accountId = preferredAccountId || trackingTargetId || initializedAccounts[0]?.id;
     if (!accountId) {
       showToast("warning", "请先初始化一个账号");
       return;
@@ -336,6 +332,21 @@ export function useAudioModuleController({
   const handleOpenModProcessing = (purpose: ModProcessingPurpose = "manage", accountId?: string) => {
     setModProcessingTargetId(accountId || trackingTargetId || initializedAccounts[0]?.id || "");
     handleOpenAudioSetup(purpose);
+    setActiveTab("mod-processing");
+  };
+
+  const handlePrepareSelectedMod = (
+    accountId: string,
+    purpose: Exclude<ModProcessingPurpose, "manage">,
+    autoStart = false,
+  ) => {
+    cacheRef.current.delete(accountId);
+    setModProcessingTargetId(accountId);
+    setAudioSetupPurpose(purpose);
+    setIncludeAudioTelemetry(purpose === "recognition");
+    setIncludeRoomTools(purpose === "room-tools");
+    setAudioSetupOpen(true);
+    if (autoStart) setAutoPrepareRequest((request) => request + 1);
     setActiveTab("mod-processing");
   };
 
@@ -469,12 +480,15 @@ export function useAudioModuleController({
     isAudioEnableRequested,
     isAudioRecognitionActive,
     audioPrepareBlockedReason,
+    autoPrepareRequest,
+    consumeAutoPrepareRequest: () => setAutoPrepareRequest(0),
     refreshAudioModState,
     handleAudioTargetChange,
     handleModProcessingTargetChange,
     handleAudioToggle,
     handleOpenAudioSetup,
     handleOpenModProcessing,
+    handlePrepareSelectedMod,
     handlePrepareAudioMod,
     toggleAudioDiagnosticRecording,
   };

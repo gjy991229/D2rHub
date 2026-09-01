@@ -328,6 +328,7 @@ export interface ModCapsule {
   default_launch_arguments: string | null;
   feature_groups: string[];
   processed: boolean;
+  source_eligible: boolean;
   update_required: boolean;
   ready: boolean;
   deletable: boolean;

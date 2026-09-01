@@ -7,6 +7,15 @@ import type {
 export const AUDIO_TELEMETRY_CAPSULE_FEATURE = "audio_telemetry";
 export const ROOM_TOOLS_CAPSULE_FEATURE = "in_game_room_tools";
 
+const FEATURE_LABELS: Record<string, string> = {
+  [AUDIO_TELEMETRY_CAPSULE_FEATURE]: "声纹识别",
+  [ROOM_TOOLS_CAPSULE_FEATURE]: "局内房间工具",
+};
+
+export function capsuleFeatureLabels(capsule: ModCapsule): string[] {
+  return capsule.feature_groups.map((feature) => FEATURE_LABELS[feature] ?? feature);
+}
+
 export function capsuleSelectionForAccount(
   pool: ModCapsulePool | null,
   accountId: string,

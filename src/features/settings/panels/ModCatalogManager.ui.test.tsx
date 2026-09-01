@@ -18,6 +18,7 @@ const pool: ModCapsulePool = {
     default_launch_arguments: "-mod Plain -txt -assettestmode 1",
     feature_groups: [],
     processed: false,
+    source_eligible: true,
     update_required: false,
     ready: true,
     deletable: false,
@@ -31,6 +32,7 @@ const pool: ModCapsulePool = {
     default_launch_arguments: "-mod Ready -txt -assettestmode 1",
     feature_groups: ["audio_telemetry"],
     processed: true,
+    source_eligible: true,
     update_required: false,
     ready: true,
     deletable: false,
@@ -62,7 +64,9 @@ describe("ModCatalogManager", () => {
     render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
 
     expect(screen.getAllByText("游戏目录预设 · 名称由文件夹决定")).toHaveLength(2);
-    expect(screen.getByText("已加工")).toBeTruthy();
+    const processed = screen.getByText("Ready").closest("article");
+    expect(processed?.textContent).toContain("已加工");
+    expect(processed?.textContent).toContain("声纹识别");
     expect(screen.getByRole("button", { name: "加工" })).toBeTruthy();
     expect(screen.queryByTitle("删除自定义参数")).toBeNull();
   });

@@ -30,6 +30,7 @@ import { useAudioModuleController } from "../../features/settings/useAudioModule
 import { useAuxiliaryWindowActions } from "../../features/settings/useAuxiliaryWindowActions";
 import { useMaintenanceController } from "../../features/settings/useMaintenanceController";
 import { useModCapsulePool } from "../../features/modCapsules/useModCapsulePool";
+import { useModFeatureCoordination } from "../../features/settings/useModFeatureCoordination";
 import {
   isSettingsTabId,
   type SettingsTabId,
@@ -68,14 +69,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
   const trackingTargetId = trackingTarget.valid ? trackingTarget.account.id : "";
 
-  // Tab and search state
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const { windowPlacementBusy, locateWindow, recoverAllWindows } = useAuxiliaryWindowActions(
     config?.app_language,
   );
 
-  // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
   const navigationSaveRef = useRef(false);
   const [navigationSaving, setNavigationSaving] = useState(false);
@@ -103,7 +102,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     };
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
-  // Game settings edit states (per account)
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [gameSettings, setGameSettings] = useState<SettingsMap>({});
   const [gameSettingsLoading, setGameSettingsLoading] = useState(false);
@@ -112,15 +110,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [gameSettingsSaving, setGameSettingsSaving] = useState(false);
   const [gameSettingsTab, setGameSettingsTab] = useState<"launch" | "game_display" | "game_graphics" | "game_audio" | "game_gameplay" | "game_automap">("launch");
 
-  // Account card values draft states
   const [accountNicknameDraft, setAccountNicknameDraft] = useState("");
   const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
   const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
 
-  // Shortcut key recording state (shared hook)
   const { recordingPos, setRecordingPos } = useShortcutRecorder();
 
-  // Local detected paths
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
   const {
     exportPickerOpen,
@@ -138,7 +133,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     exportDiagnostics: handleExportDiagnostics,
   } = useMaintenanceController(accounts, loadAccounts);
 
-  // Auto initialize selected account and active tab
   // Backup config for rollback when modal opens
   useEffect(() => {
     if (open && config) {
@@ -155,7 +149,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   }, [open]);
 
-  // Auto initialize selected account and active tab
   useEffect(() => {
     if (open) {
       if (initialTab?.startsWith("mod-processing") || isSettingsTabId(initialTab)) {
@@ -164,7 +157,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         setActiveTab("accounts");
       }
 
-      // Pre-select account if provided
       const activeAccounts = accounts.filter(a => a.initialized);
       if (initialAccountId) {
         setSelectedAccountId(initialAccountId);
@@ -174,7 +166,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         setSelectedAccountId(accounts[0].id);
       }
 
-      // Detect paths
       (async () => {
         const cnSavedGames = await detectSavedGamesPath();
         const globalSavedGames = await detectGlobalSavedGamesPath();
@@ -192,7 +183,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   }, [open, initialTab, initialAccountId]);
 
-  // Load account parameters draft when selected account changes
   useEffect(() => {
     if (selectedAccountId) {
       const acc = accounts.find(a => a.id === selectedAccountId);
@@ -444,12 +434,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     isAudioEnableRequested,
     isAudioRecognitionActive,
     audioPrepareBlockedReason,
+    autoPrepareRequest,
+    consumeAutoPrepareRequest,
     refreshAudioModState,
     handleAudioTargetChange,
     handleModProcessingTargetChange,
     handleAudioToggle,
     handleOpenAudioSetup,
     handleOpenModProcessing,
+    handlePrepareSelectedMod,
     handlePrepareAudioMod,
     toggleAudioDiagnosticRecording,
   } = useAudioModuleController({
@@ -467,6 +460,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const modCapsules = useModCapsulePool({
     active: open && ["automation", "mod-processing", "room-automation"].includes(activeTab),
     onAssigned: loadAccounts,
+  });
+  const modFeatures = useModFeatureCoordination({
+    accounts, trackingTargetId, modCatalog: modCapsules, toggleAudio: handleAudioToggle,
+    openProcessing: handlePrepareSelectedMod,
+    onGlobalCommitted: (saved) => setOriginalConfig(JSON.parse(JSON.stringify(saved))),
   });
 
   const updateGameSetting = (key: string, value: unknown) => {
@@ -649,7 +647,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       onClose={handleClose}
       onTabChange={handleTabChange}
     >
-            {/* 1. Paths Tab */}
             {activeTab === "paths" && config && (
               <PathsPanel
                 config={config}
@@ -662,7 +659,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Non-disableable multi-instance core. */}
             {activeTab === "accounts" && (
               <AccountsPanel
                 accounts={accounts}
@@ -691,12 +687,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Required launch strategy for the multi-instance core. */}
             {activeTab === "agent" && config && (
               <LaunchStrategyPanel config={config} updateConfig={updateConfig} />
             )}
 
-            {/* Required application appearance preferences. */}
             {activeTab === "appearance" && config && (
               <AppearancePanel
                 draft={appearanceDraft ?? appearanceFromConfig(config)}
@@ -710,7 +704,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Optional desktop overlay capability. */}
             {activeTab === "overlays" && config && (
               <OverlayPanel
                 config={config}
@@ -722,7 +715,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Optional audio recognition and run statistics module. */}
             {activeTab === "automation" && config && (
               <AutomationPanel
                 config={config}
@@ -767,7 +759,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 isAudioRecognitionActive={isAudioRecognitionActive}
                 audioPrepareBlockedReason={audioPrepareBlockedReason}
                 onAudioTargetChange={handleAudioTargetChange}
-                onAudioToggle={handleAudioToggle}
+                onAudioToggle={modFeatures.toggleRecognition}
+                onPrepareModCapsule={(accountId, capsuleId) => {
+                  void modFeatures.prepareFeature(accountId, capsuleId, "recognition");
+                }}
                 onPrepareAudioMod={handlePrepareAudioMod}
                 onToggleDiagnosticRecording={toggleAudioDiagnosticRecording}
                 onClose={handleClose}
@@ -815,10 +810,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                   await modCapsules.refresh();
                 }}
                 onBackToRecognition={() => setActiveTab("automation")}
+                autoPrepareRequest={autoPrepareRequest}
+                onAutoPrepareConsumed={consumeAutoPrepareRequest}
               />
             )}
 
-            {/* Optional keyboard-only room creation and follower joining module. */}
             {activeTab === "room-automation" && (
               <RoomAutomationPanel
                 accounts={accounts}
@@ -828,11 +824,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 modCapsulePoolError={modCapsules.error}
                 assigningAccountId={modCapsules.assigningAccountId}
                 onAssignModCapsule={modCapsules.assign}
-                onRequireRoomTools={(accountId) => { handleOpenModProcessing("room-tools", accountId); }}
+                recognitionEnabled={!!config?.rune_audio_enabled}
+                recognitionAccountId={trackingTargetId}
+                onRequireRoomTools={(accountId, capsuleId, autoStart) => capsuleId
+                  ? void modFeatures.prepareFeature(accountId, capsuleId, "room-tools", autoStart)
+                  : handleOpenModProcessing("room-tools", accountId)}
+                onSaveLaunchScheme={modFeatures.saveRoomLaunchScheme}
               />
             )}
 
-            {/* Optional desktop companion module. */}
             {activeTab === "pet" && config && (
               <PetPanel
                 config={config}
@@ -843,7 +843,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Required shortcut routing for multi-instance windows. */}
             {activeTab === "shortcuts" && config && (
               <ShortcutsPanel
                 config={config}
@@ -855,12 +854,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {/* Required application maintenance and compatibility tools. */}
             {activeTab === "tasks" && config && (
               <TaskRuntimePanel language={config.app_language} />
             )}
 
-            {/* Required application maintenance and compatibility tools. */}
             {activeTab === "advanced" && config && (
               <MaintenancePanel
                 accounts={accounts}

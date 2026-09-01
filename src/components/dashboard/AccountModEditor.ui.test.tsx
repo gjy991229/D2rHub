@@ -30,6 +30,7 @@ const pool: ModCapsulePool = {
     default_launch_arguments: "-mod Shared -txt -assettestmode 1",
     feature_groups: ["audio_telemetry"],
     processed: true,
+    source_eligible: true,
     update_required: false,
     ready: true,
     deletable: false,

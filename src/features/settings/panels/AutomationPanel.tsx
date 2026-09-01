@@ -6,7 +6,7 @@ import {
   Play,
   RotateCw,
 } from "lucide-react";
-import type { CSSProperties, Dispatch, SetStateAction } from "react";
+import { useEffect, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
@@ -16,6 +16,7 @@ import {
   AUDIO_TELEMETRY_CAPSULE_FEATURE,
   capsuleSelectionForAccount,
   compatibleCapsulesForAccount,
+  selectedCapsuleForAccount,
 } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
@@ -46,6 +47,7 @@ interface AutomationPanelProps {
   modCapsulePool?: ModCapsulePool | null;
   assigningCapsuleAccountId?: string | null;
   onAssignModCapsule?: (accountId: string, capsuleId: string) => Promise<unknown>;
+  onPrepareModCapsule?: (accountId: string, capsuleId: string) => void;
   audioSetupOpen: boolean;
   showModProcessing?: boolean;
   onOpenModProcessing?: () => void;
@@ -74,7 +76,7 @@ interface AutomationPanelProps {
   isAudioRecognitionActive: boolean;
   audioPrepareBlockedReason: string;
   onAudioTargetChange: (accountId: string) => Promise<void>;
-  onAudioToggle: (enabled: boolean) => Promise<void>;
+  onAudioToggle: (enabled: boolean) => Promise<boolean | void>;
   onPrepareAudioMod: () => Promise<void>;
   onToggleDiagnosticRecording: () => Promise<void>;
   onClose: () => void;
@@ -93,6 +95,7 @@ export function AutomationPanel({
   modCapsulePool = null,
   assigningCapsuleAccountId = null,
   onAssignModCapsule,
+  onPrepareModCapsule,
   audioSetupOpen,
   showModProcessing = false,
   onOpenModProcessing = () => undefined,
@@ -133,7 +136,23 @@ export function AutomationPanel({
   const trackingAccountId = trackingTarget.valid ? trackingTarget.account.id : "";
   const audioCapsules = compatibleCapsulesForAccount(modCapsulePool, trackingAccountId)
     .filter((capsule) => capsule.feature_groups.includes(AUDIO_TELEMETRY_CAPSULE_FEATURE));
+  const processingCandidates = compatibleCapsulesForAccount(modCapsulePool, trackingAccountId)
+    .filter((capsule) => capsule.source_eligible);
   const audioCapsuleSelection = capsuleSelectionForAccount(modCapsulePool, trackingAccountId);
+  const selectedCapsule = selectedCapsuleForAccount(modCapsulePool, trackingAccountId);
+  const selectedAudioReady = !!selectedCapsule?.feature_groups.includes(AUDIO_TELEMETRY_CAPSULE_FEATURE);
+  const [modSelectionRequired, setModSelectionRequired] = useState(false);
+  useEffect(() => {
+    if (selectedAudioReady) setModSelectionRequired(false);
+  }, [selectedAudioReady]);
+  const requestAudioToggle = (enabled: boolean) => {
+    void handleAudioToggle(enabled).then((handled) => {
+      if (enabled && handled === false) {
+        setModSelectionRequired(true);
+        showToast("info", audioCapsules.length ? "请先选择一个已加工声纹的 Mod" : "请选择一个要加工声纹的 Mod");
+      }
+    });
+  };
   const featureCopy = isEnglish
     ? {
         title: "Mod features",
@@ -176,7 +195,7 @@ export function AutomationPanel({
         disabled={audioPreparing || audioModStateLoading}
         ariaLabel="启用音频声纹自动识别"
         descriptionId="rune-audio-readiness"
-        onChange={handleAudioToggle}
+        onChange={requestAudioToggle}
       />
     </div>
 
@@ -238,7 +257,7 @@ export function AutomationPanel({
                 if (firstAccount) void handleAudioTargetChange(firstAccount.id);
                 return;
               }
-              void handleAudioToggle(true);
+              requestAudioToggle(true);
             }}
           >
             {!hasInitializedAudioAccount
@@ -314,21 +333,25 @@ export function AutomationPanel({
                 ? `${audioModState.current_mod_name} · ${audioModState.feature_groups.length} 个功能模块`
                 : "当前账号还没有可用的 D2RHub 加工 Mod"}
           </span>
-          {audioCapsules.length > 0 && (
-            <select
-              className="settings-input recognition-capsule-select"
-              aria-label="从公共胶囊池选择声纹 Mod"
-              value={audioCapsuleSelection?.selected_capsule_id ?? ""}
-              disabled={assigningCapsuleAccountId === trackingAccountId || !onAssignModCapsule}
-              onChange={(event) => {
-                const capsule = audioCapsules.find((candidate) => candidate.id === event.target.value);
-                if (capsule) void onAssignModCapsule?.(trackingAccountId, capsule.id);
-              }}
-            >
-              <option value="">公共胶囊池</option>
-              {audioCapsules.map((capsule) => <option value={capsule.id} key={capsule.id}>{capsule.name}</option>)}
-            </select>
-          )}
+          <select
+            className="settings-input recognition-capsule-select"
+            aria-label="选择 Mod"
+            value={selectedAudioReady ? audioCapsuleSelection?.selected_capsule_id ?? "" : ""}
+            data-required={modSelectionRequired ? "true" : undefined}
+            disabled={assigningCapsuleAccountId === trackingAccountId
+              || (audioCapsules.length ? !onAssignModCapsule : !onPrepareModCapsule)}
+            onChange={(event) => {
+              const capsule = (audioCapsules.length ? audioCapsules : processingCandidates)
+                .find((candidate) => candidate.id === event.target.value);
+              if (!capsule) return;
+              if (audioCapsules.length) void onAssignModCapsule?.(trackingAccountId, capsule.id);
+              else onPrepareModCapsule?.(trackingAccountId, capsule.id);
+            }}
+          >
+            <option value="">{audioCapsules.length ? "选择 Mod" : "选择要加工声纹的 Mod"}</option>
+            {(audioCapsules.length ? audioCapsules : processingCandidates)
+              .map((capsule) => <option value={capsule.id} key={capsule.id}>{capsule.name}</option>)}
+          </select>
           <Button size="sm" variant="secondary" className="shrink-0" onClick={onOpenModProcessing}>
             <Package size={12} />
             {audioModState?.ready ? "管理 Mod" : "前往加工"}
