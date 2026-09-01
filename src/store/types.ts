@@ -32,58 +32,25 @@ export interface WindowPositionPreset {
   y: number;
 }
 
-export interface RoomRotationPoint {
-  x: number;
-  y: number;
-}
-
-export interface RoomRotationUiProfile {
-  save_and_exit: RoomRotationPoint;
-  character_select_lobby: RoomRotationPoint;
-  create_tab: RoomRotationPoint;
-  join_tab: RoomRotationPoint;
-  game_name_field: RoomRotationPoint;
-  password_field: RoomRotationPoint;
-  submit_button: RoomRotationPoint;
-  create_game_name_field: RoomRotationPoint;
-  create_password_field: RoomRotationPoint;
-  create_submit_button: RoomRotationPoint;
-  join_game_name_field: RoomRotationPoint;
-  join_password_field: RoomRotationPoint;
-  join_submit_button: RoomRotationPoint;
-  dialog_confirm: RoomRotationPoint;
-}
-
 export interface RoomRotationFlowStrategy {
-  click_lobby_after_exit: boolean;
-  escape_to_exit_ms: number;
-  exit_load_ms: number;
-  lobby_load_ms: number;
   step_delay_ms: number;
   character_delay_ms: number;
-  ui_profile: RoomRotationUiProfile;
 }
 
 export interface RoomRotationConfig {
   enabled: boolean;
+  chat_f13_auto_patch_enabled: boolean;
   primary_account_id: string;
   follower_account_ids: string[];
+  auto_followers_enabled: boolean;
+  auto_followers_delay_secs: number;
   shortcut: string;
   join_shortcut: string;
   name_prefix: string;
   password: string;
   next_sequence: number;
   sequence_width: number;
-  input_mode: "background" | "cursor_guard" | "focus";
-  background_click_strategy: "post_top" | "send_top" | "post_child" | "send_child";
-  background_text_strategy: "post_keys_paced" | "post_ctrl_v" | "send_ctrl_v" | "post_paste" | "send_paste";
-  cursor_lease_ms: number;
-  frontend_timeout_ms: number;
-  create_timeout_ms: number;
-  ui_delay_ms: number;
-  follower_exit_delay_ms: number;
-  duplicate_retries: number;
-  ui_profile: RoomRotationUiProfile;
+  background_text_strategy: "post_keys" | "send_keys";
   strategy_version: number;
   standard_flow: RoomRotationFlowStrategy;
   direct_lobby_flow: RoomRotationFlowStrategy;

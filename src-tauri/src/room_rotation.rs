@@ -1,8 +1,6 @@
-use crate::commands::global_config::{
-    RoomRotationConfig, RoomRotationFlowStrategy, RoomRotationPoint,
-};
+use crate::commands::global_config::{RoomRotationConfig, RoomRotationFlowStrategy};
 use crate::state::SharedState;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -10,13 +8,6 @@ use tauri::{Emitter, Manager};
 
 const STATUS_EVENT: &str = "room-rotation-status";
 const MAX_GAME_NAME_LENGTH: usize = 15;
-const INPUT_TEST_PREVIEW_MS: u64 = 1_000;
-const PRODUCTION_TEXT_STRATEGY: &str = "post_ctrl_v";
-
-fn client_coordinate(length: i32, permille: u16) -> i32 {
-    let last_pixel = length.saturating_sub(1).max(0);
-    (length.saturating_mul(i32::from(permille.min(1_000))) / 1_000).min(last_pixel)
-}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct RoomRotationStatus {
@@ -29,18 +20,6 @@ pub struct RoomRotationStatus {
     pub follower_account_ids: Vec<String>,
     pub started_at: Option<String>,
     pub last_error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RoomRotationInputTestRequest {
-    account_id: String,
-    action: String,
-    sample: Option<String>,
-    click_variant: Option<String>,
-    text_variant: Option<String>,
-    flow_strategy: Option<String>,
-    point_override: Option<RoomRotationPoint>,
 }
 
 impl Default for RoomRotationStatus {
@@ -143,6 +122,12 @@ fn room_name(config: &RoomRotationConfig, sequence: u32) -> Result<String, Strin
             "房间名“{value}”超过 D2R 的 {MAX_GAME_NAME_LENGTH} 字符限制"
         ));
     }
+    if !value
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || character == '-' || character == '_')
+    {
+        return Err("后台房间名只支持英文字母、数字、短横线和下划线".to_string());
+    }
     Ok(value)
 }
 
@@ -194,6 +179,7 @@ fn validate_room_tools_accounts(
     state: &SharedState,
     config: &RoomRotationConfig,
 ) -> Result<(), String> {
+    crate::chat_key_binding::ensure_room_rotation_chat_binding_ready(state)?;
     crate::audio_mod::validate_in_game_room_tools_for_account(state, &config.primary_account_id)?;
     for account_id in &config.follower_account_ids {
         crate::audio_mod::validate_in_game_room_tools_for_account(state, account_id)?;
@@ -235,6 +221,24 @@ fn validate_follower_runtime(
     Ok(followers)
 }
 
+fn validate_automatic_follower_runtime(
+    app: &tauri::AppHandle,
+    config: &RoomRotationConfig,
+) -> Result<Vec<(String, u32)>, String> {
+    validate_base_config(config)?;
+    let state = app.state::<SharedState>();
+    validate_room_tools_accounts(&state, config)?;
+    // Automatic continuation is deliberately background-only. It verifies
+    // that the primary process still exists, but never requires it to retain
+    // physical foreground focus during the configured delay.
+    resolve_pid(&state, &config.primary_account_id)?;
+    let mut followers = Vec::with_capacity(config.follower_account_ids.len());
+    for account_id in &config.follower_account_ids {
+        followers.push((account_id.clone(), resolve_pid(&state, account_id)?));
+    }
+    Ok(followers)
+}
+
 fn commit_next_sequence(app: &tauri::AppHandle, sequence: u32) -> Result<(), String> {
     let state = app.state::<SharedState>();
     let saved = {
@@ -259,6 +263,67 @@ fn commit_next_sequence(app: &tauri::AppHandle, sequence: u32) -> Result<(), Str
 enum WorkflowCompletion {
     PrimaryReady { room_name: String, sequence: u32 },
     FollowersComplete,
+}
+
+fn continue_with_automatic_followers(
+    app: &tauri::AppHandle,
+    generation: u64,
+    config: RoomRotationConfig,
+    completion: WorkflowCompletion,
+) -> Result<WorkflowCompletion, String> {
+    let (room_name, sequence) = match completion {
+        WorkflowCompletion::PrimaryReady {
+            room_name,
+            sequence,
+        } => (room_name, sequence),
+        other => return Ok(other),
+    };
+    if !config.auto_followers_enabled {
+        return Ok(WorkflowCompletion::PrimaryReady {
+            room_name,
+            sequence,
+        });
+    }
+
+    ensure_active(generation)?;
+    let delay_secs = config.auto_followers_delay_secs.clamp(2, 60);
+    let status = {
+        let mut current = runtime().lock().unwrap_or_else(|error| error.into_inner());
+        if current.generation != generation || current.cancelled {
+            return Err("换房流程已取消".to_string());
+        }
+        // Keep this room available for a manual retry if automatic follower
+        // validation or delivery fails after the primary has already created it.
+        current.pending_room_name = Some(room_name.clone());
+        current.pending_sequence = Some(sequence);
+        current.status.running = true;
+        current.status.phase = "waiting_auto_followers".to_string();
+        current.status.message = format!("主号已提交建房，{delay_secs} 秒后自动让小号并行加入");
+        current.status.room_name = Some(room_name.clone());
+        current.status.last_error = None;
+        current.status.clone()
+    };
+    crate::logger::log_msg("INFO", "RoomRotation", &status.message);
+    emit_status(app, &status);
+
+    sleep_interruptible(generation, Duration::from_secs(delay_secs))?;
+    let followers = validate_automatic_follower_runtime(app, &config)?;
+    update_status(app, generation, |status| {
+        status.phase = "joining_followers".to_string();
+        status.message = format!(
+            "延迟结束，正在让 {} 个小号并行加入 {room_name}",
+            followers.len()
+        );
+        status.attempt = 1;
+    });
+    run_follower_workflow(
+        app.clone(),
+        generation,
+        config,
+        followers,
+        room_name,
+        sequence,
+    )
 }
 
 fn finish(app: &tauri::AppHandle, generation: u64, result: Result<WorkflowCompletion, String>) {
@@ -322,67 +387,34 @@ struct RoomFormInput<'a> {
 
 #[cfg(target_os = "windows")]
 fn fill_credentials(
-    app: &tauri::AppHandle,
+    _app: &tauri::AppHandle,
     driver: &win::WindowDriver,
     hwnd: isize,
     flow: &RoomRotationFlowStrategy,
     input: RoomFormInput<'_>,
     generation: u64,
 ) -> Result<(), String> {
-    // Keep each form transaction together so parallel followers cannot replace
-    // one another's clipboard or cursor target. Cursor-guard/background modes
-    // stay unfocused; only the explicit focus fallback activates the window.
     let update_password =
         password_needs_update(input.account_id, input.pid, input.create, input.password);
     let form = driver.begin_form_input(hwnd)?;
-    let (tab, game_name_field, password_field) = if input.create {
-        (
-            flow.ui_profile.create_tab,
-            flow.ui_profile.create_game_name_field,
-            flow.ui_profile.create_password_field,
-        )
-    } else {
-        (
-            flow.ui_profile.join_tab,
-            flow.ui_profile.join_game_name_field,
-            flow.ui_profile.join_password_field,
-        )
-    };
-    // The r8 Mod uses the same toolbar button to open and close a form. Normal
-    // rotations open it here, while a duplicate-name retry keeps the create
-    // form open after dismissing the dialog and must not toggle it closed.
+    // The Mod's PausePanel gateway gives the native room form its normal first
+    // field focus without any mouse input. F13 is installed as CfgChat's second
+    // binding, so it enters D2R's real text-input state without submitting the
+    // form like Enter would. Ordinary background key messages then reach the
+    // focused room field before gameplay hotkeys.
     if input.open_form {
-        form.click(tab)?;
-        sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
+        form.open_room_form_with_keyboard(input.create, flow.step_delay_ms)?;
     }
-    form.click(game_name_field)?;
+    form.enter_native_chat_mode(flow.step_delay_ms)?;
+    form.replace_text(input.name, flow.character_delay_ms)?;
     sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
-    form.paste_text(
-        app,
-        input.name,
-        flow.character_delay_ms,
-        PRODUCTION_TEXT_STRATEGY,
-    )?;
+    form.advance_to_password()?;
     sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     if update_password {
-        form.click(password_field)?;
-        sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
-        form.paste_text(
-            app,
-            input.password,
-            flow.character_delay_ms,
-            PRODUCTION_TEXT_STRATEGY,
-        )?;
+        form.replace_text(input.password, flow.character_delay_ms)?;
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     }
-    // The join form can display the posted password text before D2R copies it
-    // into the value used by validation. A final guarded click on that field
-    // reproduces the user-confirmed commit gesture without changing its text.
-    if !input.create {
-        form.click(password_field)?;
-        sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
-    }
-    form.key(win::VK_RETURN, PRODUCTION_TEXT_STRATEGY)?;
+    form.submit()?;
     if update_password {
         remember_applied_password(input.account_id, input.pid, input.create, input.password);
     }
@@ -397,11 +429,7 @@ fn run_primary_workflow(
     primary_pid: u32,
     retry_sequence: Option<u32>,
 ) -> Result<WorkflowCompletion, String> {
-    let driver = win::WindowDriver::new(
-        &config.input_mode,
-        &config.background_click_strategy,
-        config.cursor_lease_ms,
-    );
+    let driver = win::WindowDriver::new(&config.background_text_strategy);
     let primary_hwnd = crate::commands::system::find_game_hwnd(primary_pid)
         .ok_or_else(|| "无法找到主号 D2R 窗口".to_string())?;
     let flow = config.flow_for_account(&config.primary_account_id);
@@ -411,12 +439,12 @@ fn run_primary_workflow(
             status.phase = "retrying_primary".to_string();
             status.message = "正在确认重名弹窗并使用下一个序号重试".to_string();
         });
-        driver.click(primary_hwnd, flow.ui_profile.dialog_confirm)?;
+        driver.press_return(primary_hwnd)?;
         sleep_interruptible(generation, Duration::from_millis(flow.step_delay_ms))?;
     } else {
         update_status(&app, generation, |status| {
             status.phase = "opening_primary_room_form".to_string();
-            status.message = "正在从局内工具栏打开主号创建房间面板".to_string();
+            status.message = "正在用纯键盘入口打开主号创建房间面板".to_string();
         });
     }
 
@@ -451,32 +479,19 @@ fn run_primary_workflow(
 
 #[cfg(target_os = "windows")]
 fn run_one_follower(
-    app: &tauri::AppHandle,
+    app: tauri::AppHandle,
     generation: u64,
     config: RoomRotationConfig,
     account_id: String,
     pid: u32,
     room_name: String,
 ) -> Result<(), String> {
-    // Focus mode uses process-global keyboard and mouse state. Keep the whole
-    // per-window workflow together so parallel workers cannot type into each
-    // other's window. CursorGuard/background modes still run concurrently.
-    static FOCUS_WORKFLOW_LOCK: Mutex<()> = Mutex::new(());
-    let _focus_guard = (config.input_mode == "focus").then(|| {
-        FOCUS_WORKFLOW_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner())
-    });
-    let driver = win::WindowDriver::new(
-        &config.input_mode,
-        &config.background_click_strategy,
-        config.cursor_lease_ms,
-    );
+    let driver = win::WindowDriver::new(&config.background_text_strategy);
     let hwnd = crate::commands::system::find_game_hwnd(pid)
         .ok_or_else(|| format!("无法找到小号“{account_id}”的 D2R 窗口"))?;
     let flow = config.flow_for_account(&account_id);
     fill_credentials(
-        app,
+        &app,
         &driver,
         hwnd,
         flow,
@@ -519,7 +534,7 @@ fn run_follower_workflow(
         let worker_account = account_id.clone();
         handles.push(std::thread::spawn(move || {
             let result = run_one_follower(
-                &worker_app,
+                worker_app,
                 generation,
                 worker_config,
                 worker_account.clone(),
@@ -545,14 +560,6 @@ fn run_follower_workflow(
     }
     for handle in handles {
         let _ = handle.join();
-    }
-    if config.input_mode == "focus" {
-        if let Some(primary_hwnd) = crate::commands::system::find_game_hwnd(resolve_pid(
-            &app.state::<SharedState>(),
-            &config.primary_account_id,
-        )?) {
-            crate::commands::system::bring_window_to_foreground_raw(primary_hwnd);
-        }
     }
     if failures.is_empty() {
         Ok(WorkflowCompletion::FollowersComplete)
@@ -641,10 +648,13 @@ pub fn start_primary(app: tauri::AppHandle) -> Result<RoomRotationStatus, String
             let result = run_primary_workflow(
                 worker_app.clone(),
                 generation,
-                config,
+                config.clone(),
                 primary_pid,
                 retry_sequence,
-            );
+            )
+            .and_then(|completion| {
+                continue_with_automatic_followers(&worker_app, generation, config, completion)
+            });
             finish(&worker_app, generation, result);
         })
     {
@@ -771,264 +781,36 @@ pub fn get_room_rotation_status() -> RoomRotationStatus {
         .clone()
 }
 
-#[tauri::command]
-pub fn test_room_rotation_input(
-    app: tauri::AppHandle,
-    request: RoomRotationInputTestRequest,
-) -> Result<String, String> {
-    let RoomRotationInputTestRequest {
-        account_id,
-        action,
-        sample,
-        click_variant,
-        text_variant,
-        flow_strategy,
-        point_override,
-    } = request;
-    #[cfg(target_os = "windows")]
-    {
-        let state = app.state::<SharedState>();
-        crate::audio_mod::validate_in_game_room_tools_for_account(&state, &account_id)?;
-        let (config, pid) = {
-            let stored = state.config.read();
-            let config = stored
-                .as_ref()
-                .ok_or_else(|| "尚未加载全局配置".to_string())?
-                .room_rotation
-                .clone();
-            let pid = resolve_pid(&state, &account_id)?;
-            (config, pid)
-        };
-        let hwnd = crate::commands::system::find_game_hwnd(pid)
-            .ok_or_else(|| format!("无法找到账号“{account_id}”的 D2R 窗口"))?;
-        let flow = match flow_strategy.as_deref() {
-            Some("direct_lobby") => config.direct_lobby_flow.clone(),
-            Some("standard") => config.standard_flow.clone(),
-            _ => config.flow_for_account(&account_id).clone(),
-        };
-        if let Some(message) = win::test_background_key_action(hwnd, &action)? {
-            return Ok(format!("账号“{account_id}”：{message}"));
-        }
-        let original = win::foreground_window();
-        let driver = if let Some(strategy) = click_variant.as_deref() {
-            win::WindowDriver::for_click_test(strategy)
-        } else if text_variant.is_some() {
-            win::WindowDriver::new(
-                "cursor_guard",
-                &config.background_click_strategy,
-                config.cursor_lease_ms,
-            )
-        } else {
-            win::WindowDriver::new(
-                &config.input_mode,
-                &config.background_click_strategy,
-                config.cursor_lease_ms,
-            )
-        };
-        let configured_point = match action.as_str() {
-            "save_exit" => Some(flow.ui_profile.save_and_exit),
-            "lobby" => Some(flow.ui_profile.character_select_lobby),
-            "create_tab" => Some(flow.ui_profile.create_tab),
-            "join_tab" => Some(flow.ui_profile.join_tab),
-            "create_game_name_field" => Some(flow.ui_profile.create_game_name_field),
-            "create_password_field" => Some(flow.ui_profile.create_password_field),
-            "create_submit" => Some(flow.ui_profile.create_submit_button),
-            "join_game_name_field" => Some(flow.ui_profile.join_game_name_field),
-            "join_password_field" => Some(flow.ui_profile.join_password_field),
-            "join_submit" => Some(flow.ui_profile.join_submit_button),
-            "confirm" => Some(flow.ui_profile.dialog_confirm),
-            _ => None,
-        };
-        let tested_point = configured_point.map(|point| point_override.unwrap_or(point));
-        let mut click_report = None;
-        let text_strategy = text_variant
-            .as_deref()
-            .unwrap_or(&config.background_text_strategy);
-        if !matches!(
-            text_strategy,
-            "post_keys_paced"
-                | "post_keys_1ms"
-                | "post_ctrl_v"
-                | "send_ctrl_v"
-                | "post_paste"
-                | "send_paste"
-        ) {
-            return Err("未知的后台填字方案".to_string());
-        }
-        let mut text_report = None;
-        match action.as_str() {
-            "escape" => driver.key(hwnd, win::VK_ESCAPE)?,
-            "save_exit"
-            | "lobby"
-            | "create_tab"
-            | "join_tab"
-            | "create_game_name_field"
-            | "create_password_field"
-            | "create_submit"
-            | "join_game_name_field"
-            | "join_password_field"
-            | "join_submit"
-            | "confirm" => {
-                let point = tested_point.ok_or_else(|| "缺少点击测试坐标".to_string())?;
-                click_report = Some(driver.click_report(hwnd, point)?);
-            }
-            "create_name" | "join_name" => {
-                let form = driver.begin_form_input(hwnd)?;
-                let (tab, game_name_field) = if action == "create_name" {
-                    (
-                        flow.ui_profile.create_tab,
-                        flow.ui_profile.create_game_name_field,
-                    )
-                } else {
-                    (
-                        flow.ui_profile.join_tab,
-                        flow.ui_profile.join_game_name_field,
-                    )
-                };
-                form.click(tab)?;
-                std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
-                form.click(game_name_field)?;
-                std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
-                let value = sample.unwrap_or_else(|| "d2rtest123".to_string());
-                form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
-                std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
-                form.click(tab)?;
-                text_report = Some(win::background_text_strategy_label(text_strategy));
-            }
-            "create_password_text" | "join_password_text" | "password_text" => {
-                let form = driver.begin_form_input(hwnd)?;
-                let create = action != "join_password_text";
-                let (tab, password_field) = if create {
-                    (
-                        flow.ui_profile.create_tab,
-                        flow.ui_profile.create_password_field,
-                    )
-                } else {
-                    (
-                        flow.ui_profile.join_tab,
-                        flow.ui_profile.join_password_field,
-                    )
-                };
-                form.click(tab)?;
-                std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
-                form.click(password_field)?;
-                std::thread::sleep(Duration::from_millis(flow.step_delay_ms));
-                let value = sample.unwrap_or_else(|| config.password.clone());
-                form.paste_text(&app, &value, flow.character_delay_ms, text_strategy)?;
-                std::thread::sleep(Duration::from_millis(INPUT_TEST_PREVIEW_MS));
-                form.click(tab)?;
-                text_report = Some(win::background_text_strategy_label(text_strategy));
-            }
-            _ => return Err("未知的后台输入测试动作".to_string()),
-        }
-        if driver.focuses_windows() && original != 0 {
-            crate::commands::system::bring_window_to_foreground_raw(original);
-        }
-        if let Some(point) = tested_point {
-            let (pixel_x, pixel_y) = win::client_point(hwnd, point)?;
-            let report = click_report.ok_or_else(|| "未生成点击诊断结果".to_string())?;
-            Ok(format!(
-                "{}：X {:.1}%、Y {:.1}% → 客户区 ({pixel_x}, {pixel_y}) px；{} HWND=0x{:X}",
-                report.strategy_label,
-                f32::from(point.x) / 10.0,
-                f32::from(point.y) / 10.0,
-                if report.used_child {
-                    "命中子窗口"
-                } else {
-                    "D2R 主窗口"
-                },
-                report.target_hwnd,
-            ))
-        } else if let Some(text_report) = text_report {
-            let focus_report = if driver.focuses_windows() {
-                "短暂聚焦回退"
-            } else {
-                "未主动激活窗口"
-            };
-            Ok(format!(
-                "已向账号“{account_id}”发送测试动作：{action}；填字={text_report}；{focus_report}"
-            ))
-        } else {
-            Ok(format!("已向账号“{account_id}”发送测试动作：{action}"))
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (
-            app,
-            account_id,
-            action,
-            sample,
-            click_variant,
-            text_variant,
-            flow_strategy,
-            point_override,
-        );
-        Err("后台输入测试仅支持 Windows".to_string())
-    }
-}
-
 #[cfg(target_os = "windows")]
 mod win {
-    use super::{client_coordinate, RoomRotationPoint, MAX_GAME_NAME_LENGTH};
-    use std::sync::{Mutex, MutexGuard};
+    use super::MAX_GAME_NAME_LENGTH;
 
-    pub const VK_RETURN: u16 = 0x0D;
-    pub const VK_ESCAPE: u16 = 0x1B;
-    const VK_CONTROL: u16 = 0x11;
-    const VK_A: u16 = 0x41;
-    const VK_V: u16 = 0x56;
-    const VK_BACK: u16 = 0x08;
-    const VK_END: u16 = 0x23;
-    const VK_TAB: u16 = 0x09;
-    const VK_SHIFT: u16 = 0x10;
-    const VK_SPACE: u16 = 0x20;
-    const VK_LEFT: u16 = 0x25;
-    const VK_UP: u16 = 0x26;
-    const VK_RIGHT: u16 = 0x27;
-    const VK_DOWN: u16 = 0x28;
-    const VK_OEM_MINUS: u16 = 0xBD;
     const WM_KEYDOWN: u32 = 0x0100;
     const WM_KEYUP: u32 = 0x0101;
-    const WM_MOUSEMOVE: u32 = 0x0200;
-    const WM_LBUTTONDOWN: u32 = 0x0201;
-    const WM_LBUTTONUP: u32 = 0x0202;
-    const WM_PASTE: u32 = 0x0302;
-    const MK_LBUTTON: usize = 0x0001;
-    const KEYEVENTF_KEYUP: u32 = 0x0002;
-    const MOUSEEVENTF_LEFTDOWN: u32 = 0x0002;
-    const MOUSEEVENTF_LEFTUP: u32 = 0x0004;
-    const CWP_SKIPINVISIBLE: u32 = 0x0001;
-    const CWP_SKIPDISABLED: u32 = 0x0002;
-    const CWP_SKIPTRANSPARENT: u32 = 0x0004;
     const SMTO_BLOCK: u32 = 0x0001;
     const SMTO_ABORTIFHUNG: u32 = 0x0002;
     const SMTO_ERRORONEXIT: u32 = 0x0020;
+    const VK_BACK: u16 = 0x08;
+    const VK_TAB: u16 = 0x09;
+    const VK_RETURN: u16 = 0x0D;
+    const VK_SHIFT: u16 = 0x10;
+    const VK_ESCAPE: u16 = 0x1B;
+    const VK_END: u16 = 0x23;
+    const VK_LEFT: u16 = 0x25;
+    const VK_RIGHT: u16 = 0x27;
+    const VK_F13: u16 = 0x7C;
+    const VK_OEM_MINUS: u16 = 0xBD;
     const MAPVK_VK_TO_VSC: u32 = 0;
-    // D2R may sample key state instead of consuming every queued key message.
-    // Keep each synthetic key down long enough to cross a rendered frame and
-    // leave a release gap so repeated digits such as `00` are not coalesced.
-    const FORM_KEY_DOWN_MS: u64 = 30;
-    const FORM_KEY_UP_GAP_MS: u64 = 10;
-    const FORM_FOCUS_SETTLE_MS: u64 = 80;
-
-    static GLOBAL_INPUT_LOCK: Mutex<()> = Mutex::new(());
-
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct Point {
-        x: i32,
-        y: i32,
-    }
-
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    struct Rect {
-        left: i32,
-        top: i32,
-        right: i32,
-        bottom: i32,
-    }
+    const KEY_DOWN_HOLD_MS: u64 = 14;
+    const MIN_CHARACTER_GAP_MS: u64 = 10;
+    const PUNCTUATION_GAP_MS: u64 = 18;
+    const FIELD_CLEAR_SETTLE_MS: u64 = 24;
+    const CHAT_MODE_SETTLE_MS: u64 = 120;
+    const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
+    // The native fields accept at most 15 characters. One extra Backspace is
+    // enough to guarantee an empty field after moving to End.
+    const FIELD_CLEAR_COUNT: usize = MAX_GAME_NAME_LENGTH + 1;
+    const ROOM_FORM_SETTLE_MS: u64 = 200;
 
     extern "system" {
         fn PostMessageW(hWnd: isize, Msg: u32, wParam: usize, lParam: isize) -> i32;
@@ -1041,335 +823,142 @@ mod win {
             uTimeout: u32,
             lpdwResult: *mut usize,
         ) -> isize;
-        fn ChildWindowFromPointEx(hWndParent: isize, Point: Point, uFlags: u32) -> isize;
-        fn MapWindowPoints(
-            hWndFrom: isize,
-            hWndTo: isize,
-            lpPoints: *mut Point,
-            cPoints: u32,
-        ) -> i32;
         fn MapVirtualKeyW(uCode: u32, uMapType: u32) -> u32;
-        fn GetClientRect(hWnd: isize, lpRect: *mut Rect) -> i32;
-        fn ClientToScreen(hWnd: isize, lpPoint: *mut Point) -> i32;
         fn IsIconic(hWnd: isize) -> i32;
         fn GetForegroundWindow() -> isize;
         fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
-        fn GetCursorPos(lpPoint: *mut Point) -> i32;
-        fn GetClipCursor(lpRect: *mut Rect) -> i32;
-        fn ClipCursor(lpRect: *const Rect) -> i32;
-        fn SetCursorPos(X: i32, Y: i32) -> i32;
-        fn keybd_event(bVk: u8, bScan: u8, dwFlags: u32, dwExtraInfo: usize);
-        fn mouse_event(dwFlags: u32, dx: u32, dy: u32, dwData: u32, dwExtraInfo: usize);
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum InputMode {
-        Background,
-        CursorGuard,
-        Focus,
-    }
-
-    #[derive(Clone, Copy, PartialEq, Eq)]
-    enum BackgroundClickStrategy {
-        PostTop,
-        SendTop,
-        PostChild,
-        SendChild,
-    }
-
-    impl BackgroundClickStrategy {
-        fn from_value(value: &str) -> Self {
-            match value {
-                "send_top" => Self::SendTop,
-                "post_child" => Self::PostChild,
-                "send_child" => Self::SendChild,
-                _ => Self::PostTop,
-            }
-        }
-
-        fn uses_child(self) -> bool {
-            matches!(self, Self::PostChild | Self::SendChild)
-        }
-
-        fn is_synchronous(self) -> bool {
-            matches!(self, Self::SendTop | Self::SendChild)
-        }
-
-        fn label(self) -> &'static str {
-            match self {
-                Self::PostTop => "A 异步主窗口",
-                Self::SendTop => "B 同步主窗口",
-                Self::PostChild => "C 异步命中窗口",
-                Self::SendChild => "D 同步命中窗口",
-            }
-        }
     }
 
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum BackgroundTextStrategy {
-        PostKeysPaced,
-        PostCtrlV,
-        SendCtrlV,
-        PostPaste,
-        SendPaste,
+        PostKeys,
+        SendKeys,
     }
 
     impl BackgroundTextStrategy {
         fn from_value(value: &str) -> Self {
             match value {
-                "post_keys_paced" | "post_keys_1ms" => Self::PostKeysPaced,
-                "send_ctrl_v" => Self::SendCtrlV,
-                "post_paste" => Self::PostPaste,
-                "send_paste" => Self::SendPaste,
-                "post_ctrl_v" => Self::PostCtrlV,
-                _ => Self::PostKeysPaced,
+                "send_keys" | "send_keys_chat" | "send_paste" => Self::SendKeys,
+                _ => Self::PostKeys,
             }
         }
 
         fn is_synchronous(self) -> bool {
-            matches!(self, Self::SendCtrlV | Self::SendPaste)
+            matches!(self, Self::SendKeys)
         }
-
-        fn uses_paste_message(self) -> bool {
-            matches!(self, Self::PostPaste | Self::SendPaste)
-        }
-
-        fn uses_fast_keys(self) -> bool {
-            self == Self::PostKeysPaced
-        }
-
-        fn label(self) -> &'static str {
-            match self {
-                Self::PostKeysPaced => "L 后台跨帧逐字",
-                Self::PostCtrlV => "H 异步 Ctrl+V",
-                Self::SendCtrlV => "I 同步 Ctrl+V",
-                Self::PostPaste => "J 异步 WM_PASTE",
-                Self::SendPaste => "K 同步 WM_PASTE",
-            }
-        }
-    }
-
-    pub(super) fn background_text_strategy_label(value: &str) -> &'static str {
-        BackgroundTextStrategy::from_value(value).label()
-    }
-
-    pub struct ClickReport {
-        pub strategy_label: String,
-        pub target_hwnd: isize,
-        pub used_child: bool,
     }
 
     pub struct WindowDriver {
-        mode: InputMode,
-        background_click_strategy: BackgroundClickStrategy,
-        cursor_lease_ms: u64,
+        background_text_strategy: BackgroundTextStrategy,
     }
 
     pub(super) struct FormInputSession<'a> {
         driver: &'a WindowDriver,
         hwnd: isize,
-        original_hwnd: Option<isize>,
-        _guard: MutexGuard<'static, ()>,
     }
 
     impl FormInputSession<'_> {
-        fn ensure_foreground(&self) -> Result<(), String> {
-            if activate_form_window(self.hwnd) {
-                Ok(())
-            } else {
-                Err("无法激活目标 D2R 窗口，已停止表单操作".to_string())
-            }
-        }
-
-        pub fn click(&self, point: RoomRotationPoint) -> Result<(), String> {
-            let (x, y) = client_point(self.hwnd, point)?;
-            match self.driver.mode {
-                InputMode::Background => {
-                    background_click(self.hwnd, x, y, self.driver.background_click_strategy)
-                        .map(|_| ())
-                }
-                InputMode::CursorGuard => {
-                    guarded_cursor_click_unlocked(self.hwnd, x, y, self.driver.cursor_lease_ms)
-                        .map(|_| ())
-                }
-                InputMode::Focus => {
-                    self.ensure_foreground()?;
-                    guarded_real_click(self.hwnd, x, y)
-                }
-            }
-        }
-
-        fn replace_real_text(&self, value: &str, character_delay_ms: u64) -> Result<(), String> {
-            validate_text_value(value)?;
-            self.ensure_foreground()?;
-            clear_real_text();
-            let character_delay_ms = character_delay_ms.clamp(1, 250);
-            for character in value.chars() {
-                real_character(character)?;
-                std::thread::sleep(std::time::Duration::from_millis(character_delay_ms));
-            }
+        pub fn enter_native_chat_mode(&self, step_delay_ms: u64) -> Result<(), String> {
+            let step = step_delay_ms.clamp(60, 500);
+            deliver_background_key(
+                self.hwnd,
+                VK_F13,
+                false,
+                self.driver.background_text_strategy,
+                20,
+            )?;
+            // F13 changes CfgChat's global input routing. Its key messages can
+            // return before that state is visible to the next room-field key,
+            // so keep a small state-transition guard independent of UI speed.
+            std::thread::sleep(std::time::Duration::from_millis(
+                step.max(CHAT_MODE_SETTLE_MS),
+            ));
             Ok(())
         }
 
-        pub fn paste_text(
+        pub fn open_room_form_with_keyboard(
             &self,
-            app: &tauri::AppHandle,
-            value: &str,
-            fallback_character_delay_ms: u64,
-            text_strategy: &str,
+            create: bool,
+            step_delay_ms: u64,
         ) -> Result<(), String> {
-            use tauri_plugin_clipboard_manager::ClipboardExt;
+            let step = step_delay_ms.clamp(60, 500);
+            deliver_background_key(
+                self.hwnd,
+                VK_ESCAPE,
+                false,
+                self.driver.background_text_strategy,
+                20,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(step));
 
-            validate_text_value(value)?;
-            let strategy = BackgroundTextStrategy::from_value(text_strategy);
-            if strategy.uses_fast_keys() {
-                return match self.driver.mode {
-                    InputMode::Background | InputMode::CursorGuard => {
-                        replace_background_text_paced(self.hwnd, value, fallback_character_delay_ms)
-                    }
-                    InputMode::Focus => self.replace_real_text(value, 1),
-                };
-            }
-
-            let previous_text = app.clipboard().read_text().ok();
-            if let Err(error) = app.clipboard().write_text(value) {
-                return if self.driver.mode == InputMode::Focus {
-                    self.replace_real_text(value, fallback_character_delay_ms)
-                        .map_err(|fallback_error| {
-                            format!("写入剪贴板失败（{error}），键盘回退也失败：{fallback_error}")
-                        })
-                } else {
-                    Err(format!("写入剪贴板失败，无法执行后台粘贴：{error}"))
-                };
-            }
-
-            let result = (|| -> Result<(), String> {
-                match self.driver.mode {
-                    InputMode::Background | InputMode::CursorGuard => {
-                        clear_background_text(self.hwnd, strategy.is_synchronous())?;
-                        if !value.is_empty() {
-                            deliver_background_paste(self.hwnd, strategy)?;
-                        }
-                        Ok(())
-                    }
-                    InputMode::Focus => {
-                        self.ensure_foreground()?;
-                        clear_real_text();
-                        if !value.is_empty() {
-                            real_key_event(VK_CONTROL, 0);
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                FORM_KEY_UP_GAP_MS,
-                            ));
-                            real_key_fast(VK_V);
-                            real_key_event(VK_CONTROL, KEYEVENTF_KEYUP);
-                        }
-                        Ok(())
-                    }
-                }
-            })();
-            let clipboard_settle_ms = if strategy.is_synchronous() { 60 } else { 180 };
-            std::thread::sleep(std::time::Duration::from_millis(clipboard_settle_ms));
-            if let Some(previous_text) = previous_text {
-                let _ = app.clipboard().write_text(previous_text);
-            }
-            result
-        }
-
-        pub fn key(&self, vk: u16, text_strategy: &str) -> Result<(), String> {
-            match self.driver.mode {
-                InputMode::Background | InputMode::CursorGuard => deliver_background_key(
+            let direction = if create { VK_LEFT } else { VK_RIGHT };
+            for _ in 0..GATEWAY_DIRECTION_REPETITIONS {
+                deliver_background_key(
                     self.hwnd,
-                    vk,
+                    direction,
                     false,
-                    BackgroundTextStrategy::from_value(text_strategy).is_synchronous(),
-                )?,
-                InputMode::Focus => {
-                    self.ensure_foreground()?;
-                    real_key(vk);
-                }
+                    self.driver.background_text_strategy,
+                    20,
+                )?;
+                std::thread::sleep(std::time::Duration::from_millis(step));
             }
+            deliver_background_key(
+                self.hwnd,
+                VK_RETURN,
+                false,
+                self.driver.background_text_strategy,
+                20,
+            )?;
+            std::thread::sleep(std::time::Duration::from_millis(step));
+            // The hidden gateway closes PausePanel and opens a timer-driven
+            // native room panel. Give D2R several frames to finish that panel
+            // transition before F13 and text messages enter the queue.
+            std::thread::sleep(std::time::Duration::from_millis(ROOM_FORM_SETTLE_MS));
             Ok(())
         }
-    }
 
-    impl Drop for FormInputSession<'_> {
-        fn drop(&mut self) {
-            if let Some(original_hwnd) = self.original_hwnd {
-                if original_hwnd != 0 && original_hwnd != self.hwnd {
-                    crate::commands::system::bring_window_to_foreground_raw(original_hwnd);
-                }
-            }
+        pub fn submit(&self) -> Result<(), String> {
+            deliver_background_key(
+                self.hwnd,
+                VK_RETURN,
+                false,
+                self.driver.background_text_strategy,
+                20,
+            )
+        }
+
+        pub fn advance_to_password(&self) -> Result<(), String> {
+            deliver_background_key(
+                self.hwnd,
+                VK_TAB,
+                false,
+                self.driver.background_text_strategy,
+                20,
+            )
+        }
+
+        pub fn replace_text(&self, value: &str, character_delay_ms: u64) -> Result<(), String> {
+            replace_background_text(
+                self.hwnd,
+                value,
+                character_delay_ms,
+                self.driver.background_text_strategy,
+            )
         }
     }
 
     impl WindowDriver {
-        pub fn new(
-            input_mode: &str,
-            background_click_strategy: &str,
-            cursor_lease_ms: u64,
-        ) -> Self {
+        pub fn new(background_text_strategy: &str) -> Self {
             Self {
-                mode: match input_mode {
-                    "cursor_guard" => InputMode::CursorGuard,
-                    "focus" => InputMode::Focus,
-                    _ => InputMode::Background,
-                },
-                background_click_strategy: BackgroundClickStrategy::from_value(
-                    background_click_strategy,
+                background_text_strategy: BackgroundTextStrategy::from_value(
+                    background_text_strategy,
                 ),
-                cursor_lease_ms: cursor_lease_ms.clamp(4, 50),
             }
-        }
-
-        pub fn for_click_test(strategy: &str) -> Self {
-            let cursor_lease_ms = match strategy {
-                "cursor_guard_8" => Some(8),
-                "cursor_guard_16" => Some(16),
-                "cursor_guard_32" => Some(32),
-                _ => None,
-            };
-            if let Some(cursor_lease_ms) = cursor_lease_ms {
-                Self {
-                    mode: InputMode::CursorGuard,
-                    background_click_strategy: BackgroundClickStrategy::PostTop,
-                    cursor_lease_ms,
-                }
-            } else {
-                Self {
-                    mode: InputMode::Background,
-                    background_click_strategy: BackgroundClickStrategy::from_value(strategy),
-                    cursor_lease_ms: 16,
-                }
-            }
-        }
-
-        pub fn focuses_windows(&self) -> bool {
-            self.mode == InputMode::Focus
         }
 
         pub(super) fn begin_form_input(&self, hwnd: isize) -> Result<FormInputSession<'_>, String> {
             self.validate_target(hwnd)?;
-            let guard = GLOBAL_INPUT_LOCK
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let original_hwnd = if self.mode == InputMode::Focus {
-                let original_hwnd = foreground_window();
-                if !activate_form_window(hwnd) {
-                    if original_hwnd != 0 && original_hwnd != hwnd {
-                        crate::commands::system::bring_window_to_foreground_raw(original_hwnd);
-                    }
-                    return Err("无法激活目标 D2R 窗口，未执行表单操作".to_string());
-                }
-                Some(original_hwnd)
-            } else {
-                None
-            };
-            Ok(FormInputSession {
-                driver: self,
-                hwnd,
-                original_hwnd,
-                _guard: guard,
-            })
+            Ok(FormInputSession { driver: self, hwnd })
         }
 
         fn validate_target(&self, hwnd: isize) -> Result<(), String> {
@@ -1382,136 +971,41 @@ mod win {
             Ok(())
         }
 
-        fn prepare(&self, hwnd: isize) -> Result<(), String> {
+        pub fn press_return(&self, hwnd: isize) -> Result<(), String> {
             self.validate_target(hwnd)?;
-            if self.mode == InputMode::Focus {
-                crate::commands::system::bring_window_to_foreground_raw(hwnd);
-                std::thread::sleep(std::time::Duration::from_millis(120));
-            }
-            Ok(())
-        }
-
-        pub fn key(&self, hwnd: isize, vk: u16) -> Result<(), String> {
-            self.prepare(hwnd)?;
-            match self.mode {
-                InputMode::Background | InputMode::CursorGuard => {
-                    deliver_background_key(hwnd, vk, false, false)?
-                }
-                InputMode::Focus => real_key(vk),
-            }
-            Ok(())
-        }
-
-        pub fn click(&self, hwnd: isize, point: RoomRotationPoint) -> Result<(), String> {
-            self.click_report(hwnd, point).map(|_| ())
-        }
-
-        pub fn click_report(
-            &self,
-            hwnd: isize,
-            point: RoomRotationPoint,
-        ) -> Result<ClickReport, String> {
-            self.prepare(hwnd)?;
-            let (x, y) = client_point(hwnd, point)?;
-            match self.mode {
-                InputMode::Background => {
-                    background_click(hwnd, x, y, self.background_click_strategy)
-                }
-                InputMode::CursorGuard => guarded_cursor_click(hwnd, x, y, self.cursor_lease_ms),
-                InputMode::Focus => {
-                    real_click(hwnd, x, y)?;
-                    Ok(ClickReport {
-                        strategy_label: "前台物理输入".to_string(),
-                        target_hwnd: hwnd,
-                        used_child: false,
-                    })
-                }
-            }
+            deliver_background_key(hwnd, VK_RETURN, false, self.background_text_strategy, 20)
         }
     }
 
-    pub(super) fn client_point(
+    fn replace_background_text(
         hwnd: isize,
-        point: RoomRotationPoint,
-    ) -> Result<(i32, i32), String> {
-        let mut rect = Rect::default();
-        if unsafe { GetClientRect(hwnd, &mut rect) } == 0 {
-            return Err("无法读取 D2R 客户区尺寸".to_string());
-        }
-        let width = rect.right.saturating_sub(rect.left);
-        let height = rect.bottom.saturating_sub(rect.top);
-        if width <= 0 || height <= 0 {
-            return Err("D2R 客户区尺寸无效".to_string());
-        }
-        Ok((
-            client_coordinate(width, point.x),
-            client_coordinate(height, point.y),
-        ))
-    }
-
-    fn make_lparam(x: i32, y: i32) -> isize {
-        let packed = (u32::try_from(x).unwrap_or_default() & 0xFFFF)
-            | ((u32::try_from(y).unwrap_or_default() & 0xFFFF) << 16);
-        packed as isize
-    }
-
-    pub(super) fn test_background_key_action(
-        hwnd: isize,
-        action: &str,
-    ) -> Result<Option<String>, String> {
-        let Some(spec) = action.strip_prefix("key_") else {
-            return Ok(None);
-        };
-        let Some((delivery, key_name)) = spec.split_once('_') else {
-            return Err("后台按键测试动作格式无效".to_string());
-        };
-        let synchronous = match delivery {
-            "post" => false,
-            "send" => true,
-            _ => return Err("未知的后台按键投递方案".to_string()),
-        };
-        let (vk, shift, label) = match key_name {
-            "escape" => (VK_ESCAPE, false, "Esc"),
-            "tab" => (VK_TAB, false, "Tab"),
-            "shift_tab" => (VK_TAB, true, "Shift+Tab"),
-            "left" => (VK_LEFT, false, "←"),
-            "up" => (VK_UP, false, "↑"),
-            "right" => (VK_RIGHT, false, "→"),
-            "down" => (VK_DOWN, false, "↓"),
-            "space" => (VK_SPACE, false, "Space"),
-            "enter" => (VK_RETURN, false, "Enter"),
-            _ => return Err("未知的后台按键".to_string()),
-        };
-        if hwnd == 0 || unsafe { IsIconic(hwnd) } != 0 {
-            return Err("目标 D2R 窗口不存在或已最小化".to_string());
-        }
-        deliver_background_key(hwnd, vk, shift, synchronous)?;
-        Ok(Some(format!(
-            "已用{}投递 {label}，未移动鼠标、未激活窗口",
-            if synchronous {
-                "同步 SendMessageTimeout"
-            } else {
-                "异步 PostMessage"
-            }
-        )))
-    }
-
-    fn deliver_background_key(
-        hwnd: isize,
-        vk: u16,
-        shift: bool,
-        synchronous: bool,
+        value: &str,
+        character_delay_ms: u64,
+        strategy: BackgroundTextStrategy,
     ) -> Result<(), String> {
-        if shift {
-            deliver_key_message(hwnd, VK_SHIFT, true, synchronous)?;
-            std::thread::sleep(std::time::Duration::from_millis(12));
+        validate_text_value(value)?;
+        let key_gap_ms = character_delay_ms.clamp(MIN_CHARACTER_GAP_MS, 250);
+
+        // CfgChat's native text-input state suppresses gameplay bindings before
+        // these ordinary key messages reach the currently focused room field.
+        deliver_background_key(hwnd, VK_END, false, strategy, key_gap_ms)?;
+        for _ in 0..FIELD_CLEAR_COUNT {
+            // Keep the key-down pulse, but do not add a release gap
+            // between consecutive Backspaces. This is the largest avoidable
+            // delay in every field replacement.
+            deliver_background_key(hwnd, VK_BACK, false, strategy, 0)?;
         }
-        deliver_key_message(hwnd, vk, true, synchronous)?;
-        std::thread::sleep(std::time::Duration::from_millis(35));
-        deliver_key_message(hwnd, vk, false, synchronous)?;
-        if shift {
-            std::thread::sleep(std::time::Duration::from_millis(12));
-            deliver_key_message(hwnd, VK_SHIFT, false, synchronous)?;
+        // D2R occasionally consumed the first value key while the final
+        // Backspace was still being applied by the native text controller.
+        std::thread::sleep(std::time::Duration::from_millis(FIELD_CLEAR_SETTLE_MS));
+        for character in value.chars() {
+            let (vk, shift) = character_key(character)?;
+            let release_gap_ms = if matches!(character, '-' | '_') {
+                key_gap_ms.max(PUNCTUATION_GAP_MS)
+            } else {
+                key_gap_ms
+            };
+            deliver_background_key(hwnd, vk, shift, strategy, release_gap_ms)?;
         }
         Ok(())
     }
@@ -1523,94 +1017,39 @@ mod win {
             '0'..='9' => Ok((character as u16, false)),
             '-' => Ok((VK_OEM_MINUS, false)),
             '_' => Ok((VK_OEM_MINUS, true)),
-            _ => Err(format!("不支持输入字符：{character}")),
+            _ => Err(format!("后台原生聊天态输入暂不支持字符：{character}")),
         }
     }
 
-    fn deliver_background_key_paced(
+    fn deliver_background_key(
         hwnd: isize,
         vk: u16,
         shift: bool,
-        release_gap_ms: u64,
-    ) -> Result<(), String> {
-        if shift {
-            deliver_key_message(hwnd, VK_SHIFT, true, false)?;
-        }
-        deliver_key_message(hwnd, vk, true, false)?;
-        std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_DOWN_MS));
-        deliver_key_message(hwnd, vk, false, false)?;
-        if shift {
-            deliver_key_message(hwnd, VK_SHIFT, false, false)?;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(
-            release_gap_ms.clamp(5, 250),
-        ));
-        Ok(())
-    }
-
-    fn replace_background_text_paced(
-        hwnd: isize,
-        value: &str,
-        release_gap_ms: u64,
-    ) -> Result<(), String> {
-        // Move to the end and erase the entire bounded field without Ctrl+A,
-        // because D2R may ignore synthetic modifier state in a background window.
-        deliver_background_key_paced(hwnd, VK_END, false, release_gap_ms)?;
-        for _ in 0..MAX_GAME_NAME_LENGTH {
-            deliver_background_key_paced(hwnd, VK_BACK, false, release_gap_ms)?;
-        }
-        for character in value.chars() {
-            let (vk, shift) = character_key(character)?;
-            deliver_background_key_paced(hwnd, vk, shift, release_gap_ms)?;
-        }
-        Ok(())
-    }
-
-    fn deliver_background_chord(
-        hwnd: isize,
-        modifier: u16,
-        vk: u16,
-        synchronous: bool,
-    ) -> Result<(), String> {
-        deliver_key_message(hwnd, modifier, true, synchronous)?;
-        std::thread::sleep(std::time::Duration::from_millis(12));
-        deliver_key_message(hwnd, vk, true, synchronous)?;
-        std::thread::sleep(std::time::Duration::from_millis(35));
-        deliver_key_message(hwnd, vk, false, synchronous)?;
-        std::thread::sleep(std::time::Duration::from_millis(12));
-        deliver_key_message(hwnd, modifier, false, synchronous)
-    }
-
-    fn clear_background_text(hwnd: isize, synchronous: bool) -> Result<(), String> {
-        deliver_background_chord(hwnd, VK_CONTROL, VK_A, synchronous)?;
-        std::thread::sleep(std::time::Duration::from_millis(15));
-        deliver_background_key(hwnd, VK_BACK, false, synchronous)
-    }
-
-    fn deliver_background_paste(
-        hwnd: isize,
         strategy: BackgroundTextStrategy,
+        release_gap_ms: u64,
     ) -> Result<(), String> {
-        if strategy.uses_paste_message() {
-            if strategy.is_synchronous() {
-                send_window_message(hwnd, WM_PASTE, 0, 0)
-            } else {
-                post_window_message(hwnd, WM_PASTE, 0, 0)
-            }
-        } else {
-            deliver_background_chord(hwnd, VK_CONTROL, VK_V, strategy.is_synchronous())
+        if shift {
+            deliver_key_message(hwnd, VK_SHIFT, true, strategy)?;
         }
+        deliver_key_message(hwnd, vk, true, strategy)?;
+        std::thread::sleep(std::time::Duration::from_millis(KEY_DOWN_HOLD_MS));
+        deliver_key_message(hwnd, vk, false, strategy)?;
+        if shift {
+            deliver_key_message(hwnd, VK_SHIFT, false, strategy)?;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(release_gap_ms));
+        Ok(())
     }
 
     fn deliver_key_message(
         hwnd: isize,
         vk: u16,
         pressed: bool,
-        synchronous: bool,
+        strategy: BackgroundTextStrategy,
     ) -> Result<(), String> {
         let message = if pressed { WM_KEYDOWN } else { WM_KEYUP };
         let l_param = key_lparam(vk, pressed);
-        if synchronous {
+        if strategy.is_synchronous() {
             send_window_message(hwnd, message, usize::from(vk), l_param)
         } else {
             post_window_message(hwnd, message, usize::from(vk), l_param)
@@ -1619,7 +1058,7 @@ mod win {
 
     fn key_lparam(vk: u16, pressed: bool) -> isize {
         let scan_code = unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC) } & 0xFF;
-        let extended = matches!(vk, VK_END | VK_LEFT | VK_UP | VK_RIGHT | VK_DOWN);
+        let extended = vk == VK_END;
         let mut value = 1u32 | (scan_code << 16);
         if extended {
             value |= 1 << 24;
@@ -1630,175 +1069,16 @@ mod win {
         value as isize
     }
 
-    fn background_click(
-        top_hwnd: isize,
-        x: i32,
-        y: i32,
-        strategy: BackgroundClickStrategy,
-    ) -> Result<ClickReport, String> {
-        let (target_hwnd, target_x, target_y) = if strategy.uses_child() {
-            deepest_child_at_point(top_hwnd, x, y)
-        } else {
-            (top_hwnd, x, y)
-        };
-        let position = make_lparam(target_x, target_y);
-        if strategy.is_synchronous() {
-            send_window_message(target_hwnd, WM_MOUSEMOVE, 0, position)?;
-            send_window_message(target_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, position)?;
-            std::thread::sleep(std::time::Duration::from_millis(35));
-            send_window_message(target_hwnd, WM_LBUTTONUP, 0, position)?;
-        } else {
-            post_window_message(target_hwnd, WM_MOUSEMOVE, 0, position)?;
-            post_window_message(target_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, position)?;
-            std::thread::sleep(std::time::Duration::from_millis(35));
-            post_window_message(target_hwnd, WM_LBUTTONUP, 0, position)?;
-        }
-        Ok(ClickReport {
-            strategy_label: strategy.label().to_string(),
-            target_hwnd,
-            used_child: target_hwnd != top_hwnd,
-        })
-    }
-
-    struct CursorLease {
-        original_position: Point,
-        original_clip: Rect,
-    }
-
-    impl CursorLease {
-        fn acquire(target: Point) -> Result<Self, String> {
-            let mut original_position = Point::default();
-            if unsafe { GetCursorPos(&mut original_position) } == 0 {
-                return Err("无法保存系统光标位置".to_string());
-            }
-            let mut original_clip = Rect::default();
-            if unsafe { GetClipCursor(&mut original_clip) } == 0 {
-                return Err("无法读取系统光标裁剪区域".to_string());
-            }
-            let target_clip = Rect {
-                left: target.x,
-                top: target.y,
-                right: target.x.saturating_add(1),
-                bottom: target.y.saturating_add(1),
-            };
-            if unsafe { ClipCursor(&target_clip) } == 0 {
-                return Err("无法锁定系统光标到 D2R 点击位置".to_string());
-            }
-            if unsafe { SetCursorPos(target.x, target.y) } == 0 {
-                unsafe {
-                    ClipCursor(&original_clip);
-                }
-                return Err("无法移动系统光标到 D2R 点击位置".to_string());
-            }
-            Ok(Self {
-                original_position,
-                original_clip,
-            })
-        }
-    }
-
-    impl Drop for CursorLease {
-        fn drop(&mut self) {
-            unsafe {
-                ClipCursor(&self.original_clip);
-                SetCursorPos(self.original_position.x, self.original_position.y);
-            }
-        }
-    }
-
-    fn guarded_cursor_click(
-        hwnd: isize,
-        x: i32,
-        y: i32,
-        lease_ms: u64,
-    ) -> Result<ClickReport, String> {
-        let _lock = GLOBAL_INPUT_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        guarded_cursor_click_unlocked(hwnd, x, y, lease_ms)
-    }
-
-    fn guarded_cursor_click_unlocked(
-        hwnd: isize,
-        x: i32,
-        y: i32,
-        lease_ms: u64,
-    ) -> Result<ClickReport, String> {
-        let mut screen = Point { x, y };
-        if unsafe { ClientToScreen(hwnd, &mut screen) } == 0 {
-            return Err("无法换算 D2R 光标租约坐标".to_string());
-        }
-        let _lease = CursorLease::acquire(screen)?;
-        let position = make_lparam(x, y);
-        send_window_message_with_timeout(hwnd, WM_MOUSEMOVE, 0, position, 40)?;
-        send_window_message_with_timeout(hwnd, WM_LBUTTONDOWN, MK_LBUTTON, position, 40)?;
-        std::thread::sleep(std::time::Duration::from_millis(lease_ms.clamp(4, 50)));
-        if let Err(error) = send_window_message_with_timeout(hwnd, WM_LBUTTONUP, 0, position, 40) {
-            let _ = post_window_message(hwnd, WM_LBUTTONUP, 0, position);
-            return Err(error);
-        }
-        Ok(ClickReport {
-            strategy_label: format!("光标租约 {lease_ms}ms"),
-            target_hwnd: hwnd,
-            used_child: false,
-        })
-    }
-
-    fn guarded_real_click(hwnd: isize, x: i32, y: i32) -> Result<(), String> {
-        let mut screen = Point { x, y };
-        if unsafe { ClientToScreen(hwnd, &mut screen) } == 0 {
-            return Err("无法换算 D2R 真实点击坐标".to_string());
-        }
-        let _lease = CursorLease::acquire(screen)?;
-        unsafe { mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0) };
-        std::thread::sleep(std::time::Duration::from_millis(25));
-        unsafe { mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0) };
-        Ok(())
-    }
-
-    fn activate_form_window(hwnd: isize) -> bool {
-        if foreground_window() == hwnd {
-            return true;
-        }
-        crate::commands::system::bring_window_to_foreground_raw(hwnd);
-        for _ in 0..12 {
-            std::thread::sleep(std::time::Duration::from_millis(25));
-            if foreground_window() == hwnd {
-                std::thread::sleep(std::time::Duration::from_millis(FORM_FOCUS_SETTLE_MS));
-                return true;
-            }
-        }
-        false
-    }
-
     fn validate_text_value(value: &str) -> Result<(), String> {
         if value.chars().count() > MAX_GAME_NAME_LENGTH {
             return Err("输入内容超过 15 个字符".to_string());
         }
-        if !value
-            .chars()
-            .all(|character| character.is_alphanumeric() || character == '-' || character == '_')
-        {
-            return Err("输入内容只能包含中英文字母、数字、短横线和下划线".to_string());
+        if !value.chars().all(|character| {
+            character.is_ascii_alphanumeric() || character == '-' || character == '_'
+        }) {
+            return Err("后台原生聊天态输入只支持英文字母、数字、短横线和下划线".to_string());
         }
         Ok(())
-    }
-
-    fn deepest_child_at_point(top_hwnd: isize, x: i32, y: i32) -> (isize, i32, i32) {
-        let mut current = top_hwnd;
-        let mut point = Point { x, y };
-        let flags = CWP_SKIPINVISIBLE | CWP_SKIPDISABLED | CWP_SKIPTRANSPARENT;
-        for _ in 0..8 {
-            let child = unsafe { ChildWindowFromPointEx(current, point, flags) };
-            if child == 0 || child == current {
-                break;
-            }
-            unsafe {
-                MapWindowPoints(current, child, &mut point, 1);
-            }
-            current = child;
-        }
-        (current, point.x, point.y)
     }
 
     fn post_window_message(
@@ -1850,67 +1130,6 @@ mod win {
         Ok(())
     }
 
-    fn real_key_event(vk: u16, flags: u32) {
-        let scan_code = unsafe { MapVirtualKeyW(u32::from(vk), MAPVK_VK_TO_VSC) } as u8;
-        unsafe { keybd_event(vk as u8, scan_code, flags, 0) };
-    }
-
-    fn real_key(vk: u16) {
-        real_key_event(vk, 0);
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        real_key_event(vk, KEYEVENTF_KEYUP);
-    }
-
-    fn real_key_fast(vk: u16) {
-        real_key_event(vk, 0);
-        std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_DOWN_MS));
-        real_key_event(vk, KEYEVENTF_KEYUP);
-        std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_UP_GAP_MS));
-    }
-
-    fn clear_real_text() {
-        real_key_event(VK_CONTROL, 0);
-        real_key_fast(VK_A);
-        real_key_event(VK_CONTROL, KEYEVENTF_KEYUP);
-        std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_UP_GAP_MS));
-        real_key_fast(VK_BACK);
-    }
-
-    fn real_character(character: char) -> Result<(), String> {
-        let (vk, shift) = character_key(character)?;
-        if shift {
-            real_key_event(VK_SHIFT, 0);
-            std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_UP_GAP_MS));
-        }
-        real_key_fast(vk);
-        if shift {
-            real_key_event(VK_SHIFT, KEYEVENTF_KEYUP);
-            std::thread::sleep(std::time::Duration::from_millis(FORM_KEY_UP_GAP_MS));
-        }
-        Ok(())
-    }
-
-    fn real_click(hwnd: isize, x: i32, y: i32) -> Result<(), String> {
-        let mut screen = Point { x, y };
-        if unsafe { ClientToScreen(hwnd, &mut screen) } == 0 {
-            return Err("无法换算 D2R 点击坐标".to_string());
-        }
-        let mut original = Point::default();
-        let has_original = unsafe { GetCursorPos(&mut original) } != 0;
-        unsafe {
-            SetCursorPos(screen.x, screen.y);
-            mouse_event(MOUSEEVENTF_LEFTDOWN, 0, 0, 0, 0);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(35));
-        unsafe {
-            mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0);
-            if has_original {
-                SetCursorPos(original.x, original.y);
-            }
-        }
-        Ok(())
-    }
-
     pub fn foreground_window() -> isize {
         unsafe { GetForegroundWindow() }
     }
@@ -1944,20 +1163,13 @@ mod tests {
     }
 
     #[test]
-    fn room_name_supports_a_unicode_prefix_with_character_counting() {
+    fn room_name_rejects_a_unicode_prefix_for_background_key_delivery() {
         let config = RoomRotationConfig {
             name_prefix: "巴尔-".to_string(),
             sequence_width: 3,
             ..RoomRotationConfig::default()
         };
-        assert_eq!(room_name(&config, 7).unwrap(), "巴尔-007");
-
-        let config = RoomRotationConfig {
-            name_prefix: "巴尔巴尔巴尔巴尔巴尔-".to_string(),
-            sequence_width: 3,
-            ..RoomRotationConfig::default()
-        };
-        assert_eq!(room_name(&config, 7).unwrap().chars().count(), 14);
+        assert!(room_name(&config, 7).is_err());
     }
 
     #[test]
@@ -1979,13 +1191,5 @@ mod tests {
             ..RoomRotationConfig::default()
         };
         assert!(room_name(&config, 1).is_err());
-    }
-
-    #[test]
-    fn client_coordinates_keep_the_full_percentage_inside_the_window() {
-        assert_eq!(client_coordinate(1_280, 0), 0);
-        assert_eq!(client_coordinate(1_280, 500), 640);
-        assert_eq!(client_coordinate(1_280, 1_000), 1_279);
-        assert_eq!(client_coordinate(720, u16::MAX), 719);
     }
 }

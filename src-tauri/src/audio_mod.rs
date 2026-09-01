@@ -16,11 +16,16 @@ use tauri_plugin_shell::ShellExt;
 const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 8;
-const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v6";
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 21;
+const IN_GAME_ROOM_TOOLS_CAPABILITY: &str = "in_game_room_tools_v19";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
-const ROOM_FORM_INPUT_PRIORITY: i64 = 1_999_999_999;
-const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 258;
+const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 267;
+const ROOM_TOOL_BUTTON_SCALE: f64 = 0.30;
+const ROOM_TOOL_BUTTON_Y: i64 = 12;
+const ROOM_TOOL_NEXT_X: i64 = -1_040;
+const ROOM_TOOL_CREATE_X: i64 = -760;
+const ROOM_TOOL_JOIN_X: i64 = -480;
+const ROOM_TOOL_CONFIRM_Y: i64 = 92;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
@@ -401,6 +406,29 @@ fn layout_has_child_message(document: &serde_json::Value, field: &str, expected:
         })
 }
 
+fn layout_has_timed_child_message(
+    document: &serde_json::Value,
+    expected: &str,
+    expected_time: f64,
+) -> bool {
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                let fields = child.get("fields");
+                fields
+                    .and_then(|value| value.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected)
+                    && fields
+                        .and_then(|value| value.get("time"))
+                        .and_then(serde_json::Value::as_f64)
+                        .is_some_and(|time| (time - expected_time).abs() < f64::EPSILON)
+            })
+        })
+}
+
 fn find_layout_node<'a>(
     document: &'a serde_json::Value,
     name: &str,
@@ -438,6 +466,29 @@ fn validate_in_game_room_tool_layouts(
             return Err("局内房间工具栏按钮不完整".to_string());
         }
     }
+    for (name, expected_x) in [
+        ("D2RHubNextGame", ROOM_TOOL_NEXT_X),
+        ("D2RHubCreateGame", ROOM_TOOL_CREATE_X),
+        ("D2RHubJoinGame", ROOM_TOOL_JOIN_X),
+    ] {
+        let button = find_layout_node(&toolbar, name)
+            .ok_or_else(|| format!("局内房间工具栏缺少按钮 {name}"))?;
+        let scale = button
+            .pointer("/fields/rect/scale")
+            .and_then(serde_json::Value::as_f64);
+        if button
+            .pointer("/fields/rect/x")
+            .and_then(serde_json::Value::as_i64)
+            != Some(expected_x)
+            || button
+                .pointer("/fields/rect/y")
+                .and_then(serde_json::Value::as_i64)
+                != Some(ROOM_TOOL_BUTTON_Y)
+            || scale.is_none_or(|value| (value - ROOM_TOOL_BUTTON_SCALE).abs() > f64::EPSILON)
+        {
+            return Err(format!("局内房间工具栏按钮尺寸或位置无效：{name}"));
+        }
+    }
     let next_game = find_layout_node(&toolbar, "D2RHubNextGame")
         .ok_or_else(|| "局内“下一局”按钮不完整".to_string())?;
     if next_game
@@ -454,6 +505,8 @@ fn validate_in_game_room_tool_layouts(
 
     let confirmation =
         read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateConfirmhd.json")?;
+    let confirm_next = find_layout_node(&confirmation, "D2RHubConfirmNextGame")
+        .ok_or_else(|| "局内“下一局”确认按钮不完整".to_string())?;
     if confirmation
         .pointer("/fields/isDismissable")
         .and_then(serde_json::Value::as_bool)
@@ -472,6 +525,18 @@ fn validate_in_game_room_tool_layouts(
             "message",
             "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm",
         )
+        || confirm_next
+            .pointer("/fields/rect/x")
+            .and_then(serde_json::Value::as_i64)
+            != Some(ROOM_TOOL_NEXT_X)
+        || confirm_next
+            .pointer("/fields/rect/y")
+            .and_then(serde_json::Value::as_i64)
+            != Some(ROOM_TOOL_CONFIRM_Y)
+        || confirm_next
+            .pointer("/fields/rect/scale")
+            .and_then(serde_json::Value::as_f64)
+            .is_none_or(|value| (value - ROOM_TOOL_BUTTON_SCALE).abs() > f64::EPSILON)
     {
         return Err("局内“下一局”确认条不完整".to_string());
     }
@@ -484,41 +549,149 @@ fn validate_in_game_room_tool_layouts(
     ) {
         return Err("局内“下一局”动作无效".to_string());
     }
-    for (name, target) in [
-        ("D2RHubOpenCreateGamehd.json", "CreateGamePanel"),
-        ("D2RHubOpenJoinGamehd.json", "JoinGamePanel"),
+    for (name, opener_name, native_target, opposite_target) in [
+        (
+            "D2RHubOpenCreateGamehd.json",
+            "D2RHubOpenCreateGame",
+            "CreateGamePanel",
+            "JoinGamePanel",
+        ),
+        (
+            "D2RHubOpenJoinGamehd.json",
+            "D2RHubOpenJoinGame",
+            "JoinGamePanel",
+            "CreateGamePanel",
+        ),
     ] {
         let opener = read_room_tool_layout(&layout_directory, name)?;
         if opener.get("fields").is_some()
-            || !layout_has_child_message(
+            || !layout_has_timed_child_message(
                 &opener,
-                "message",
-                &format!("PanelManager:TogglePanel:{target}"),
+                &format!("PanelManager:TogglePanel:{native_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &opener,
+                &format!("PanelManager:ClosePanel:{opposite_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &opener,
+                &format!("PanelManager:ClosePanel:{opener_name}"),
+                0.1,
             )
         {
-            return Err(format!("局内房间工具无法切换 {target}"));
+            return Err(format!("局内房间工具未按 MDK 时序打开 {native_target}"));
+        }
+    }
+
+    for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
+        let pause = read_room_tool_layout(&layout_directory, pause_name)?;
+        let safe_hub = find_layout_node(&pause, "D2RHubKeyboardGatewayHub")
+            .ok_or_else(|| format!("暂停布局缺少安全键盘焦点：{pause_name}"))?;
+        if pause
+            .pointer("/fields/defaultWidget")
+            .and_then(serde_json::Value::as_str)
+            != Some("D2RHubKeyboardGatewayHub")
+            || safe_hub
+                .pointer("/fields/acceptsReturnKey")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+        {
+            return Err(format!("暂停布局安全键盘焦点无效：{pause_name}"));
+        }
+        let return_to_game = find_layout_node(&pause, "ReturnToGame")
+            .ok_or_else(|| format!("暂停布局缺少 ReturnToGame：{pause_name}"))?;
+        if return_to_game
+            .pointer("/fields/navigation/left/name")
+            .and_then(serde_json::Value::as_str)
+            != Some("D2RHubKeyboardCreateGateway")
+            || return_to_game
+                .pointer("/fields/navigation/right/name")
+                .and_then(serde_json::Value::as_str)
+                != Some("D2RHubKeyboardJoinGateway")
+        {
+            return Err(format!("暂停布局没有连接创建/加入键盘入口：{pause_name}"));
+        }
+        for (gateway, action) in [
+            (
+                "D2RHubKeyboardCreateGateway",
+                "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate",
+            ),
+            (
+                "D2RHubKeyboardJoinGateway",
+                "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin",
+            ),
+        ] {
+            let node = find_layout_node(&pause, gateway)
+                .ok_or_else(|| format!("暂停布局缺少键盘入口 {gateway}：{pause_name}"))?;
+            if node
+                .pointer("/fields/onClickMessage")
+                .and_then(serde_json::Value::as_str)
+                != Some(action)
+                || node
+                    .pointer("/fields/acceptsReturnKey")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+            {
+                return Err(format!("暂停布局键盘入口无效 {gateway}：{pause_name}"));
+            }
+        }
+    }
+    for (helper_name, helper_panel, native_target, opposite_target) in [
+        (
+            "D2RHubKeyboardOpenCreatehd.json",
+            "D2RHubKeyboardOpenCreate",
+            "CreateGamePanel",
+            "JoinGamePanel",
+        ),
+        (
+            "D2RHubKeyboardOpenJoinhd.json",
+            "D2RHubKeyboardOpenJoin",
+            "JoinGamePanel",
+            "CreateGamePanel",
+        ),
+    ] {
+        let helper = read_room_tool_layout(&layout_directory, helper_name)?;
+        if !layout_has_timed_child_message(&helper, "PausePanelMessage:Close", 0.005)
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:TogglePanel:{native_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:ClosePanel:{opposite_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:ClosePanel:{helper_panel}"),
+                0.1,
+            )
+        {
+            return Err(format!("暂停菜单房间入口未复用 MDK 时序：{helper_name}"));
         }
     }
 
     let form_specs: [(&str, &str, &[&str]); 2] = [
         (
             "creategamepanelhd.json",
-            "CreateGamePanel",
+            "GameNameInput",
             &["GameNameInput", "PasswordInput", "DescriptionInput"],
         ),
         (
             "joingamepanelhd.json",
-            "JoinGamePanel",
+            "NameInput",
             &["NameInput", "PasswordInput"],
         ),
     ];
-    for (name, panel_name, input_names) in form_specs {
+    for (name, primary_input, input_names) in form_specs {
         let form = read_room_tool_layout(&layout_directory, name)?;
         if form
-            .pointer("/fields/priority")
-            .and_then(serde_json::Value::as_i64)
-            != Some(ROOM_FORM_INPUT_PRIORITY)
-            || form.pointer("/fields/defaultWidget").is_some()
+            .pointer("/fields/defaultWidget")
+            .and_then(serde_json::Value::as_str)
+            != Some(primary_input)
             || form
                 .pointer("/fields/isDismissable")
                 .and_then(serde_json::Value::as_bool)
@@ -541,10 +714,15 @@ fn validate_in_game_room_tool_layouts(
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
+        let close_action = if primary_input == "NameInput" {
+            "PanelManager:ClosePanel:JoinGamePanel"
+        } else {
+            "PanelManager:ClosePanel:CreateGamePanel"
+        };
         if find_layout_node(&form, "D2RHubCloseRoomForm")
             .and_then(|node| node.pointer("/fields/onClickMessage"))
             .and_then(serde_json::Value::as_str)
-            != Some(&format!("PanelManager:ClosePanel:{panel_name}"))
+            != Some(close_action)
         {
             return Err(format!("局内房间表单缺少关闭按钮：{name}"));
         }
@@ -1478,7 +1656,8 @@ mod tests {
         resolve_source_directory, validate_audio_mod, validate_in_game_room_tool_layouts,
         AREA_CATALOG_FILE_NAME, IN_GAME_ROOM_TOOLS_CAPABILITY, ITEM_CATALOG_FILE_NAME,
         NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
-        ROOM_FORM_INPUT_PRIORITY, ROOM_TOOL_LAYOUT_DIRECTORY,
+        ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X,
+        ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
     };
 
     fn write_test_audio_mod(
@@ -1517,15 +1696,60 @@ mod tests {
                 serde_json::json!({"children": [{"fields": {"message": "PanelManager:OpenPanel:D2RHubRoomToolbar"}}]}),
             ),
             (
+                "pauselayouthd.json",
+                serde_json::json!({"fields": {"defaultWidget": "D2RHubKeyboardGatewayHub"}, "children": [
+                    {"name": "D2RHubKeyboardGatewayHub", "fields": {"acceptsReturnKey": false}},
+                    {"name": "ReturnToGame", "fields": {
+                        "navigation": {
+                            "left": {"name": "D2RHubKeyboardCreateGateway"},
+                            "right": {"name": "D2RHubKeyboardJoinGateway"}
+                        }
+                    }},
+                    {"name": "D2RHubKeyboardCreateGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate"
+                    }},
+                    {"name": "D2RHubKeyboardJoinGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin"
+                    }}
+                ]}),
+            ),
+            (
+                "pauselayoutgardenhd.json",
+                serde_json::json!({"fields": {"defaultWidget": "D2RHubKeyboardGatewayHub"}, "children": [
+                    {"name": "D2RHubKeyboardGatewayHub", "fields": {"acceptsReturnKey": false}},
+                    {"name": "ReturnToGame", "fields": {"navigation": {
+                        "left": {"name": "D2RHubKeyboardCreateGateway"},
+                        "right": {"name": "D2RHubKeyboardJoinGateway"}
+                    }}},
+                    {"name": "D2RHubKeyboardCreateGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate"
+                    }},
+                    {"name": "D2RHubKeyboardJoinGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin"
+                    }}
+                ]}),
+            ),
+            (
                 "D2RHubRoomToolbarhd.json",
                 serde_json::json!({"children": [
                     {"name": "D2RHubNextGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
                         "tooltipString": "首次点击只打开确认条；再次确认才会离开当前房间，4 秒后自动取消。",
                         "tooltipOffset": {"y": NEXT_GAME_TOOLTIP_OFFSET_Y},
                         "onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"
                     }},
-                    {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"}},
-                    {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubOpenJoinGame"}}
+                    {"name": "D2RHubCreateGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_CREATE_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"
+                    }},
+                    {"name": "D2RHubJoinGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_JOIN_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubOpenJoinGame"
+                    }}
                 ]}),
             ),
             (
@@ -1533,7 +1757,10 @@ mod tests {
                 serde_json::json!({
                     "fields": {"isDismissable": true, "acceptsEscKeyEverywhere": true},
                     "children": [
-                        {"fields": {"onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"}},
+                        {"name": "D2RHubConfirmNextGame", "fields": {
+                            "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_CONFIRM_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                            "onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"
+                        }},
                         {"fields": {"message": "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm"}}
                     ]
                 }),
@@ -1544,17 +1771,43 @@ mod tests {
             ),
             (
                 "D2RHubOpenCreateGamehd.json",
-                serde_json::json!({"children": [{"fields": {"message": "PanelManager:TogglePanel:CreateGamePanel"}}]}),
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenCreateGame"}},
+                ]}),
             ),
             (
                 "D2RHubOpenJoinGamehd.json",
-                serde_json::json!({"children": [{"fields": {"message": "PanelManager:TogglePanel:JoinGamePanel"}}]}),
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenJoinGame"}},
+                ]}),
+            ),
+            (
+                "D2RHubKeyboardOpenCreatehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenCreate"}}
+                ]}),
+            ),
+            (
+                "D2RHubKeyboardOpenJoinhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenJoin"}}
+                ]}),
             ),
             (
                 "creategamepanelhd.json",
                 serde_json::json!({
                     "fields": {
-                        "priority": ROOM_FORM_INPUT_PRIORITY,
+                        "defaultWidget": "GameNameInput",
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
@@ -1570,7 +1823,7 @@ mod tests {
                 "joingamepanelhd.json",
                 serde_json::json!({
                     "fields": {
-                        "priority": ROOM_FORM_INPUT_PRIORITY,
+                        "defaultWidget": "NameInput",
                         "isDismissable": true,
                         "acceptsEscKeyEverywhere": true
                     },
@@ -1580,6 +1833,79 @@ mod tests {
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
                     ]
                 }),
+            ),
+            (
+                "D2RHubCreateNamePanelhd.json",
+                serde_json::json!({
+                    "name": "D2RHubCreateNamePanel",
+                    "fields": {"priority": 1999999999, "defaultWidget": "D2RHubCreateNameInput"},
+                    "children": [{"name": "D2RHubCreateNameInput", "fields": {
+                        "alwaysAcceptsKeyInput": true,
+                        "onUpdateMessage": "CreateGame:CacheGameName",
+                        "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubCreatePasswordTransition"
+                    }}]
+                }),
+            ),
+            (
+                "D2RHubCreatePasswordPanelhd.json",
+                serde_json::json!({
+                    "name": "D2RHubCreatePasswordPanel",
+                    "fields": {"priority": 1999999999, "defaultWidget": "D2RHubCreatePasswordInput"},
+                    "children": [{"name": "D2RHubCreatePasswordInput", "fields": {
+                        "alwaysAcceptsKeyInput": true,
+                        "onUpdateMessage": "CreateGame:CachePassword",
+                        "onReturnInputMessage": "CreateGame:CreateGame"
+                    }}]
+                }),
+            ),
+            (
+                "D2RHubJoinNamePanelhd.json",
+                serde_json::json!({
+                    "name": "D2RHubJoinNamePanel",
+                    "fields": {"priority": 1999999999, "defaultWidget": "D2RHubJoinNameInput"},
+                    "children": [{"name": "D2RHubJoinNameInput", "fields": {
+                        "alwaysAcceptsKeyInput": true,
+                        "onUpdateMessage": "JoinGame:CacheGameName",
+                        "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubJoinPasswordTransition"
+                    }}]
+                }),
+            ),
+            (
+                "D2RHubJoinPasswordPanelhd.json",
+                serde_json::json!({
+                    "name": "D2RHubJoinPasswordPanel",
+                    "fields": {"priority": 1999999999, "defaultWidget": "D2RHubJoinPasswordInput"},
+                    "children": [{"name": "D2RHubJoinPasswordInput", "fields": {
+                        "alwaysAcceptsKeyInput": true,
+                        "onUpdateMessage": "JoinGame:CachePassword",
+                        "onReturnInputMessage": "JoinGame:JoinGame"
+                    }}]
+                }),
+            ),
+            (
+                "D2RHubCreatePasswordTransitionhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubCreateNamePanel"}},
+                    {"fields": {"message": "PanelManager:OpenPanel:D2RHubCreatePasswordPanel"}}
+                ]}),
+            ),
+            (
+                "D2RHubJoinPasswordTransitionhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubJoinNamePanel"}},
+                    {"fields": {"message": "PanelManager:OpenPanel:D2RHubJoinPasswordPanel"}}
+                ]}),
+            ),
+            (
+                "D2RHubCloseRoomFlowhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubCreateNamePanel"}},
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubCreatePasswordPanel"}},
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubJoinNamePanel"}},
+                    {"fields": {"message": "PanelManager:ClosePanel:D2RHubJoinPasswordPanel"}}
+                ]}),
             ),
         ] {
             std::fs::write(layouts.join(name), serde_json::to_vec(&document).unwrap()).unwrap();

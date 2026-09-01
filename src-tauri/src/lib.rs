@@ -1,5 +1,6 @@
 mod audio_mod;
 mod battle_net_config;
+mod chat_key_binding;
 mod commands;
 mod error;
 mod input_listener;
@@ -99,6 +100,11 @@ pub fn run() {
             &format!("全局配置加载失败，为防止覆盖已停止自动初始化: {error}"),
         ),
     }
+
+    // Start before any account/game launch so newly downloaded per-character
+    // .keyo files receive the already-authorized F13 Chat secondary binding at
+    // creation time instead of failing only when room rotation is first used.
+    chat_key_binding::start_auto_patch_watcher(app_state.clone());
 
     // 从磁盘加载窗口几何并应用到初始窗口
     let geo = GlobalConfig::load_geometry(&app_state.app_data_dir);
@@ -410,12 +416,14 @@ pub fn run() {
             rune_audio::monitor::get_rune_audio_status,
             rune_audio::monitor::start_rune_audio_diagnostic_recording,
             rune_audio::monitor::stop_rune_audio_diagnostic_recording,
-            // ── 自动换房测试版 ──
+            // ── 局内自动换房 ──
             room_rotation::start_room_rotation,
             room_rotation::join_room_rotation_followers,
             room_rotation::cancel_room_rotation,
             room_rotation::get_room_rotation_status,
-            room_rotation::test_room_rotation_input,
+            chat_key_binding::get_room_rotation_chat_binding_status,
+            chat_key_binding::install_room_rotation_chat_binding,
+            chat_key_binding::restore_room_rotation_chat_binding,
             // ── 数据统计 ──
             stats::save_scene_record,
             stats::get_stats_data,
