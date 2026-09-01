@@ -437,7 +437,7 @@
           </tbody>
         </table>
       </div>
-      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>config\stateData</code> 或导出 JSON。</div>
+      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>%APPDATA%\D2RHub\stateData</code> 或导出 JSON。</div>
     </section>
 
     <section id="pet">
@@ -454,19 +454,20 @@
     <section id="data">
       <p class="eyebrow">10 · DATA & PRIVACY</p>
       <h2>数据位置、备份与更新</h2>
-      <p>D2RHub 当前使用<strong>程序可执行文件同级目录</strong>保存运行数据，而不是 Windows AppData：</p>
+      <p>D2RHub 使用当前 Windows 用户的 <strong><code>%APPDATA%\D2RHub</code></strong> 保存运行数据；日志保存在程序可执行文件同级目录：</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>位置</th><th>内容</th></tr></thead>
           <tbody>
-            <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
-            <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
-            <tr><td><code>config\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
             <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
           </tbody>
         </table>
       </div>
-      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>config</code> 目录；排障需要时也可一并备份 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
+      <p>从旧版便携格式升级时，程序会自动把程序同级 <code>config</code> 搬迁到用户数据目录；迁移失败会继续使用旧目录并在下次启动重试。如果新旧两处都已有配置、账号或统计数据，程序会保留两边而不会静默合并或覆盖，并在日志中报告冲突。</p>
+      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>%APPDATA%\D2RHub</code> 目录；如果旧 <code>config</code> 仍存在或日志报告迁移冲突，请在核对完成前同时备份它。排障需要时也可一并备份程序同级 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
       <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
       <p>D2RHub 不会主动上传账号配置、Token 或声纹统计。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；统计数据留在本机。</p>
     </section>

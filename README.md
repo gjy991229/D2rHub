@@ -44,12 +44,14 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 
 D2RHub 通过 Windows 进程、句柄、注册表、文件、窗口和 WASAPI 管理本机环境，**不写入游戏内存、不注入 DLL**。独立 Mod 工具只在新输出目录生成文件，不覆盖源 Mod；两个程序只约定音频编码和 JSON 清单。
 
-运行数据保存在程序同级目录：
+运行数据保存在当前 Windows 用户的 `%APPDATA%\D2RHub` 目录；日志仍保存在程序同级 `logs` 目录：
 
-- `config/global_config.json`：全局配置；
-- `config/accounts/`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
-- `config/stateData/data.db`：场次、历史记录和符文声纹观测数据库；
+- `%APPDATA%\D2RHub\global_config.json`：全局配置；
+- `%APPDATA%\D2RHub\accounts\`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
+- `%APPDATA%\D2RHub\stateData\data.db`：场次、历史记录和符文声纹观测数据库；
 - `logs/`：运行日志，最多自动保留 16 个。
+
+升级自便携目录格式时，程序会自动把完整的旧 `config/` 搬迁到用户数据目录并保留迁移标记；迁移失败会继续使用旧目录并在下次启动重试。若新旧两处都已有配置、账号或统计数据，程序不会静默合并或覆盖任何一边，并会在日志中报告冲突；完成手工核对前请同时备份两处目录。
 
 程序不会主动上传账号配置或 Token。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口。完整的管理员权限、进程与句柄访问、注册表、全局快捷键、进程音频捕获和 v0.9.4 杀毒软件误报说明见 [安全、权限与漏洞报告政策](SECURITY.md)。请勿在公开 Issue 中提交 Token、账号目录、个人路径或包含隐私的日志；安全问题请按该政策私下报告。
 
@@ -63,7 +65,7 @@ npm run build
 npm run build:desktop
 ```
 
-环境要求、项目结构和 Windows 构建细节见 [开发指南](docs/DEVELOPMENT.md)。提交修改前请阅读 [贡献指南](CONTRIBUTING.md)。
+环境要求、项目结构和 Windows 构建细节见 [开发指南](docs/DEVELOPMENT.md)。核心、平台服务、可选能力与配置兼容边界见 [架构决策 ADR 0002](docs/adr/0002-core-and-capability-module-architecture.md)。提交修改前请阅读 [贡献指南](CONTRIBUTING.md)。
 
 ---
 
@@ -97,7 +99,7 @@ The v7 protocol uses isolated area/drop synchronization, a 127-chip Gold signatu
 
 D2RHub uses Windows process, handle, registry, filesystem, window, and WASAPI interfaces. It does **not** write to game memory or inject DLLs. The Mod generator writes to a new output Mod and never overwrites the selected source Mod.
 
-Runtime data is stored beside the executable in `config/` and `logs/`, including global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data. See the [Security, permissions, antivirus false-positive, and vulnerability-reporting policy](SECURITY.md) for the complete Windows capability and trust-boundary disclosure.
+Runtime data is stored in `%APPDATA%\D2RHub`; launch logs remain in `logs/` beside the executable. An existing portable `config/` directory is migrated automatically with a recoverable fallback, and conflicting populated locations are never silently merged or overwritten. If a conflict is reported, back up both locations until they have been reconciled. The data includes global settings, DPAPI-encrypted tokens, local Battle.net/UnifiedAuth snapshots, per-account settings, and the SQLite statistics database. D2RHub does not intentionally upload account configuration or tokens. The separate Mod tool writes only to a new output Mod and does not read D2RHub data. See the [Security, permissions, antivirus false-positive, and vulnerability-reporting policy](SECURITY.md) for the complete Windows capability and trust-boundary disclosure.
 
 ### Development
 
@@ -109,7 +111,7 @@ npm run build
 npm run build:desktop
 ```
 
-See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites and Windows build details. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
+See the [Development Guide](docs/DEVELOPMENT.md) for prerequisites and Windows build details, and [ADR 0002](docs/adr/0002-core-and-capability-module-architecture.md) for the core/platform/capability and configuration-compatibility boundaries. Please read [CONTRIBUTING.md](CONTRIBUTING.md) before submitting a change.
 
 ### License and trademarks
 
