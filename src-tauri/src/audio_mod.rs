@@ -7,16 +7,25 @@ use crate::rune_audio::item_catalog::ITEM_CATALOG_FILE_NAME;
 use crate::rune_audio::protocol::PROTOCOL_VERSION;
 use crate::state::SharedState;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
 use tauri::Emitter;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
 
-const MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
+const MANIFEST_FILE_NAME: &str = "d2rhub-mod-manifest.json";
+const LEGACY_MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 2;
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 22;
+const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
+const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 1;
+const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
+const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
+const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
+const REPLACE_JOURNAL_SUFFIX: &str = ".json";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
@@ -24,6 +33,8 @@ pub struct InstalledMod {
     pub audio_ready: bool,
     pub update_required: bool,
     pub source_eligible: bool,
+    pub feature_groups: Vec<String>,
+    pub audio_reusable: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -39,6 +50,7 @@ pub struct AudioModSetupState {
     pub required_recipe_version: u32,
     pub build_mode: Option<String>,
     pub source_mod_name: Option<String>,
+    pub feature_groups: Vec<String>,
     pub reason_code: String,
     pub message: String,
     pub installed_mods: Vec<InstalledMod>,
@@ -64,6 +76,7 @@ pub struct AudioModPrepareResult {
     pub mod_directory: String,
     pub launch_arguments: String,
     pub source_mod_name: Option<String>,
+    pub feature_groups: Vec<GeneratorFeatureGroup>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -75,12 +88,23 @@ pub struct AudioModRuntimeWarning {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+pub struct GeneratorFeatureGroup {
+    pub id: String,
+    pub recipe_version: u32,
+    pub fingerprint: String,
+    #[serde(default)]
+    pub reused_from_source: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct GeneratorReport {
     protocol_version: u8,
     recipe_version: u32,
     mod_name: String,
     mod_directory: String,
+    #[serde(default)]
+    feature_groups: Vec<GeneratorFeatureGroup>,
 }
 
 #[derive(Debug)]
@@ -102,6 +126,81 @@ struct ValidatedAudioMod {
     recipe_version: Option<u32>,
     build_mode: Option<String>,
     source_mod_name: Option<String>,
+    feature_groups: Vec<GeneratorFeatureGroup>,
+    has_audio_telemetry: bool,
+    current_feature_protocol: bool,
+}
+
+#[derive(Debug)]
+struct ValidatedGeneratorOutput {
+    directory: PathBuf,
+    feature_groups: Vec<GeneratorFeatureGroup>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct RequestedFeatureGroups {
+    audio_telemetry: bool,
+    room_tools: bool,
+}
+
+struct GeneratorInvocation<'a> {
+    account_id: &'a str,
+    game_directory: &'a Path,
+    output_directory: &'a Path,
+    mod_name: &'a str,
+    source_directory: Option<&'a Path>,
+    requested_features: RequestedFeatureGroups,
+    progress_ceiling: u8,
+}
+
+impl RequestedFeatureGroups {
+    fn from_options(
+        audio_telemetry: Option<bool>,
+        room_tools: Option<bool>,
+    ) -> Result<Self, String> {
+        // Missing fields preserve the pre-r22 command contract used by older D2RHub frontends.
+        let requested = Self {
+            audio_telemetry: audio_telemetry.unwrap_or(true),
+            room_tools: room_tools.unwrap_or(false),
+        };
+        if !requested.audio_telemetry && !requested.room_tools {
+            return Err("请至少选择一个要加工的功能".to_string());
+        }
+        Ok(requested)
+    }
+
+    fn generator_value(self) -> &'static str {
+        match (self.audio_telemetry, self.room_tools) {
+            (true, true) => "audio,rooms",
+            (true, false) => "audio",
+            (false, true) => "rooms",
+            (false, false) => unreachable!("feature selection is validated at the command edge"),
+        }
+    }
+
+    fn validate_present(self, groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
+        for (requested, id, label) in [
+            (self.audio_telemetry, AUDIO_TELEMETRY_FEATURE_ID, "声纹识别"),
+            (
+                self.room_tools,
+                IN_GAME_ROOM_TOOLS_FEATURE_ID,
+                "局内房间工具",
+            ),
+        ] {
+            if requested && !groups.iter().any(|group| group.id == id) {
+                return Err(format!("生成结果缺少已选择的{label}功能组"));
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct AudioModReplaceJournal {
+    format_version: u8,
+    mod_name: String,
+    staged_relative: PathBuf,
+    backup_relative: PathBuf,
 }
 
 #[derive(Debug)]
@@ -283,9 +382,55 @@ fn source_mod_name_from_manifest(
         })
 }
 
-fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<ValidatedAudioMod, String> {
+fn processing_manifest_path(mod_directory: &Path) -> Option<PathBuf> {
+    [MANIFEST_FILE_NAME, LEGACY_MANIFEST_FILE_NAME]
+        .iter()
+        .map(|name| mod_directory.join(name))
+        .find(|path| path.is_file())
+}
+
+fn parse_feature_groups(
+    manifest: &serde_json::Value,
+) -> Result<Vec<GeneratorFeatureGroup>, String> {
+    let groups = match manifest.get("feature_groups") {
+        None | Some(serde_json::Value::Null) => Vec::new(),
+        Some(value) => serde_json::from_value::<Vec<GeneratorFeatureGroup>>(value.clone())
+            .map_err(|_| "D2RHub Mod 清单的功能组信息无效，请重新加工".to_string())?,
+    };
+    validate_feature_group_entries(&groups)?;
+    Ok(groups)
+}
+
+fn validate_feature_group_entries(groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
+    let mut ids = HashSet::new();
+    for group in groups {
+        if group.id.is_empty()
+            || group.id.len() > 128
+            || !group.id.bytes().all(|byte| {
+                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_-".contains(&byte)
+            })
+        {
+            return Err("D2RHub Mod 清单包含无效的功能组标识，请重新加工".to_string());
+        }
+        if !ids.insert(group.id.as_str()) {
+            return Err(format!("D2RHub Mod 清单重复声明功能组：{}", group.id));
+        }
+        if group.recipe_version == 0
+            || group.fingerprint.trim().is_empty()
+            || group.fingerprint.len() > 4_096
+        {
+            return Err(format!("D2RHub Mod 功能组元数据无效：{}", group.id));
+        }
+    }
+    Ok(())
+}
+
+fn validate_audio_mod_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    mod_directory: PathBuf,
+) -> Result<ValidatedAudioMod, String> {
     let mod_name = plain_mod_name(mod_name)?;
-    let mod_directory = mods_directory.join(mod_name);
     if !mod_directory.is_dir() {
         return Err(format!("未找到 Mod：{mod_name}"));
     }
@@ -293,10 +438,10 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
         return Err("Mod 目录结构不完整".to_string());
     }
 
-    let manifest_path = mod_directory.join(MANIFEST_FILE_NAME);
+    let manifest_path = processing_manifest_path(&mod_directory)
+        .ok_or_else(|| "这个 Mod 未经过 D2RHub 声纹加工".to_string())?;
     let manifest: serde_json::Value = serde_json::from_slice(
-        &std::fs::read(&manifest_path)
-            .map_err(|_| "这个 Mod 未经过 D2RHub 声纹加工".to_string())?,
+        &std::fs::read(&manifest_path).map_err(|_| "无法读取 D2RHub Mod 加工清单".to_string())?,
     )
     .map_err(|_| "识别 Mod 清单已损坏，请重新准备".to_string())?;
     let protocol = manifest
@@ -338,6 +483,30 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
                 .ok_or_else(|| "识别 Mod 清单的配方版本无效，请重新准备".to_string())?,
         ),
     };
+    let parsed_feature_groups = parse_feature_groups(&manifest)?;
+    let current_feature_protocol = recipe_version
+        .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        && !parsed_feature_groups.is_empty();
+    let has_current_identity = manifest
+        .get("manifest_format")
+        .and_then(serde_json::Value::as_str)
+        == Some(MANIFEST_FORMAT)
+        && manifest.get("producer").and_then(serde_json::Value::as_str) == Some(PRODUCER_NAME)
+        && manifest.get("mod_name").and_then(serde_json::Value::as_str) == Some(mod_name);
+    if current_feature_protocol && !has_current_identity {
+        return Err("当前功能组协议清单缺少完整的生成器身份信息，请重新加工".to_string());
+    }
+    // r21 and earlier manifests did not have independently verifiable feature groups. Keep their
+    // published audio runtime working, but never expose their claims to additive generation.
+    let feature_groups = if current_feature_protocol {
+        parsed_feature_groups
+    } else {
+        Vec::new()
+    };
+    let has_audio_telemetry = feature_groups.is_empty()
+        || feature_groups
+            .iter()
+            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
     let build_mode = manifest
         .get("build_mode")
         .and_then(serde_json::Value::as_str)
@@ -345,10 +514,12 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
         .map(str::to_string);
     let source_mod_name = source_mod_name_from_manifest(&manifest, mods_directory);
 
-    for catalog in [AREA_CATALOG_FILE_NAME, ITEM_CATALOG_FILE_NAME] {
-        let version = read_protocol_version(&mod_directory.join(catalog))?;
-        if version != PROTOCOL_VERSION {
-            return Err(format!("{catalog} 协议版本不匹配"));
+    if has_audio_telemetry {
+        for catalog in [AREA_CATALOG_FILE_NAME, ITEM_CATALOG_FILE_NAME] {
+            let version = read_protocol_version(&mod_directory.join(catalog))?;
+            if version != PROTOCOL_VERSION {
+                return Err(format!("{catalog} 协议版本不匹配"));
+            }
         }
     }
     Ok(ValidatedAudioMod {
@@ -356,7 +527,67 @@ fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<Validated
         recipe_version,
         build_mode,
         source_mod_name,
+        feature_groups,
+        has_audio_telemetry,
+        current_feature_protocol,
     })
+}
+
+fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<ValidatedAudioMod, String> {
+    let mod_name = plain_mod_name(mod_name)?;
+    validate_audio_mod_directory(mods_directory, mod_name, mods_directory.join(mod_name))
+}
+
+fn validate_recoverable_audio_mod_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    mod_directory: &Path,
+) -> Result<(), String> {
+    if validate_audio_mod_directory(mods_directory, mod_name, mod_directory.to_path_buf()).is_ok() {
+        return Ok(());
+    }
+    let mod_name = plain_mod_name(mod_name)?;
+    if !mod_directory.is_dir() || !mod_directory.join(format!("{mod_name}.mpq")).is_dir() {
+        return Err("Mod 恢复目录结构不完整".to_string());
+    }
+    let manifest_path = processing_manifest_path(mod_directory)
+        .ok_or_else(|| "Mod 恢复目录缺少 D2RHub 清单".to_string())?;
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(manifest_path).map_err(|error| format!("无法读取 Mod 恢复清单：{error}"))?,
+    )
+    .map_err(|_| "Mod 恢复清单已损坏".to_string())?;
+    if manifest
+        .get("protocol_version")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        return Err("Mod 恢复清单缺少协议版本".to_string());
+    }
+    match manifest.get("manifest_format") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(value)) if value == MANIFEST_FORMAT => {}
+        _ => return Err("Mod 恢复清单类型无效".to_string()),
+    }
+    match manifest.get("producer") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(value)) if value == PRODUCER_NAME => {}
+        _ => return Err("Mod 恢复清单生成器无效".to_string()),
+    }
+    match manifest.get("mod_name") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(value)) if value == mod_name => {}
+        _ => return Err("Mod 恢复清单名称无效".to_string()),
+    }
+    if manifest.get("recipe_version").is_some_and(|value| {
+        !value.is_null()
+            && value
+                .as_u64()
+                .and_then(|version| u32::try_from(version).ok())
+                .is_none()
+    }) {
+        return Err("Mod 恢复清单配方版本无效".to_string());
+    }
+    Ok(())
 }
 
 fn official_update_metadata(
@@ -368,9 +599,9 @@ fn official_update_metadata(
     if !mod_directory.is_dir() || !mod_directory.join(format!("{mod_name}.mpq")).is_dir() {
         return None;
     }
+    let manifest_path = processing_manifest_path(&mod_directory)?;
     let manifest: serde_json::Value =
-        serde_json::from_slice(&std::fs::read(mod_directory.join(MANIFEST_FILE_NAME)).ok()?)
-            .ok()?;
+        serde_json::from_slice(&std::fs::read(manifest_path).ok()?).ok()?;
     if manifest
         .get("protocol_version")
         .is_none_or(|value| value.as_u64().is_none())
@@ -465,9 +696,20 @@ fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility
     }
     match validate_audio_mod(mods_directory, &name) {
         Ok(validated) => {
-            let update_required = validated
-                .recipe_version
-                .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION);
+            if !validated.has_audio_telemetry {
+                return Compatibility {
+                    mod_name,
+                    has_txt,
+                    ready: false,
+                    update_required: false,
+                    recipe_version: validated.recipe_version,
+                    build_mode: validated.build_mode,
+                    source_mod_name: validated.source_mod_name,
+                    reason_code: "missing_audio_feature".to_string(),
+                    message: "当前 Mod 已经过 D2RHub 加工，但没有声纹识别功能组".to_string(),
+                };
+            }
+            let update_required = !validated.current_feature_protocol;
             Compatibility {
                 mod_name,
                 has_txt,
@@ -482,7 +724,7 @@ fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility
                     "ready".to_string()
                 },
                 message: if update_required {
-                    "旧版识别 Mod 仍可使用；更新后可获得即时恐怖区域识别".to_string()
+                    "旧版识别 Mod 仍可使用；重新加工后可获得可验证、可复用的独立功能组".to_string()
                 } else {
                     "识别 Mod 已准备好".to_string()
                 },
@@ -534,20 +776,46 @@ fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             if !entry.path().join(format!("{name}.mpq")).is_dir() {
                 return None;
             }
-            let source_eligible = !entry.path().join(MANIFEST_FILE_NAME).exists();
             let validation = validate_audio_mod(mods_directory, &name);
-            let audio_ready = validation.is_ok();
+            let audio_ready = validation
+                .as_ref()
+                .is_ok_and(|validated| validated.has_audio_telemetry);
             let update_required = match validation.as_ref() {
-                Ok(validated) => validated
-                    .recipe_version
-                    .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION),
+                Ok(validated) if validated.has_audio_telemetry => {
+                    !validated.current_feature_protocol
+                }
+                Ok(_) => false,
                 Err(_) => official_update_metadata(mods_directory, &name).is_some(),
+            };
+            let feature_groups = validation
+                .as_ref()
+                .map(|validated| {
+                    validated
+                        .feature_groups
+                        .iter()
+                        .map(|group| group.id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let audio_reusable = validation.as_ref().is_ok_and(|validated| {
+                validated.current_feature_protocol
+                    && validated.feature_groups.iter().any(|group| {
+                        group.id == AUDIO_TELEMETRY_FEATURE_ID
+                            && group.recipe_version == AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+                    })
+            });
+            let has_processing_manifest = processing_manifest_path(&entry.path()).is_some();
+            let source_eligible = match validation.as_ref() {
+                Ok(validated) => validated.current_feature_protocol,
+                Err(_) => !has_processing_manifest,
             };
             Some(InstalledMod {
                 name,
                 audio_ready,
                 update_required,
                 source_eligible,
+                feature_groups,
+                audio_reusable,
             })
         })
         .collect::<Vec<_>>();
@@ -627,6 +895,18 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
     let restart_required = running_pid.is_some()
         && !configured.update_required
         && (active_session_ready != Some(true) || active_session_update_required != Some(false));
+    let feature_groups = configured
+        .mod_name
+        .as_deref()
+        .and_then(|name| validate_audio_mod(&mods_directory, name).ok())
+        .map(|validated| {
+            validated
+                .feature_groups
+                .into_iter()
+                .map(|group| group.id)
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(AudioModSetupState {
         account_id: account.id.clone(),
         account_name: if account.display_name.trim().is_empty() {
@@ -643,6 +923,7 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
         required_recipe_version: REQUIRED_AUDIO_MOD_RECIPE_VERSION,
         build_mode: configured.build_mode,
         source_mod_name: configured.source_mod_name,
+        feature_groups,
         reason_code: configured.reason_code,
         message: configured.message,
         installed_mods: installed_mods(&mods_directory),
@@ -659,6 +940,12 @@ pub fn get_audio_mod_setup_state(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<AudioModSetupState, String> {
+    let _lease = BuildLease::acquire(state.inner())?;
+    let (_config, _account, context) = configured_account(state.inner(), &account_id)?;
+    let mods_directory = context.installation.game_directory.join("mods");
+    if mods_directory.is_dir() {
+        recover_audio_mod_replacements(&mods_directory)?;
+    }
     setup_state(state.inner(), &account_id)
 }
 
@@ -712,7 +999,7 @@ fn resolve_source_directory(
         .as_deref()
         .is_some_and(|source| source.eq_ignore_ascii_case(output_mod_name))
     {
-        return Err("生成目标不能同时作为源 Mod；请选择未经 D2RHub 加工的原始 Mod".to_string());
+        return Err("生成目标不能同时作为源 Mod；请使用新名称生成后再替换".to_string());
     }
     let source_directory = source_mod_name
         .as_deref()
@@ -721,8 +1008,16 @@ fn resolve_source_directory(
         if !source.is_dir() {
             return Err(format!("未找到源 Mod：{}", source.display()));
         }
-        if source.join(MANIFEST_FILE_NAME).exists() {
-            return Err("请选择原始 Mod，不要再次加工旧版、损坏或已经生成的识别 Mod".to_string());
+        if processing_manifest_path(source).is_some() {
+            let source_name = source_mod_name.as_deref().unwrap_or_default();
+            let validated = validate_audio_mod(mods_directory, source_name)
+                .map_err(|error| format!("这个 D2RHub Mod 不能作为增量来源：{error}"))?;
+            if !validated.current_feature_protocol {
+                return Err(
+                    "旧版 D2RHub Mod 可以继续运行，但不能安全增量加工；请改选原始 Mod 或 r22+ 产物"
+                        .to_string(),
+                );
+            }
         }
     }
     Ok((source_mod_name, source_directory))
@@ -730,13 +1025,17 @@ fn resolve_source_directory(
 
 async fn run_audio_mod_generator(
     app: &tauri::AppHandle,
-    account_id: &str,
-    game_directory: &Path,
-    output_directory: &Path,
-    mod_name: &str,
-    source_directory: Option<&Path>,
-    progress_ceiling: u8,
+    invocation: GeneratorInvocation<'_>,
 ) -> Result<GeneratorReport, String> {
+    let GeneratorInvocation {
+        account_id,
+        game_directory,
+        output_directory,
+        mod_name,
+        source_directory,
+        requested_features,
+        progress_ceiling,
+    } = invocation;
     let command_name = if source_directory.is_some() {
         "augment"
     } else {
@@ -754,6 +1053,8 @@ async fn run_audio_mod_generator(
         "all".to_string(),
         "--track".to_string(),
         "all".to_string(),
+        "--features".to_string(),
+        requested_features.generator_value().to_string(),
         "--events".to_string(),
     ];
     if let Some(source) = source_directory {
@@ -845,7 +1146,8 @@ fn validate_generator_output(
     output_directory: &Path,
     requested_mod_name: &str,
     report: &GeneratorReport,
-) -> Result<PathBuf, String> {
+    requested_features: RequestedFeatureGroups,
+) -> Result<ValidatedGeneratorOutput, String> {
     if report.protocol_version != PROTOCOL_VERSION {
         return Err(format!(
             "生成器协议版本不匹配：收到 v{}，需要 v{PROTOCOL_VERSION}",
@@ -858,6 +1160,12 @@ fn validate_generator_output(
             report.recipe_version
         ));
     }
+    if report.feature_groups.is_empty() {
+        return Err("生成器没有返回功能组清单".to_string());
+    }
+    validate_feature_group_entries(&report.feature_groups)
+        .map_err(|error| format!("生成器报告无效：{error}"))?;
+    requested_features.validate_present(&report.feature_groups)?;
     if report.mod_name != requested_mod_name {
         return Err("生成器返回的 Mod 名称与用户指定名称不一致".to_string());
     }
@@ -865,9 +1173,17 @@ fn validate_generator_output(
     if validated
         .recipe_version
         .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || !validated.current_feature_protocol
     {
         return Err("生成结果缺少当前配方版本，请重新安装 D2RHub 后重试".to_string());
     }
+    if validated.recipe_version != Some(report.recipe_version) {
+        return Err("生成器报告的配方版本与落盘清单不一致".to_string());
+    }
+    if validated.feature_groups != report.feature_groups {
+        return Err("生成器报告的功能组与落盘清单不一致".to_string());
+    }
+    requested_features.validate_present(&validated.feature_groups)?;
     let reported_directory = std::fs::canonicalize(&report.mod_directory)
         .map_err(|error| format!("无法校验生成目录: {error}"))?;
     let validated_directory = std::fs::canonicalize(validated.directory)
@@ -875,7 +1191,203 @@ fn validate_generator_output(
     if reported_directory != validated_directory {
         return Err("生成器返回的目录与实际输出不一致".to_string());
     }
-    Ok(validated_directory)
+    Ok(ValidatedGeneratorOutput {
+        directory: validated_directory,
+        feature_groups: validated.feature_groups,
+    })
+}
+
+fn is_safe_relative_path(path: &Path) -> bool {
+    path.components().next().is_some()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+fn replace_journal_paths_are_valid(
+    mod_name: &str,
+    staged_relative: &Path,
+    backup_relative: &Path,
+) -> bool {
+    if !is_safe_relative_path(staged_relative)
+        || !is_safe_relative_path(backup_relative)
+        || staged_relative.components().count() != 2
+        || backup_relative.components().count() != 1
+        || staged_relative.file_name().and_then(|name| name.to_str()) != Some(mod_name)
+    {
+        return false;
+    }
+    let stage_parent_is_valid = staged_relative
+        .components()
+        .next()
+        .and_then(|component| match component {
+            Component::Normal(name) => name.to_str(),
+            _ => None,
+        })
+        .is_some_and(|name| name.starts_with(".d2rhub-upgrade-stage-"));
+    let backup_is_valid = backup_relative
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(".d2rhub-upgrade-backup-"));
+    stage_parent_is_valid && backup_is_valid
+}
+
+fn write_replace_journal(
+    mods_directory: &Path,
+    mod_name: &str,
+    staged_directory: &Path,
+    backup_directory: &Path,
+) -> Result<PathBuf, String> {
+    let staged_relative = staged_directory
+        .strip_prefix(mods_directory)
+        .map_err(|_| "同名更新的暂存目录必须位于 mods 目录内".to_string())?
+        .to_path_buf();
+    let backup_relative = backup_directory
+        .strip_prefix(mods_directory)
+        .map_err(|_| "同名更新的备份目录必须位于 mods 目录内".to_string())?
+        .to_path_buf();
+    if !replace_journal_paths_are_valid(mod_name, &staged_relative, &backup_relative) {
+        return Err("同名更新的事务目录无效".to_string());
+    }
+
+    let transaction_id = uuid::Uuid::new_v4().simple().to_string();
+    let journal_path = mods_directory.join(format!(
+        "{REPLACE_JOURNAL_PREFIX}{transaction_id}{REPLACE_JOURNAL_SUFFIX}"
+    ));
+    let temporary_path = mods_directory.join(format!(
+        "{REPLACE_JOURNAL_PREFIX}{transaction_id}{REPLACE_JOURNAL_SUFFIX}.tmp"
+    ));
+    let journal = AudioModReplaceJournal {
+        format_version: REPLACE_JOURNAL_FORMAT_VERSION,
+        mod_name: mod_name.to_string(),
+        staged_relative,
+        backup_relative,
+    };
+    let bytes = serde_json::to_vec_pretty(&journal)
+        .map_err(|error| format!("无法创建 Mod 更新事务记录：{error}"))?;
+    let write_result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary_path)
+            .map_err(|error| format!("无法创建 Mod 更新事务记录：{error}"))?;
+        file.write_all(&bytes)
+            .map_err(|error| format!("无法写入 Mod 更新事务记录：{error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("无法持久化 Mod 更新事务记录：{error}"))?;
+        std::fs::rename(&temporary_path, &journal_path)
+            .map_err(|error| format!("无法提交 Mod 更新事务记录：{error}"))?;
+        Ok(())
+    })();
+    if write_result.is_err() {
+        let _ = std::fs::remove_file(&temporary_path);
+    }
+    write_result.map(|()| journal_path)
+}
+
+fn cleanup_staged_directory(mods_directory: &Path, staged_directory: &Path) -> Result<(), String> {
+    if !staged_directory.exists() {
+        return Ok(());
+    }
+    let removable = staged_directory
+        .parent()
+        .filter(|parent| parent.parent() == Some(mods_directory))
+        .filter(|parent| {
+            parent
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with(".d2rhub-upgrade-stage-"))
+        })
+        .unwrap_or(staged_directory);
+    std::fs::remove_dir_all(removable)
+        .map_err(|error| format!("清理 Mod 更新暂存目录失败：{error}"))
+}
+
+pub(crate) fn recover_audio_mod_replacements(mods_directory: &Path) -> Result<(), String> {
+    let mut journal_paths = std::fs::read_dir(mods_directory)
+        .map_err(|error| format!("无法检查 Mod 更新事务：{error}"))?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            (name.starts_with(REPLACE_JOURNAL_PREFIX) && name.ends_with(REPLACE_JOURNAL_SUFFIX))
+                .then(|| entry.path())
+        })
+        .collect::<Vec<_>>();
+    journal_paths.sort();
+
+    for journal_path in journal_paths {
+        let journal: AudioModReplaceJournal = serde_json::from_slice(
+            &std::fs::read(&journal_path)
+                .map_err(|error| format!("无法读取 Mod 更新事务记录：{error}"))?,
+        )
+        .map_err(|error| format!("Mod 更新事务记录已损坏：{error}"))?;
+        let mod_name = plain_mod_name(&journal.mod_name)?;
+        if journal.format_version != REPLACE_JOURNAL_FORMAT_VERSION
+            || !replace_journal_paths_are_valid(
+                mod_name,
+                &journal.staged_relative,
+                &journal.backup_relative,
+            )
+        {
+            return Err("Mod 更新事务记录版本或路径无效，已停止自动恢复".to_string());
+        }
+        let target_directory = mods_directory.join(mod_name);
+        let staged_directory = mods_directory.join(&journal.staged_relative);
+        let backup_directory = mods_directory.join(&journal.backup_relative);
+
+        if target_directory.exists() {
+            let target_is_recoverable = validate_recoverable_audio_mod_directory(
+                mods_directory,
+                mod_name,
+                &target_directory,
+            )
+            .is_ok();
+            if !target_is_recoverable && backup_directory.exists() {
+                validate_recoverable_audio_mod_directory(
+                    mods_directory,
+                    mod_name,
+                    &backup_directory,
+                )
+                .map_err(|error| format!("新版与备份 Mod 都无法通过恢复校验：{error}"))?;
+                let quarantine = mods_directory.join(format!(
+                    ".d2rhub-upgrade-failed-{}-{}",
+                    uuid::Uuid::new_v4().simple(),
+                    mod_name
+                ));
+                std::fs::rename(&target_directory, &quarantine)
+                    .map_err(|error| format!("隔离损坏的新版 Mod 失败：{error}"))?;
+                if let Err(error) = std::fs::rename(&backup_directory, &target_directory) {
+                    let _ = std::fs::rename(&quarantine, &target_directory);
+                    return Err(format!("恢复旧版 Mod 失败：{error}"));
+                }
+            } else if !target_is_recoverable {
+                return Err("更新事务中的 Mod 已损坏，且没有可恢复的备份".to_string());
+            }
+        } else if backup_directory.exists() {
+            std::fs::rename(&backup_directory, &target_directory)
+                .map_err(|error| format!("自动恢复旧版 Mod 失败：{error}"))?;
+        } else if staged_directory.exists() {
+            validate_audio_mod_directory(mods_directory, mod_name, staged_directory.clone())
+                .map_err(|error| format!("更新暂存 Mod 无法恢复：{error}"))?;
+            std::fs::rename(&staged_directory, &target_directory)
+                .map_err(|error| format!("自动完成暂存 Mod 安装失败：{error}"))?;
+        } else {
+            return Err("Mod 更新事务缺少目标、备份与暂存目录，无法自动恢复".to_string());
+        }
+
+        validate_recoverable_audio_mod_directory(mods_directory, mod_name, &target_directory)
+            .map_err(|error| format!("Mod 更新事务恢复后校验失败：{error}"))?;
+        if backup_directory.exists() {
+            std::fs::remove_dir_all(&backup_directory)
+                .map_err(|error| format!("清理已恢复的 Mod 备份失败：{error}"))?;
+        }
+        cleanup_staged_directory(mods_directory, &staged_directory)?;
+        std::fs::remove_file(&journal_path)
+            .map_err(|error| format!("清理 Mod 更新事务记录失败：{error}"))?;
+    }
+    Ok(())
 }
 
 fn replace_audio_mod_directory(
@@ -884,6 +1396,7 @@ fn replace_audio_mod_directory(
     staged_directory: &Path,
     backup_directory: &Path,
 ) -> Result<(), String> {
+    recover_audio_mod_replacements(mods_directory)?;
     let target_directory = mods_directory.join(mod_name);
     if !staged_directory.is_dir() {
         return Err("同名更新的暂存目录不存在".to_string());
@@ -895,16 +1408,25 @@ fn replace_audio_mod_directory(
         return Err("同名更新的备份目录发生冲突，请重试".to_string());
     }
 
-    std::fs::rename(&target_directory, backup_directory)
-        .map_err(|error| format!("无法备份旧 Mod；请确认游戏已经关闭：{error}"))?;
+    let journal_path =
+        write_replace_journal(mods_directory, mod_name, staged_directory, backup_directory)?;
+    if let Err(error) = std::fs::rename(&target_directory, backup_directory) {
+        let _ = std::fs::remove_file(&journal_path);
+        return Err(format!("无法备份旧 Mod；请确认游戏已经关闭：{error}"));
+    }
     match std::fs::rename(staged_directory, &target_directory) {
         Ok(()) => {
             // 新目录已完成同盘原子切换，旧目录仅在切换成功后清理。
-            let _ = std::fs::remove_dir_all(backup_directory);
+            if std::fs::remove_dir_all(backup_directory).is_ok() {
+                let _ = std::fs::remove_file(journal_path);
+            }
             Ok(())
         }
         Err(install_error) => match std::fs::rename(backup_directory, &target_directory) {
-            Ok(()) => Err(format!("安装新版 Mod 失败，已恢复旧版：{install_error}")),
+            Ok(()) => {
+                let _ = std::fs::remove_file(journal_path);
+                Err(format!("安装新版 Mod 失败，已恢复旧版：{install_error}"))
+            }
             Err(rollback_error) => Err(format!(
                 "安装新版 Mod 失败且自动恢复失败；旧版仍保留在 {}。安装错误：{}；恢复错误：{}",
                 backup_directory.display(),
@@ -922,6 +1444,8 @@ pub async fn prepare_audio_mod(
     account_id: String,
     mod_name: String,
     source_mod_name: Option<String>,
+    include_audio_telemetry: Option<bool>,
+    include_room_tools: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
@@ -930,6 +1454,7 @@ pub async fn prepare_audio_mod(
     let mods_directory = game_directory.join("mods");
     std::fs::create_dir_all(&mods_directory)
         .map_err(|error| format!("创建 mods 目录失败: {error}"))?;
+    recover_audio_mod_replacements(&mods_directory)?;
 
     let mod_name = generated_audio_mod_name(&mod_name)?.to_string();
     if let Some(existing_name) = find_existing_mod_name(&mods_directory, &mod_name)? {
@@ -938,26 +1463,33 @@ pub async fn prepare_audio_mod(
 
     let (source_mod_name, source_directory) =
         resolve_source_directory(&mods_directory, &mod_name, source_mod_name)?;
+    let requested_features =
+        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
 
     emit_prepare_progress(&app, &account_id, "starting", 1, "正在开始准备…");
     let report = run_audio_mod_generator(
         &app,
-        &account_id,
-        &game_directory,
-        &mods_directory,
-        &mod_name,
-        source_directory.as_deref(),
-        100,
+        GeneratorInvocation {
+            account_id: &account_id,
+            game_directory: &game_directory,
+            output_directory: &mods_directory,
+            mod_name: &mod_name,
+            source_directory: source_directory.as_deref(),
+            requested_features,
+            progress_ceiling: 100,
+        },
     )
     .await?;
-    validate_generator_output(&mods_directory, &mod_name, &report)?;
+    let generated =
+        validate_generator_output(&mods_directory, &mod_name, &report, requested_features)?;
     emit_prepare_progress(&app, &account_id, "complete", 100, "识别 Mod 已准备完成");
     Ok(AudioModPrepareResult {
         account_id,
         mod_name: report.mod_name,
-        mod_directory: report.mod_directory,
+        mod_directory: generated.directory.to_string_lossy().into_owned(),
         launch_arguments: arguments_with_audio_mod("", &mod_name)?,
         source_mod_name,
+        feature_groups: generated.feature_groups,
     })
 }
 
@@ -967,11 +1499,14 @@ pub async fn upgrade_audio_mod(
     state: tauri::State<'_, SharedState>,
     account_id: String,
     source_mod_name: Option<String>,
+    include_audio_telemetry: Option<bool>,
+    include_room_tools: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
     let (config, account, context) = configured_account(&shared_state, &account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
+    recover_audio_mod_replacements(&mods_directory)?;
     let current = compatibility(&mods_directory, &account.mod_args);
     if !current.update_required {
         return Err("当前账号没有需要原位更新的旧版识别 Mod".to_string());
@@ -988,6 +1523,8 @@ pub async fn upgrade_audio_mod(
     }
     let (_source_name, source_directory) =
         resolve_source_directory(&mods_directory, mod_name, requested_source)?;
+    let requested_features =
+        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
 
     emit_prepare_progress(&app, &account_id, "starting", 1, "正在生成同名新版 Mod…");
     let temporary_output = TemporaryDirectory::create(std::env::temp_dir().join(format!(
@@ -996,16 +1533,23 @@ pub async fn upgrade_audio_mod(
     )))?;
     let report = run_audio_mod_generator(
         &app,
-        &account_id,
-        &context.installation.game_directory,
-        temporary_output.path(),
-        mod_name,
-        source_directory.as_deref(),
-        85,
+        GeneratorInvocation {
+            account_id: &account_id,
+            game_directory: &context.installation.game_directory,
+            output_directory: temporary_output.path(),
+            mod_name,
+            source_directory: source_directory.as_deref(),
+            requested_features,
+            progress_ceiling: 85,
+        },
     )
     .await?;
-    let generated_directory =
-        validate_generator_output(temporary_output.path(), mod_name, &report)?;
+    let generated = validate_generator_output(
+        temporary_output.path(),
+        mod_name,
+        &report,
+        requested_features,
+    )?;
 
     emit_prepare_progress(&app, &account_id, "staging", 90, "正在校验并暂存新版 Mod…");
     let transaction_id = uuid::Uuid::new_v4().simple().to_string();
@@ -1013,14 +1557,19 @@ pub async fn upgrade_audio_mod(
         mods_directory.join(format!(".d2rhub-upgrade-stage-{transaction_id}")),
     )?;
     let staged_directory = staging_parent.path().join(mod_name);
-    crate::commands::utils::copy_dir_recursive(&generated_directory, &staged_directory)
+    crate::commands::utils::copy_dir_recursive(&generated.directory, &staged_directory)
         .map_err(|error| format!("暂存新版 Mod 失败: {error}"))?;
     let staged = validate_audio_mod(staging_parent.path(), mod_name)?;
     if staged
         .recipe_version
         .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || !staged.current_feature_protocol
     {
         return Err("暂存的 Mod 未通过当前配方校验，旧版未被修改".to_string());
+    }
+    requested_features.validate_present(&staged.feature_groups)?;
+    if staged.feature_groups != generated.feature_groups {
+        return Err("暂存 Mod 的功能组与已验证生成结果不一致，旧版未被修改".to_string());
     }
 
     emit_prepare_progress(&app, &account_id, "switching", 96, "正在替换同名旧版 Mod…");
@@ -1037,6 +1586,8 @@ pub async fn upgrade_audio_mod(
     if installed
         .recipe_version
         .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || !installed.current_feature_protocol
+        || installed.feature_groups != generated.feature_groups
     {
         return Err("同名更新完成后校验异常，请重新准备识别 Mod".to_string());
     }
@@ -1140,8 +1691,11 @@ pub fn apply_audio_mod_to_account(
     account_id: String,
     mod_name: String,
 ) -> Result<AudioModSetupState, String> {
+    let _lease = BuildLease::acquire(state.inner())?;
     let (_config, account, context) = configured_account(state.inner(), &account_id)?;
-    validate_audio_mod(&context.installation.game_directory.join("mods"), &mod_name)?;
+    let mods_directory = context.installation.game_directory.join("mods");
+    recover_audio_mod_replacements(&mods_directory)?;
+    validate_audio_mod(&mods_directory, &mod_name)?;
     let next_arguments = arguments_with_audio_mod(&account.mod_args, &mod_name)?;
     let mut mod_list = account.mod_list.clone();
     if !mod_list.iter().any(|entry| entry == &next_arguments) {
@@ -1229,8 +1783,11 @@ pub(crate) fn emit_runtime_compatibility_warning(
 mod tests {
     use super::{
         active_mod_name, arguments_with_audio_mod, compatibility, find_existing_mod_name,
-        generated_audio_mod_name, has_txt_argument, installed_mods, replace_audio_mod_directory,
-        resolve_source_directory, AREA_CATALOG_FILE_NAME, ITEM_CATALOG_FILE_NAME, PROTOCOL_VERSION,
+        generated_audio_mod_name, has_txt_argument, installed_mods, recover_audio_mod_replacements,
+        replace_audio_mod_directory, replace_journal_paths_are_valid, resolve_source_directory,
+        validate_generator_output, write_replace_journal, GeneratorFeatureGroup, GeneratorReport,
+        RequestedFeatureGroups, AREA_CATALOG_FILE_NAME, AUDIO_TELEMETRY_FEATURE_ID,
+        IN_GAME_ROOM_TOOLS_FEATURE_ID, ITEM_CATALOG_FILE_NAME, PROTOCOL_VERSION,
         REQUIRED_AUDIO_MOD_RECIPE_VERSION,
     };
 
@@ -1258,6 +1815,22 @@ mod tests {
         std::env::temp_dir().join(format!("d2rhub_audio_mod_{label}_{}", uuid::Uuid::new_v4()))
     }
 
+    fn current_audio_manifest(mod_name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "manifest_format": "d2r-audio-telemetry-mod",
+            "producer": "d2r-audio-mod",
+            "protocol_version": PROTOCOL_VERSION,
+            "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+            "build_mode": "minimal",
+            "mod_name": mod_name,
+            "feature_groups": [{
+                "id": AUDIO_TELEMETRY_FEATURE_ID,
+                "recipe_version": 1,
+                "fingerprint": "audio-v1;fixture=true"
+            }]
+        })
+    }
+
     #[test]
     fn rewrites_only_mod_and_txt_arguments() {
         let result = arguments_with_audio_mod(
@@ -1280,6 +1853,14 @@ mod tests {
     fn adds_audio_arguments_to_an_original_profile() {
         let result = arguments_with_audio_mod("-w", "D2RHubAudio").unwrap();
         assert_eq!(result, "-w -mod D2RHubAudio -txt -assettestmode 1");
+    }
+
+    #[test]
+    fn omitted_feature_flags_keep_the_legacy_audio_command_contract() {
+        let requested = RequestedFeatureGroups::from_options(None, None).unwrap();
+        assert!(requested.audio_telemetry);
+        assert!(!requested.room_tools);
+        assert_eq!(requested.generator_value(), "audio");
     }
 
     #[test]
@@ -1325,10 +1906,29 @@ mod tests {
     }
 
     #[test]
+    fn replacement_journal_paths_cannot_alias_the_target_or_escape_the_transaction_layout() {
+        assert!(replace_journal_paths_are_valid(
+            "safe-mod",
+            std::path::Path::new(".d2rhub-upgrade-stage-test/safe-mod"),
+            std::path::Path::new(".d2rhub-upgrade-backup-test"),
+        ));
+        assert!(!replace_journal_paths_are_valid(
+            "safe-mod",
+            std::path::Path::new("safe-mod"),
+            std::path::Path::new("safe-mod"),
+        ));
+        assert!(!replace_journal_paths_are_valid(
+            "safe-mod",
+            std::path::Path::new("../outside/safe-mod"),
+            std::path::Path::new(".d2rhub-upgrade-backup-test"),
+        ));
+    }
+
+    #[test]
     fn same_name_update_switches_only_after_staged_mod_is_ready() {
         let root = test_mods_directory("same_name_upgrade");
         let mods = root.join("mods");
-        let staging = root.join("staging");
+        let staging = mods.join(".d2rhub-upgrade-stage-test");
         std::fs::create_dir_all(&mods).unwrap();
         std::fs::create_dir_all(&staging).unwrap();
         write_test_audio_mod(
@@ -1341,18 +1941,7 @@ mod tests {
             }),
         );
         std::fs::write(mods.join("jcy-tz").join("old-marker.txt"), b"old").unwrap();
-        write_test_audio_mod(
-            &staging,
-            "jcy-tz",
-            serde_json::json!({
-                "manifest_format": "d2r-audio-telemetry-mod",
-                "producer": "d2r-audio-mod",
-                "protocol_version": PROTOCOL_VERSION,
-                "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
-                "build_mode": "minimal",
-                "mod_name": "jcy-tz"
-            }),
-        );
+        write_test_audio_mod(&staging, "jcy-tz", current_audio_manifest("jcy-tz"));
         std::fs::write(staging.join("jcy-tz").join("new-marker.txt"), b"new").unwrap();
         let backup = mods.join(".d2rhub-upgrade-backup-test");
 
@@ -1368,7 +1957,7 @@ mod tests {
     }
 
     #[test]
-    fn generated_mod_is_never_accepted_as_an_upgrade_source() {
+    fn legacy_generated_mod_runs_but_is_not_an_additive_source() {
         let root = test_mods_directory("generated_source");
         write_test_audio_mod(
             &root,
@@ -1384,8 +1973,212 @@ mod tests {
             resolve_source_directory(&root, "old-audio-updated", Some("old-audio".to_string()))
                 .unwrap_err();
 
-        assert!(error.contains("不要再次加工"));
+        let runtime = compatibility(&root, "-mod old-audio -txt");
+        assert!(runtime.ready);
+        assert!(runtime.update_required);
+        assert!(error.contains("不能安全增量加工"));
         assert!(root.join("old-audio").is_dir());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn verified_current_feature_mod_is_an_additive_source() {
+        let root = test_mods_directory("current_generated_source");
+        write_test_audio_mod(&root, "audio-r22", current_audio_manifest("audio-r22"));
+
+        let (source_name, source_directory) =
+            resolve_source_directory(&root, "audio-plus-rooms", Some("audio-r22".to_string()))
+                .unwrap();
+
+        let expected_source = root.join("audio-r22");
+        assert_eq!(source_name.as_deref(), Some("audio-r22"));
+        assert_eq!(source_directory.as_deref(), Some(expected_source.as_path()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn duplicate_or_unfingerprinted_groups_are_not_trusted_as_sources() {
+        let root = test_mods_directory("invalid_feature_sources");
+        for (name, groups) in [
+            (
+                "duplicate",
+                serde_json::json!([
+                    {"id": AUDIO_TELEMETRY_FEATURE_ID, "recipe_version": 1, "fingerprint": "one"},
+                    {"id": AUDIO_TELEMETRY_FEATURE_ID, "recipe_version": 1, "fingerprint": "two"}
+                ]),
+            ),
+            (
+                "empty-fingerprint",
+                serde_json::json!([
+                    {"id": AUDIO_TELEMETRY_FEATURE_ID, "recipe_version": 1, "fingerprint": ""}
+                ]),
+            ),
+        ] {
+            let mut manifest = current_audio_manifest(name);
+            manifest["feature_groups"] = groups;
+            write_test_audio_mod(&root, name, manifest);
+            assert!(resolve_source_directory(&root, "next", Some(name.to_string())).is_err());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn generator_report_must_match_requested_and_persisted_groups() {
+        let root = test_mods_directory("generator_groups");
+        let mod_name = "generated";
+        write_test_audio_mod(&root, mod_name, current_audio_manifest(mod_name));
+        let audio_group = GeneratorFeatureGroup {
+            id: AUDIO_TELEMETRY_FEATURE_ID.to_string(),
+            recipe_version: 1,
+            fingerprint: "audio-v1;fixture=true".to_string(),
+            reused_from_source: false,
+        };
+        let mut report = GeneratorReport {
+            protocol_version: PROTOCOL_VERSION,
+            recipe_version: REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+            mod_name: mod_name.to_string(),
+            mod_directory: root.join(mod_name).to_string_lossy().into_owned(),
+            feature_groups: vec![audio_group.clone()],
+        };
+
+        let actual = validate_generator_output(
+            &root,
+            mod_name,
+            &report,
+            RequestedFeatureGroups {
+                audio_telemetry: true,
+                room_tools: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(actual.feature_groups, vec![audio_group]);
+
+        assert!(validate_generator_output(
+            &root,
+            mod_name,
+            &report,
+            RequestedFeatureGroups {
+                audio_telemetry: true,
+                room_tools: true,
+            },
+        )
+        .unwrap_err()
+        .contains("局内房间工具"));
+
+        report.feature_groups.push(GeneratorFeatureGroup {
+            id: IN_GAME_ROOM_TOOLS_FEATURE_ID.to_string(),
+            recipe_version: 19,
+            fingerprint: "room-tools-v19".to_string(),
+            reused_from_source: false,
+        });
+        assert!(validate_generator_output(
+            &root,
+            mod_name,
+            &report,
+            RequestedFeatureGroups {
+                audio_telemetry: true,
+                room_tools: true,
+            },
+        )
+        .unwrap_err()
+        .contains("落盘清单不一致"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn final_persisted_groups_control_audio_readiness() {
+        let root = test_mods_directory("room_only");
+        let name = "room-only";
+        let mut manifest = current_audio_manifest(name);
+        manifest["feature_groups"] = serde_json::json!([{
+            "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
+            "recipe_version": 19,
+            "fingerprint": "room-tools-v19"
+        }]);
+        write_test_audio_mod(&root, name, manifest);
+        std::fs::remove_file(root.join(name).join(AREA_CATALOG_FILE_NAME)).unwrap();
+        std::fs::remove_file(root.join(name).join(ITEM_CATALOG_FILE_NAME)).unwrap();
+
+        let state = compatibility(&root, &format!("-mod {name} -txt"));
+        assert!(!state.ready);
+        assert_eq!(state.reason_code, "missing_audio_feature");
+        let listed = installed_mods(&root);
+        assert_eq!(
+            listed[0].feature_groups,
+            vec![IN_GAME_ROOM_TOOLS_FEATURE_ID]
+        );
+        assert!(!listed[0].audio_ready);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_directory_switch_restores_the_old_mod() {
+        let root = test_mods_directory("replace_recovery_rollback");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(".d2rhub-upgrade-stage-recovery");
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(".d2rhub-upgrade-backup-recovery");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_test_audio_mod(
+            &mods,
+            "recover-me",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION - 1,
+                "build_mode": "minimal",
+                "mod_name": "recover-me"
+            }),
+        );
+        std::fs::write(mods.join("recover-me").join("old-marker.txt"), b"old").unwrap();
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup).unwrap();
+        std::fs::rename(mods.join("recover-me"), &backup).unwrap();
+
+        recover_audio_mod_replacements(&mods).unwrap();
+
+        assert!(mods.join("recover-me").join("old-marker.txt").is_file());
+        assert!(!mods.join("recover-me").join("new-marker.txt").exists());
+        assert!(!backup.exists());
+        assert!(!journal.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn interrupted_directory_switch_commits_the_valid_new_mod() {
+        let root = test_mods_directory("replace_recovery_commit");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(".d2rhub-upgrade-stage-recovery");
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(".d2rhub-upgrade-backup-recovery");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_test_audio_mod(
+            &mods,
+            "recover-me",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "build_mode": "minimal",
+                "mod_name": "recover-me"
+            }),
+        );
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup).unwrap();
+        std::fs::rename(mods.join("recover-me"), &backup).unwrap();
+        std::fs::rename(&staged, mods.join("recover-me")).unwrap();
+
+        recover_audio_mod_replacements(&mods).unwrap();
+
+        assert!(mods.join("recover-me").join("new-marker.txt").is_file());
+        assert!(!backup.exists());
+        assert!(!journal.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -1454,7 +2247,12 @@ mod tests {
                     "recipe_version": version,
                     "build_mode": "augment",
                     "source_mod_name": "jcy",
-                    "mod_name": name
+                    "mod_name": name,
+                    "feature_groups": [{
+                        "id": AUDIO_TELEMETRY_FEATURE_ID,
+                        "recipe_version": 1,
+                        "fingerprint": "audio-v1;fixture=true"
+                    }]
                 }),
             );
             let result = compatibility(&root, &format!("-mod {name} -txt"));
