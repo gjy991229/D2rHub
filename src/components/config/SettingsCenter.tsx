@@ -30,6 +30,7 @@ import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
 import {
   audioSetupDefaults,
+  hasAudioTelemetry,
   type AudioModPrepareProgress,
   type AudioModPrepareResult,
   type RuneAudioStatus,
@@ -703,7 +704,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
           sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
         });
         setAudioModState(next);
-        await persistAudioEnabledState(accountId, wasEnabled);
+        await persistAudioEnabledState(
+          accountId,
+          wasEnabled && hasAudioTelemetry(next.feature_groups),
+        );
         setAudioSetupOpen(false);
         showToast("success", `识别 Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`);
         return;
@@ -719,7 +723,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       });
       await loadAccounts();
       setAudioModState(next);
-      await persistAudioEnabledState(accountId, true);
+      await persistAudioEnabledState(
+        accountId,
+        hasAudioTelemetry(result.feature_groups) && hasAudioTelemetry(next.feature_groups),
+      );
       setAudioSetupOpen(false);
       setAudioSetupName("");
       if (next.restart_required) {

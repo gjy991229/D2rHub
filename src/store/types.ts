@@ -281,6 +281,15 @@ export interface InstalledAudioMod {
   audio_ready: boolean;
   update_required: boolean;
   source_eligible: boolean;
+  feature_groups: string[];
+  audio_reusable: boolean;
+}
+
+export interface AudioModFeatureGroup {
+  id: string;
+  recipe_version: number;
+  fingerprint: string;
+  reused_from_source: boolean;
 }
 
 export interface AudioModSetupState {
@@ -295,6 +304,7 @@ export interface AudioModSetupState {
   required_recipe_version: number;
   build_mode: "minimal" | "augment" | null;
   source_mod_name: string | null;
+  feature_groups: string[];
   reason_code: string;
   message: string;
   installed_mods: InstalledAudioMod[];

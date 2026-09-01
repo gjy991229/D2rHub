@@ -1,4 +1,4 @@
-import type { AudioModSetupState } from "../../store/types";
+import type { AudioModFeatureGroup, AudioModSetupState } from "../../store/types";
 
 export interface RuneAudioStatus {
   running: boolean;
@@ -31,6 +31,15 @@ export interface AudioModPrepareResult {
   mod_directory: string;
   launch_arguments: string;
   source_mod_name: string | null;
+  feature_groups: AudioModFeatureGroup[];
+}
+
+export function hasAudioTelemetry(
+  groups: readonly string[] | readonly AudioModFeatureGroup[],
+): boolean {
+  return groups.some((group) => (
+    typeof group === "string" ? group : group.id
+  ) === "audio_telemetry");
 }
 
 export function audioSetupDefaults(state: AudioModSetupState): {
