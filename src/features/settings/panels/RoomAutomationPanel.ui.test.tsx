@@ -163,23 +163,16 @@ describe("RoomAutomationPanel", () => {
 
   it("keeps module copy local, shows a room preview, and saves with generation CAS", async () => {
     const { gateway, saveConfig } = makeGateway();
-    const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
     expect(await screen.findByRole("heading", { name: "Room Automation" })).toBeTruthy();
     expect(screen.getByText("run-007")).toBeTruthy();
 
-    await user.clear(screen.getByLabelText("Room prefix"));
-    await user.type(screen.getByLabelText("Room prefix"), "chaos-");
-
-    expect(screen.getByText("Unapplied changes")).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Create with primary/ }) as HTMLButtonElement).disabled).toBe(true);
-    await user.click(screen.getByRole("button", { name: /Apply settings/ }));
-
-    await waitFor(() => expect(saveConfig).toHaveBeenCalledTimes(1));
+    fireEvent.change(screen.getByLabelText("Room prefix"), { target: { value: "chaos-" } });
+    await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].name_prefix).toBe("chaos-"));
     expect(saveConfig.mock.calls[0][0]).toBe(4);
-    expect(saveConfig.mock.calls[0][1].name_prefix).toBe("chaos-");
     expect(await screen.findByText("chaos-007")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
   });
 
   it("keeps manual waiting active while allowing the next-sequence primary action", async () => {
@@ -202,7 +195,7 @@ describe("RoomAutomationPanel", () => {
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
 
     expect(await screen.findByText(/若房名重复/)).toBeTruthy();
-    expect((screen.getByLabelText("房名开头") as HTMLInputElement).disabled).toBe(true);
+    expect((screen.getByLabelText("房名开头") as HTMLInputElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: /应用配置/ })).toBeNull();
     const nextPrimary = screen.getByRole("button", { name: /下一序号重新建房/ });
     expect((nextPrimary as HTMLButtonElement).disabled).toBe(false);
@@ -276,73 +269,40 @@ describe("RoomAutomationPanel", () => {
     expect(stop).toHaveBeenCalledTimes(1);
   });
 
-  it("reports its explicit draft boundary and can discard without saving", async () => {
+  it("auto-saves valid edits without an apply or discard boundary", async () => {
     const { gateway, saveConfig } = makeGateway();
-    const onDirtyChange = vi.fn();
     const user = userEvent.setup();
-    render(
-      <RoomAutomationPanel
-        accounts={accounts}
-        language="en-US"
-        gateway={gateway}
-        onDirtyChange={onDirtyChange}
-      />,
-    );
+    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
     const prefix = await screen.findByLabelText("Room prefix") as HTMLInputElement;
     await user.clear(prefix);
-    await user.type(prefix, "discard-");
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
+    await user.type(prefix, "instant-");
 
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-
-    await waitFor(() => expect((screen.getByLabelText("Room prefix") as HTMLInputElement).value).toBe("run-"));
-    expect(onDirtyChange).toHaveBeenLastCalledWith(false);
-    expect(saveConfig).not.toHaveBeenCalled();
+    await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].name_prefix).toBe("instant-"));
+    expect(screen.queryByRole("button", { name: /Apply settings|Discard/ })).toBeNull();
+    await waitFor(() => expect(screen.getByText("Settings applied")).toBeTruthy());
   });
 
-  it("derives dirty state from the persisted snapshot instead of edit history", async () => {
-    const { gateway } = makeGateway();
-    const onDirtyChange = vi.fn();
-    const user = userEvent.setup();
-    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} onDirtyChange={onDirtyChange} />);
-
-    const prefix = await screen.findByLabelText("Room prefix") as HTMLInputElement;
-    await user.clear(prefix);
-    await user.type(prefix, "temporary-");
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
-    await user.clear(prefix);
-    await user.type(prefix, "run-");
-
-    await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(false));
-    expect(screen.getByText("Settings applied")).toBeTruthy();
-  });
-
-  it("keeps an external-generation conflict sticky until an explicit reload", async () => {
-    const { gateway, getHandlers } = makeGateway();
+  it("keeps a stale save conflict sticky until an explicit reload", async () => {
+    const { gateway, saveConfig } = makeGateway();
+    saveConfig.mockRejectedValueOnce(new Error("stale generation"));
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
     const prefix = await screen.findByLabelText("Room prefix") as HTMLInputElement;
     await user.clear(prefix);
     await user.type(prefix, "local-");
-    getHandlers()?.onConfig({
-      ...snapshot,
-      generation: 5,
-      config: { ...config, name_prefix: "external-" },
-    });
 
     expect(await screen.findByText(/Settings changed elsewhere/)).toBeTruthy();
     await user.type(prefix, "again");
     expect(screen.getByText(/Settings changed elsewhere/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Apply settings/ }) as HTMLButtonElement).disabled).toBe(true);
 
     await user.click(screen.getByRole("button", { name: "Reload" }));
     await waitFor(() => expect(screen.queryByText(/Settings changed elsewhere/)).toBeNull());
   });
 
   it("captures canonical shortcuts instead of accepting free-form text", async () => {
-    const { gateway } = makeGateway();
+    const { gateway, saveConfig } = makeGateway();
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
@@ -355,11 +315,11 @@ describe("RoomAutomationPanel", () => {
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, { key: "+", code: "NumpadAdd", ctrlKey: true });
     expect(shortcut.textContent).toBe("Ctrl+Num+");
-    expect(screen.getByText("Unapplied changes")).toBeTruthy();
+    await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].shortcut).toBe("Ctrl+Num+"));
   });
 
-  it("can cancel an externally-started workflow and discard a dirty local draft", async () => {
-    const { gateway, getHandlers } = makeGateway();
+  it("can edit settings and cancel an externally-started workflow", async () => {
+    const { gateway, getHandlers, saveConfig } = makeGateway();
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
@@ -382,12 +342,11 @@ describe("RoomAutomationPanel", () => {
 
     const cancel = await screen.findByRole("button", { name: "Cancel task" });
     expect((cancel as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole("button", { name: "Discard" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByLabelText("Room prefix") as HTMLInputElement).disabled).toBe(false);
 
     await user.click(cancel);
     await waitFor(() => expect(gateway.cancel).toHaveBeenCalledTimes(1));
-    await user.click(screen.getByRole("button", { name: "Discard" }));
-    await waitFor(() => expect((screen.getByLabelText("Room prefix") as HTMLInputElement).value).toBe("run-"));
+    await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].name_prefix).toBe("local-"));
   });
 
   it("accepts a durable save outcome while surfacing a later lifecycle warning", async () => {
@@ -401,13 +360,10 @@ describe("RoomAutomationPanel", () => {
       snapshot: committed,
       apply_warning: "shortcut reload failed",
     });
-    const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
     const prefix = await screen.findByLabelText("Room prefix") as HTMLInputElement;
-    await user.clear(prefix);
-    await user.type(prefix, "saved-");
-    await user.click(screen.getByRole("button", { name: /Apply settings/ }));
+    fireEvent.change(prefix, { target: { value: "saved-" } });
 
     expect(await screen.findByText(/Settings were saved, but the module could not apply them immediately/)).toBeTruthy();
     expect((screen.getByLabelText("Room prefix") as HTMLInputElement).value).toBe("saved-");

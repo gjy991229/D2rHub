@@ -20,7 +20,10 @@ import { ShortcutsPanel } from "../../features/settings/panels/ShortcutsPanel";
 import { MaintenancePanel } from "../../features/settings/panels/MaintenancePanel";
 import { PetPanel } from "../../features/settings/panels/PetPanel";
 import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
-import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
+import {
+  AppearancePanel,
+  type AppearanceSettingsDraft,
+} from "../../features/settings/panels/AppearancePanel";
 import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
 import {
@@ -46,10 +49,24 @@ interface Props {
   initialAccountId?: string | null;
 }
 
+function appearanceFromConfig(config: GlobalConfig): AppearanceSettingsDraft {
+  return {
+    app_language: config.app_language,
+    theme: config.theme === "onyx" ? "onyx" : "light",
+    main_opacity: config.main_opacity ?? 95,
+    font_scale: config.font_scale || "default",
+    separate_game_taskbar_icons: !!config.separate_game_taskbar_icons,
+  };
+}
+
+function appearanceSettingsEqual(config: GlobalConfig | null, draft: AppearanceSettingsDraft | null): boolean {
+  return !!config && !!draft && JSON.stringify(appearanceFromConfig(config)) === JSON.stringify(draft);
+}
+
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
-  const { theme, setTheme } = useTheme();
+  const { previewTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
   const shortcutAccounts = sortAccountsByCardOrder(accounts);
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
@@ -57,7 +74,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Tab and search state
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
-  const [roomAutomationDirty, setRoomAutomationDirty] = useState(false);
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const { windowPlacementBusy, locateWindow, recoverAllWindows } = useAuxiliaryWindowActions(
     config?.app_language,
@@ -65,7 +81,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const navigationSaveRef = useRef(false);
+  const [navigationSaving, setNavigationSaving] = useState(false);
+  const [appearanceDraft, setAppearanceDraft] = useState<AppearanceSettingsDraft | null>(null);
+  const [appearanceApplying, setAppearanceApplying] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -95,7 +114,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [gameSettingsLoadError, setGameSettingsLoadError] = useState<string | null>(null);
   const [gameSettingsChanged, setGameSettingsChanged] = useState(false);
   const [gameSettingsSaving, setGameSettingsSaving] = useState(false);
-  const [_fontScaleKey, setFontScaleKey] = useState(0);
   const [gameSettingsTab, setGameSettingsTab] = useState<"launch" | "game_display" | "game_graphics" | "game_audio" | "game_gameplay" | "game_automap">("launch");
 
   // Account card values draft states
@@ -130,6 +148,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   useEffect(() => {
     if (open && config) {
       setOriginalConfig(JSON.parse(JSON.stringify(config)));
+      setAppearanceDraft(appearanceFromConfig(config));
     }
   }, [open]);
 
@@ -137,7 +156,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (!open) {
       setExportPickerOpen(false);
       setExportPlaintextRiskAcknowledged(false);
-      setRoomAutomationDirty(false);
+      navigationSaveRef.current = false;
     }
   }, [open]);
 
@@ -232,37 +251,20 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Close / Rollback
   const handleClose = () => {
-    if (roomAutomationDirty) {
-      setActiveTab("room-automation");
-      showToast(
-        "warning",
-        config?.app_language === "en-US"
-          ? "Apply or discard the Room Automation changes before closing settings"
-          : "请先应用或放弃自动跟房的更改，再关闭设置",
-      );
-      return;
-    }
     if (config && installationPathEditsAreInvalid(originalConfig, config)) {
       setActiveTab("paths");
       showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
       return;
     }
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
-
-    const closeAfterSave = async () => {
-      if (config && globalHasChanges && !(await handleSaveGlobal(true))) {
-        return;
-      }
-      if (accountHasChanges && !(await handleSaveAccount(true))) {
-        return;
-      }
-      onClose();
-    };
-
-    void closeAfterSave();
+    if (navigationSaveRef.current) return;
+    navigationSaveRef.current = true;
+    setNavigationSaving(true);
+    void commitPendingSettings().then((saved) => {
+      if (saved) onClose();
+    }).finally(() => {
+      navigationSaveRef.current = false;
+      setNavigationSaving(false);
+    });
   };
 
   // Global Config Save
@@ -280,11 +282,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       showToast("error", `保存全局设置失败: ${e}`);
       return null;
     }
-  };
-
-  const handleSaveGlobal = async (quiet = false) => {
-    if (!config) return true;
-    return (await persistGlobalDraft(config, quiet)) !== null;
   };
 
   // Selected Account Config Save (includes basic metadata and game settings file)
@@ -338,6 +335,53 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     } finally {
       setGameSettingsSaving(false);
     }
+  };
+
+  const applyAppearanceDraft = async (quiet = false) => {
+    const current = useGlobalConfig.getState().config;
+    if (!current || !appearanceDraft) return true;
+    const next: GlobalConfig = {
+      ...current,
+      app_language: appearanceDraft.app_language,
+      theme: appearanceDraft.theme,
+      main_opacity: appearanceDraft.main_opacity,
+      font_scale: appearanceDraft.font_scale,
+      separate_game_taskbar_icons: appearanceDraft.separate_game_taskbar_icons,
+    };
+
+    setAppearanceApplying(true);
+    useGlobalConfig.setState({ config: next });
+    previewTheme(appearanceDraft.theme);
+    document.documentElement.dataset.fontScale = appearanceDraft.font_scale;
+    try { localStorage.setItem("d2rhub-font-scale", appearanceDraft.font_scale); } catch {}
+    const saved = await persistGlobalDraft(next, quiet);
+    setAppearanceApplying(false);
+    if (!saved) {
+      useGlobalConfig.setState({ config: current });
+      previewTheme(current.theme === "onyx" ? "onyx" : "light");
+      document.documentElement.dataset.fontScale = current.font_scale || "default";
+      try { localStorage.setItem("d2rhub-font-scale", current.font_scale || "default"); } catch {}
+      return false;
+    }
+    setAppearanceDraft(appearanceFromConfig(saved));
+    return true;
+  };
+
+  const commitPendingSettings = async () => {
+    const appearanceDirtyNow = !appearanceSettingsEqual(
+      useGlobalConfig.getState().config,
+      appearanceDraft,
+    );
+    if (appearanceDirtyNow) {
+      if (!(await applyAppearanceDraft(true))) return false;
+    } else {
+      const latestConfig = useGlobalConfig.getState().config;
+      if (latestConfig && originalConfig && JSON.stringify(latestConfig) !== JSON.stringify(originalConfig)) {
+        if (!(await persistGlobalDraft(latestConfig, true))) return false;
+      }
+    }
+    if (accountHasChanges && !(await handleSaveAccount(true))) return false;
+    return true;
   };
 
   const handleSnapshotSystemSettings = async () => {
@@ -557,70 +601,51 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     );
   })();
 
-  const hasUnsavedChanges = globalHasChanges || accountHasChanges;
-  const hasAnyUnsavedChanges = hasUnsavedChanges || roomAutomationDirty;
-
-  const autoSaveKey = JSON.stringify({
-    selectedAccountId,
-    accountNicknameDraft,
-    accountModArgsDraft,
-    accountWinXDraft,
-    accountWinYDraft,
-    gameSettingsChanged,
-    gameSettings,
-    config,
-  });
-
-  useEffect(() => {
-    if (!open || !hasUnsavedChanges || (config && installationPathEditsAreInvalid(originalConfig, config))) return;
-
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-    }
-
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSaveTimerRef.current = null;
-      (async () => {
-        if (config && globalHasChanges) {
-          await handleSaveGlobal(true);
-        }
-        if (accountHasChanges) {
-          await handleSaveAccount(true);
-        }
-      })().catch(e => showToast("error", `自动保存失败: ${e}`));
-    }, 800);
-
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-      }
-    };
-  }, [open, hasUnsavedChanges, autoSaveKey]);
+  const appearanceHasChanges = !!config && !!appearanceDraft
+    && !appearanceSettingsEqual(config, appearanceDraft);
+  const hasAnyUnsavedChanges = !!globalHasChanges || !!accountHasChanges || appearanceHasChanges;
 
   const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const accountRegionLabel = (region?: string | null) =>
     region === "KR" ? "亚服" : region === "NA" ? "美服" : region === "EU" ? "欧服" : region === "Global" ? "国际服" : "国服";
-  const saveStatusText = gameSettingsSaving
-    ? "自动保存中"
+  const saveStatusText = gameSettingsSaving || appearanceApplying || navigationSaving
+    ? "保存中"
     : hasAnyUnsavedChanges
       ? "有未保存改动"
-      : "已自动保存";
+      : "已保存";
 
   const handleTabChange = (nextTab: SettingsTabId) => {
-    if (roomAutomationDirty && nextTab !== "room-automation") {
-      showToast(
-        "warning",
-        config?.app_language === "en-US"
-          ? "Apply or discard the Room Automation changes before leaving this section"
-          : "请先应用或放弃自动跟房的更改，再离开此页面",
-      );
-      return false;
-    }
-    if (nextTab === "mod-processing" && activeTab !== "mod-processing") {
-      handleOpenAudioSetup("manage");
-    }
-    setActiveTab(nextTab);
+    if (nextTab === activeTab) return true;
+    if (navigationSaveRef.current) return false;
+    navigationSaveRef.current = true;
+    setNavigationSaving(true);
+    void commitPendingSettings().then((saved) => {
+      if (!saved) return;
+      if (nextTab === "mod-processing" && activeTab !== "mod-processing") {
+        handleOpenAudioSetup("manage");
+      }
+      setActiveTab(nextTab);
+    }).finally(() => {
+      navigationSaveRef.current = false;
+      setNavigationSaving(false);
+    });
     return true;
+  };
+
+  const handleSelectedAccountChange = (nextAccountId: string) => {
+    if (nextAccountId === selectedAccountId || navigationSaveRef.current) return;
+    if (!accountHasChanges) {
+      setSelectedAccountId(nextAccountId);
+      return;
+    }
+    navigationSaveRef.current = true;
+    setNavigationSaving(true);
+    void handleSaveAccount(true).then((saved) => {
+      if (saved) setSelectedAccountId(nextAccountId);
+    }).finally(() => {
+      navigationSaveRef.current = false;
+      setNavigationSaving(false);
+    });
   };
 
   return (
@@ -651,7 +676,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 accounts={accounts}
                 selectedAccountId={selectedAccountId}
                 selectedAccount={selectedAccount}
-                setSelectedAccountId={setSelectedAccountId}
+                setSelectedAccountId={handleSelectedAccountChange}
                 accountHasChanges={!!accountHasChanges}
                 saveAccount={handleSaveAccount}
                 toggleCustomizedSettings={handleToggleAccountSettingsMode}
@@ -683,12 +708,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
             {/* Required application appearance preferences. */}
             {activeTab === "appearance" && config && (
               <AppearancePanel
-                config={config}
-                theme={theme}
-                setTheme={setTheme}
-                updateConfig={updateConfig}
-                persistConfig={persistGlobalDraft}
-                setFontScaleKey={setFontScaleKey}
+                draft={appearanceDraft ?? appearanceFromConfig(config)}
+                dirty={appearanceHasChanges}
+                applying={appearanceApplying}
+                onChange={(patch) => setAppearanceDraft((current) => ({
+                  ...(current ?? appearanceFromConfig(config)),
+                  ...patch,
+                }))}
+                onApply={() => applyAppearanceDraft(false)}
               />
             )}
 
@@ -745,7 +772,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onAudioToggle={handleAudioToggle}
                 onPrepareAudioMod={handlePrepareAudioMod}
                 onToggleDiagnosticRecording={toggleAudioDiagnosticRecording}
-                onClose={onClose}
+                onClose={handleClose}
                 onInitializeAccount={onInitializeAccount}
               />
             )}
@@ -788,7 +815,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               <RoomAutomationPanel
                 accounts={accounts}
                 language={config?.app_language}
-                onDirtyChange={setRoomAutomationDirty}
                 onOpenAudioModSettings={() => { handleOpenModProcessing("manage"); }}
               />
             )}

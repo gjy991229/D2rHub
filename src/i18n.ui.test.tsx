@@ -3,11 +3,11 @@ import { translateUiText } from "./i18n";
 
 describe("translateUiText settings copy", () => {
   it("translates the settings title with its dynamic save status", () => {
-    expect(translateUiText("设置中心 · 已自动保存", "en-US")).toBe(
-      "Settings Center · Auto-saved",
+    expect(translateUiText("设置中心 · 已保存", "en-US")).toBe(
+      "Settings Center · Saved",
     );
-    expect(translateUiText("设置中心 · 自动保存中", "en-US")).toBe(
-      "Settings Center · Auto-saving",
+    expect(translateUiText("设置中心 · 保存中", "en-US")).toBe(
+      "Settings Center · Saving",
     );
     expect(translateUiText("设置中心 · 有未保存改动", "en-US")).toBe(
       "Settings Center · Unsaved changes",

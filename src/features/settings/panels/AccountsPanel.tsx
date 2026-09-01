@@ -23,7 +23,7 @@ interface AccountsPanelProps {
   accounts: AccountMeta[];
   selectedAccountId: string;
   selectedAccount?: AccountMeta;
-  setSelectedAccountId: Dispatch<SetStateAction<string>>;
+  setSelectedAccountId: (accountId: string) => void;
   accountHasChanges: boolean;
   saveAccount: (quiet?: boolean) => Promise<boolean>;
   toggleCustomizedSettings: (accountId: string, customized: boolean) => Promise<void>;

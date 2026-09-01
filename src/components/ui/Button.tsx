@@ -11,26 +11,26 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const sizeMap: Record<Size, string> = {
-  sm: "h-[28px] px-3 text-xs gap-1.5 rounded-xl",
-  md: "h-[32px] px-4 text-sm gap-2 rounded-xl",
-  lg: "h-[36px] px-5 text-sm gap-2 rounded-[14px]",
+  sm: "min-h-[32px] px-3 text-xs gap-1.5 rounded-lg",
+  md: "min-h-[36px] px-4 text-sm gap-2 rounded-lg",
+  lg: "min-h-[40px] px-5 text-sm gap-2 rounded-[10px]",
 };
 
 const variantMap: Record<Variant, { base: string; style: React.CSSProperties }> = {
   primary: {
-    base: "font-semibold active:scale-[0.97]",
-    style: { background: "var(--cta-bg, var(--accent))", color: "var(--cta-text, #fff)", boxShadow: "inset 0 1px 0 rgba(255,255,255,0.16), 0 10px 22px rgba(0,0,0,0.10)" },
+    base: "font-semibold hover:brightness-105 active:translate-y-px",
+    style: { border: "1px solid transparent", background: "var(--cta-bg, var(--accent))", color: "var(--cta-text, #fff)" },
   },
   secondary: {
-    base: "font-medium active:scale-[0.97]",
-    style: { border: "1px solid var(--border-default)", color: "var(--text-secondary)", background: "var(--surface-control, var(--surface-card))" },
+    base: "font-medium hover:bg-surface-hover active:translate-y-px",
+    style: { border: "1px solid var(--border-default)", color: "var(--text-secondary)", background: "transparent" },
   },
   ghost: {
-    base: "font-medium hover:bg-surface-hover active:scale-[0.97]",
-    style: { color: "var(--text-secondary)" },
+    base: "font-medium hover:bg-surface-hover active:translate-y-px",
+    style: { border: "1px solid transparent", color: "var(--text-secondary)" },
   },
   danger: {
-    base: "font-medium active:scale-[0.97]",
+    base: "font-medium hover:brightness-105 active:translate-y-px",
     style: { border: "1px solid rgba(255,59,48,0.12)", color: "var(--error)", background: "rgba(255,59,48,0.10)" },
   },
 };
@@ -44,8 +44,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       <button
         ref={ref}
         disabled={disabled || loading}
-        className={`inline-flex items-center justify-center transition-all duration-200 ease-out
-          disabled:opacity-35 disabled:cursor-not-allowed ${s} ${v.base} ${className}`}
+        className={`inline-flex items-center justify-center whitespace-nowrap transition-[background-color,border-color,color,filter,transform] duration-150 ease-out
+          focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2
+          disabled:translate-y-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:brightness-100 ${s} ${v.base} ${className}`}
         style={{ ...v.style, ...style }}
         {...props}
       >

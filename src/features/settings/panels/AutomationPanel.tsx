@@ -149,8 +149,8 @@ export function AutomationPanel({
         manageTitle: "管理 Mod 功能",
       };
   return (
-<div className="settings-content-grid">
-  <div className="spatial-panel p-3 space-y-2">
+<div className="settings-content-grid recognition-layout">
+  <div className="spatial-panel recognition-control-panel">
     <div className="flex items-center justify-between py-1">
       <div className="min-w-0 pr-4">
         <span className="text-sm font-bold text-text-secondary">音频声纹自动识别</span>
@@ -167,13 +167,8 @@ export function AutomationPanel({
 
     <div
       id="rune-audio-readiness"
-      className={`rounded-xl border px-3 py-3 ${
-        isAudioRecognitionActive
-          ? "border-success/25 bg-success/10"
-          : hasReadyAudioMod
-            ? "border-accent/20 bg-surface-hover"
-            : "border-warning/25 bg-warning/10"
-      }`}
+      className="recognition-readiness"
+      data-state={isAudioRecognitionActive ? "running" : hasReadyAudioMod ? "ready" : "attention"}
       role="status"
       aria-live="polite"
     >
@@ -241,7 +236,7 @@ export function AutomationPanel({
           </Button>
         )}
       </div>
-      <ol className="mt-3 grid grid-cols-3 gap-2" aria-label="声纹识别启用步骤">
+      <ol className="recognition-checklist" aria-label="声纹识别启用步骤">
         {[
           { label: "初始化账号", complete: hasInitializedAudioAccount },
           { label: "选择监听账号", complete: hasAudioTarget },
@@ -249,14 +244,11 @@ export function AutomationPanel({
         ].map((step, index) => (
           <li
             key={step.label}
-            className={`flex min-w-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-2xs ${
-              step.complete ? "bg-success/10 text-success" : "bg-surface-card text-text-secondary"
-            }`}
+            className="recognition-checklist-item"
+            data-complete={step.complete ? "true" : undefined}
           >
             <span
-              className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[9px] font-bold ${
-                step.complete ? "bg-success text-black" : "border border-border-default text-text-muted"
-              }`}
+              className="recognition-checklist-marker"
               aria-hidden="true"
             >
               {step.complete ? "✓" : index + 1}
@@ -267,7 +259,7 @@ export function AutomationPanel({
       </ol>
     </div>
 
-    <div className="space-y-1.5 border-t border-border-default/50 pt-3">
+    <div className="recognition-target-section">
       <div className="flex items-center justify-between gap-4">
         <div>
           <label htmlFor="rune-audio-target-account" className="text-sm font-semibold text-text-secondary">
@@ -634,7 +626,7 @@ export function AutomationPanel({
       </div>
     )}
 
-    <div className="space-y-2 border-t border-border-default/50 pt-3">
+    <div className="recognition-monitor">
       <div className="flex items-center justify-between text-xs">
         <span className={audioStatus?.running ? "text-success" : "text-text-secondary"}>
           {audioStatus?.running ? `正在捕获 · PID ${audioStatus.target_pid}` : "监控未运行"}
@@ -738,8 +730,8 @@ export function AutomationPanel({
     )}
   </div>
 
-  <div className="space-y-3">
-    <details className="spatial-panel group overflow-hidden" open>
+  <div className="recognition-side">
+    <details className="spatial-panel group overflow-hidden recognition-filters" open>
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
         <span>
           <span className="block text-sm font-bold text-text-primary">识别过滤器</span>
@@ -899,7 +891,7 @@ export function AutomationPanel({
       </div>
     </details>
 
-    <div className="spatial-panel p-4 space-y-3">
+    <div className="spatial-panel recognition-notes">
       <div>
         <span className="text-xs font-bold text-text-primary block mb-1">识别说明</span>
         <p className="text-2xs text-text-muted">

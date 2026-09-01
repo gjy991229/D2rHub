@@ -122,9 +122,8 @@ export function ModProcessingPanel({
         </Button>
       </header>
 
-      <section className="spatial-panel mod-processing-section">
+      <section className="spatial-panel mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
-          <span>1</span>
           <div>
             <h3>{isEnglish ? "Target account" : "加工目标"}</h3>
             <p>{isEnglish ? "The selected account receives the generated launch arguments." : "加工完成后会自动写入这个账号的启动参数。"}</p>
@@ -144,7 +143,7 @@ export function ModProcessingPanel({
       </section>
 
       {!trackingTarget.valid ? (
-        <div className="room-automation-state room-automation-state-block" data-tone="danger" role="status">
+        <div className="room-automation-state room-automation-state-block mod-processing-main-state" data-tone="danger" role="status">
           <AlertTriangle size={16} />
           <div>
             <strong>{isEnglish ? "Select an initialized account first" : "请先选择一个已初始化账号"}</strong>
@@ -152,16 +151,15 @@ export function ModProcessingPanel({
           </div>
         </div>
       ) : audioModStateLoading && !audioModState ? (
-        <div className="space-y-2" aria-label="正在扫描 Mod">
+        <div className="mod-processing-main-state space-y-2" aria-label="正在扫描 Mod">
           <div className="h-24 skeleton rounded-xl" />
           <div className="h-40 skeleton rounded-xl" />
         </div>
       ) : (
         <>
           {!isAudioModFeatureManagement && (
-            <section className="spatial-panel mod-processing-section">
+            <section className="spatial-panel mod-processing-section mod-processing-source">
               <div className="mod-processing-section-heading">
-                <span>2</span>
                 <div>
                   <h3>{isEnglish ? "Choose the source" : "选择源内容"}</h3>
                   <p>{isEnglish ? "An existing Mod stays unchanged; D2RHub builds a separate verified result." : "原 Mod 不会被修改；D2RHub 会生成并校验一个独立结果。"}</p>
@@ -208,9 +206,8 @@ export function ModProcessingPanel({
             </section>
           )}
 
-          <section className="spatial-panel mod-processing-section">
+          <section className="spatial-panel mod-processing-section mod-processing-capabilities">
             <div className="mod-processing-section-heading">
-              <span>{isAudioModFeatureManagement ? "2" : "3"}</span>
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
                 <p>{isEnglish ? "Inherited modules are locked. Recognition is also locked when this flow was opened to enable it." : "源 Mod 已有模块会锁定保留；为开启识别进入此页时，声纹识别同样为必选。"}</p>
@@ -240,7 +237,6 @@ export function ModProcessingPanel({
 
           <section className="spatial-panel mod-processing-section mod-processing-output">
             <div className="mod-processing-section-heading">
-              <span>{isAudioModFeatureManagement ? "3" : "4"}</span>
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
                 <p>{isAudioModUpgrade ? (isEnglish ? "The current Mod is safely replaced in place after verification." : "校验成功后原位更新，名称和账号启动参数保持不变。") : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
