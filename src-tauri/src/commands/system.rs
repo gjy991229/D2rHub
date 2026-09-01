@@ -1464,6 +1464,7 @@ pub fn is_admin() -> bool {
 /// 退出程序
 #[tauri::command]
 pub fn exit_app(app: tauri::AppHandle) {
+    crate::capabilities::shutdown(&app);
     app.exit(0);
 }
 

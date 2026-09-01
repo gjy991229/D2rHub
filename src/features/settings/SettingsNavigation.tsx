@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
-import type { GlobalConfig } from "../../store/types";
+import type {
+  CapabilityRuntimeState,
+  CapabilityStatusSnapshot,
+  GlobalConfig,
+} from "../../store/types";
+import { aggregateCapabilityStatuses } from "../capabilities";
 import {
   SETTINGS_FEATURES,
   SETTINGS_COPY,
@@ -12,11 +17,39 @@ import {
 interface SettingsNavigationProps {
   activeTab: SettingsTabId;
   config?: GlobalConfig | null;
+  capabilityStatus?: CapabilityStatusSnapshot | null;
+  capabilityStatusUnavailable?: boolean;
   language?: string | null;
   onSelect: (tab: SettingsTabId) => void;
 }
 
-export function SettingsNavigation({ activeTab, config, language, onSelect }: SettingsNavigationProps) {
+const STATUS_COPY: Record<"zh-CN" | "en-US", Record<CapabilityRuntimeState, string>> = {
+  "zh-CN": {
+    disabled: "已停用",
+    stopped: "待启动",
+    starting: "启动中",
+    running: "运行中",
+    degraded: "受限",
+    failed: "异常",
+  },
+  "en-US": {
+    disabled: "Off",
+    stopped: "Pending",
+    starting: "Starting",
+    running: "Running",
+    degraded: "Limited",
+    failed: "Error",
+  },
+};
+
+export function SettingsNavigation({
+  activeTab,
+  config,
+  capabilityStatus,
+  capabilityStatusUnavailable = false,
+  language,
+  onSelect,
+}: SettingsNavigationProps) {
   const buttonRefs = useRef(new Map<SettingsTabId, HTMLButtonElement>());
   const [compact, setCompact] = useState(false);
   const locale = normalizeSettingsLanguage(language);
@@ -78,8 +111,25 @@ export function SettingsNavigation({ activeTab, config, language, onSelect }: Se
               {features.map((feature) => {
                 const Icon = feature.icon;
                 const selected = feature.id === activeTab;
-                const enabled = feature.isEnabled && config ? feature.isEnabled(config) : false;
                 const copy = SETTINGS_COPY[locale][feature.id];
+                const runtimeStatus = feature.capabilityIds && !capabilityStatusUnavailable
+                  ? aggregateCapabilityStatuses(capabilityStatus ?? null, feature.capabilityIds)
+                  : null;
+                const configured = feature.isConfigured && config
+                  ? feature.isConfigured(config)
+                  : false;
+                const badgeState = feature.capabilityIds
+                  ? runtimeStatus?.state ?? "unknown"
+                  : configured ? "configured" : "unconfigured";
+                const badgeCopy = feature.capabilityIds
+                  ? capabilityStatusUnavailable
+                    ? locale === "en-US" ? "Unavailable" : "不可用"
+                    : runtimeStatus
+                      ? STATUS_COPY[locale][runtimeStatus.state]
+                      : locale === "en-US" ? "Checking" : "读取中"
+                  : configured
+                    ? locale === "en-US" ? "Configured" : "已配置"
+                    : locale === "en-US" ? "Not set" : "未配置";
                 return (
                   <button
                     key={feature.id}
@@ -104,10 +154,8 @@ export function SettingsNavigation({ activeTab, config, language, onSelect }: Se
                       <span className="settings-navigation-description">{copy.description}</span>
                     </span>
                     {feature.kind === "optional" && (
-                      <span className="settings-navigation-badge" data-enabled={enabled ? "true" : "false"}>
-                        {locale === "en-US"
-                          ? enabled ? "On" : "Off"
-                          : enabled ? "已启用" : "未启用"}
+                      <span className="settings-navigation-badge" data-state={badgeState}>
+                        {badgeCopy}
                       </span>
                     )}
                   </button>

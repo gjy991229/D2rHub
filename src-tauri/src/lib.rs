@@ -151,6 +151,7 @@ pub fn run() {
         // ── 全局配置 ──
         .invoke_handler(tauri::generate_handler![
             commands::global_config::get_global_config,
+            commands::capability::get_capability_statuses,
             commands::global_config::save_global_config,
             commands::global_config::patch_global_config,
             commands::global_config::save_window_geometry,

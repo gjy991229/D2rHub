@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use crate::application::capability::CapabilityRegistry;
 use crate::application::configuration::ConfigurationRuntime;
 use crate::application::multi_instance::MultiInstanceRuntime;
 use crate::error::AppError;
@@ -12,6 +13,8 @@ use crate::error::AppError;
 pub struct AppState {
     /// 全局配置事务运行时。所有读取都取得不可变快照，写入只能经仓储与策略端口提交。
     configuration: ConfigurationRuntime,
+    /// 可选模块生命周期的纯应用层控制面。
+    capabilities: Arc<CapabilityRegistry>,
     /// 应用数据目录路径
     pub app_data_dir: String,
     /// 多开核心运行时。账号实例与操作取消只能通过其公开接口访问，避免模块直接操作锁。
@@ -49,6 +52,7 @@ impl AppState {
     fn with_app_data_dir(app_data: PathBuf) -> Self {
         Self {
             configuration: ConfigurationRuntime::new(),
+            capabilities: Arc::new(CapabilityRegistry::new()),
             app_data_dir: app_data.to_string_lossy().to_string(),
             multi_instance: MultiInstanceRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
@@ -63,6 +67,10 @@ impl AppState {
 
     pub fn configuration(&self) -> &ConfigurationRuntime {
         &self.configuration
+    }
+
+    pub fn capabilities(&self) -> &Arc<CapabilityRegistry> {
+        &self.capabilities
     }
 
     pub fn multi_instance(&self) -> &MultiInstanceRuntime {

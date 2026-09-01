@@ -26,43 +26,7 @@ async function retryWindowAction(
 }
 
 export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null) {
-  const prevEnabledRef = useRef(config?.enable_bongo_cat);
   const prevScaleRef = useRef(config?.bongo_cat_scale);
-
-  useEffect(() => {
-    if (loading || !config) return;
-
-    let cancelled = false;
-
-    const showCat = async () => {
-      try {
-        if (cancelled) return true;
-        await setAuxiliaryWindowVisible("bongo-cat", true);
-        return true;
-      } catch {}
-      return false;
-    };
-
-    const hideCat = async () => {
-      try {
-        if (cancelled) return;
-        await setAuxiliaryWindowVisible("bongo-cat", false);
-      } catch {}
-    };
-
-    if (config.enable_bongo_cat) {
-      void retryWindowAction(showCat, () => cancelled, 300);
-    } else if (prevEnabledRef.current) {
-      // 配置变更：从开启变为关闭 → 隐藏猫咪窗口
-      void hideCat();
-    }
-
-    prevEnabledRef.current = config.enable_bongo_cat;
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, config?.enable_bongo_cat]);
 
   // 缩放变更即时生效（无需重启）
   useEffect(() => {

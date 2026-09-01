@@ -99,9 +99,26 @@
   line-height: 1.4;
 }
 
-.settings-navigation-badge[data-enabled="true"] {
+.settings-navigation-badge[data-state="configured"] {
+  border-color: color-mix(in srgb, var(--accent) 30%, var(--border-default));
+  color: var(--accent);
+}
+
+.settings-navigation-badge[data-state="running"] {
   border-color: color-mix(in srgb, var(--success) 35%, var(--border-default));
   color: var(--success);
+}
+
+.settings-navigation-badge[data-state="starting"],
+.settings-navigation-badge[data-state="stopped"],
+.settings-navigation-badge[data-state="degraded"] {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border-default));
+  color: var(--warning);
+}
+
+.settings-navigation-badge[data-state="failed"] {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border-default));
+  color: var(--danger);
 }
 
 .settings-panel-scroll {

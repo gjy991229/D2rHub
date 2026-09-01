@@ -3,7 +3,6 @@ import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useGlobalConfig } from "../../../store/globalConfig";
 import type { GlobalConfig } from "../../../store/types";
-import { setAuxiliaryWindowVisible } from "../../../utils/windowPlacement";
 
 interface PetPanelProps {
   config: GlobalConfig;
@@ -45,11 +44,6 @@ export function PetPanel({
                 updateConfig(current => { current.enable_bongo_cat = enabled; });
                 const current = useGlobalConfig.getState().config;
                 if (current) await persistConfig({ ...current, enable_bongo_cat: enabled }, true);
-                try {
-                  await setAuxiliaryWindowVisible("bongo-cat", enabled);
-                } catch (error) {
-                  console.error("切换桌宠窗口显示失败", error);
-                }
               }}
             />
           </div>

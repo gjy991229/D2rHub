@@ -34,15 +34,16 @@ describe("settings feature registry", () => {
     expect(new Set(SETTINGS_FEATURES.map((feature) => feature.id)).size).toBe(SETTINGS_FEATURES.length);
   });
 
-  it("derives optional module state from existing persisted fields", () => {
+  it("labels unsupervised optional modules as configured intent", () => {
     const shortcuts = SETTINGS_FEATURES.find((feature) => feature.id === "shortcuts");
     const overlays = SETTINGS_FEATURES.find((feature) => feature.id === "overlays");
 
-    expect(shortcuts?.isEnabled?.({ shortcut_bindings_json: '{"1":" Ctrl+1 ","2":""}' } as GlobalConfig)).toBe(true);
-    expect(shortcuts?.isEnabled?.({ shortcut_bindings_json: '{"1":"   "}' } as GlobalConfig)).toBe(false);
-    expect(shortcuts?.isEnabled?.({ shortcut_bindings_json: "invalid" } as GlobalConfig)).toBe(false);
-    expect(overlays?.isEnabled?.({ enable_tz_overlay: false, enable_stats_overlay: true } as GlobalConfig)).toBe(true);
-    expect(overlays?.isEnabled?.({ enable_tz_overlay: false, enable_stats_overlay: false } as GlobalConfig)).toBe(false);
+    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: '{"1":" Ctrl+1 ","2":""}' } as GlobalConfig)).toBe(true);
+    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: '{"1":"   "}' } as GlobalConfig)).toBe(false);
+    expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: "invalid" } as GlobalConfig)).toBe(false);
+    expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: true } as GlobalConfig)).toBe(true);
+    expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: false } as GlobalConfig)).toBe(false);
+    expect(SETTINGS_FEATURES.find((feature) => feature.id === "pet")?.capabilityIds).toEqual(["desktop-pet"]);
   });
 });
 
@@ -77,5 +78,53 @@ describe("SettingsNavigation", () => {
     expect(screen.getByRole("tab", { name: /Desktop Overlays/ })).toBeTruthy();
     expect(screen.getByText("Optional features")).toBeTruthy();
     expect(screen.queryByText("账号与实例")).toBeNull();
+  });
+
+  it("renders observed lifecycle state instead of inferring desktop pet health from config", () => {
+    render(
+      <SettingsNavigation
+        activeTab="pet"
+        config={{ enable_bongo_cat: true } as GlobalConfig}
+        capabilityStatus={{
+          revision: 4,
+          capabilities: [{
+            id: "desktop-pet",
+            requested_enabled: true,
+            state: "failed",
+            reason_code: "window-unavailable",
+          }],
+        }}
+        onSelect={() => {}}
+      />,
+    );
+
+    const badge = screen.getByRole("tab", { name: /桌面伴随/ })
+      .querySelector(".settings-navigation-badge");
+    expect(badge?.textContent).toBe("异常");
+    expect(badge?.getAttribute("data-state")).toBe("failed");
+  });
+
+  it("does not present a stale runtime snapshot when status synchronization is unavailable", () => {
+    render(
+      <SettingsNavigation
+        activeTab="pet"
+        capabilityStatus={{
+          revision: 9,
+          capabilities: [{
+            id: "desktop-pet",
+            requested_enabled: true,
+            state: "running",
+            reason_code: null,
+          }],
+        }}
+        capabilityStatusUnavailable
+        onSelect={() => {}}
+      />,
+    );
+
+    const badge = screen.getByRole("tab", { name: /桌面伴随/ })
+      .querySelector(".settings-navigation-badge");
+    expect(badge?.textContent).toBe("不可用");
+    expect(badge?.getAttribute("data-state")).toBe("unknown");
   });
 });

@@ -1,6 +1,7 @@
 pub mod account;
 pub mod account_transfer;
 pub mod browser;
+pub mod capability;
 pub mod crypto;
 pub mod global_config;
 pub mod launch;

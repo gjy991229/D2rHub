@@ -31,8 +31,10 @@ export interface SettingsFeatureDefinition {
   icon: LucideIcon;
   kind: SettingsCapabilityKind;
   group: SettingsFeatureGroup;
-  /** Existing persisted fields remain the source of truth for module state. */
-  isEnabled?: (config: GlobalConfig) => boolean;
+  /** Stable backend lifecycle IDs. Their observed status is never inferred from config. */
+  capabilityIds?: readonly string[];
+  /** Compatibility-only configuration intent for capabilities not yet supervised. */
+  isConfigured?: (config: GlobalConfig) => boolean;
 }
 
 export const SETTINGS_GROUPS: ReadonlyArray<{
@@ -140,7 +142,7 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: Settings,
     kind: "optional",
     group: "optional-features",
-    isEnabled: (config) => {
+    isConfigured: (config) => {
       try {
         const bindings: unknown = JSON.parse(config.shortcut_bindings_json || "{}");
         return !!bindings
@@ -159,21 +161,21 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: Monitor,
     kind: "optional",
     group: "optional-features",
-    isEnabled: (config) => config.enable_tz_overlay || config.enable_stats_overlay,
+    isConfigured: (config) => config.enable_tz_overlay || config.enable_stats_overlay,
   },
   {
     id: "automation",
     icon: ScanEye,
     kind: "optional",
     group: "optional-features",
-    isEnabled: (config) => config.rune_audio_enabled,
+    isConfigured: (config) => config.rune_audio_enabled,
   },
   {
     id: "pet",
     icon: Cat,
     kind: "optional",
     group: "optional-features",
-    isEnabled: (config) => config.enable_bongo_cat,
+    capabilityIds: ["desktop-pet"],
   },
 ] as const;
 

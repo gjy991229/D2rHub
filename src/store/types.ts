@@ -79,6 +79,40 @@ export interface GlobalConfig {
   favorite_launch_group_ids?: string[];
 }
 
+// ── 可选能力运行状态 ──
+
+/**
+ * Runtime state reported by the backend capability supervisor.
+ *
+ * This deliberately describes observed lifecycle state, not a value inferred
+ * from global configuration. `requested_enabled` remains separate so a module
+ * that was requested but failed to start is not presented as healthy.
+ */
+export type CapabilityRuntimeState =
+  | "disabled"
+  | "stopped"
+  | "starting"
+  | "running"
+  | "degraded"
+  | "failed";
+
+export interface CapabilityStatus {
+  /** Stable, non-localized, kebab-case module identifier. */
+  id: string;
+  /** Persisted user intent as resolved by the backend compatibility adapter. */
+  requested_enabled: boolean;
+  /** Actual lifecycle state observed by the backend supervisor. */
+  state: CapabilityRuntimeState;
+  /** Stable machine-readable reason; localized copy remains frontend-owned. */
+  reason_code: string | null;
+}
+
+export interface CapabilityStatusSnapshot {
+  /** Monotonic backend revision used to reject stale command responses. */
+  revision: number;
+  capabilities: CapabilityStatus[];
+}
+
 // ── 数据统计 ──
 
 export type DropKind = "rune" | "item";

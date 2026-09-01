@@ -8,7 +8,6 @@ import { useWindowPlacementSave } from "../hooks/useWindowPlacementSave";
 import { usePreventDragRegionDoubleClick } from "../hooks/useAppEffects";
 import {
   restoreWindowPlacement,
-  setAuxiliaryWindowVisible,
   type LegacyWindowGeometry,
 } from "../utils/windowPlacement";
 
@@ -262,7 +261,7 @@ export function BongoCatWindow() {
 
   const hideWindow = async () => {
     try {
-      await setAuxiliaryWindowVisible("bongo-cat", false);
+      await patch({ enable_bongo_cat: false });
     } catch {}
   };
 

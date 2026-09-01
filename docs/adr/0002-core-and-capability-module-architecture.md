@@ -95,6 +95,32 @@ The first implementation uses a static registry compiled with D2RHub. A future
 out-of-process extension protocol may be added for untrusted integrations, but
 it is not part of this decision.
 
+The application-layer registry is the single source of lifecycle truth. It
+validates stable IDs and dependency graphs, serializes each driver's idempotent
+operations without holding the global registry lock, and publishes monotonic
+status snapshots. Configuration observers only update desired state and enqueue
+bounded reconciliation work; they never start or stop a module inside the
+global configuration transaction. The frontend subscribes to
+`capability-status-updated` before reading `get_capability_statuses`, then uses
+the snapshot revision to reject stale responses.
+
+Reconciliation quiesces dependents in reverse dependency order before it
+activates dependencies in topological order. Runtime availability is
+transitive: a module is unavailable when any dependency anywhere below it is
+unavailable. A failed start, stop, or health probe requires an idempotent
+`stop` cleanup before a later `start`; cleanup never proceeds while an active
+dependent cannot stop. Periodic health checks fail closed and propagate the
+failure, but do not create an unbounded automatic restart loop. Recovery is an
+explicit, supervised reconciliation and module-specific retry policy may add a
+bounded backoff later.
+
+The desktop pet is the first managed capability (`desktop-pet`). Its existing
+`enable_bongo_cat` field remains compatible, but the worker, input forwarding,
+window visibility, health, and shutdown are now owned by its lifecycle driver.
+Other optional features continue to expose configuration intent as
+"configured" until their actual runtime is supervised; configuration alone is
+never presented as proof that a module is running.
+
 ## Configuration compatibility
 
 The existing global configuration remains the compatibility envelope during
@@ -167,15 +193,18 @@ architecture without exposing implementation jargon to users:
 
 ## Room automation integration
 
-The unfinished room-follow/room-rotation work at
-`095a6e7e78b1693b202d44ec699a25a10700fb25` is not merged during the foundation
-refactor. When complete, it enters as an optional `room-automation` capability:
+The completed room-follow/room-rotation baseline is
+`730d6eb9de20c701c62ef85d0d4f6f2c638517a7`. Its branch predates the application,
+configuration-transaction, capability, platform-gateway, and modular-settings
+boundaries, so its repository tree is retained as a behavior specification and
+rollback point rather than merged wholesale. The completed behavior is ported
+into an optional `room-automation` capability:
 
 - it depends on public account selection, launch, and instance-status ports;
 - its scheduler and listeners are owned by its lifecycle and stop when disabled;
 - its settings panel is registered rather than appended to the settings shell;
-- its configuration has a legacy adapter if the feature branch has already
-  shipped a persisted format;
+- its global-v9 `room_rotation` value is imported once into a versioned module
+  sidecar without deleting or rewriting the preserved legacy value;
 - it cannot mutate launch internals or global configuration through command
   module implementation details.
 

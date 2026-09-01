@@ -117,7 +117,7 @@ struct RuntimeConfigurationObserver<'a> {
 impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
     fn publish(&self, config: &GlobalConfig) {
         update_shortcut_map(self.state, config);
-        crate::input_listener::set_bongo_cat_input_enabled(config.enable_bongo_cat);
+        crate::capabilities::apply_configuration(self.state, self.app, config);
         if !config.rune_audio_enabled || config.rune_audio_target_account.trim().is_empty() {
             crate::rune_audio::monitor::stop_rune_audio_monitor();
         }

@@ -355,16 +355,6 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 pub fn start_input_listener(app_handle: AppHandle) {
-    if let Some(state) = app_handle.try_state::<SharedState>() {
-        let enabled = state
-            .configuration()
-            .snapshot()
-            .as_ref()
-            .map(|c| c.enable_bongo_cat)
-            .unwrap_or(false);
-        set_bongo_cat_input_enabled(enabled);
-    }
-
     if let Ok(mut guard) = APP_HANDLE.lock() {
         *guard = Some(app_handle.clone());
     }

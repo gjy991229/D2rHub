@@ -1,3 +1,4 @@
+use crate::application::capability::{CapabilityDriver, CapabilityFailure, CapabilityHealth};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow};
@@ -47,14 +48,25 @@ impl WindowGeometry {
 
 type GeometryCache = Arc<Mutex<WindowGeometry>>;
 
-pub(crate) struct InstalledBongoCat {
+pub(crate) struct BongoCatCapability {
     window: WebviewWindow,
     geometry: GeometryCache,
+    worker: Mutex<Option<BongoCatWorker>>,
 }
 
-impl InstalledBongoCat {
-    pub(crate) fn install(app: &tauri::App) -> Option<Self> {
-        let window = app.get_webview_window(WINDOW_LABEL)?;
+struct BongoCatWorker {
+    stop: std::sync::mpsc::SyncSender<()>,
+    handle: std::thread::JoinHandle<()>,
+}
+
+impl BongoCatCapability {
+    pub(crate) fn install(app: &tauri::App) -> Result<Arc<Self>, CapabilityFailure> {
+        let window = app.get_webview_window(WINDOW_LABEL).ok_or_else(|| {
+            CapabilityFailure::new(
+                "window-unavailable",
+                "the desktop pet window was not created",
+            )
+        })?;
         let geometry = Arc::new(Mutex::new(WindowGeometry::capture(&window)));
 
         let geometry_for_events = Arc::clone(&geometry);
@@ -77,44 +89,166 @@ impl InstalledBongoCat {
             _ => {}
         });
 
-        Some(Self { window, geometry })
+        Ok(Arc::new(Self {
+            window,
+            geometry,
+            worker: Mutex::new(None),
+        }))
     }
 
-    pub(crate) fn start(self) {
-        std::thread::spawn(move || {
-            let mut is_ignoring_cursor_events = false;
+    fn run_cursor_worker(
+        window: WebviewWindow,
+        geometry: GeometryCache,
+        stop: std::sync::mpsc::Receiver<()>,
+    ) {
+        let mut is_ignoring_cursor_events = false;
 
-            loop {
-                std::thread::sleep(POLL_INTERVAL);
+        loop {
+            match stop.recv_timeout(POLL_INTERVAL) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
 
-                if !self.window.is_visible().unwrap_or(false) {
-                    continue;
-                }
+            if !window.is_visible().unwrap_or(false) {
+                continue;
+            }
 
-                let geometry = self
-                    .geometry
-                    .lock()
-                    .map(|geometry| *geometry)
-                    .unwrap_or_else(|_| WindowGeometry::unavailable());
-                let Some(cursor) = cursor_position() else {
-                    continue;
-                };
-                let Some((normalized_x, normalized_y)) =
-                    geometry.normalized_cursor_position(cursor)
-                else {
-                    continue;
-                };
+            let geometry = geometry
+                .lock()
+                .map(|geometry| *geometry)
+                .unwrap_or_else(|_| WindowGeometry::unavailable());
+            let Some(cursor) = cursor_position() else {
+                continue;
+            };
+            let Some((normalized_x, normalized_y)) = geometry.normalized_cursor_position(cursor)
+            else {
+                continue;
+            };
 
-                let cursor_is_over_cat = is_cat_hit(normalized_x, normalized_y);
-                if cursor_is_over_cat && is_ignoring_cursor_events {
-                    let _ = self.window.set_ignore_cursor_events(false);
-                    is_ignoring_cursor_events = false;
-                } else if !cursor_is_over_cat && !is_ignoring_cursor_events {
-                    let _ = self.window.set_ignore_cursor_events(true);
-                    is_ignoring_cursor_events = true;
+            let cursor_is_over_cat = is_cat_hit(normalized_x, normalized_y);
+            if cursor_is_over_cat && is_ignoring_cursor_events {
+                let _ = window.set_ignore_cursor_events(false);
+                is_ignoring_cursor_events = false;
+            } else if !cursor_is_over_cat && !is_ignoring_cursor_events {
+                let _ = window.set_ignore_cursor_events(true);
+                is_ignoring_cursor_events = true;
+            }
+        }
+
+        // A stopped hidden window must never retain click-through state if the
+        // user enables it again during the same process.
+        let _ = window.set_ignore_cursor_events(false);
+    }
+}
+
+impl CapabilityDriver for BongoCatCapability {
+    fn start(&self) -> Result<(), CapabilityFailure> {
+        let mut worker = self.worker.lock().map_err(|_| {
+            CapabilityFailure::new(
+                "worker-state-poisoned",
+                "desktop pet worker lock is poisoned",
+            )
+        })?;
+        if worker
+            .as_ref()
+            .is_some_and(|worker| !worker.handle.is_finished())
+        {
+            return Ok(());
+        }
+        if let Some(finished) = worker.take() {
+            let _ = finished.handle.join();
+        }
+
+        crate::window_placement::set_auxiliary_window_visible_for_app(
+            self.window.app_handle(),
+            WINDOW_LABEL,
+            true,
+            None,
+        )
+        .map_err(|error| CapabilityFailure::new("window-show-failed", error.to_string()))?;
+        crate::input_listener::set_bongo_cat_input_enabled(true);
+
+        let (stop, stop_rx) = std::sync::mpsc::sync_channel(1);
+        let window = self.window.clone();
+        let geometry = Arc::clone(&self.geometry);
+        let handle = std::thread::Builder::new()
+            .name("desktop-pet-cursor-policy".to_string())
+            .spawn(move || Self::run_cursor_worker(window, geometry, stop_rx))
+            .map_err(|error| {
+                crate::input_listener::set_bongo_cat_input_enabled(false);
+                let _ = crate::window_placement::set_auxiliary_window_visible_for_app(
+                    self.window.app_handle(),
+                    WINDOW_LABEL,
+                    false,
+                    None,
+                );
+                CapabilityFailure::new("worker-start-failed", error.to_string())
+            })?;
+        *worker = Some(BongoCatWorker { stop, handle });
+        Ok(())
+    }
+
+    fn stop(&self) -> Result<(), CapabilityFailure> {
+        crate::input_listener::set_bongo_cat_input_enabled(false);
+        let worker = self
+            .worker
+            .lock()
+            .map_err(|_| {
+                CapabilityFailure::new(
+                    "worker-state-poisoned",
+                    "desktop pet worker lock is poisoned",
+                )
+            })?
+            .take();
+        let worker_result = if let Some(worker) = worker {
+            let _ = worker.stop.try_send(());
+            worker.handle.join().map_err(|_| {
+                CapabilityFailure::new("worker-panicked", "desktop pet worker panicked")
+            })
+        } else {
+            Ok(())
+        };
+        let window_result = crate::window_placement::set_auxiliary_window_visible_for_app(
+            self.window.app_handle(),
+            WINDOW_LABEL,
+            false,
+            None,
+        )
+        .map_err(|error| CapabilityFailure::new("window-hide-failed", error.to_string()));
+
+        worker_result?;
+        window_result?;
+        Ok(())
+    }
+
+    fn health(&self) -> CapabilityHealth {
+        match self.worker.lock() {
+            Ok(worker)
+                if worker
+                    .as_ref()
+                    .is_some_and(|worker| !worker.handle.is_finished()) =>
+            {
+                match self.window.is_visible() {
+                    Ok(true) => CapabilityHealth::Healthy,
+                    Ok(false) => CapabilityHealth::Degraded(CapabilityFailure::new(
+                        "window-hidden",
+                        "desktop pet window is hidden",
+                    )),
+                    Err(error) => CapabilityHealth::Degraded(CapabilityFailure::new(
+                        "window-status-unavailable",
+                        error.to_string(),
+                    )),
                 }
             }
-        });
+            Ok(_) => CapabilityHealth::Failed(CapabilityFailure::new(
+                "worker-stopped",
+                "desktop pet worker is not running",
+            )),
+            Err(_) => CapabilityHealth::Failed(CapabilityFailure::new(
+                "worker-state-poisoned",
+                "desktop pet worker lock is poisoned",
+            )),
+        }
     }
 }
 
