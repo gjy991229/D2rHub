@@ -58,6 +58,8 @@ pub enum ModuleConfigError {
     },
     #[error("module config artifact {path:?} is not a regular file")]
     UnsafeArtifactType { path: PathBuf },
+    #[error("module config directory {path:?} is unsafe: {reason}")]
+    UnsafeDirectory { path: PathBuf, reason: String },
     #[error("module config artifact {path:?} is corrupt: {reason}")]
     CorruptArtifact { path: PathBuf, reason: String },
     #[error(
@@ -98,6 +100,7 @@ pub struct ModuleConfigStore {
     module_id: String,
     minimum_schema_version: u32,
     current_schema_version: u32,
+    app_data_dir: PathBuf,
     module_dir: PathBuf,
     io: Arc<Mutex<()>>,
 }
@@ -138,8 +141,10 @@ impl ModuleConfigStore {
             });
         }
 
+        let app_data_dir = app_data_dir.as_ref().to_path_buf();
         Ok(Self {
-            module_dir: app_data_dir.as_ref().join("modules").join(&module_id),
+            module_dir: app_data_dir.join("modules").join(&module_id),
+            app_data_dir,
             module_id,
             minimum_schema_version,
             current_schema_version,
@@ -256,6 +261,10 @@ impl ModuleConfigStore {
     where
         T: DeserializeOwned,
     {
+        if !self.validate_directory_tree(false)? {
+            return Ok(None);
+        }
+
         let primary = self.config_path();
         let backup = self.backup_path();
         let staging = self.staging_path();
@@ -382,8 +391,7 @@ impl ModuleConfigStore {
     }
 
     fn commit_bytes(&self, content: &[u8]) -> Result<(), ModuleConfigError> {
-        fs::create_dir_all(&self.module_dir)
-            .map_err(|error| io_error("creating the module directory", &self.module_dir, error))?;
+        self.validate_directory_tree(true)?;
         let primary = self.config_path();
         let backup = self.backup_path();
         let staging = self.staging_path();
@@ -441,6 +449,8 @@ impl ModuleConfigStore {
         corrupt_primary: &Path,
         safe_backup: &Path,
     ) -> Result<(), ModuleConfigError> {
+        self.require_existing_directory_tree()?;
+
         // Once a corrupt primary has selected its backup, any staging file is
         // definitively before the commit point. Archive it first so a crash in
         // the small primary-replacement window cannot make a later startup
@@ -474,6 +484,7 @@ impl ModuleConfigStore {
     }
 
     fn archive_corrupt(&self, path: &Path) -> Result<(), ModuleConfigError> {
+        self.require_existing_directory_tree()?;
         let archived = self.unique_corrupt_path();
         fs::rename(path, &archived)
             .map_err(|error| io_error("archiving a corrupt artifact", path, error))?;
@@ -485,6 +496,7 @@ impl ModuleConfigStore {
         candidate: &Path,
         primary: &Path,
     ) -> Result<(), ModuleConfigError> {
+        self.require_existing_directory_tree()?;
         fs::rename(candidate, primary)
             .map_err(|error| io_error("promoting a recovery candidate", candidate, error))?;
         sync_directory(&self.module_dir)
@@ -500,6 +512,151 @@ impl ModuleConfigStore {
             uuid::Uuid::new_v4().simple()
         ))
     }
+
+    /// Validates the complete directory chain owned by the store before any
+    /// artifact is inspected or mutated. Reads deliberately leave missing
+    /// directories absent; writes create each owned layer separately so
+    /// `create_dir_all` can never traverse a pre-existing link.
+    fn validate_directory_tree(&self, create_missing: bool) -> Result<bool, ModuleConfigError> {
+        if !ensure_real_directory(&self.app_data_dir, create_missing)? {
+            return Ok(false);
+        }
+        let canonical_app_data = canonical_real_directory(&self.app_data_dir)?;
+
+        let modules_dir = self.app_data_dir.join("modules");
+        if !ensure_real_directory(&modules_dir, create_missing)? {
+            return Ok(false);
+        }
+        let canonical_modules = canonical_real_directory(&modules_dir)?;
+        ensure_canonical_child(&canonical_app_data, &canonical_modules, &modules_dir)?;
+
+        if !ensure_real_directory(&self.module_dir, create_missing)? {
+            return Ok(false);
+        }
+        let canonical_module = canonical_real_directory(&self.module_dir)?;
+        ensure_canonical_child(&canonical_modules, &canonical_module, &self.module_dir)?;
+        Ok(true)
+    }
+
+    fn require_existing_directory_tree(&self) -> Result<(), ModuleConfigError> {
+        if self.validate_directory_tree(false)? {
+            Ok(())
+        } else {
+            Err(unsafe_directory(
+                &self.module_dir,
+                "directory chain disappeared before recovery could be committed",
+            ))
+        }
+    }
+}
+
+fn ensure_real_directory(path: &Path, create_missing: bool) -> Result<bool, ModuleConfigError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            validate_directory_metadata(path, &metadata)?;
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create_missing => Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            match fs::create_dir(path) {
+                Ok(()) => {}
+                // Another participant may have created the path between the
+                // metadata check and create. It is trusted only after the same
+                // non-following metadata validation as every existing layer.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(io_error("creating a module config directory", path, error));
+                }
+            }
+            let metadata = fs::symlink_metadata(path).map_err(|error| {
+                io_error("validating a created module config directory", path, error)
+            })?;
+            validate_directory_metadata(path, &metadata)?;
+            Ok(true)
+        }
+        Err(error) => Err(io_error("checking a module config directory", path, error)),
+    }
+}
+
+fn validate_directory_metadata(
+    path: &Path,
+    metadata: &fs::Metadata,
+) -> Result<(), ModuleConfigError> {
+    if metadata.file_type().is_symlink() {
+        return Err(unsafe_directory(path, "symbolic links are not allowed"));
+    }
+    if metadata_is_reparse_point(metadata) {
+        return Err(unsafe_directory(
+            path,
+            "filesystem reparse points are not allowed",
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(unsafe_directory(path, "path is not a directory"));
+    }
+    Ok(())
+}
+
+fn canonical_real_directory(path: &Path) -> Result<PathBuf, ModuleConfigError> {
+    let canonical = fs::canonicalize(path)
+        .map_err(|error| io_error("canonicalizing a module config directory", path, error))?;
+
+    // Re-check the configured path after canonicalization. Besides narrowing
+    // the metadata/canonicalize race, this ensures canonical containment is
+    // never used to legitimize a link that appeared between the two calls.
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        io_error(
+            "revalidating a canonical module config directory",
+            path,
+            error,
+        )
+    })?;
+    validate_directory_metadata(path, &metadata)?;
+    Ok(canonical)
+}
+
+fn ensure_canonical_child(
+    canonical_parent: &Path,
+    canonical_child: &Path,
+    configured_child: &Path,
+) -> Result<(), ModuleConfigError> {
+    let relative = canonical_child
+        .strip_prefix(canonical_parent)
+        .map_err(|_| unsafe_directory(configured_child, "canonical path escapes its owner"))?;
+    if relative.components().count() != 1 {
+        return Err(unsafe_directory(
+            configured_child,
+            "canonical path is not an immediate child of its owner",
+        ));
+    }
+    Ok(())
+}
+
+fn unsafe_directory(path: &Path, reason: impl Into<String>) -> ModuleConfigError {
+    ModuleConfigError::UnsafeDirectory {
+        path: path.to_path_buf(),
+        reason: reason.into(),
+    }
+}
+
+#[cfg(windows)]
+const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+
+#[cfg(windows)]
+fn file_attributes_include_reparse_point(attributes: u32) -> bool {
+    attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    file_attributes_include_reparse_point(metadata.file_attributes())
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse_point(_metadata: &fs::Metadata) -> bool {
+    false
 }
 
 fn validate_module_id(module_id: &str) -> Result<(), ModuleConfigError> {
@@ -708,6 +865,22 @@ mod tests {
 
         assert!(store.load::<Payload>().unwrap().is_none());
         assert!(!store.module_dir().exists());
+    }
+
+    #[test]
+    fn save_creates_each_missing_owned_directory() {
+        let root = TestDirectory::new("create_owned_layers");
+        let app_data = root.path().join("new-app-data");
+        let store = ModuleConfigStore::new(&app_data, "room-automation", 1).unwrap();
+
+        store
+            .save_if_generation(0, Payload { sequence: 1 })
+            .unwrap();
+
+        assert!(app_data.is_dir());
+        assert!(app_data.join("modules").is_dir());
+        assert!(store.module_dir().is_dir());
+        assert!(store.config_path().is_file());
     }
 
     #[test]
@@ -1145,6 +1318,51 @@ mod tests {
         assert!(store.backup_path().exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_directory_layers_fail_closed_without_writing_the_targets() {
+        use std::os::unix::fs::symlink;
+
+        let modules_root = TestDirectory::new("symlink_modules_root");
+        let modules_target = TestDirectory::new("symlink_modules_target");
+        symlink(modules_target.path(), modules_root.path().join("modules")).unwrap();
+        let modules_store = store(&modules_root);
+        assert!(matches!(
+            modules_store.save_if_generation(0, Payload { sequence: 1 }),
+            Err(ModuleConfigError::UnsafeDirectory { path, .. })
+                if path == modules_root.path().join("modules")
+        ));
+        assert!(!modules_target.path().join("room-automation").exists());
+
+        let module_root = TestDirectory::new("symlink_module_root");
+        let module_target = TestDirectory::new("symlink_module_target");
+        fs::create_dir(module_root.path().join("modules")).unwrap();
+        symlink(
+            module_target.path(),
+            module_root.path().join("modules").join("room-automation"),
+        )
+        .unwrap();
+        let module_store = store(&module_root);
+        assert!(matches!(
+            module_store.load::<Payload>(),
+            Err(ModuleConfigError::UnsafeDirectory { path, .. })
+                if path == module_root.path().join("modules").join("room-automation")
+        ));
+        assert!(!module_target.path().join("config.json").exists());
+
+        let app_data_parent = TestDirectory::new("symlink_app_data_parent");
+        let app_data_target = TestDirectory::new("symlink_app_data_target");
+        let linked_app_data = app_data_parent.path().join("app-data");
+        symlink(app_data_target.path(), &linked_app_data).unwrap();
+        let app_data_store =
+            ModuleConfigStore::new(&linked_app_data, "room-automation", 1).unwrap();
+        assert!(matches!(
+            app_data_store.save_if_generation(0, Payload { sequence: 1 }),
+            Err(ModuleConfigError::UnsafeDirectory { path, .. }) if path == linked_app_data
+        ));
+        assert!(!app_data_target.path().join("modules").exists());
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_symlink_primary_fails_closed_without_using_backup() {
@@ -1169,6 +1387,18 @@ mod tests {
         ));
         assert!(store.config_path().is_symlink());
         assert!(store.backup_path().exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_reparse_attribute_guard_recognizes_junctions() {
+        assert!(super::file_attributes_include_reparse_point(
+            super::FILE_ATTRIBUTE_REPARSE_POINT
+        ));
+        assert!(super::file_attributes_include_reparse_point(
+            super::FILE_ATTRIBUTE_REPARSE_POINT | 0x10
+        ));
+        assert!(!super::file_attributes_include_reparse_point(0x10));
     }
 
     #[test]
