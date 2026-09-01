@@ -376,6 +376,9 @@ export function RoomAutomationPanel({
             </span>
           </div>
           <p>{copy.subtitle}</p>
+          <span className="room-automation-save-state" data-dirty={dirty ? "true" : undefined}>
+            {dirty ? copy.unsaved : copy.applied}
+          </span>
         </div>
         <Toggle
           checked={draft.enabled}
@@ -391,22 +394,16 @@ export function RoomAutomationPanel({
         </p>
       )}
 
-      <div className="room-automation-apply-bar" data-dirty={dirty ? "true" : "false"}>
-        <span aria-live="polite">
-          {dirty ? copy.unsaved : copy.applied}
-          <span className="room-automation-generation"> · v{snapshot.generation}</span>
-        </span>
+      {dirty && <div className="room-automation-apply-bar" data-dirty="true">
         <div className="room-automation-apply-actions">
-          {dirty && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={!!operation}
-              onClick={reload}
-            >
-              {copy.discard}
-            </Button>
-          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!!operation}
+            onClick={reload}
+          >
+            {copy.discard}
+          </Button>
           <Button
             size="sm"
             variant="primary"
@@ -418,7 +415,7 @@ export function RoomAutomationPanel({
             {saving ? copy.applying : copy.apply}
           </Button>
         </div>
-      </div>
+      </div>}
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
@@ -436,7 +433,7 @@ export function RoomAutomationPanel({
         <div>
           <strong id="room-mod-prerequisite-title">{copy.modPrerequisiteTitle}</strong>
           <p>{copy.modPrerequisiteDescription}</p>
-          <code>{copy.modPrerequisiteFeature}</code>
+          <span className="sr-only">{copy.modPrerequisiteFeature}</span>
         </div>
         {onOpenAudioModSettings && (
           <Button size="sm" variant="secondary" onClick={onOpenAudioModSettings}>
@@ -445,6 +442,7 @@ export function RoomAutomationPanel({
         )}
       </section>
 
+      <div className="room-automation-config-grid">
       <section className="spatial-panel room-automation-section" aria-labelledby="room-participants-title">
         <div className="room-automation-section-heading">
           <UsersRound size={16} aria-hidden="true" />
@@ -627,6 +625,7 @@ export function RoomAutomationPanel({
           <code>{generatedRoomName(draft)}</code>
         </div>
       </section>
+      </div>
 
       <section className="spatial-panel room-automation-section" aria-labelledby="room-workflow-title">
         <div className="room-automation-section-heading room-automation-workflow-heading">
@@ -685,13 +684,20 @@ export function RoomAutomationPanel({
         </div>
       </section>
 
-      <section className="spatial-panel room-automation-section" aria-labelledby="room-binding-title">
-        <div className="room-automation-section-heading room-automation-section-heading-action">
-          <KeyRound size={16} aria-hidden="true" />
-          <div>
-            <h3 id="room-binding-title">{copy.f13Title}</h3>
-            <p>{copy.f13Description}</p>
-          </div>
+      <details
+        className="spatial-panel room-automation-advanced room-automation-binding-details"
+        open={bindingNeedsAttention || undefined}
+      >
+        <summary>
+          <span>
+            <strong id="room-binding-title">{copy.f13Title}</strong>
+            <small>{binding?.ready ? copy.bindingReady : copy.bindingNotReady}</small>
+          </span>
+          <ChevronDown size={15} aria-hidden="true" />
+        </summary>
+        <div className="room-automation-binding-body">
+          <p className="room-automation-consent-copy">{copy.f13Description}</p>
+          <div className="flex justify-end">
           <Button
             size="sm"
             variant="ghost"
@@ -702,7 +708,7 @@ export function RoomAutomationPanel({
             <RefreshCw size={13} aria-hidden="true" />
             {copy.refreshBinding}
           </Button>
-        </div>
+          </div>
         {snapshot.consent_notice?.requires_user_reauthorization && (
           <p className="room-automation-consent-notice" role="note">{copy.f13LegacyNotice}</p>
         )}
@@ -725,7 +731,6 @@ export function RoomAutomationPanel({
         ) : (
           <div className="room-automation-binding-status" data-ready={binding?.ready ? "true" : "false"}>
             <div>
-              <strong>{binding?.ready ? copy.bindingReady : copy.bindingNotReady}</strong>
               {binding && <span>{copy.bindingFiles(binding.installedFiles, binding.totalFiles)}</span>}
               {!!binding?.conflictedFiles && <span>{copy.bindingConflicts(binding.conflictedFiles)}</span>}
               {!!binding?.orphanBackupFiles && <span>{copy.bindingOrphans(binding.orphanBackupFiles)}</span>}
@@ -755,7 +760,8 @@ export function RoomAutomationPanel({
             onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
           >{copy.restoreBinding}</Button>
         </div>
-      </section>
+        </div>
+      </details>
 
       <details className="spatial-panel room-automation-advanced">
         <summary>

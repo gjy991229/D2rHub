@@ -1,4 +1,4 @@
-import { AlertTriangle, Play } from "lucide-react";
+import { AlertTriangle, Play, Plus } from "lucide-react";
 
 import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
 import {
@@ -15,6 +15,7 @@ interface FavoriteLaunchGroupsProps {
   config: GlobalConfig | null;
   disabled?: boolean;
   onLaunch: (group: LaunchGroup) => void;
+  onManageFavorites: () => void;
 }
 
 export function FavoriteLaunchGroups({
@@ -24,11 +25,10 @@ export function FavoriteLaunchGroups({
   config,
   disabled = false,
   onLaunch,
+  onManageFavorites,
 }: FavoriteLaunchGroupsProps) {
   const { t } = useI18n();
   const favorites = favoriteLaunchGroups(groups, favoriteGroupIds);
-  if (favorites.length === 0) return null;
-
   return (
     <div className="favorite-launch-groups" role="group" aria-label={t("launch.favorite.groupLabel")}>
       {favorites.map(group => {
@@ -54,6 +54,16 @@ export function FavoriteLaunchGroups({
           </button>
         );
       })}
+      <button
+        type="button"
+        className="control-btn favorite-launch-add"
+        disabled={disabled}
+        aria-label={t("launch.favorite.manage")}
+        title={t("launch.favorite.manage")}
+        onClick={onManageFavorites}
+      >
+        <Plus size={12} strokeWidth={2} aria-hidden="true" />
+      </button>
     </div>
   );
 }

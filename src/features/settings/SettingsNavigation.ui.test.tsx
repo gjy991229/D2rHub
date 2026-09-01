@@ -29,6 +29,7 @@ describe("settings feature registry", () => {
       "shortcuts",
       "overlays",
       "automation",
+      "mod-processing",
       "room-automation",
       "pet",
     ]);

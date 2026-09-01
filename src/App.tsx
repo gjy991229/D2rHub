@@ -29,6 +29,7 @@ import {
   AccountGridLoading,
   AccountGridEmpty,
   MainActionBar,
+  LaunchGroupPanel,
 } from "./components/dashboard";
 import { useLaunch } from "./store/launch";
 import { LaunchProgressView } from "./components/Launch/LaunchProgress";
@@ -78,6 +79,7 @@ function App() {
   const [settingsAccountId, setSettingsAccountId] = useState<string | null>(null);
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
+  const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);
 
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
@@ -322,6 +324,8 @@ function App() {
             onStartLaunch={startLaunch}
             onAddAccount={() => setShowInit(true)}
             onRequestKillAll={() => setShowKillConfirm(true)}
+            launchGroupPanelOpen={launchGroupPanelOpen}
+            onToggleLaunchGroupPanel={() => setLaunchGroupPanelOpen((open) => !open)}
           />
 
           {audioModUpdate && (
@@ -344,7 +348,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSettingsTab("automation");
+                    setSettingsTab("mod-processing");
                     setSettingsAccountId(null);
                     setShowSettings(true);
                   }}
@@ -356,12 +360,12 @@ function App() {
             </div>
           )}
 
-          {initialLoading ? (
-            <AccountGridLoading />
-          ) : accounts.length === 0 ? (
-            <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
-          ) : (
-            <>
+          <div className="dashboard-workspace">
+            {initialLoading ? (
+              <AccountGridLoading />
+            ) : accounts.length === 0 ? (
+              <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
+            ) : (
               <AccountGrid
                 accounts={sortedAccounts}
                 isSelectionMode={!!launchGroupDraft}
@@ -399,13 +403,39 @@ function App() {
                   />;
                 })}
               </AccountGrid>
+            )}
 
-              <LaunchProgressView
+            {launchGroupPanelOpen && !launchGroupDraft && (
+              <LaunchGroupPanel
+                groups={config?.launch_groups ?? []}
                 accounts={accounts}
-                logs={logs}
-                onClear={clearLogs}
+                config={config}
+                favoriteGroupIds={config?.favorite_launch_group_ids}
+                disabled={launching || configSaving}
+                onClose={() => setLaunchGroupPanelOpen(false)}
+                onLaunch={group => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.launch(group);
+                }}
+                onCreate={() => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.create();
+                }}
+                onEdit={group => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.edit(group);
+                }}
+                onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
               />
-            </>
+            )}
+          </div>
+
+          {accounts.length > 0 && (
+            <LaunchProgressView
+              accounts={accounts}
+              logs={logs}
+              onClear={clearLogs}
+            />
           )}
         </Dashboard>
       </AppShell>

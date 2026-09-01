@@ -192,6 +192,17 @@ export interface ItemAudioEvent {
   confidence: number;
 }
 
+export interface TrackingDropSnapshot {
+  observation_id: number;
+  kind: DropKind;
+  telemetry_id: number;
+  code?: string | null;
+  category: string;
+  name: string;
+  name_en: string;
+  rune_number?: number | null;
+}
+
 export interface TrackingSnapshot {
   revision: number;
   account_id: string;
@@ -207,16 +218,9 @@ export interface TrackingSnapshot {
   current_run_key: string | null;
   current_run_name: string | null;
   current_run_name_en: string | null;
-  current_run_drops: Array<{
-    observation_id: number;
-    kind: DropKind;
-    telemetry_id: number;
-    code?: string | null;
-    category: string;
-    name: string;
-    name_en: string;
-    rune_number?: number | null;
-  }>;
+  current_run_drops: TrackingDropSnapshot[];
+  previous_run_drops?: TrackingDropSnapshot[];
+  session_drops?: TrackingDropSnapshot[];
   session_runs: Record<string, number>;
 }
 

@@ -631,6 +631,14 @@ async function primeStores() {
         { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
         { kind: "item", telemetryId: 36, itemCode: "cm1", category: "charms", name: "小型护身符", nameEn: "Small Charm", runeNumber: null, screenshotPath: null },
       ],
+      currentRunDrops: [
+        { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
+        { kind: "rune", telemetryId: 30, itemCode: "r30", category: "runes", name: "贝", nameEn: "Ber", runeNumber: 30, screenshotPath: null },
+        { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
+      ],
+      previousRunDrops: [
+        { kind: "item", telemetryId: 36, itemCode: "cm1", category: "charms", name: "小型护身符", nameEn: "Small Charm", runeNumber: null, screenshotPath: null },
+      ],
     });
   }
   document.documentElement.setAttribute("data-theme", requestedTheme);

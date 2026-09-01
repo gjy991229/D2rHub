@@ -173,6 +173,10 @@ pub struct TrackingSnapshot {
     pub current_run_name: Option<String>,
     pub current_run_name_en: Option<String>,
     pub current_run_drops: Vec<TrackedDrop>,
+    #[serde(default)]
+    pub previous_run_drops: Vec<TrackedDrop>,
+    #[serde(default)]
+    pub session_drops: Vec<TrackedDrop>,
     pub session_runs: HashMap<String, u32>,
 }
 
@@ -261,6 +265,8 @@ pub struct SegmentTracker {
     journey_id: Option<String>,
     next_segment_index: u32,
     session_runs: HashMap<String, u32>,
+    previous_run_drops: Vec<TrackedDrop>,
+    session_drops: Vec<TrackedDrop>,
     revision: u64,
     sample_rate: u32,
     catalog: LocationCatalog,
@@ -291,6 +297,8 @@ impl SegmentTracker {
             journey_id: None,
             next_segment_index: 0,
             session_runs: HashMap::new(),
+            previous_run_drops: Vec::new(),
+            session_drops: Vec::new(),
             revision: 0,
             sample_rate,
             catalog,
@@ -411,7 +419,8 @@ impl SegmentTracker {
 
     pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
         if let Some(active_segment) = &mut self.active_segment {
-            active_segment.drops.push(drop);
+            active_segment.drops.push(drop.clone());
+            self.session_drops.push(drop);
             self.revision += 1;
         }
         self.snapshot()
@@ -467,6 +476,8 @@ impl SegmentTracker {
                 .as_ref()
                 .map(|segment| segment.drops.clone())
                 .unwrap_or_default(),
+            previous_run_drops: self.previous_run_drops.clone(),
+            session_drops: self.session_drops.clone(),
             session_runs: self.session_runs.clone(),
         }
     }
@@ -499,6 +510,7 @@ impl SegmentTracker {
         observed_at_ms: i64,
     ) -> Option<CompletedSegment> {
         let active = self.active_segment.take()?;
+        self.previous_run_drops = active.drops.clone();
         let elapsed_frames = observed_at_frame.checked_sub(active.started_at_frame);
         let timer_seconds = elapsed_frames
             .map(|frames| frames as f64 / self.sample_rate as f64)
@@ -716,6 +728,8 @@ mod tests {
         assert_eq!(completed.scene_name, "黑色沼泽");
         assert_eq!(completed.timer_seconds, 2.0);
         assert_eq!(completed.drops.len(), 1);
+        assert_eq!(town.snapshot.previous_run_drops.len(), 1);
+        assert_eq!(town.snapshot.session_drops.len(), 1);
     }
 
     #[test]

@@ -159,7 +159,7 @@ export function SettingsNavigation({
                       <span className="settings-navigation-label">{copy.label}</span>
                       <span className="settings-navigation-description">{copy.description}</span>
                     </span>
-                    {feature.kind === "optional" && (
+                    {feature.kind === "optional" && (feature.capabilityIds || feature.isConfigured) && (
                       <span className="settings-navigation-badge" data-state={badgeState}>
                         {badgeCopy}
                       </span>

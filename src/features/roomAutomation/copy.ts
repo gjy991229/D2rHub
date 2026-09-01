@@ -3,7 +3,7 @@ import type { SettingsLanguage } from "../settings/settingsRegistry";
 export const ROOM_AUTOMATION_COPY = {
   "zh-CN": {
     title: "自动跟房",
-    subtitle: "先由主账号创建房间，再让其余账号手动或自动加入。所有输入只通过键盘完成。",
+    subtitle: "主账号建房，跟随账号按设定加入；全程只发送键盘输入。",
     enabled: "启用自动跟房模块",
     unavailable: "模块不可用",
     loading: "正在读取模块状态…",
@@ -21,7 +21,7 @@ export const ROOM_AUTOMATION_COPY = {
     participants: "参与账号",
     participantsHelp: "主账号负责创建房间；跟随账号将在第二阶段加入同一房间。",
     modPrerequisiteTitle: "局内房间工具是必要条件",
-    modPrerequisiteDescription: "主账号和每个跟随账号都必须使用包含“局内房间工具”的 D2RHub Mod；任一账号缺少时，任务会在发送按键前停止。",
+    modPrerequisiteDescription: "所有参与账号都需包含“局内房间工具”；缺少时不会执行任务。",
     modPrerequisiteFeature: "功能组：in_game_room_tools",
     manageModFeatures: "管理 Mod 功能",
     primary: "主账号",
@@ -114,7 +114,7 @@ export const ROOM_AUTOMATION_COPY = {
   },
   "en-US": {
     title: "Room Automation",
-    subtitle: "Create with the primary account, then join with the followers manually or automatically. Input remains keyboard-only.",
+    subtitle: "The primary creates; followers join as configured. Every action stays keyboard-only.",
     enabled: "Enable room automation",
     unavailable: "Module unavailable",
     loading: "Loading module status…",
@@ -132,7 +132,7 @@ export const ROOM_AUTOMATION_COPY = {
     participants: "Participants",
     participantsHelp: "The primary creates the room; followers join it in the second stage.",
     modPrerequisiteTitle: "In-game room tools are required",
-    modPrerequisiteDescription: "The primary and every follower must use a D2RHub Mod containing In-game room tools. If any participant lacks it, the task stops before sending input.",
+    modPrerequisiteDescription: "Every participant needs In-game room tools; the workflow will not run if one is missing.",
     modPrerequisiteFeature: "Feature group: in_game_room_tools",
     manageModFeatures: "Manage Mod features",
     primary: "Primary account",

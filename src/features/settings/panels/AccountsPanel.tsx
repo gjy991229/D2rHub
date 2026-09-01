@@ -9,6 +9,7 @@ import {
   type SettingsMap,
 } from "../../../pages/SettingsEditor";
 import type { AccountMeta } from "../../../store/types";
+import { FRAMERATE_CAP_KEY, readFramerateCap } from "../../../utils/gameSettings";
 
 export type GameSettingsTab =
   | "launch"
@@ -258,8 +259,8 @@ export function AccountsPanel({
                       min={0}
                       max={500}
                       list="settings-center-fps-options"
-                      value={Number(gameSettings["Framerate Target"] ?? gameSettings["Framerate Cap"] ?? 60)}
-                      onChange={e => updateGameSetting("Framerate Target", Math.max(0, Math.min(300, Number(e.target.value) || 0)))}
+                      value={readFramerateCap(gameSettings, 60)}
+                      onChange={e => updateGameSetting(FRAMERATE_CAP_KEY, Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
                     />
                     <datalist id="settings-center-fps-options">
                       {[0, 30, 60, 120, 144, 240].map(f => <option key={f} value={f}>{f === 0 ? "无限制" : `${f} FPS`}</option>)}

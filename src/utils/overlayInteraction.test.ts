@@ -73,10 +73,17 @@ export function runTests() {
     "timer double-click and audio-tracked town detection share the same run-finishing transition",
   );
   assert(
-    overlaySource.includes("aggregateOverlayDrops(stats.currentDrops)")
+    overlaySource.includes("aggregateOverlayDrops(scopedDrops)")
       && overlaySource.includes("displayedDropGroups.map(({ key, drop, count, latestIndex })")
+      && overlaySource.includes('dropScope === "overview"')
       && overlaySource.includes("stats.removeCurrentDrop(latestIndex)"),
-    "statistics overlay groups repeated drops and removes the latest occurrence from a group",
+    "statistics overlay groups the selected drop range and limits front-end removal to the overview",
+  );
+  assert(
+    overlaySource.includes('type DropScope = "current" | "previous" | "overview"')
+      && overlaySource.includes('setDropScope(scopes[nextIndex])')
+      && overlaySource.includes('data-direction={dropSlideDirection}'),
+    "statistics overlay cycles smoothly between current, previous, and overview drops",
   );
   assert(
     overlaySource.includes('aria-live="polite"')

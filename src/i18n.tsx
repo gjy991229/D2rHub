@@ -27,6 +27,8 @@ const keyedMessages = {
   "launch.favorite.removeTitle": { zh: "从主界面移除", en: "Remove from the main action bar" },
   "launch.favorite.launchTitle": { zh: "启动常用方案“{name}”", en: "Launch favorite scheme “{name}”" },
   "launch.favorite.emptyReason": { zh: "方案尚未选择账号", en: "No accounts selected" },
+  "launch.favorite.manage": { zh: "添加常用方案", en: "Add Favorite Scheme" },
+  "launch.scheme.closePanel": { zh: "关闭启动方案列表", en: "Close Launch Schemes" },
 } as const;
 
 export type I18nKey = keyof typeof keyedMessages;

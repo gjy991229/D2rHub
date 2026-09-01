@@ -149,7 +149,7 @@ describe("RoomAutomationPanel", () => {
     );
 
     expect(await screen.findByText("局内房间工具是必要条件")).toBeTruthy();
-    expect(screen.getByText(/主账号和每个跟随账号都必须/)).toBeTruthy();
+    expect(screen.getByText(/所有参与账号都需包含/)).toBeTruthy();
     expect(screen.getByText("功能组：in_game_room_tools")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "管理 Mod 功能" }));
     expect(onOpenAudioModSettings).toHaveBeenCalledTimes(1);
@@ -209,7 +209,7 @@ describe("RoomAutomationPanel", () => {
 
     expect(await screen.findByText(/若房名重复/)).toBeTruthy();
     expect((screen.getByLabelText("房名开头") as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: /应用配置/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /应用配置/ })).toBeNull();
     const nextPrimary = screen.getByRole("button", { name: /下一序号重新建房/ });
     expect((nextPrimary as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: /让跟随账号加入/ }) as HTMLButtonElement).disabled).toBe(false);
@@ -417,8 +417,8 @@ describe("RoomAutomationPanel", () => {
 
     expect(await screen.findByText(/Settings were saved, but the module could not apply them immediately/)).toBeTruthy();
     expect((screen.getByLabelText("Room prefix") as HTMLInputElement).value).toBe("saved-");
-    expect(screen.getByText(/v5/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Apply settings/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("Settings applied")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
   });
 
   it("labels follower recovery as a same-room retry", async () => {
@@ -468,6 +468,7 @@ describe("RoomAutomationPanel", () => {
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
+    await user.click(await screen.findByText("In-game chat binding"));
     const refresh = await screen.findByRole("button", { name: "Refresh status" });
     await waitFor(() => expect(gateway.getChatBinding).toHaveBeenCalledTimes(1));
     await user.click(refresh);

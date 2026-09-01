@@ -16,6 +16,8 @@ interface MainActionBarProps {
   onStartLaunch: (accountIds: string[]) => void;
   onAddAccount: () => void;
   onRequestKillAll: () => void;
+  launchGroupPanelOpen: boolean;
+  onToggleLaunchGroupPanel: () => void;
 }
 
 export function MainActionBar({
@@ -26,6 +28,8 @@ export function MainActionBar({
   onStartLaunch,
   onAddAccount,
   onRequestKillAll,
+  launchGroupPanelOpen,
+  onToggleLaunchGroupPanel,
 }: MainActionBarProps) {
   const { config, saving } = useGlobalConfig();
   const { accounts } = useAccounts();
@@ -101,22 +105,12 @@ export function MainActionBar({
           )}
         </>
       ) : (
-        <div className="flex items-center gap-2">
+        <>
+        <div className="flex min-w-0 items-center gap-2">
           <LaunchButton
             count={launchableAccountIds.length}
             loading={launching}
             onClick={() => onStartLaunch(launchableAccountIds)}
-          />
-          <LaunchGroupMenu
-            groups={config?.launch_groups ?? []}
-            accounts={accounts}
-            config={config}
-            favoriteGroupIds={config?.favorite_launch_group_ids}
-            disabled={launching || saving}
-            onLaunch={launchGroups.launch}
-            onCreate={launchGroups.create}
-            onEdit={launchGroups.edit}
-            onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
           />
           <FavoriteLaunchGroups
             groups={config?.launch_groups ?? []}
@@ -125,6 +119,7 @@ export function MainActionBar({
             config={config}
             disabled={launching || saving}
             onLaunch={launchGroups.launch}
+            onManageFavorites={onToggleLaunchGroupPanel}
           />
           <button
             onClick={onRequestKillAll}
@@ -134,10 +129,17 @@ export function MainActionBar({
             一键关闭
           </button>
         </div>
+        <div className="flex-1" />
+        <LaunchGroupMenu
+          count={config?.launch_groups.length ?? 0}
+          open={launchGroupPanelOpen}
+          disabled={launching || saving}
+          onToggle={onToggleLaunchGroupPanel}
+        />
+        </>
       )}
       {!draft && (
         <>
-          <div className="flex-1" />
           <button onClick={onAddAccount} className="control-btn add-account-cta">
             <UserPlus size={13} strokeWidth={1.9} />
             添加账号

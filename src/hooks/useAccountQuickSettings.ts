@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { emitEvent, invokeCommand, listenEvent } from "../platform/tauri";
 
 import { useAccounts } from "../store/accounts";
+import { readFramerateCap, writeFramerateCap } from "../utils/gameSettings";
 
 export interface AccountQuickSettings {
   resolution: string;
@@ -48,7 +49,7 @@ function subscribeToSettings(accountId: string, subscriber: SettingsSubscriber):
 function parseSettings(raw: Record<string, unknown>): AccountQuickSettings {
   return {
     resolution: String(raw["Screen Resolution (Windowed)"] ?? DEFAULT_SETTINGS.resolution),
-    fps: Number(raw["Framerate Target"] ?? raw["Framerate Cap"] ?? DEFAULT_SETTINGS.fps),
+    fps: readFramerateCap(raw, DEFAULT_SETTINGS.fps),
   };
 }
 
@@ -125,7 +126,7 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
           merged["Screen Resolution (Windowed)"] = patch.resolution;
         }
         if (patch.fps !== undefined) {
-          merged["Framerate Target"] = patch.fps;
+          Object.assign(merged, writeFramerateCap(merged, patch.fps));
         }
 
         await invokeCommand("save_account_settings", { accountId, settings: merged });

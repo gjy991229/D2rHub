@@ -13,6 +13,7 @@ import { installationPathEditsAreInvalid } from "../../utils/installationPathCha
 import { diffGlobalConfig } from "../../utils/globalConfigPatch";
 import { validateAudioModName } from "../../utils/audioModName";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
+import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../../utils/gameSettings";
 import {
   locateAuxiliaryWindow,
   recoverAuxiliaryWindows,
@@ -28,6 +29,10 @@ import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
 import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
 import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
+import {
+  ModProcessingPanel,
+  type ModProcessingPurpose,
+} from "../../features/settings/panels/ModProcessingPanel";
 import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
 import {
   AUDIO_TELEMETRY_FEATURE_ID,
@@ -85,6 +90,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [audioModState, setAudioModState] = useState<AudioModSetupState | null>(null);
   const [audioModStateLoading, setAudioModStateLoading] = useState(false);
   const [audioSetupOpen, setAudioSetupOpen] = useState(false);
+  const [audioSetupPurpose, setAudioSetupPurpose] = useState<ModProcessingPurpose>("manage");
   const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
@@ -92,6 +98,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [includeRoomTools, setIncludeRoomTools] = useState(true);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
+  const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
+  const audioModStateCacheRef = useRef(new Map<string, { state: AudioModSetupState; scannedAt: number }>());
   const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
   const normalizedAudioSetupName = audioSetupName.trim();
   const isAudioModUpgrade = !!audioModState?.current_mod_name && (
@@ -111,11 +119,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
   const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
   const installedAudioFeatureGroups = audioModState?.feature_groups ?? [];
+  const selectedAudioSourceFeatureGroups = audioSetupMode === "existing"
+    ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)?.feature_groups ?? []
+    : [];
+  const inheritedAudioFeatureGroups = isAudioModUpgrade
+    ? installedAudioFeatureGroups
+    : selectedAudioSourceFeatureGroups;
   const audioFeatureSelection = {
     includeAudioTelemetry: includeAudioTelemetry
-      || (isAudioModUpgrade && installedAudioFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID)),
+      || audioSetupPurpose === "recognition"
+      || inheritedAudioFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID),
     includeRoomTools: includeRoomTools
-      || (isAudioModUpgrade && installedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID)),
+      || inheritedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
   };
   const audioPrepareBlockedReason = !hasSelectedAudioModFeature(audioFeatureSelection)
     ? config?.app_language === "en-US"
@@ -215,7 +230,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
   useEffect(() => {
-    if (!open || activeTab !== "automation") return;
+    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -235,16 +250,33 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   }, [open, activeTab]);
 
   useEffect(() => {
-    if (!open || activeTab !== "automation" || !trackingTargetId) {
-      setAudioModState(null);
+    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing") || !trackingTargetId) return;
+    let cancelled = false;
+    const cached = audioModStateCacheRef.current.get(trackingTargetId);
+    if (cached) {
+      setAudioModState(cached.state);
+      setAudioModScannedAt(cached.scannedAt);
+      setAudioModStateLoading(false);
+      if (audioModState?.account_id === trackingTargetId) return;
+      const defaults = audioSetupDefaults(cached.state);
+      const availableSources = cached.state.installed_mods.filter((mod) => mod.source_eligible);
+      setAudioSetupSource((current) => (
+        current && availableSources.some((mod) => mod.name === current)
+          ? current
+          : defaults.source
+      ));
+      setAudioSetupMode(defaults.mode);
+      setAudioSetupName(defaults.name);
       return;
     }
-    let cancelled = false;
     setAudioModStateLoading(true);
     void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: trackingTargetId })
       .then((next) => {
+        const scannedAt = Date.now();
+        audioModStateCacheRef.current.set(trackingTargetId, { state: next, scannedAt });
         if (cancelled) return;
         setAudioModState(next);
+        setAudioModScannedAt(scannedAt);
         const defaults = audioSetupDefaults(next);
         const availableSources = next.installed_mods.filter((mod) => mod.source_eligible);
         setAudioSetupSource((current) => (
@@ -272,10 +304,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     return () => {
       cancelled = true;
     };
-  }, [open, activeTab, trackingTargetId, config?.rune_audio_enabled]);
+  }, [open, activeTab, trackingTargetId]);
 
   useEffect(() => {
-    if (!open || activeTab !== "automation") return;
+    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<AudioModPrepareProgress>("audio-mod-prepare-progress", (event) => {
@@ -576,7 +608,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   const updateGameSetting = (key: string, value: unknown) => {
     if (gameSettingsLoadError) return;
-    setGameSettings(prev => ({ ...prev, [key]: value }));
+    setGameSettings(prev => key === FRAMERATE_CAP_KEY
+      ? writeFramerateCap(prev, Number(value))
+      : ({ ...prev, [key]: value }));
     setGameSettingsChanged(true);
   };
 
@@ -651,6 +685,27 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     await persistGlobalDraft(next, true);
   };
 
+  const refreshAudioModState = async () => {
+    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
+    if (!accountId) return;
+    setAudioModStateLoading(true);
+    try {
+      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      const scannedAt = Date.now();
+      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
+      setAudioModState(next);
+      setAudioModScannedAt(scannedAt);
+      const defaults = audioSetupDefaults(next);
+      setAudioSetupSource(defaults.source);
+      setAudioSetupMode(defaults.mode);
+      setAudioSetupName(defaults.name);
+    } catch (error) {
+      showToast("error", `重新扫描 Mod 失败: ${error}`);
+    } finally {
+      setAudioModStateLoading(false);
+    }
+  };
+
   const handleAudioTargetChange = async (accountId: string) => {
     const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
     updateConfig(next => {
@@ -664,7 +719,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setAudioModStateLoading(true);
     try {
       const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      const scannedAt = Date.now();
+      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
       setAudioModState(next);
+      setAudioModScannedAt(scannedAt);
       const defaults = audioSetupDefaults(next);
       setAudioSetupSource(defaults.source);
       setAudioSetupMode(defaults.mode);
@@ -674,7 +732,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       } else if (wasEnabled) {
         setIncludeAudioTelemetry(true);
         setIncludeRoomTools(true);
+        setAudioSetupPurpose("recognition");
         setAudioSetupOpen(true);
+        setActiveTab("mod-processing");
       }
     } catch (error) {
       showToast("error", `无法检查账号的识别 Mod：${error}`);
@@ -700,7 +760,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setAudioModStateLoading(true);
     try {
       const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      const scannedAt = Date.now();
+      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
       setAudioModState(next);
+      setAudioModScannedAt(scannedAt);
       if (next.ready) {
         await persistAudioEnabledState(accountId, true);
         setAudioSetupOpen(false);
@@ -725,7 +788,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       });
       setIncludeAudioTelemetry(true);
       setIncludeRoomTools(true);
+      setAudioSetupPurpose("recognition");
       setAudioSetupOpen(true);
+      setActiveTab("mod-processing");
     } catch (error) {
       showToast("error", `无法开启声纹识别：${error}`);
     } finally {
@@ -733,7 +798,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  const handleOpenAudioSetup = () => {
+  const handleOpenAudioSetup = (purpose: ModProcessingPurpose = "manage") => {
     if (audioModState) {
       const defaults = audioSetupDefaults(audioModState);
       setAudioSetupMode(defaults.mode);
@@ -742,7 +807,13 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
     setIncludeAudioTelemetry(true);
     setIncludeRoomTools(true);
+    setAudioSetupPurpose(purpose);
     setAudioSetupOpen(true);
+  };
+
+  const handleOpenModProcessing = (purpose: ModProcessingPurpose = "manage") => {
+    handleOpenAudioSetup(purpose);
+    setActiveTab("mod-processing");
   };
 
   const handlePrepareAudioMod = async () => {
@@ -772,7 +843,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
             : audioSetupMode === "existing" ? audioSetupSource : null,
           ...featureOptions,
         });
+        const scannedAt = Date.now();
+        audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
         setAudioModState(next);
+        setAudioModScannedAt(scannedAt);
         await persistAudioEnabledState(
           accountId,
           wasEnabled && hasAudioTelemetry(next.feature_groups),
@@ -796,8 +870,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         accountId,
         modName: result.mod_name,
       });
+      const scannedAt = Date.now();
+      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
       await loadAccounts();
       setAudioModState(next);
+      setAudioModScannedAt(scannedAt);
       const preparedAudioTelemetry = hasAudioTelemetry(result.feature_groups)
         && hasAudioTelemetry(next.feature_groups);
       await persistAudioEnabledState(
@@ -1058,6 +1135,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       );
       return false;
     }
+    if (nextTab === "mod-processing" && activeTab !== "mod-processing") {
+      handleOpenAudioSetup("manage");
+    }
     setActiveTab(nextTab);
     return true;
   };
@@ -1155,6 +1235,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 audioModState={audioModState}
                 audioModStateLoading={audioModStateLoading}
                 audioSetupOpen={audioSetupOpen}
+                onOpenModProcessing={() => handleOpenModProcessing("recognition")}
                 onOpenAudioSetup={handleOpenAudioSetup}
                 onCloseAudioSetup={() => setAudioSetupOpen(false)}
                 audioSetupMode={audioSetupMode}
@@ -1189,13 +1270,47 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
+            {activeTab === "mod-processing" && config && (
+              <ModProcessingPanel
+                config={config}
+                initializedAccounts={initializedTrackingAccounts}
+                trackingTarget={trackingTarget}
+                audioModState={audioModState}
+                audioModStateLoading={audioModStateLoading}
+                audioModScannedAt={audioModScannedAt}
+                purpose={audioSetupPurpose}
+                audioSetupMode={audioSetupMode}
+                setAudioSetupMode={setAudioSetupMode}
+                audioSetupSource={audioSetupSource}
+                setAudioSetupSource={setAudioSetupSource}
+                audioSetupName={audioSetupName}
+                setAudioSetupName={setAudioSetupName}
+                includeAudioTelemetry={includeAudioTelemetry}
+                setIncludeAudioTelemetry={setIncludeAudioTelemetry}
+                includeRoomTools={includeRoomTools}
+                setIncludeRoomTools={setIncludeRoomTools}
+                audioPreparing={audioPreparing}
+                audioPrepareProgress={audioPrepareProgress}
+                normalizedAudioSetupName={normalizedAudioSetupName}
+                isAudioModUpgrade={isAudioModUpgrade}
+                isAudioModFeatureManagement={isAudioModFeatureManagement}
+                audioSetupNameError={audioSetupNameError}
+                showAudioSetupNameError={showAudioSetupNameError}
+                audioPrepareBlockedReason={audioPrepareBlockedReason}
+                onTargetChange={handleAudioTargetChange}
+                onPrepare={handlePrepareAudioMod}
+                onRefresh={refreshAudioModState}
+                onBackToRecognition={() => setActiveTab("automation")}
+              />
+            )}
+
             {/* Optional keyboard-only room creation and follower joining module. */}
             {activeTab === "room-automation" && (
               <RoomAutomationPanel
                 accounts={accounts}
                 language={config?.app_language}
                 onDirtyChange={setRoomAutomationDirty}
-                onOpenAudioModSettings={() => { handleTabChange("automation"); }}
+                onOpenAudioModSettings={() => { handleOpenModProcessing("manage"); }}
               />
             )}
 

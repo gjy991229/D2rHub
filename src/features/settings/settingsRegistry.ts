@@ -3,6 +3,7 @@ import {
   Folder,
   Monitor,
   Palette,
+  PackageOpen,
   Play,
   Route,
   ScanEye,
@@ -20,6 +21,7 @@ export type SettingsTabId =
   | "appearance"
   | "overlays"
   | "automation"
+  | "mod-processing"
   | "room-automation"
   | "pet"
   | "shortcuts"
@@ -68,6 +70,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     appearance: { label: "外观与界面", description: "语言、主题、字体与主界面透明度" },
     overlays: { label: "桌面悬浮窗", description: "邪恶区域与场景统计悬浮窗口" },
     automation: { label: "识别与统计", description: "掉落识别、运行统计与协议诊断" },
+    "mod-processing": { label: "Mod 加工", description: "保留已有功能并增补 D2RHub 模块" },
     "room-automation": { label: "自动跟房", description: "主账号建房与跟随账号分阶段加入" },
     pet: { label: "桌面伴随", description: "桌宠及轻量状态反馈" },
   },
@@ -80,6 +83,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     appearance: { label: "Appearance", description: "Language, theme, typography, and main window opacity" },
     overlays: { label: "Desktop Overlays", description: "Terror Zone and run statistics overlay windows" },
     automation: { label: "Recognition & Stats", description: "Audio recognition, run statistics, and diagnostics" },
+    "mod-processing": { label: "Mod Processing", description: "Preserve installed features and add D2RHub modules" },
     "room-automation": { label: "Room Automation", description: "Primary room creation and staged follower joining" },
     pet: { label: "Desktop Companion", description: "Optional desktop pet and status feedback" },
   },
@@ -173,6 +177,12 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     kind: "optional",
     group: "optional-features",
     isConfigured: (config) => config.rune_audio_enabled,
+  },
+  {
+    id: "mod-processing",
+    icon: PackageOpen,
+    kind: "optional",
+    group: "optional-features",
   },
   {
     id: "room-automation",

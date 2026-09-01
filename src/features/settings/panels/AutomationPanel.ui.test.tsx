@@ -1,9 +1,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { type ComponentProps, useState } from "react";
+import { type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AudioModSetupState, GlobalConfig } from "../../../store/types";
-import { AutomationPanel } from "./AutomationPanel";
+import { ModProcessingPanel } from "./ModProcessingPanel";
 
 const readyAudioOnlyMod: AudioModSetupState = {
   account_id: "one",
@@ -28,40 +27,46 @@ const readyAudioOnlyMod: AudioModSetupState = {
   restart_required: false,
 };
 
-const baseConfig = {
-  app_language: "zh-CN",
-  rune_audio_enabled: false,
-  rune_audio_tracked_categories: [],
-  rune_audio_tracked_charm_codes: [],
-} as unknown as GlobalConfig;
+const sourceState: AudioModSetupState = {
+  ...readyAudioOnlyMod,
+  current_mod_name: null,
+  ready: false,
+  build_mode: null,
+  feature_groups: [],
+  installed_mods: [{
+    name: "MyExistingMod",
+    audio_ready: true,
+    update_required: false,
+    source_eligible: true,
+    feature_groups: ["audio_telemetry", "in_game_room_tools"],
+    audio_reusable: true,
+  }],
+};
 
+const baseConfig = { app_language: "zh-CN" } as unknown as GlobalConfig;
 const account = { id: "one", display_name: "Leader", initialized: true } as never;
 const trackingTarget = { valid: true, account } as never;
 
 function baseProps(
-  overrides: Partial<ComponentProps<typeof AutomationPanel>> = {},
-): ComponentProps<typeof AutomationPanel> {
+  overrides: Partial<ComponentProps<typeof ModProcessingPanel>> = {},
+): ComponentProps<typeof ModProcessingPanel> {
   return {
     config: baseConfig,
-    updateConfig: vi.fn(),
-    persistConfig: vi.fn(async () => undefined),
-    initializedTrackingAccounts: [account],
+    initializedAccounts: [account],
     trackingTarget,
-    audioStatus: null,
-    audioModState: null,
+    audioModState: sourceState,
     audioModStateLoading: false,
-    audioSetupOpen: true,
-    onOpenAudioSetup: vi.fn(),
-    onCloseAudioSetup: vi.fn(),
-    audioSetupMode: "original",
+    audioModScannedAt: Date.now(),
+    purpose: "recognition",
+    audioSetupMode: "existing",
     setAudioSetupMode: vi.fn(),
-    audioSetupSource: "",
+    audioSetupSource: "MyExistingMod",
     setAudioSetupSource: vi.fn(),
     audioSetupName: "D2rHubTools",
     setAudioSetupName: vi.fn(),
-    includeAudioTelemetry: true,
+    includeAudioTelemetry: false,
     setIncludeAudioTelemetry: vi.fn(),
-    includeRoomTools: true,
+    includeRoomTools: false,
     setIncludeRoomTools: vi.fn(),
     audioPreparing: false,
     audioPrepareProgress: null,
@@ -70,105 +75,73 @@ function baseProps(
     isAudioModFeatureManagement: false,
     audioSetupNameError: "",
     showAudioSetupNameError: false,
-    hasInitializedAudioAccount: true,
-    hasAudioTarget: true,
-    hasReadyAudioMod: false,
-    isAudioEnableRequested: false,
-    isAudioRecognitionActive: false,
     audioPrepareBlockedReason: "",
-    onAudioTargetChange: vi.fn(async () => undefined),
-    onAudioToggle: vi.fn(async () => undefined),
-    onPrepareAudioMod: vi.fn(async () => undefined),
-    onToggleDiagnosticRecording: vi.fn(async () => undefined),
-    onClose: vi.fn(),
-    onInitializeAccount: vi.fn(),
+    onTargetChange: vi.fn(async () => undefined),
+    onPrepare: vi.fn(async () => undefined),
+    onRefresh: vi.fn(async () => undefined),
+    onBackToRecognition: vi.fn(),
     ...overrides,
   };
 }
 
 afterEach(cleanup);
 
-describe("AutomationPanel Mod feature groups", () => {
-  it("starts new preparation with both feature groups selected and blocks an empty selection", async () => {
-    const user = userEvent.setup();
-
-    function Harness() {
-      const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
-      const [includeRoomTools, setIncludeRoomTools] = useState(true);
-      const blockedReason = includeAudioTelemetry || includeRoomTools
-        ? ""
-        : "请至少选择一个 Mod 功能";
-      return (
-        <AutomationPanel
-          {...baseProps({
-            includeAudioTelemetry,
-            setIncludeAudioTelemetry,
-            includeRoomTools,
-            setIncludeRoomTools,
-            audioPrepareBlockedReason: blockedReason,
-          })}
-        />
-      );
-    }
-
-    render(<Harness />);
+describe("ModProcessingPanel feature inheritance", () => {
+  it("locks recognition when processing was opened to enable recognition", () => {
+    render(<ModProcessingPanel {...baseProps({
+      audioSetupMode: "original",
+      audioSetupSource: "",
+      audioModState: { ...sourceState, installed_mods: [] },
+    })} />);
 
     const audio = screen.getByRole("checkbox", { name: /声纹识别/ }) as HTMLInputElement;
     const rooms = screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement;
     expect(audio.checked).toBe(true);
-    expect(rooms.checked).toBe(true);
-
-    await user.click(audio);
-    await user.click(rooms);
-
-    expect(screen.getByText(/请至少选择一个 Mod 功能/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "完成上方配置后即可准备" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(audio.disabled).toBe(true);
+    expect(screen.getByText("本次目标 · 必选")).toBeTruthy();
+    expect(rooms.disabled).toBe(false);
   });
 
-  it("opens a ready Mod as additive feature management and preserves installed groups", async () => {
-    const user = userEvent.setup();
+  it("locks every module already present in the selected source Mod", () => {
+    render(<ModProcessingPanel {...baseProps()} />);
 
-    function Harness() {
-      const [open, setOpen] = useState(false);
-      const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
-      const [includeRoomTools, setIncludeRoomTools] = useState(true);
-      return (
-        <AutomationPanel
-          {...baseProps({
-            audioModState: readyAudioOnlyMod,
-            audioSetupOpen: open,
-            onOpenAudioSetup: () => setOpen(true),
-            onCloseAudioSetup: () => setOpen(false),
-            includeAudioTelemetry,
-            setIncludeAudioTelemetry,
-            includeRoomTools,
-            setIncludeRoomTools,
-            isAudioModUpgrade: true,
-            isAudioModFeatureManagement: true,
-            hasReadyAudioMod: true,
-          })}
-        />
-      );
-    }
+    const audio = screen.getByRole("checkbox", { name: /声纹识别/ }) as HTMLInputElement;
+    const rooms = screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement;
+    expect(audio.checked).toBe(true);
+    expect(audio.disabled).toBe(true);
+    expect(rooms.checked).toBe(true);
+    expect(rooms.disabled).toBe(true);
+    expect(screen.getAllByText("源 Mod 已有").length).toBe(2);
+  });
 
-    render(<Harness />);
-    await user.click(screen.getByRole("button", { name: "管理功能" }));
+  it("preserves installed modules while allowing additive management", () => {
+    render(<ModProcessingPanel {...baseProps({
+      purpose: "manage",
+      audioModState: readyAudioOnlyMod,
+      audioSetupMode: "original",
+      audioSetupSource: "",
+      isAudioModUpgrade: true,
+      isAudioModFeatureManagement: true,
+      includeRoomTools: true,
+    })} />);
 
-    expect(screen.getByText("管理 Mod 功能")).toBeTruthy();
-    const installedAudio = screen.getByRole("checkbox", { name: /声纹识别.*已安装/ }) as HTMLInputElement;
+    const installedAudio = screen.getByRole("checkbox", { name: /声纹识别/ }) as HTMLInputElement;
     expect(installedAudio.checked).toBe(true);
     expect(installedAudio.disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement).disabled).toBe(false);
     expect(screen.getByText("-mod D2rHubTools -txt -assettestmode 1")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "增补所选功能" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /增补所选模块/ })).toBeTruthy();
   });
 
-  it("uses English copy for feature management without changing feature IDs", () => {
-    render(<AutomationPanel {...baseProps({
+  it("uses English copy without changing feature semantics", () => {
+    render(<ModProcessingPanel {...baseProps({
       config: { ...baseConfig, app_language: "en-US" },
+      audioSetupMode: "original",
+      audioSetupSource: "",
+      audioModState: { ...sourceState, installed_mods: [] },
     })} />);
 
-    expect(screen.getAllByText("Mod features").length).toBeGreaterThan(0);
+    expect(screen.getByText("Feature modules")).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /Audio recognition/ })).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /In-game room tools/ })).toBeTruthy();
   });

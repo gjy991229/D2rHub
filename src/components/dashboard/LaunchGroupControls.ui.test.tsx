@@ -1,9 +1,9 @@
 import { fireEvent, render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AccountMeta, LaunchGroup } from "../../store/types";
 import { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
-import { LaunchGroupMenu } from "./LaunchGroupMenu";
+import { LaunchGroupPanel } from "./LaunchGroupPanel";
 
 const readyAccount: AccountMeta = {
   id: "account-1",
@@ -35,21 +35,14 @@ const group: LaunchGroup = {
 };
 
 describe("launch group controls", () => {
-  beforeEach(() => {
-    vi.spyOn(window, "requestAnimationFrame").mockImplementation(callback => {
-      callback(0);
-      return 1;
-    });
-    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-  });
-
   it("adds and removes a scheme from the main action bar through the star control", () => {
     const onToggleFavorite = vi.fn();
     const { rerender } = render(
-      <LaunchGroupMenu
+      <LaunchGroupPanel
         groups={[group]}
         accounts={[readyAccount]}
         config={null}
+        onClose={vi.fn()}
         onLaunch={vi.fn()}
         onCreate={vi.fn()}
         onEdit={vi.fn()}
@@ -57,16 +50,16 @@ describe("launch group controls", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /启动方案/ }));
     fireEvent.click(screen.getByRole("button", { name: `设为常用启动方案“${group.name}”` }));
     expect(onToggleFavorite).toHaveBeenLastCalledWith(group);
 
     rerender(
-      <LaunchGroupMenu
+      <LaunchGroupPanel
         groups={[group]}
         accounts={[readyAccount]}
         config={null}
         favoriteGroupIds={[group.id]}
+        onClose={vi.fn()}
         onLaunch={vi.fn()}
         onCreate={vi.fn()}
         onEdit={vi.fn()}
@@ -86,6 +79,7 @@ describe("launch group controls", () => {
         accounts={[{ ...readyAccount, initialized: false }]}
         config={null}
         onLaunch={onLaunch}
+        onManageFavorites={vi.fn()}
       />,
     );
 

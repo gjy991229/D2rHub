@@ -39,6 +39,8 @@ interface AutomationPanelProps {
   audioModState: AudioModSetupState | null;
   audioModStateLoading: boolean;
   audioSetupOpen: boolean;
+  showModProcessing?: boolean;
+  onOpenModProcessing?: () => void;
   onOpenAudioSetup: () => void;
   onCloseAudioSetup: () => void;
   audioSetupMode: AudioSetupMode;
@@ -82,6 +84,8 @@ export function AutomationPanel({
   audioModState,
   audioModStateLoading,
   audioSetupOpen,
+  showModProcessing = false,
+  onOpenModProcessing = () => undefined,
   onOpenAudioSetup,
   onCloseAudioSetup,
   audioSetupMode,
@@ -299,9 +303,24 @@ export function AutomationPanel({
             ? `只识别“${trackingTarget.account.display_name || trackingTarget.account.id}”对应的游戏声音。`
             : "必须先选择目标账号；也可点击上方“选择首个账号”快速继续。"}
       </p>
+      {trackingTarget.valid && (
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-hover px-2.5 py-2">
+          <span className="min-w-0 text-2xs text-text-muted">
+            {audioModStateLoading
+              ? "正在检查当前 Mod…"
+              : audioModState?.ready
+                ? `${audioModState.current_mod_name} · ${audioModState.feature_groups.length} 个功能模块`
+                : "当前账号还没有可用的 D2RHub 加工 Mod"}
+          </span>
+          <Button size="sm" variant="secondary" className="shrink-0" onClick={onOpenModProcessing}>
+            <Package size={12} />
+            {audioModState?.ready ? "管理 Mod" : "前往加工"}
+          </Button>
+        </div>
+      )}
     </div>
 
-    {trackingTarget.valid && (
+    {showModProcessing && trackingTarget.valid && (
       <div className="border-t border-border-default/50 pt-3">
         {audioModStateLoading && !audioModState ? (
           <div className="h-16 rounded-xl bg-surface-hover skeleton" aria-label="正在检查识别 Mod" />

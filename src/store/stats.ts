@@ -70,6 +70,7 @@ function matchRune(text: string): string | null {
 
 /// 单次掉落（前端追踪用，非持久化）
 export interface DropEntry {
+  observationId?: number | null;
   kind: "rune" | "item";
   telemetryId: number;
   itemCode: string | null;
@@ -105,8 +106,11 @@ interface StatsState {
 
   // ── 累计掉落（悬浮窗展示，跨场景不清空）──
   currentDrops: DropEntry[];
+  // ── 上一把已结束场景的掉落 ──
+  previousRunDrops: DropEntry[];
   // ── 当前单次场景掉落（每次 startTimer 重置，仅用于数据库存储）──
   currentRunDrops: DropEntry[];
+  hiddenObservationIds: number[];
 
   // ── 角色昵称 ──
   characterName: string;
@@ -150,7 +154,9 @@ export const useStats = create<StatsState>((set, get) => ({
   dbTotalRuns: null,
   sessionRuns: {},
   currentDrops: [],
+  previousRunDrops: [],
   currentRunDrops: [],
+  hiddenObservationIds: [],
   characterName: "",
 
   setCharacterName: (name) => set({ characterName: name }),
@@ -168,7 +174,13 @@ export const useStats = create<StatsState>((set, get) => ({
 
     // 先同步冻结计时状态，再异步保存快照。这样手动结束会立即反馈，保存期间
     // 新识别到的场景也不会被迟到的旧保存流程重置。
-    set({ isTiming: false, timerStart: null, elapsedMs: 0, currentRunDrops: [] });
+    set({
+      isTiming: false,
+      timerStart: null,
+      elapsedMs: 0,
+      previousRunDrops: currentRunDrops,
+      currentRunDrops: [],
+    });
 
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -326,8 +338,10 @@ export const useStats = create<StatsState>((set, get) => ({
       screenshotPath: null,
     };
 
+    const current = get();
     set({
-      currentDrops: [...get().currentDrops, newDrop],
+      currentDrops: [...current.currentDrops, newDrop],
+      ...(current.isTiming ? { currentRunDrops: [...current.currentRunDrops, newDrop] } : {}),
     });
   },
 
@@ -343,13 +357,18 @@ export const useStats = create<StatsState>((set, get) => ({
       runeNumber: null,
       screenshotPath: null,
     };
-    set({ currentDrops: [...get().currentDrops, newDrop] });
+    const current = get();
+    set({
+      currentDrops: [...current.currentDrops, newDrop],
+      ...(current.isTiming ? { currentRunDrops: [...current.currentRunDrops, newDrop] } : {}),
+    });
   },
 
   applyTrackingSnapshot: (snapshot) => {
     const previousRunName = get().currentRunName;
     const previousTz = get().currentTz;
-    const currentRunDrops: DropEntry[] = snapshot.current_run_drops.map((drop) => ({
+    const toDropEntries = (drops: TrackingSnapshot["current_run_drops"]): DropEntry[] => drops.map((drop) => ({
+      observationId: drop.observation_id > 0 ? drop.observation_id : null,
       kind: drop.kind,
       telemetryId: drop.telemetry_id,
       itemCode: drop.code || null,
@@ -359,6 +378,12 @@ export const useStats = create<StatsState>((set, get) => ({
       runeNumber: drop.rune_number || null,
       screenshotPath: null,
     }));
+    const hiddenObservationIds = new Set(get().hiddenObservationIds);
+    const visibleDrops = (drops: TrackingSnapshot["current_run_drops"]) => toDropEntries(drops)
+      .filter((drop) => drop.observationId == null || !hiddenObservationIds.has(drop.observationId));
+    const currentRunDrops = visibleDrops(snapshot.current_run_drops);
+    const previousRunDrops = visibleDrops(snapshot.previous_run_drops ?? []);
+    const sessionDrops = visibleDrops(snapshot.session_drops ?? snapshot.current_run_drops);
     set({
       currentScene: snapshot.current_scene || "等待识别...",
       currentTz: Boolean(snapshot.tz),
@@ -372,6 +397,8 @@ export const useStats = create<StatsState>((set, get) => ({
         ? Math.max(0, Date.now() - snapshot.timer_started_at_ms)
         : 0,
       currentRunDrops,
+      previousRunDrops,
+      currentDrops: sessionDrops,
       sessionRuns: snapshot.session_runs,
       ...(snapshot.is_timing ? {} : { dbAvgTime: null, dbTotalRuns: null }),
     });
@@ -384,8 +411,22 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   removeCurrentDrop: (index) => {
+    const removed = get().currentDrops[index];
+    const observationId = removed?.observationId;
+    const keep = (drop: DropEntry, currentIndex: number) => observationId != null
+      ? drop.observationId !== observationId
+      : currentIndex !== index;
     set({
-      currentDrops: get().currentDrops.filter((_, idx) => idx !== index),
+      currentDrops: get().currentDrops.filter(keep),
+      currentRunDrops: observationId == null
+        ? get().currentRunDrops
+        : get().currentRunDrops.filter((drop) => drop.observationId !== observationId),
+      previousRunDrops: observationId == null
+        ? get().previousRunDrops
+        : get().previousRunDrops.filter((drop) => drop.observationId !== observationId),
+      hiddenObservationIds: observationId == null
+        ? get().hiddenObservationIds
+        : [...new Set([...get().hiddenObservationIds, observationId])],
     });
   },
 }));

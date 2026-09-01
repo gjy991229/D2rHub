@@ -349,15 +349,16 @@ fn apply_temporary_graphics_override_at_path(
         "Screen Resolution (Windowed)".to_string(),
         serde_json::Value::String(graphics.resolution.clone()),
     );
-    let fps_key = if settings.contains_key("Framerate Target") {
-        "Framerate Target"
-    } else {
-        "Framerate Cap"
-    };
     settings.insert(
-        fps_key.to_string(),
+        "Framerate Cap".to_string(),
         serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
     );
+    if settings.contains_key("Framerate Target") {
+        settings.insert(
+            "Framerate Target".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
+        );
+    }
     let content = serde_json::to_vec_pretty(&settings)?;
     std::fs::write(&path, content).map_err(|error| {
         AppError::FileError(format!(
@@ -3204,6 +3205,7 @@ mod tests {
         let path = root.join("Settings.json");
         let original = br#"{
   "Screen Resolution (Windowed)": "1280x720",
+  "Framerate Cap": 60,
   "Framerate Target": 30,
   "VSync": true
 }"#;
@@ -3221,6 +3223,7 @@ mod tests {
             let temporary: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert_eq!(temporary["Screen Resolution (Windowed)"], "2560x1440");
+            assert_eq!(temporary["Framerate Cap"], 144);
             assert_eq!(temporary["Framerate Target"], 144);
             assert_eq!(temporary["VSync"], true);
         }

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef } from "react";
-import { Eye } from "lucide-react";
+import { ChevronLeft, ChevronRight, Eye } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
@@ -70,6 +70,7 @@ interface TerrorZoneSnapshot {
 
 type TerrorZoneStatus = "loading" | "ready" | "empty" | "error";
 type OverlayDisplayMode = "mini" | "expanded";
+type DropScope = "current" | "previous" | "overview";
 
 const OVERLAY_MODE_STORAGE_KEY = "d2rhub-information-overlay-mode";
 const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
@@ -353,6 +354,8 @@ export function Overlay() {
   const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
   const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
   const [showAllDropGroups, setShowAllDropGroups] = useState(false);
+  const [dropScope, setDropScope] = useState<DropScope>("current");
+  const [dropSlideDirection, setDropSlideDirection] = useState<"previous" | "next">("next");
   const observedDropsRef = useRef(stats.currentDrops);
   const dropHighlightSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
@@ -1652,9 +1655,14 @@ export function Overlay() {
 
   // ── 派生数据 ──
   const activeAccounts = accounts.filter((a) => a.is_running);
+  const scopedDrops = dropScope === "current"
+    ? stats.currentRunDrops
+    : dropScope === "previous"
+      ? stats.previousRunDrops
+      : stats.currentDrops;
   const aggregatedDrops = React.useMemo(
-    () => aggregateOverlayDrops(stats.currentDrops),
-    [stats.currentDrops],
+    () => aggregateOverlayDrops(scopedDrops),
+    [scopedDrops],
   );
   const displayedDropGroups = showAllDropGroups
     ? aggregatedDrops
@@ -1750,6 +1758,9 @@ export function Overlay() {
     : `展开其余 ${hiddenDropGroupCount} 种`;
   const collapseDropsLabel = useEnglish ? "Show latest 5" : "收起至最近 5 种";
   const deleteDropTitle = useEnglish ? "Remove the latest occurrence" : "移除最近一次掉落";
+  const dropScopeLabels: Record<DropScope, string> = useEnglish
+    ? { current: "Current", previous: "Previous", overview: "Overview" }
+    : { current: "当前", previous: "上一把", overview: "总览" };
   const terrorZoneTitle = useEnglish ? "Terror Zone" : "邪恶区域";
   const terrorZoneEmptyMessage = terrorZoneStatus === "error"
     ? (useEnglish ? "Forecast unavailable" : "预报暂不可用")
@@ -1760,6 +1771,15 @@ export function Overlay() {
   function handleDockPointerEnter() {
     pointerInsideDockRef.current = true;
     if (dockStateRef.current) void revealDockedOverlay();
+  }
+
+  function cycleDropScope(direction: "previous" | "next") {
+    const scopes: DropScope[] = ["current", "previous", "overview"];
+    const offset = direction === "next" ? 1 : -1;
+    const nextIndex = (scopes.indexOf(dropScope) + offset + scopes.length) % scopes.length;
+    setDropSlideDirection(direction);
+    setDropScope(scopes[nextIndex]);
+    setShowAllDropGroups(false);
   }
 
   function handleDockPointerLeave() {
@@ -2019,13 +2039,25 @@ export function Overlay() {
 
         {/* 掉落分组；新识别结果在原胶囊上短时强调 */}
         <div className="flex flex-col gap-1 flex-1 min-h-0">
-          <div className="flex items-center justify-between gap-2 px-1">
-            <span className="text-2xs font-medium text-text-muted">
-              {dropsLabel}
-              {stats.currentDrops.length > 0 && (
-                <span className="text-accent ml-0.5">({stats.currentDrops.length})</span>
-              )}
-            </span>
+          <div className="overlay-drop-scope-header flex items-center justify-between gap-2 px-1">
+            <div className="overlay-drop-scope-controls" role="group" aria-label={useEnglish ? "Drop range" : "掉落范围"}>
+              <button
+                type="button"
+                data-overlay-interactive="true"
+                aria-label={useEnglish ? "Previous drop range" : "查看上一种掉落范围"}
+                onClick={(event) => { event.stopPropagation(); cycleDropScope("previous"); }}
+              ><ChevronLeft size={11} /></button>
+              <span>
+                {dropsLabel} · {dropScopeLabels[dropScope]}
+                {scopedDrops.length > 0 && <em>({scopedDrops.length})</em>}
+              </span>
+              <button
+                type="button"
+                data-overlay-interactive="true"
+                aria-label={useEnglish ? "Next drop range" : "查看下一种掉落范围"}
+                onClick={(event) => { event.stopPropagation(); cycleDropScope("next"); }}
+              ><ChevronRight size={11} /></button>
+            </div>
             {aggregatedDrops.length > 0 && (
               <span className="text-2xs text-text-muted tabular-nums">
                 {uniqueDropCountLabel}
@@ -2038,14 +2070,16 @@ export function Overlay() {
           </span>
 
           <div
-            className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
+            key={dropScope}
+            className="overlay-drop-scope-content flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
+            data-direction={dropSlideDirection}
             style={{ flex: 1, scrollbarWidth: "thin" }}
           >
             {displayedDropGroups.length > 0 ? (
               <>
                 {displayedDropGroups.map(({ key, drop, count, latestIndex }) => {
                   const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
-                  const highlightId = recentDropHighlightIds.get(key);
+                  const highlightId = dropScope === "previous" ? undefined : recentDropHighlightIds.get(key);
                   return (
                     <span
                       key={key}
@@ -2064,7 +2098,7 @@ export function Overlay() {
                         <span key={highlightId} className="overlay-drop-pill-flash" aria-hidden="true" />
                       )}
                       <span className="relative z-[1]">{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
-                      <button
+                      {dropScope === "overview" && <button
                         className="absolute right-0.5 top-0 bottom-0 z-[1] flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -2073,7 +2107,7 @@ export function Overlay() {
                         title={deleteDropTitle}
                       >
                         ×
-                      </button>
+                      </button>}
                     </span>
                   );
                 })}

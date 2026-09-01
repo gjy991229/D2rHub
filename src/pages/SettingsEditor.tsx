@@ -6,6 +6,7 @@ import { Toggle } from "../components/ui/Toggle";
 import { showToast } from "../components/ui/Toast";
 import type { AccountMeta } from "../store/types";
 import { useAccounts } from "../store/accounts";
+import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../utils/gameSettings";
 
 interface Props {
   account: AccountMeta;
@@ -209,7 +210,7 @@ const settingsSections: ConfigSection[] = [
         ],
       },
       { key: "Dynamic Resolution Scaling", label: "分辨率动态调整", type: "toggle", defaultValue: 0 },
-      { key: "Framerate Target", label: "帧数目标值", type: "number", defaultValue: 0, min: 0, max: 300 },
+      { key: FRAMERATE_CAP_KEY, label: "帧数上限", type: "number", defaultValue: 0, min: 0, max: 500 },
       { key: "Vfx Quality", label: "Vfx质量", type: "select", defaultValue: 2, options: qualityLowUltra },
       {
         key: "Vfx Lighting Quality",
@@ -412,7 +413,9 @@ export function SettingsEditor({ account, onClose }: Props) {
   };
 
   const update = (key: string, value: unknown) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSettings((prev) => key === FRAMERATE_CAP_KEY
+      ? writeFramerateCap(prev, Number(value))
+      : ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
 
