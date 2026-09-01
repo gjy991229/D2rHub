@@ -251,7 +251,7 @@ pub fn launch_browser_for_account(
 
     // 在启动浏览器之前，收集现有的 Chrome/Edge 窗口句柄列表
     #[cfg(target_os = "windows")]
-    let before_hwnds = crate::commands::system::collect_chrome_windows();
+    let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
     let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
     if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
@@ -262,7 +262,7 @@ pub fn launch_browser_for_account(
 
     // 启动后台监测线程，自动将新打开的浏览器空白窗口置顶并激活
     #[cfg(target_os = "windows")]
-    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
 
     Ok(())
 }
@@ -338,7 +338,7 @@ pub fn open_url_in_browser(
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
 
     #[cfg(target_os = "windows")]
-    let before_hwnds = crate::commands::system::collect_chrome_windows();
+    let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
     ensure_browser_path_allowed(&config, &browser_path)?;
     ensure_allowed_bnet_login_url(&url)?;
@@ -351,7 +351,7 @@ pub fn open_url_in_browser(
     }
 
     #[cfg(target_os = "windows")]
-    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
 
     Ok(())
 }

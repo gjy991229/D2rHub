@@ -101,7 +101,7 @@ pub(crate) fn fill_room_form(
     request: RoomFormRequest<'_>,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let hwnd = crate::commands::system::find_game_hwnd(request.pid)
+    let hwnd = crate::infrastructure::system::find_game_hwnd(request.pid)
         .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {})", request.pid))?;
     validate_target(hwnd)?;
     let strategy = BackgroundTextStrategy::from_value(request.background_text_strategy);
@@ -143,7 +143,7 @@ pub(crate) fn confirm_retry(
     step_delay_ms: u64,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let hwnd = crate::commands::system::find_game_hwnd(pid)
+    let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
         .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {pid})"))?;
     validate_target(hwnd)?;
     let strategy = BackgroundTextStrategy::from_value(background_text_strategy);

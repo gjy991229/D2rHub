@@ -334,6 +334,27 @@ assert(
     : `[RUST-CONFIG-004] ${relativePath(configurationRuntimeFile)}:${lineAt(configurationRuntimeSource, publicRuntimeLock.index)} exposes configuration synchronization internals`,
 );
 
+const systemCommandFile = path.join(rustRoot, "commands", "system.rs");
+const systemAdapterFile = path.join(rustRoot, "infrastructure", "system.rs");
+const systemCommandSource = maskRustCommentsAndStrings(fs.readFileSync(systemCommandFile, "utf8"));
+const systemAdapterSource = maskRustCommentsAndStrings(fs.readFileSync(systemAdapterFile, "utf8"));
+const systemCommandImplementation = /\b(?:windows|windows_sys|winreg|sysinfo)\s*::|\bstd\s*::\s*(?:process|thread)\s*::|\bunsafe\b/.exec(
+  systemCommandSource,
+);
+assert(
+  systemCommandImplementation === null,
+  systemCommandImplementation === null
+    ? "[RUST-SYSTEM-001] system commands are thin IPC delegates"
+    : `[RUST-SYSTEM-001] ${relativePath(systemCommandFile)}:${lineAt(systemCommandSource, systemCommandImplementation.index)} contains operating-system implementation logic`,
+);
+const adapterCommandMacro = /#\s*\[\s*tauri\s*::\s*command\s*\]/.exec(systemAdapterSource);
+assert(
+  adapterCommandMacro === null,
+  adapterCommandMacro === null
+    ? "[RUST-SYSTEM-002] the system adapter is not an IPC command surface"
+    : `[RUST-SYSTEM-002] ${relativePath(systemAdapterFile)}:${lineAt(systemAdapterSource, adapterCommandMacro.index)} exposes a Tauri command macro`,
+);
+
 const frontendConfigStoreFile = path.join(g.process.cwd(), "src", "store", "globalConfig.ts");
 const frontendConfigStoreSource = fs.readFileSync(frontendConfigStoreFile, "utf8");
 assert(

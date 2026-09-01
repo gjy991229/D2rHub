@@ -246,7 +246,7 @@ impl RuntimeHost for WindowsRuntimeHost {
                 .to_string_lossy()
                 .eq_ignore_ascii_case("D2R.exe")
                 && process.exe().is_some_and(|actual| {
-                    crate::commands::system::executable_paths_match(actual, &expected)
+                    crate::infrastructure::system::executable_paths_match(actual, &expected)
                 })
         });
         if !alive_and_expected {
@@ -458,7 +458,7 @@ impl LazyChatBinding {
             cached.service.shutdown()?;
         }
         let service = Arc::new(ChatF13BindingService::new(directories.clone(), || {
-            !crate::commands::system::get_d2r_pids().is_empty()
+            !crate::infrastructure::system::get_d2r_pids().is_empty()
         })?);
         if resume_watcher {
             let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
@@ -516,7 +516,7 @@ impl ChatBindingPort for LazyChatBinding {
                 backup_files: 0,
                 orphan_backup_files: 0,
                 transaction_artifacts: 0,
-                d2r_running: !crate::commands::system::get_d2r_pids().is_empty(),
+                d2r_running: !crate::infrastructure::system::get_d2r_pids().is_empty(),
                 consent_granted: false,
                 watcher_running: false,
                 auto_patch_enabled: false,

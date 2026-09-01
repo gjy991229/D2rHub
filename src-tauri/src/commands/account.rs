@@ -489,7 +489,7 @@ impl AccountRuntimePort for AccountManagerRuntime<'_> {
             .to_string_lossy()
             .eq_ignore_ascii_case("D2R.exe")
             && process.exe().is_some_and(|actual| {
-                crate::commands::system::executable_paths_match(actual, &expected_game_path)
+                crate::infrastructure::system::executable_paths_match(actual, &expected_game_path)
             })
     }
 
@@ -2546,7 +2546,7 @@ fn run_bnet_initialization_transaction(
         );
         let _ = app.emit(
             "launch-progress",
-            crate::commands::system::LaunchProgress::new(account_id, step, status, message),
+            crate::infrastructure::system::LaunchProgress::new(account_id, step, status, message),
         );
     };
 
@@ -2600,7 +2600,7 @@ fn run_bnet_initialization_transaction(
         if !cfg.browser_path.is_empty() && !cfg.browser_type.is_empty() {
             emit("browser", "running", "正在启动该账号的独立浏览器配置");
             #[cfg(target_os = "windows")]
-            let before_hwnds = crate::commands::system::collect_chrome_windows();
+            let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
             match crate::commands::browser::launch_browser_for_account_impl(
                 &cfg,
@@ -2609,7 +2609,7 @@ fn run_bnet_initialization_transaction(
             ) {
                 Ok(()) => {
                     #[cfg(target_os = "windows")]
-                    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+                    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
                     std::thread::sleep(std::time::Duration::from_millis(1500));
                     emit("browser", "ok", "浏览器已启动");
                 }
@@ -2654,7 +2654,7 @@ fn run_bnet_initialization_transaction(
                     battle_net_path.display()
                 ))
             })?;
-        crate::commands::system::bring_bnet_to_foreground();
+        crate::infrastructure::system::bring_bnet_to_foreground();
         emit("launch", "ok", "Battle.net 已启动，请完成登录");
 
         emit("login", "running", "正在等待 Battle.net 登录完成");
@@ -2666,7 +2666,9 @@ fn run_bnet_initialization_transaction(
                 return Err(AppError::Unknown("账号初始化已取消".to_string()));
             }
 
-            if crate::commands::system::count_bnet_processes_for_path(&battle_net_identity) >= 7 {
+            if crate::infrastructure::system::count_bnet_processes_for_path(&battle_net_identity)
+                >= 7
+            {
                 logged_in = true;
                 break;
             }
@@ -3986,7 +3988,7 @@ pub fn move_game_window(
     } else {
         &meta.display_name
     };
-    let windows = crate::commands::system::SystemGameWindowPort;
+    let windows = crate::infrastructure::system::SystemGameWindowPort;
     let facade = state.multi_instance().facade();
     facade.move_account_window(&windows, &account_id, display, WindowPosition { x, y });
     Ok(())

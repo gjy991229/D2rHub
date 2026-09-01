@@ -16,11 +16,11 @@ use crate::commands::account::{
     replace_path_with_backup, resolve_account_runtime_snapshot, sibling_with_suffix,
     AccountManager, AccountMeta, RegistrySnapshotPath,
 };
-use crate::commands::system::{LaunchProgress, SystemGameWindowPort};
 use crate::commands::utils::silent_cmd;
 use crate::domain::account::{AuthMode, ClientEdition};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
+use crate::infrastructure::system::{LaunchProgress, SystemGameWindowPort};
 use crate::launch_context::{
     account_game_executable_identity, ContextPurpose, HostRuntimeLease, LaunchContext,
 };
@@ -413,7 +413,7 @@ fn unique_account_window_executable(
         })
         .filter(|(candidate_title, executable)| {
             candidate_title.eq_ignore_ascii_case(&title)
-                && crate::commands::system::executable_paths_match(executable, &expected)
+                && crate::infrastructure::system::executable_paths_match(executable, &expected)
         })
         .count();
     (matching_accounts == 1).then_some(expected)
@@ -673,7 +673,7 @@ fn kill_battle_net_for_context(context: &LaunchContext, flush_before_kill: bool)
                 .to_string_lossy()
                 .eq_ignore_ascii_case("Battle.net.exe")
                 && process.exe().is_some_and(|actual| {
-                    crate::commands::system::executable_paths_match(actual, expected_path)
+                    crate::infrastructure::system::executable_paths_match(actual, expected_path)
                 })
         })
         .map(|process| process.pid().as_u32())
@@ -698,7 +698,9 @@ async fn cancel_with_cleanup(
     let bnet_count = context
         .battle_net_executable()
         .ok()
-        .map(|path| crate::commands::system::count_bnet_processes_for_path(&path.to_string_lossy()))
+        .map(|path| {
+            crate::infrastructure::system::count_bnet_processes_for_path(&path.to_string_lossy())
+        })
         .unwrap_or(0);
     let bnet_logged_in = bnet_count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD;
 
@@ -1274,7 +1276,8 @@ async fn prepare_bnet_environment(
                 .await);
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let count = crate::commands::system::count_bnet_processes_for_path(&battle_net_path);
+            let count =
+                crate::infrastructure::system::count_bnet_processes_for_path(&battle_net_path);
             if count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD {
                 bnet_ready = true;
                 emit(
@@ -1786,7 +1789,7 @@ async fn launch_single(
     };
 
     // ── Step 4: 记录当前 D2R 进程快照 ──
-    let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
+    let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
 
     // ── Step 5 & 6: 发送游戏启动指令并等待新 D2R 进程 ──
     emit("game", "running", "正在启动游戏进程...");
@@ -1837,7 +1840,7 @@ async fn launch_single(
                     agent_pids.push(pid.as_u32());
                 } else if name.eq_ignore_ascii_case("Battle.net.exe") {
                     if proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             Path::new(&monitored_bnet_path),
                         )
@@ -1846,7 +1849,7 @@ async fn launch_single(
                     }
                 } else if name.eq_ignore_ascii_case("D2R.exe")
                     && proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             &monitored_game_path,
                         )
@@ -2181,12 +2184,12 @@ async fn launch_single(
                     break;
                 }
                 if let Ok(Some(hid)) =
-                    crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                    crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
                 {
                     found.store(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = crate::commands::system::close_handle(d2r_pid, &hid);
+                    let _ = crate::infrastructure::system::close_handle(d2r_pid, &hid);
                     if let Ok(None) =
-                        crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                        crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
                     {
                         killed.store(true, std::sync::atomic::Ordering::SeqCst);
                         break;
@@ -2240,7 +2243,7 @@ async fn launch_single(
         if !web_token_read && now >= next_tcp_sample {
             stable_tcp_connection = record_network_readiness_sample(
                 &mut network_ready_samples,
-                crate::commands::system::check_game_connected(d2r_pid),
+                crate::infrastructure::system::check_game_connected(d2r_pid),
             );
             next_tcp_sample = now + std::time::Duration::from_secs(1);
         }
@@ -2263,7 +2266,7 @@ async fn launch_single(
         }
 
         if now >= next_key_send {
-            let _ = crate::commands::system::send_keys_to_window(d2r_pid);
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             if !keys_logged {
                 emit("connect", "running", "正在发送按键跳过动画...");
                 keys_logged = true;
@@ -2332,7 +2335,7 @@ async fn launch_single(
 
     // ── Step 9: 优雅关闭战网 → 等待退出 → 回写最新状态 ──
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let graceful = crate::commands::system::graceful_kill_bnet(30);
+    let graceful = crate::infrastructure::system::graceful_kill_bnet(30);
     if !graceful {
         emit("cleanup", "warning", "战网未能优雅关闭，已回退强制关闭");
     }
@@ -2563,7 +2566,7 @@ async fn launch_single_token(
     };
 
     // 3. 记录之前存在的 D2R 进程
-    let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
+    let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
 
     emit("game", "running", "正在直接启动 D2R.exe...");
     // 4. 启动 D2R.exe
@@ -2622,7 +2625,7 @@ async fn launch_single_token(
                     .to_string_lossy()
                     .eq_ignore_ascii_case("D2R.exe")
                     && proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             &monitored_game_path,
                         )
@@ -2740,13 +2743,13 @@ async fn launch_single_token(
         tokio::spawn(async move {
             let mut closed_at_least_once = false;
             for _ in 0..120 {
-                match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
+                match crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
                     Ok(Some(hid)) => {
                         mutex_state.record_found();
-                        match crate::commands::system::close_handle(d2r_pid, &hid) {
+                        match crate::infrastructure::system::close_handle(d2r_pid, &hid) {
                             Ok(()) => {
                                 closed_at_least_once = true;
-                                match crate::commands::system::find_mutex_handle(
+                                match crate::infrastructure::system::find_mutex_handle(
                                     d2r_pid, MUTEX_NAME,
                                 ) {
                                     Ok(None) => {
@@ -2785,7 +2788,7 @@ async fn launch_single_token(
     // 消费事件驱动，避免用固定次数或固定时长猜测游戏初始化进度。
     let intro_skip_task = tokio::spawn(async move {
         loop {
-            let _ = crate::commands::system::send_keys_to_window(d2r_pid);
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     });
