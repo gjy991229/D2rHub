@@ -5,6 +5,8 @@ mod capabilities;
 mod commands;
 mod domain;
 mod error;
+#[doc(hidden)]
+pub mod infrastructure;
 mod input_listener;
 mod launch_context;
 pub mod logger;
