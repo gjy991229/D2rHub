@@ -1,6 +1,7 @@
 use crate::commands::account::{update_account_mods_inner, AccountManager, AccountMeta};
 use crate::commands::launch::parse_windows_command_line;
 use crate::domain::config::GlobalConfig;
+use crate::infrastructure::durable_fs;
 use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::rune_audio::catalog::AREA_CATALOG_FILE_NAME;
 use crate::rune_audio::item_catalog::ITEM_CATALOG_FILE_NAME;
@@ -2037,75 +2038,9 @@ fn sync_regular_file(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("无法持久化 Mod 文件 {}：{error}", path.display()))
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), String> {
-    std::fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    durable_fs::sync_directory(path)
         .map_err(|error| format!("无法同步目录元数据 {}：{error}", path.display()))
-}
-
-#[cfg(windows)]
-fn sync_directory(path: &Path) -> Result<(), String> {
-    use std::ffi::c_void;
-    use std::os::windows::ffi::OsStrExt;
-
-    type Handle = *mut c_void;
-    const GENERIC_WRITE: u32 = 0x4000_0000;
-    const FILE_SHARE_READ: u32 = 0x0000_0001;
-    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
-    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
-    const OPEN_EXISTING: u32 = 3;
-    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
-    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
-    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
-
-    #[link(name = "kernel32")]
-    extern "system" {
-        fn CreateFileW(
-            file_name: *const u16,
-            desired_access: u32,
-            share_mode: u32,
-            security_attributes: *mut c_void,
-            creation_disposition: u32,
-            flags_and_attributes: u32,
-            template_file: Handle,
-        ) -> Handle;
-        fn FlushFileBuffers(file: Handle) -> i32;
-        fn CloseHandle(object: Handle) -> i32;
-    }
-
-    let wide = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect::<Vec<_>>();
-    let handle = unsafe {
-        CreateFileW(
-            wide.as_ptr(),
-            GENERIC_WRITE,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            std::ptr::null_mut(),
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-            std::ptr::null_mut(),
-        )
-    };
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(format!(
-            "无法打开目录以同步元数据 {}：{}",
-            path.display(),
-            std::io::Error::last_os_error()
-        ));
-    }
-    let flushed = unsafe { FlushFileBuffers(handle) };
-    let flush_error = (flushed == 0).then(std::io::Error::last_os_error);
-    unsafe {
-        CloseHandle(handle);
-    }
-    if let Some(error) = flush_error {
-        return Err(format!("无法同步目录元数据 {}：{error}", path.display()));
-    }
-    Ok(())
 }
 
 fn rename_directory_and_sync(
@@ -2128,7 +2063,7 @@ fn rename_directory_and_sync(
     if path_exists_no_follow(to)? {
         return Err(format!("{operation}的目标路径已存在：{}", to.display()));
     }
-    std::fs::rename(from, to).map_err(|error| format!("{operation}失败：{error}"))?;
+    durable_fs::durable_rename(from, to).map_err(|error| format!("{operation}失败：{error}"))?;
     // A cross-directory rename changes both directory entry sets. Flush the nested stage parent as
     // well as the common mods parent; target/backup/quarantine renames only need the latter.
     for parent in [from.parent(), to.parent()].into_iter().flatten() {
@@ -2256,7 +2191,7 @@ where
             .map_err(|error| format!("无法写入 Mod 更新事务记录：{error}"))?;
         file.sync_all()
             .map_err(|error| format!("无法持久化 Mod 更新事务记录：{error}"))?;
-        std::fs::rename(&temporary_path, &journal_path)
+        durable_fs::durable_rename(&temporary_path, &journal_path)
             .map_err(|error| format!("无法提交 Mod 更新事务记录：{error}"))?;
         sync_directory(mods_directory)?;
         Ok(())

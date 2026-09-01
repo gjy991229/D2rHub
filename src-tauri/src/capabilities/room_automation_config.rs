@@ -167,11 +167,9 @@ impl RoomAutomationConfigController {
         &self,
         used_sequence: u32,
     ) -> Result<RoomAutomationConfigSnapshot, RoomAutomationConfigControllerError> {
-        let next_sequence = used_sequence
-            .checked_add(1)
-            .ok_or(RoomAutomationConfigControllerError::SequenceExhausted(
-                used_sequence,
-            ))?;
+        let next_sequence = used_sequence.checked_add(1).ok_or(
+            RoomAutomationConfigControllerError::SequenceExhausted(used_sequence),
+        )?;
         self.merge_sidecar(|config| {
             let merged = config.next_sequence.max(next_sequence);
             let changed = merged != config.next_sequence;
@@ -217,6 +215,19 @@ impl RoomAutomationConfigController {
             if config.account_flow_bindings.len() != binding_count {
                 changed = true;
             }
+            changed
+        })
+    }
+
+    /// Persists the independent, explicit consent controlling automatic F13
+    /// patching. This merge never overwrites concurrent settings edits.
+    pub fn set_chat_binding_consent(
+        &self,
+        granted: bool,
+    ) -> Result<RoomAutomationConfigSnapshot, RoomAutomationConfigControllerError> {
+        self.merge_sidecar(|config| {
+            let changed = config.chat_f13_auto_patch_enabled != granted;
+            config.chat_f13_auto_patch_enabled = granted;
             changed
         })
     }
@@ -286,13 +297,18 @@ fn prepare_initial_config(
     let original_strategy_version = config.strategy_version;
     let legacy_claimed_chat_binding_consent = config.chat_f13_auto_patch_enabled;
 
-    // The old global field cannot prove that file mutation was explicitly
-    // authorized. Import the feature configuration, never the consent.
-    config.chat_f13_auto_patch_enabled = false;
+    // Before strategy v13 this flag could be inferred from module enablement,
+    // so it did not prove user consent. Since v13 it was written only after a
+    // successful explicit install and can be preserved; the service still
+    // verifies every live key file before resuming a watcher.
+    let consent_is_explicit = original_strategy_version >= 13;
+    if !consent_is_explicit {
+        config.chat_f13_auto_patch_enabled = false;
+    }
     let (config, mut normalization) = normalize_and_validate(config, account_shortcuts)?;
-    normalization.changed |= legacy_claimed_chat_binding_consent;
-    let requires_chat_binding_reauthorization =
-        legacy_claimed_chat_binding_consent || normalization.requires_chat_binding_consent;
+    normalization.changed |= legacy_claimed_chat_binding_consent && !consent_is_explicit;
+    let requires_chat_binding_reauthorization = !consent_is_explicit
+        && (legacy_claimed_chat_binding_consent || normalization.requires_chat_binding_consent);
 
     Ok(PreparedInitialConfig {
         config,
@@ -430,8 +446,8 @@ mod tests {
     }
 
     #[test]
-    fn resets_even_a_v16_legacy_consent_claim_and_allows_explicit_reauthorization() {
-        let root = TestDirectory::new("consent_reset");
+    fn preserves_explicit_v16_consent_during_sidecar_import() {
+        let root = TestDirectory::new("consent_preserved");
         let controller = controller(&root);
         let mut legacy = enabled_config();
         legacy.strategy_version = CURRENT_STRATEGY_VERSION;
@@ -440,24 +456,9 @@ mod tests {
         let imported = controller
             .load_or_initialize(Some(serde_json::to_value(legacy).unwrap()), &[])
             .unwrap();
-        assert!(!imported.config.chat_f13_auto_patch_enabled);
-        assert!(imported.normalization.changed);
-        assert_eq!(
-            imported.consent_notice,
-            Some(ChatBindingConsentNotice {
-                source: LEGACY_GLOBAL_SOURCE.to_string(),
-                original_strategy_version: CURRENT_STRATEGY_VERSION,
-                requires_user_reauthorization: true,
-            })
-        );
-
-        let mut explicitly_authorized = imported.config.clone();
-        explicitly_authorized.chat_f13_auto_patch_enabled = true;
-        let saved = controller
-            .save(imported.generation, explicitly_authorized, &[])
-            .unwrap();
-        assert!(saved.config.chat_f13_auto_patch_enabled);
-        assert!(saved.consent_notice.is_none());
+        assert!(imported.config.chat_f13_auto_patch_enabled);
+        assert!(!imported.normalization.changed);
+        assert!(imported.consent_notice.is_none());
     }
 
     #[test]

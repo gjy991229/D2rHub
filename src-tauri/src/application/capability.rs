@@ -87,6 +87,14 @@ pub trait CapabilityDriver: Send + Sync {
     fn stop(&self) -> Result<(), CapabilityFailure>;
 
     fn health(&self) -> CapabilityHealth;
+
+    /// Best-effort domain notification for capability-owned account
+    /// references. The core account transaction is already committed before
+    /// this hook runs, so implementations must be idempotent and may not
+    /// require the deleted account directory to remain present.
+    fn account_removed(&self, _account_id: &str) -> Result<(), CapabilityFailure> {
+        Ok(())
+    }
 }
 
 pub struct CapabilityRegistration {
@@ -316,6 +324,38 @@ impl CapabilityRegistry {
 
     pub fn snapshot(&self) -> CapabilityStatusSnapshot {
         snapshot_from_inner(&self.inner.lock())
+    }
+
+    /// Broadcasts an account-removal notification without coupling the core
+    /// command layer to concrete optional modules. Each driver uses the same
+    /// per-capability operation lock as lifecycle reconciliation; panics and
+    /// failures are isolated and returned for logging by the caller.
+    pub fn notify_account_removed(
+        &self,
+        account_id: &str,
+    ) -> Vec<(CapabilityId, CapabilityFailure)> {
+        let drivers = {
+            let inner = self.inner.lock();
+            topological_order(&inner.entries)
+                .into_iter()
+                .filter_map(|id| {
+                    inner
+                        .entries
+                        .get(&id)
+                        .map(|entry| (id, Arc::clone(&entry.operation), Arc::clone(&entry.driver)))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        drivers
+            .into_iter()
+            .filter_map(|(id, operation, driver)| {
+                let _operation = operation.lock();
+                call_lifecycle_hook("account_removed", || driver.account_removed(account_id))
+                    .err()
+                    .map(|failure| (id, failure))
+            })
+            .collect()
     }
 
     #[cfg(test)]
@@ -840,10 +880,13 @@ mod tests {
     struct FakeDriver {
         starts: AtomicUsize,
         stops: AtomicUsize,
+        removed_accounts: Mutex<Vec<String>>,
         health: Mutex<CapabilityHealth>,
         fail_start: Mutex<Option<CapabilityFailure>>,
         fail_stop: Mutex<Option<CapabilityFailure>>,
+        fail_account_removed: Mutex<Option<CapabilityFailure>>,
         panic_start: AtomicBool,
+        panic_account_removed: AtomicBool,
     }
 
     impl FakeDriver {
@@ -878,6 +921,18 @@ mod tests {
 
         fn health(&self) -> CapabilityHealth {
             self.health.lock().clone()
+        }
+
+        fn account_removed(&self, account_id: &str) -> Result<(), CapabilityFailure> {
+            self.removed_accounts.lock().push(account_id.to_string());
+            assert!(
+                !self.panic_account_removed.load(Ordering::SeqCst),
+                "injected account removal panic"
+            );
+            if let Some(failure) = self.fail_account_removed.lock().clone() {
+                return Err(failure);
+            }
+            Ok(())
         }
     }
 
@@ -1004,6 +1059,46 @@ mod tests {
             registry.snapshot().capabilities[0].state,
             CapabilityState::Running
         );
+    }
+
+    #[test]
+    fn account_removal_notifications_include_disabled_drivers_and_isolate_failures() {
+        let registry = CapabilityRegistry::new();
+        let healthy = FakeDriver::healthy();
+        let failing = FakeDriver::healthy();
+        let panicking = FakeDriver::healthy();
+        *failing.fail_account_removed.lock() = Some(CapabilityFailure::new(
+            "cleanup-failed",
+            "injected cleanup failure",
+        ));
+        panicking
+            .panic_account_removed
+            .store(true, Ordering::SeqCst);
+        registry
+            .register_all(vec![
+                registration(PLATFORM, vec![], false, Arc::clone(&healthy)),
+                registration(MODULE, vec![], false, Arc::clone(&failing)),
+                registration(LEAF, vec![], false, Arc::clone(&panicking)),
+            ])
+            .unwrap();
+
+        let failures = registry.notify_account_removed("Account-A");
+
+        assert_eq!(healthy.removed_accounts.lock().as_slice(), ["Account-A"]);
+        assert_eq!(failing.removed_accounts.lock().as_slice(), ["Account-A"]);
+        assert_eq!(panicking.removed_accounts.lock().as_slice(), ["Account-A"]);
+        assert_eq!(failures.len(), 2);
+        assert!(failures
+            .iter()
+            .any(|(id, failure)| *id == MODULE && failure.reason_code == "cleanup-failed"));
+        assert!(failures
+            .iter()
+            .any(|(id, failure)| *id == LEAF && failure.reason_code == "driver-panicked"));
+        assert!(registry
+            .snapshot()
+            .capabilities
+            .iter()
+            .all(|status| status.state == CapabilityState::Disabled));
     }
 
     #[test]

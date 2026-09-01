@@ -31,6 +31,13 @@ pub enum WaitingMode {
     Automatic { delay_secs: u64 },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRecoveryAction {
+    RetryPrimary,
+    ResumeFollowers,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingRoom {
     pub name: String,
@@ -59,6 +66,9 @@ pub struct WorkflowStatus {
     /// machine never reads a clock.
     pub started_at: Option<String>,
     pub last_error: Option<String>,
+    /// Explicit recovery semantics survive the terminal `error/cancelled`
+    /// phase, where the previous execution stage would otherwise be lost.
+    pub recovery_action: Option<WorkflowRecoveryAction>,
 }
 
 impl Default for WorkflowStatus {
@@ -77,6 +87,7 @@ impl Default for WorkflowStatus {
             completed_follower_account_ids: Vec::new(),
             started_at: None,
             last_error: None,
+            recovery_action: None,
         }
     }
 }
@@ -86,6 +97,12 @@ pub struct PrimaryTask {
     pub id: WorkflowTaskId,
     pub room: PendingRoom,
     pub retrying: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FollowersTask {
+    pub id: WorkflowTaskId,
+    pub room: PendingRoom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -126,8 +143,6 @@ pub enum WorkflowStateError {
     UnknownFollower(String),
     #[error("workflow error message is empty")]
     EmptyError,
-    #[error("not all followers have completed")]
-    FollowersIncomplete,
 }
 
 impl WorkflowTaskState {
@@ -143,8 +158,9 @@ impl WorkflowTaskState {
         self.pending_room.as_ref()
     }
 
-    /// Starts a primary task. If a previous primary produced a pending room,
-    /// this preserves v16 retry behavior and tries exactly the next sequence.
+    /// Starts a primary task. Manual waiting preserves the v16 duplicate-room
+    /// flow: pressing the primary shortcut confirms the dialog and consumes
+    /// the next durable sequence. Automatic waiting remains worker-owned.
     pub fn begin_primary(
         &mut self,
         config: &RoomAutomationConfig,
@@ -157,14 +173,41 @@ impl WorkflowTaskState {
         if self.status.running {
             return Err(WorkflowStateError::Busy);
         }
+        let primary_allowed = matches!(
+            self.status.phase,
+            WorkflowPhase::Idle | WorkflowPhase::Complete
+        ) || (self.status.phase == WorkflowPhase::Waiting
+            && self.status.waiting_mode == Some(WaitingMode::Manual))
+            || (matches!(
+                self.status.phase,
+                WorkflowPhase::Error | WorkflowPhase::Cancelled
+            ) && self.status.recovery_action == Some(WorkflowRecoveryAction::RetryPrimary));
+        if !primary_allowed {
+            return Err(WorkflowStateError::InvalidTransition {
+                operation: "begin primary",
+                phase: self.status.phase,
+            });
+        }
 
-        let retrying = self.pending_room.is_some();
-        let sequence = match &self.pending_room {
-            Some(room) => room
-                .sequence
-                .checked_add(1)
-                .ok_or(WorkflowStateError::SequenceExhausted)?,
-            None => config.next_sequence,
+        // Only manual waiting represents the native duplicate-room dialog.
+        // A technical primary failure must reopen the form normally; its
+        // durable reservation already advanced `config.next_sequence` when
+        // keyboard delivery may have begun.
+        let retrying = self.status.phase == WorkflowPhase::Waiting
+            && self.status.waiting_mode == Some(WaitingMode::Manual)
+            && self.pending_room.is_some();
+        let sequence = if retrying {
+            let room = self
+                .pending_room
+                .as_ref()
+                .ok_or(WorkflowStateError::MissingPendingRoom)?;
+            config.next_sequence.max(
+                room.sequence
+                    .checked_add(1)
+                    .ok_or(WorkflowStateError::SequenceExhausted)?,
+            )
+        } else {
+            config.next_sequence
         };
         let room = PendingRoom {
             name: config.generate_room_name(sequence)?,
@@ -188,6 +231,7 @@ impl WorkflowTaskState {
             completed_follower_account_ids: Vec::new(),
             started_at,
             last_error: None,
+            recovery_action: None,
         };
 
         Ok(PrimaryTask {
@@ -224,6 +268,7 @@ impl WorkflowTaskState {
         self.status.running = matches!(mode, WaitingMode::Automatic { .. });
         self.status.waiting_mode = Some(mode);
         self.status.last_error = None;
+        self.status.recovery_action = None;
         Ok(self.snapshot())
     }
 
@@ -243,7 +288,61 @@ impl WorkflowTaskState {
         self.status.waiting_mode = None;
         self.status.completed_follower_account_ids.clear();
         self.status.last_error = None;
+        self.status.recovery_action = None;
         Ok(self.snapshot())
+    }
+
+    /// Starts a fresh follower task for a room retained after a cancellation
+    /// or follower failure. Manual waiting keeps using [`Self::begin_followers`]
+    /// so its original task identity remains stable.
+    pub fn resume_followers(
+        &mut self,
+        config: &RoomAutomationConfig,
+        started_at: Option<String>,
+    ) -> Result<FollowersTask, WorkflowStateError> {
+        if !config.enabled {
+            return Err(WorkflowStateError::ConfigDisabled);
+        }
+        config.validate_for_activation(std::iter::empty())?;
+        if self.status.running {
+            return Err(WorkflowStateError::Busy);
+        }
+        if !matches!(
+            self.status.phase,
+            WorkflowPhase::Error | WorkflowPhase::Cancelled
+        ) || self.status.recovery_action != Some(WorkflowRecoveryAction::ResumeFollowers)
+        {
+            return Err(WorkflowStateError::InvalidTransition {
+                operation: "resume followers",
+                phase: self.status.phase,
+            });
+        }
+        let room = self
+            .pending_room
+            .clone()
+            .ok_or(WorkflowStateError::MissingPendingRoom)?;
+        let task_id = self.reserve_task_id()?;
+        let revision = self.next_revision()?;
+
+        self.next_task_id = task_id.0;
+        self.status = WorkflowStatus {
+            revision,
+            task_id: Some(task_id),
+            running: true,
+            phase: WorkflowPhase::Followers,
+            waiting_mode: None,
+            room_name: Some(room.name.clone()),
+            room_sequence: Some(room.sequence),
+            attempt: 1,
+            primary_account_id: Some(config.primary_account_id.clone()),
+            follower_account_ids: config.follower_account_ids.clone(),
+            completed_follower_account_ids: Vec::new(),
+            started_at,
+            last_error: None,
+            recovery_action: None,
+        };
+
+        Ok(FollowersTask { id: task_id, room })
     }
 
     /// Records one idempotent follower completion. The final follower moves
@@ -288,23 +387,6 @@ impl WorkflowTaskState {
         Ok(self.snapshot())
     }
 
-    pub fn complete_followers(
-        &mut self,
-        task_id: WorkflowTaskId,
-    ) -> Result<WorkflowStatus, WorkflowStateError> {
-        self.require_task_phase(task_id, WorkflowPhase::Followers, "complete followers")?;
-        if self.status.completed_follower_account_ids.len()
-            != self.status.follower_account_ids.len()
-        {
-            return Err(WorkflowStateError::FollowersIncomplete);
-        }
-        let revision = self.next_revision()?;
-
-        self.status.revision = revision;
-        self.finish_complete();
-        Ok(self.snapshot())
-    }
-
     pub fn cancel(
         &mut self,
         task_id: WorkflowTaskId,
@@ -320,12 +402,20 @@ impl WorkflowTaskState {
             });
         }
         let revision = self.next_revision()?;
+        let recovery_action = match self.status.phase {
+            WorkflowPhase::Primary => WorkflowRecoveryAction::RetryPrimary,
+            WorkflowPhase::Waiting | WorkflowPhase::Followers => {
+                WorkflowRecoveryAction::ResumeFollowers
+            }
+            _ => unreachable!("phase was validated above"),
+        };
 
         self.status.revision = revision;
         self.status.phase = WorkflowPhase::Cancelled;
         self.status.running = false;
         self.status.waiting_mode = None;
         self.status.last_error = None;
+        self.status.recovery_action = Some(recovery_action);
         Ok(self.snapshot())
     }
 
@@ -348,22 +438,20 @@ impl WorkflowTaskState {
             return Err(WorkflowStateError::EmptyError);
         }
         let revision = self.next_revision()?;
+        let recovery_action = match self.status.phase {
+            WorkflowPhase::Primary => WorkflowRecoveryAction::RetryPrimary,
+            WorkflowPhase::Waiting | WorkflowPhase::Followers => {
+                WorkflowRecoveryAction::ResumeFollowers
+            }
+            _ => unreachable!("terminal phases were rejected above"),
+        };
 
         self.status.revision = revision;
         self.status.phase = WorkflowPhase::Error;
         self.status.running = false;
         self.status.waiting_mode = None;
         self.status.last_error = Some(error);
-        Ok(self.snapshot())
-    }
-
-    pub fn reset(&mut self) -> Result<WorkflowStatus, WorkflowStateError> {
-        let revision = self.next_revision()?;
-        self.status = WorkflowStatus {
-            revision,
-            ..WorkflowStatus::default()
-        };
-        self.pending_room = None;
+        self.status.recovery_action = Some(recovery_action);
         Ok(self.snapshot())
     }
 
@@ -372,6 +460,7 @@ impl WorkflowTaskState {
         self.status.running = false;
         self.status.waiting_mode = None;
         self.status.last_error = None;
+        self.status.recovery_action = None;
         self.pending_room = None;
     }
 
@@ -505,20 +594,50 @@ mod tests {
     }
 
     #[test]
-    fn retry_uses_next_sequence_and_preserves_pending_room_on_failure() {
-        let config = enabled_config();
+    fn manual_waiting_primary_retries_with_the_next_durable_sequence() {
+        let mut config = enabled_config();
         let mut state = WorkflowTaskState::default();
         let first = state.begin_primary(&config, None).unwrap();
         state.primary_ready(first.id, WaitingMode::Manual).unwrap();
+        config.next_sequence = 2;
 
         let retry = state.begin_primary(&config, None).unwrap();
         assert!(retry.retrying);
         assert_eq!(retry.room.name, "run-002");
-        state.fail(retry.id, "duplicate room").unwrap();
-        assert_eq!(state.pending_room(), Some(&first.room));
+        assert!(retry.id > first.id);
+    }
 
-        let retried_again = state.begin_primary(&config, None).unwrap();
-        assert_eq!(retried_again.room.name, "run-002");
+    #[test]
+    fn automatic_waiting_rejects_manual_primary_takeover() {
+        let config = enabled_config();
+        let mut state = WorkflowTaskState::default();
+        let first = state.begin_primary(&config, None).unwrap();
+        state
+            .primary_ready(first.id, WaitingMode::Automatic { delay_secs: 5 })
+            .unwrap();
+
+        assert_eq!(
+            state.begin_primary(&config, None),
+            Err(WorkflowStateError::Busy)
+        );
+    }
+
+    #[test]
+    fn primary_failure_reopens_the_form_with_the_next_durable_sequence() {
+        let mut config = enabled_config();
+        let mut state = WorkflowTaskState::default();
+        let first = state.begin_primary(&config, None).unwrap();
+        state.fail(first.id, "primary input failed").unwrap();
+        assert_eq!(
+            state.status().recovery_action,
+            Some(WorkflowRecoveryAction::RetryPrimary)
+        );
+        assert!(state.resume_followers(&config, None).is_err());
+
+        config.next_sequence = 2;
+        let retried = state.begin_primary(&config, None).unwrap();
+        assert_eq!(retried.room.name, "run-002");
+        assert!(!retried.retrying);
     }
 
     #[test]
@@ -533,6 +652,19 @@ mod tests {
 
         assert_eq!(state.status().phase, WorkflowPhase::Error);
         assert_eq!(state.pending_room(), Some(&task.room));
+        assert_eq!(
+            state.status().recovery_action,
+            Some(WorkflowRecoveryAction::ResumeFollowers)
+        );
+
+        let resumed = state
+            .resume_followers(&config, Some("2026-09-01T13:00:00+08:00".to_string()))
+            .unwrap();
+        assert!(resumed.id > task.id);
+        assert_eq!(resumed.room, task.room);
+        assert_eq!(state.status().phase, WorkflowPhase::Followers);
+        assert!(state.status().running);
+        assert_eq!(state.status().recovery_action, None);
     }
 
     #[test]

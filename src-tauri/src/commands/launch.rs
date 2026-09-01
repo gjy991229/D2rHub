@@ -3243,7 +3243,7 @@ mod tests {
         ];
 
         assert!(validate_launch_account_ids(&account_ids).is_err());
-        assert!(state.account_operations.lock().is_empty());
+        assert!(state.multi_instance().account_leases().is_empty());
     }
 
     #[test]
@@ -3252,17 +3252,17 @@ mod tests {
         let account_ids = vec!["acount1".to_string(), "acount2".to_string()];
 
         validate_launch_account_ids(&account_ids).unwrap();
-        assert!(state.account_operations.lock().is_empty());
+        assert!(state.multi_instance().account_leases().is_empty());
 
         for account_id in account_ids {
             let lease = AccountLifecycleLease::try_acquire(&state, &account_id).unwrap();
             assert!(state
-                .account_operations
-                .lock()
-                .contains(&account_id.to_ascii_lowercase()));
+                .multi_instance()
+                .account_leases()
+                .contains(&account_id));
             drop(lease);
         }
-        assert!(state.account_operations.lock().is_empty());
+        assert!(state.multi_instance().account_leases().is_empty());
     }
 
     #[test]

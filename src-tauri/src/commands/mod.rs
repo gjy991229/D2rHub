@@ -5,6 +5,7 @@ pub mod capability;
 pub mod crypto;
 pub mod global_config;
 pub mod launch;
+pub mod room_automation;
 pub mod settings;
 pub mod system;
 pub mod terror_zone;

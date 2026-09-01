@@ -2,12 +2,14 @@ mod account_query;
 mod facade;
 mod instances;
 mod launch;
+mod leases;
 mod ports;
 
 pub use account_query::AccountQueryService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
 pub use instances::{InstanceRegistry, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
+pub use leases::{AccountLeaseManager, AccountOperationLease, AccountOperationLeases};
 pub use ports::{
     AccountCatalog, AccountRuntimePort, GameWindowIdentity, GameWindowPort, InstanceStatusPort,
     WindowPosition,
@@ -17,6 +19,7 @@ pub use ports::{
 pub struct MultiInstanceRuntime {
     instances: InstanceRegistry,
     launches: LaunchOrchestrator,
+    account_leases: AccountLeaseManager,
 }
 
 impl MultiInstanceRuntime {
@@ -26,5 +29,9 @@ impl MultiInstanceRuntime {
 
     pub fn facade(&self) -> MultiInstanceFacade<'_> {
         MultiInstanceFacade::new(&self.instances, &self.launches)
+    }
+
+    pub fn account_leases(&self) -> &AccountLeaseManager {
+        &self.account_leases
     }
 }

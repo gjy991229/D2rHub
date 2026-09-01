@@ -14,6 +14,8 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
+use crate::infrastructure::durable_fs;
+
 const KEY_FILE_VERSION: u16 = 37;
 const KEY_FILE_HEADER_SIZE: usize = 2;
 const KEY_RECORD_SIZE: usize = 20;
@@ -61,6 +63,9 @@ pub(crate) struct ChatF13BindingStatus {
     pub eligible_files: usize,
     pub conflicted_files: usize,
     pub backup_files: usize,
+    /// Backups whose original character key file no longer exists. They are
+    /// retained as user-recoverable artifacts, but never block live files.
+    pub orphan_backup_files: usize,
     pub transaction_artifacts: usize,
     pub d2r_running: bool,
     pub consent_granted: bool,
@@ -94,12 +99,15 @@ impl InspectedFile {
             Err(error) => return Some(error.clone()),
         };
         match (&self.backup, state) {
-            (Some(Err(error)), _) => Some(error.clone()),
-            (Some(Ok(bytes)), _) if inspect_key_bytes(bytes) != Ok(BindingState::Eligible) => {
+            // A manually installed F13 needs no D2RHub backup because install
+            // will not touch it. Backup ownership matters only when an
+            // eligible file is about to be changed.
+            (_, BindingState::Installed) => None,
+            (Some(Err(error)), BindingState::Eligible) => Some(error.clone()),
+            (Some(Ok(bytes)), BindingState::Eligible)
+                if inspect_key_bytes(bytes) != Ok(BindingState::Eligible) =>
+            {
                 Some("已有备份不是可恢复的原生 Chat 未绑定状态".to_string())
-            }
-            (None, BindingState::Installed) => {
-                Some("F13 已存在，但没有 D2RHub 原始键位备份，无法确认所有权".to_string())
             }
             _ => None,
         }
@@ -121,24 +129,48 @@ struct FilesystemSnapshot {
     transaction_artifacts: Vec<PathBuf>,
 }
 
+#[derive(Debug)]
+struct RestoreEntry {
+    path: PathBuf,
+    current: Vec<u8>,
+    restored: Vec<u8>,
+}
+
 impl FilesystemSnapshot {
     fn conflict_count(&self) -> usize {
-        let file_conflicts = self
-            .files
-            .iter()
-            .filter(|file| file.install_problem().is_some())
-            .count();
-        file_conflicts + self.orphan_backups.len() + self.transaction_artifacts.len()
+        self.files.iter().filter(|file| file.state.is_err()).count()
     }
 
     fn ready(&self) -> bool {
         !self.files.is_empty()
-            && self.conflict_count() == 0
+            && self.transaction_artifacts.is_empty()
             && self
                 .files
                 .iter()
-                .all(|file| file.state == Ok(BindingState::Installed) && file.has_valid_backup())
+                .all(|file| file.state == Ok(BindingState::Installed))
     }
+}
+
+fn build_restore_plan(snapshot: &FilesystemSnapshot) -> Result<Vec<RestoreEntry>, String> {
+    snapshot
+        .files
+        .iter()
+        .filter_map(|file| {
+            let backup = file.backup.as_ref()?;
+            Some((|| {
+                let backup = backup
+                    .as_ref()
+                    .map_err(|error| format!("无法使用 {} 的备份：{error}", file.path.display()))?;
+                let restored = restore_chat_secondary_slot(&file.bytes, backup)
+                    .map_err(|error| format!("无法恢复 {}：{error}", file.path.display()))?;
+                Ok(RestoreEntry {
+                    path: file.path.clone(),
+                    current: file.bytes.clone(),
+                    restored,
+                })
+            })())
+        })
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -236,8 +268,20 @@ impl ChatF13BindingService {
     /// Preflights every key file, creates durable non-overwriting backups,
     /// atomically patches eligible files, grants consent, and starts watching.
     pub(crate) fn install(&self) -> Result<ChatF13BindingStatus, String> {
-        self.stop_watcher_thread()?;
+        let watcher_was_running = self.watcher_running();
         {
+            // A rejected repeat-install must not silently stop an already
+            // healthy watcher. Only pause it after the read-only checks pass.
+            let _operation = lock(&self.inner.operation);
+            ensure_d2r_closed(&self.inner)?;
+            let snapshot = inspect_filesystem(&self.inner.directories)?;
+            if snapshot.transaction_artifacts.is_empty() {
+                preflight_install(&snapshot)?;
+            }
+        }
+        self.stop_watcher_thread()?;
+
+        let install_result = (|| {
             let _operation = lock(&self.inner.operation);
             ensure_d2r_closed(&self.inner)?;
             recover_interrupted_transactions(&self.inner.directories)?;
@@ -273,6 +317,10 @@ impl ChatF13BindingService {
             require_ready_for_watcher(&verified)?;
             self.inner.consent_granted.store(true, Ordering::Release);
             *lock(&self.inner.last_watcher_error) = None;
+            Ok::<(), String>(())
+        })();
+        if let Err(error) = install_result {
+            return Err(self.compensate_paused_watcher(watcher_was_running, error));
         }
 
         if let Err(error) = self.start_watcher_thread() {
@@ -311,69 +359,108 @@ impl ChatF13BindingService {
 
     /// Stops and joins the owned watcher. User key files and consent are kept.
     pub(crate) fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-        self.stop_watcher_thread()?;
+        self.shutdown()?;
         self.status()
+    }
+
+    /// Stops and joins the watcher without reading the configured directories
+    /// again. This is used when configuration has deliberately moved away from
+    /// a directory that may no longer exist.
+    pub(crate) fn shutdown(&self) -> Result<(), String> {
+        self.stop_watcher_thread()
+    }
+
+    /// Verifies that a restore has a safe, complete plan without changing
+    /// consent, watcher ownership, backups or live key files.
+    pub(crate) fn preflight_restore(&self) -> Result<(), String> {
+        let _operation = lock(&self.inner.operation);
+        let snapshot = inspect_filesystem(&self.inner.directories)?;
+        if snapshot.transaction_artifacts.is_empty() {
+            if !build_restore_plan(&snapshot)?.is_empty() {
+                ensure_d2r_closed(&self.inner)?;
+            }
+        } else {
+            ensure_d2r_closed(&self.inner)?;
+        }
+        Ok(())
     }
 
     /// Stops the watcher before restoring only the Chat secondary slot from
     /// each D2RHub backup. Unrelated edits made since installation survive.
     pub(crate) fn restore(&self) -> Result<ChatF13BindingStatus, String> {
+        let watcher_was_running = self.watcher_running();
+        // Invalid or absent backups must not revoke a valid session.
+        self.preflight_restore()?;
         self.stop_watcher_thread()?;
-        {
-            let _operation = lock(&self.inner.operation);
-            ensure_d2r_closed(&self.inner)?;
-            recover_interrupted_transactions(&self.inner.directories)?;
-            let snapshot = inspect_filesystem(&self.inner.directories)?;
-            if !snapshot.orphan_backups.is_empty() {
-                return Err(format!(
-                    "发现没有对应键位文件的备份，已停止恢复：{}",
-                    display_paths(&snapshot.orphan_backups)
-                ));
-            }
 
-            let mut restore_plan = Vec::new();
-            for file in &snapshot.files {
-                let Some(backup) = &file.backup else {
-                    continue;
-                };
-                let backup = backup
-                    .as_ref()
-                    .map_err(|error| format!("无法使用 {} 的备份：{error}", file.path.display()))?;
-                let restored = restore_chat_secondary_slot(&file.bytes, backup)
-                    .map_err(|error| format!("无法恢复 {}：{error}", file.path.display()))?;
-                restore_plan.push((file.path.as_path(), file.bytes.clone(), restored));
-            }
-            if restore_plan.is_empty() {
-                return Err("没有找到由 D2RHub 创建的 F13 键位备份".to_string());
-            }
-
-            let mut changed: Vec<(&Path, Vec<u8>)> = Vec::new();
-            for (path, current, restored) in &restore_plan {
-                if current != restored {
-                    if let Err(error) = atomic_replace_bytes(path, current, restored) {
-                        let rollback_errors = rollback_changed_files(&changed);
-                        let suffix = if rollback_errors.is_empty() {
-                            "；本轮已恢复文件已回滚".to_string()
-                        } else {
-                            format!("；回滚失败：{}", rollback_errors.join("；"))
-                        };
-                        return Err(format!("{error}{suffix}"));
-                    }
-                    changed.push((path, current.clone()));
+        let restore_result =
+            (|| {
+                let _operation = lock(&self.inner.operation);
+                let before_recovery = inspect_filesystem(&self.inner.directories)?;
+                if !before_recovery.transaction_artifacts.is_empty() {
+                    ensure_d2r_closed(&self.inner)?;
+                    recover_interrupted_transactions(&self.inner.directories)?;
                 }
-            }
+                let snapshot = inspect_filesystem(&self.inner.directories)?;
+                let restore_plan = build_restore_plan(&snapshot)?;
+                if !restore_plan.is_empty() {
+                    ensure_d2r_closed(&self.inner)?;
+                }
+                let restored_any = !restore_plan.is_empty();
 
-            self.inner.consent_granted.store(false, Ordering::Release);
-            for (path, _, _) in restore_plan {
-                remove_regular_if_exists(&backup_path(path)?)?;
-                sync_directory(
-                    path.parent()
-                        .ok_or_else(|| format!("键位文件缺少父目录：{}", path.display()))?,
-                )?;
+                let mut changed: Vec<(&Path, Vec<u8>)> = Vec::new();
+                for entry in &restore_plan {
+                    let path = entry.path.as_path();
+                    let current = &entry.current;
+                    let restored = &entry.restored;
+                    if current != restored {
+                        if let Err(error) = atomic_replace_bytes(path, current, restored) {
+                            let rollback_errors = rollback_changed_files(&changed);
+                            let suffix = if rollback_errors.is_empty() {
+                                "；本轮已恢复文件已回滚".to_string()
+                            } else {
+                                format!("；回滚失败：{}", rollback_errors.join("；"))
+                            };
+                            return Err(format!("{error}{suffix}"));
+                        }
+                        changed.push((path, current.clone()));
+                    }
+                }
+
+                self.inner.consent_granted.store(false, Ordering::Release);
+                let mut cleanup_warnings = Vec::new();
+                for entry in restore_plan {
+                    let backup = backup_path(&entry.path)?;
+                    if let Err(error) = remove_regular_if_exists(&backup).and_then(|_| {
+                        sync_directory(entry.path.parent().ok_or_else(|| {
+                            format!("键位文件缺少父目录：{}", entry.path.display())
+                        })?)
+                    }) {
+                        cleanup_warnings.push(format!("{}：{error}", backup.display()));
+                    }
+                }
+                *lock(&self.inner.last_watcher_error) = None;
+                Ok::<(Vec<String>, bool), String>((cleanup_warnings, restored_any))
+            })();
+        let (cleanup_warnings, restored_any) = match restore_result {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                return Err(self.compensate_paused_watcher(watcher_was_running, error));
             }
-            *lock(&self.inner.last_watcher_error) = None;
+        };
+        let mut status = self.status()?;
+        if !restored_any {
+            status
+                .message
+                .push_str("；没有 D2RHub 管理的备份，已仅关闭自动补齐，未改动手动 F13 键位");
         }
-        self.status()
+        if !cleanup_warnings.is_empty() {
+            status.message.push_str(&format!(
+                "；键位已恢复，但保留了部分无法删除的安全备份：{}",
+                cleanup_warnings.join("；")
+            ));
+        }
+        Ok(status)
     }
 
     pub(crate) fn status(&self) -> Result<ChatF13BindingStatus, String> {
@@ -410,6 +497,25 @@ impl ChatF13BindingService {
         lifecycle.cancel = Some(cancel);
         lifecycle.handle = Some(handle);
         Ok(())
+    }
+
+    fn watcher_running(&self) -> bool {
+        lock(&self.inner.lifecycle)
+            .handle
+            .as_ref()
+            .is_some_and(|handle| !handle.is_finished())
+    }
+
+    fn compensate_paused_watcher(&self, watcher_was_running: bool, error: String) -> String {
+        if !watcher_was_running {
+            return error;
+        }
+        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)
+            .expect("affirmative in-memory consent must create a resume token");
+        match self.start_watcher_with_consent(consent) {
+            Ok(_) => format!("{error}；原 F13 watcher 已恢复"),
+            Err(resume_error) => format!("{error}；原 F13 watcher 恢复失败：{resume_error}"),
+        }
     }
 
     fn stop_watcher_thread(&self) -> Result<(), String> {
@@ -507,12 +613,6 @@ fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
             display_paths(&snapshot.transaction_artifacts)
         ));
     }
-    if !snapshot.orphan_backups.is_empty() {
-        return Err(format!(
-            "发现没有对应键位文件的备份：{}",
-            display_paths(&snapshot.orphan_backups)
-        ));
-    }
     let problems: Vec<String> = snapshot
         .files
         .iter()
@@ -539,15 +639,11 @@ fn require_ready_for_watcher(snapshot: &FilesystemSnapshot) -> Result<(), String
         .files
         .iter()
         .filter_map(|file| {
-            file.install_problem()
+            file.state
+                .as_ref()
+                .err()
                 .map(|error| format!("{}：{error}", file.path.display()))
         })
-        .chain(
-            snapshot
-                .orphan_backups
-                .iter()
-                .map(|path| format!("{}：备份缺少对应键位文件", path.display())),
-        )
         .collect();
     if snapshot.files.is_empty() {
         Err("没有可验证的 .key/.keyo 键位文件，拒绝启动 F13 watcher".to_string())
@@ -585,6 +681,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         .iter()
         .filter(|file| file.has_valid_backup())
         .count();
+    let orphan_backup_files = snapshot.orphan_backups.len();
     let conflicted_files = snapshot.conflict_count();
     let transaction_artifacts = snapshot.transaction_artifacts.len();
     let ready = snapshot.ready();
@@ -617,6 +714,22 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     if let Some(error) = &last_watcher_error {
         message.push_str(&format!("；watcher 最近错误：{error}"));
     }
+    let managed_installed_files = snapshot
+        .files
+        .iter()
+        .filter(|file| file.state == Ok(BindingState::Installed) && file.has_valid_backup())
+        .count();
+    let externally_managed = installed_files.saturating_sub(managed_installed_files);
+    if externally_managed > 0 {
+        message.push_str(&format!(
+            "；其中 {externally_managed} 个 F13 键位由用户或其他工具管理，不会由 D2RHub 恢复"
+        ));
+    }
+    if orphan_backup_files > 0 {
+        message.push_str(&format!(
+            "；保留 {orphan_backup_files} 个已删除角色的历史备份，不影响当前角色"
+        ));
+    }
 
     ChatF13BindingStatus {
         ready,
@@ -625,6 +738,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         eligible_files,
         conflicted_files,
         backup_files,
+        orphan_backup_files,
         transaction_artifacts,
         d2r_running,
         consent_granted,
@@ -656,17 +770,23 @@ fn inspect_filesystem(directories: &[PathBuf]) -> Result<FilesystemSnapshot, Str
             let Some(kind) = relevant_path_kind(&path) else {
                 continue;
             };
-            validate_regular_file(&path)?;
             match kind {
-                RelevantPathKind::Key => key_files.push(path),
+                RelevantPathKind::Key => {
+                    validate_regular_file(&path)?;
+                    key_files.push(path);
+                }
                 RelevantPathKind::Backup => {
                     let target = target_from_suffixed_path(&path, BACKUP_SUFFIX)?;
                     if !is_key_file(&target) {
-                        return Err(format!("F13 备份文件名无效：{}", path.display()));
+                        snapshot.orphan_backups.push(path);
+                        continue;
                     }
                     backup_targets.insert(target, path);
                 }
-                RelevantPathKind::Transaction => snapshot.transaction_artifacts.push(path),
+                RelevantPathKind::Transaction => {
+                    validate_regular_file(&path)?;
+                    snapshot.transaction_artifacts.push(path);
+                }
             }
         }
     }
@@ -892,7 +1012,14 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
         if stage_exists {
             let stage_bytes = read_regular_file(&stage)?;
             if checksum(&stage_bytes) != journal.replacement_checksum {
-                return Err(format!("staging 文件校验失败：{}", stage.display()));
+                crate::logger::log_msg(
+                    "WARN",
+                    "RoomChatBinding",
+                    &format!(
+                        "已提交键位文件旁的 staging 校验失败，将其作为不可提交事务残留清理：{}",
+                        stage.display()
+                    ),
+                );
             }
             remove_regular_if_exists(&stage)?;
         }
@@ -911,20 +1038,33 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
     if checksum(&rollback_bytes) != journal.original_checksum {
         return Err(format!("回滚文件校验失败：{}", rollback.display()));
     }
-    std::fs::rename(&rollback, target).map_err(|error| {
+    // With the target missing, rollback is the only authoritative copy. A
+    // staging file is an uncommitted candidate and must never prevent restoring
+    // the checksum-verified original, even if that candidate was torn by a
+    // crash. Validate it as a regular owned artifact, then discard it first so
+    // another interruption still leaves an unambiguous rollback state.
+    if stage_exists {
+        let stage_bytes = read_regular_file(&stage)?;
+        if checksum(&stage_bytes) != journal.replacement_checksum {
+            crate::logger::log_msg(
+                "WARN",
+                "RoomChatBinding",
+                &format!(
+                    "未提交的 F13 staging 校验失败，正在恢复原键位并清理残留：{}",
+                    stage.display()
+                ),
+            );
+        }
+        remove_regular_if_exists(&stage)?;
+        sync_parent(target)?;
+    }
+    durable_fs::durable_sibling_rename(&rollback, target).map_err(|error| {
         format!(
             "无法恢复中断写入的原键位 {} -> {}：{error}",
             rollback.display(),
             target.display()
         )
     })?;
-    if stage_exists {
-        let stage_bytes = read_regular_file(&stage)?;
-        if checksum(&stage_bytes) != journal.replacement_checksum {
-            return Err(format!("staging 文件校验失败：{}", stage.display()));
-        }
-        remove_regular_if_exists(&stage)?;
-    }
     remove_regular_if_exists(&journal_path)?;
     sync_parent(target)
 }
@@ -976,7 +1116,7 @@ fn atomic_replace_bytes(
     }
     sync_parent(target)?;
 
-    if let Err(error) = std::fs::rename(target, &rollback) {
+    if let Err(error) = durable_fs::durable_sibling_rename(target, &rollback) {
         let _ = remove_regular_if_exists(&journal_path);
         let _ = remove_regular_if_exists(&stage);
         return Err(format!(
@@ -985,8 +1125,8 @@ fn atomic_replace_bytes(
         ));
     }
     sync_parent(target)?;
-    if let Err(install_error) = std::fs::rename(&stage, target) {
-        return match std::fs::rename(&rollback, target) {
+    if let Err(install_error) = durable_fs::durable_sibling_rename(&stage, target) {
+        return match durable_fs::durable_sibling_rename(&rollback, target) {
             Ok(()) => {
                 let _ = remove_regular_if_exists(&journal_path);
                 let _ = sync_parent(target);
@@ -1251,7 +1391,7 @@ fn validate_safe_parent(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn validate_and_canonicalize_directories(
+pub(crate) fn validate_and_canonicalize_directories(
     directories: Vec<PathBuf>,
 ) -> Result<Vec<PathBuf>, String> {
     if directories.is_empty() {
@@ -1381,19 +1521,9 @@ fn sync_parent(path: &Path) -> Result<(), String> {
     sync_directory(parent)
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), String> {
-    std::fs::File::open(path)
-        .and_then(|directory| directory.sync_all())
+    durable_fs::sync_directory(path)
         .map_err(|error| format!("无法同步目录元数据 {}：{error}", path.display()))
-}
-
-// The staged file and journal are both durably flushed. Rust's portable API
-// cannot open Windows directories with backup-semantics flags, so crash
-// recovery relies on the synced journal around same-volume renames.
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 fn ensure_d2r_closed(inner: &ServiceInner) -> Result<(), String> {
@@ -1714,20 +1844,88 @@ mod tests {
     }
 
     #[test]
-    fn persisted_consent_cannot_fake_readiness_without_backup() {
+    fn explicit_persisted_consent_accepts_a_manually_installed_f13() {
         let directory = TestDirectory::new("persisted_requires_backup");
         let patched = patch_f13(&sample_key_file()).unwrap();
         directory.key("hero.key", &patched);
         let service = service(&directory);
         let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true).unwrap();
-        assert!(service
-            .start_watcher_with_consent(consent)
-            .unwrap_err()
-            .contains("备份"));
-        let status = service.status().unwrap();
-        assert!(!status.ready);
+        let status = service.start_watcher_with_consent(consent).unwrap();
+        assert!(status.ready);
+        assert_eq!(status.backup_files, 0);
+        assert!(status.consent_granted);
+        assert!(status.watcher_running);
+        assert!(status.message.contains("其他工具管理"));
+        service.stop().unwrap();
+    }
+
+    #[test]
+    fn orphan_backup_is_reported_but_never_blocks_live_files() {
+        let directory = TestDirectory::new("orphan_warning");
+        let live = directory.key("hero.key", &sample_key_file());
+        let orphan = backup_path(&directory.path().join("deleted.keyo")).unwrap();
+        std::fs::write(&orphan, b"opaque orphan retained verbatim").unwrap();
+        let service = service(&directory);
+
+        let installed = service.install().unwrap();
+        assert!(installed.ready);
+        assert_eq!(installed.orphan_backup_files, 1);
+        assert_eq!(installed.conflicted_files, 0);
+        assert!(orphan.exists());
+
+        let restored = service.restore().unwrap();
+        assert_eq!(
+            inspect_key_bytes(&std::fs::read(live).unwrap()),
+            Ok(BindingState::Eligible)
+        );
+        assert_eq!(restored.orphan_backup_files, 1);
+        assert!(orphan.exists());
+    }
+
+    #[test]
+    fn rejected_repeat_install_or_restore_keeps_the_existing_watcher() {
+        let directory = TestDirectory::new("failed_repeat_keeps_watcher");
+        directory.key("hero.key", &sample_key_file());
+        let d2r_running = Arc::new(AtomicBool::new(false));
+        let probe = Arc::clone(&d2r_running);
+        let service = ChatF13BindingService::new(vec![directory.path().to_path_buf()], move || {
+            probe.load(Ordering::Acquire)
+        })
+        .unwrap();
+        service.install().unwrap();
+
+        d2r_running.store(true, Ordering::Release);
+        assert!(service.install().unwrap_err().contains("关闭全部 D2R"));
+        let after_install = service.status().unwrap();
+        assert!(after_install.consent_granted);
+        assert!(after_install.watcher_running);
+
+        assert!(service.restore().unwrap_err().contains("关闭全部 D2R"));
+        let after_restore = service.status().unwrap();
+        assert!(after_restore.consent_granted);
+        assert!(after_restore.watcher_running);
+
+        d2r_running.store(false, Ordering::Release);
+        service.stop().unwrap();
+    }
+
+    #[test]
+    fn restore_without_owned_backup_only_disables_watcher() {
+        let directory = TestDirectory::new("manual_restore");
+        let path = directory.key("hero.key", &patch_f13(&sample_key_file()).unwrap());
+        let service = service(&directory);
+        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true).unwrap();
+        service.start_watcher_with_consent(consent).unwrap();
+
+        let status = service.restore().unwrap();
+        assert!(status.ready);
         assert!(!status.consent_granted);
         assert!(!status.watcher_running);
+        assert!(status.message.contains("未改动手动 F13"));
+        assert_eq!(
+            inspect_key_bytes(&std::fs::read(path).unwrap()),
+            Ok(BindingState::Installed)
+        );
     }
 
     #[test]
@@ -1776,6 +1974,34 @@ mod tests {
         assert!(!stage.exists());
         assert!(!rollback.exists());
         assert!(!journal_path.exists());
+    }
+
+    #[test]
+    fn torn_uncommitted_stage_cannot_block_original_key_recovery() {
+        let directory = TestDirectory::new("recover_original_torn_stage");
+        let original = sample_key_file();
+        let replacement = patch_f13(&original).unwrap();
+        let target = directory.key("hero.key", &original);
+        let stage = sibling_with_suffix(&target, STAGING_SUFFIX).unwrap();
+        let rollback = sibling_with_suffix(&target, ROLLBACK_SUFFIX).unwrap();
+        let journal_path = sibling_with_suffix(&target, JOURNAL_SUFFIX).unwrap();
+        create_synced_new_file(&stage, b"torn-stage").unwrap();
+        let journal = ReplaceJournal {
+            version: REPLACE_JOURNAL_VERSION,
+            target_file_name: "hero.key".to_string(),
+            original_checksum: checksum(&original),
+            replacement_checksum: checksum(&replacement),
+        };
+        create_synced_new_file(&journal_path, &serde_json::to_vec(&journal).unwrap()).unwrap();
+        std::fs::rename(&target, &rollback).unwrap();
+
+        recover_interrupted_transaction(&target).unwrap();
+
+        assert_eq!(std::fs::read(&target).unwrap(), original);
+        assert!(!stage.exists());
+        assert!(!rollback.exists());
+        assert!(!journal_path.exists());
+        recover_interrupted_transaction(&target).unwrap();
     }
 
     #[test]

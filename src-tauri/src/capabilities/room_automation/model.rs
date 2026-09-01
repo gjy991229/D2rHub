@@ -332,14 +332,16 @@ impl RoomAutomationConfig {
             .into_iter()
             .filter_map(|(account_id, profile)| {
                 let account_id = account_id.trim();
-                selected_accounts.get(&account_identity(account_id)).map(|selected_id| {
-                    let profile = if profile.trim().eq_ignore_ascii_case("direct_lobby") {
-                        "direct_lobby"
-                    } else {
-                        "standard"
-                    };
-                    (selected_id.clone(), profile.to_string())
-                })
+                selected_accounts
+                    .get(&account_identity(account_id))
+                    .map(|selected_id| {
+                        let profile = if profile.trim().eq_ignore_ascii_case("direct_lobby") {
+                            "direct_lobby"
+                        } else {
+                            "standard"
+                        };
+                        (selected_id.clone(), profile.to_string())
+                    })
             })
             .collect();
 
@@ -353,11 +355,6 @@ impl RoomAutomationConfig {
                 && self.enabled
                 && !self.chat_f13_auto_patch_enabled,
         })
-    }
-
-    pub fn normalized(mut self) -> Result<(Self, NormalizationReport), RoomAutomationConfigError> {
-        let report = self.normalize_legacy()?;
-        Ok((self, report))
     }
 
     /// Compatibility validation: disabled legacy configurations may remain
@@ -497,10 +494,6 @@ impl RoomAutomationConfig {
         Ok(room_name)
     }
 
-    pub fn next_room_name(&self) -> Result<String, RoomAutomationConfigError> {
-        self.generate_room_name(self.next_sequence)
-    }
-
     pub fn flow_for_account(&self, account_id: &str) -> &FlowStrategy {
         if self
             .account_flow_bindings
@@ -586,8 +579,20 @@ pub fn canonicalize_shortcut(value: &str) -> Result<String, ShortcutValidationEr
     let mut alt = false;
     let mut shift = false;
     let mut key = None;
-    for component in value.split('+') {
-        let component = component.trim();
+    let mut components = value.split('+').map(str::trim).collect::<Vec<_>>();
+    // `+` is both the separator and the numpad-add key suffix. Fold the one
+    // unambiguous trailing form before validating the remaining grammar.
+    if components.last() == Some(&"")
+        && components
+            .get(components.len().saturating_sub(2))
+            .is_some_and(|component| component.eq_ignore_ascii_case("num"))
+    {
+        components.pop();
+        if let Some(last) = components.last_mut() {
+            *last = "Num+";
+        }
+    }
+    for component in components {
         if component.is_empty() {
             return Err(ShortcutValidationError::EmptyComponent);
         }
@@ -660,6 +665,7 @@ fn canonicalize_key(value: &str) -> Result<String, ShortcutValidationError> {
         "pause" => Some("Pause"),
         "numlock" => Some("NumLock"),
         "num*" => Some("Num*"),
+        "num+" => Some("Num+"),
         "num-" => Some("Num-"),
         "num." => Some("Num."),
         "num/" => Some("Num/"),
@@ -905,6 +911,7 @@ mod tests {
             canonicalize_shortcut("Meta+R"),
             Err(ShortcutValidationError::UnsupportedSystemModifier)
         );
+        assert_eq!(canonicalize_shortcut(" ctrl + num+ ").unwrap(), "Ctrl+Num+");
     }
 
     fn enabled_config() -> RoomAutomationConfig {

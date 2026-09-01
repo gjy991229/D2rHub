@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::application::capability::CapabilityRegistry;
 use crate::application::configuration::ConfigurationRuntime;
-use crate::application::multi_instance::MultiInstanceRuntime;
+use crate::application::multi_instance::{AccountOperationLease, MultiInstanceRuntime};
 use crate::error::AppError;
 
 /// 应用全局运行时状态
@@ -22,8 +22,6 @@ pub struct AppState {
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
-    /// 账号目录及 account.json 的生命周期写操作；同一账号同一时刻只能有一个事务。
-    pub account_operations: Mutex<HashSet<String>>,
     /// 账号目录清单级写操作；用于原子维护跨账号唯一约束（如展示名）。
     pub account_catalog_write_lock: Mutex<()>,
     /// 本进程内已经逻辑删除的稳定账号 ID。配置策略用它阻止排队中的陈旧
@@ -56,7 +54,6 @@ impl AppState {
             app_data_dir: app_data.to_string_lossy().to_string(),
             multi_instance: MultiInstanceRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
-            account_operations: Mutex::new(HashSet::new()),
             account_catalog_write_lock: Mutex::new(()),
             retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
@@ -424,34 +421,16 @@ fn resolve_app_data_dir() -> PathBuf {
 }
 
 pub struct AccountLifecycleLease {
-    state: Arc<AppState>,
-    account_id: String,
+    _lease: AccountOperationLease,
 }
 
 impl AccountLifecycleLease {
     pub fn try_acquire(state: &Arc<AppState>, account_id: &str) -> Result<Self, AppError> {
-        // Windows 文件系统通常大小写不敏感；UUID 大小写别名必须映射到同一把租约。
-        let operation_key = account_id.to_ascii_lowercase();
-        let mut active = state.account_operations.lock();
-        if !active.insert(operation_key.clone()) {
-            return Err(AppError::Unknown(format!(
-                "账号 {account_id} 正在执行另一项操作，请稍后重试"
-            )));
-        }
-        drop(active);
-        Ok(Self {
-            state: Arc::clone(state),
-            account_id: operation_key,
-        })
-    }
-}
-
-impl Drop for AccountLifecycleLease {
-    fn drop(&mut self) {
-        self.state
-            .account_operations
-            .lock()
-            .remove(&self.account_id);
+        state
+            .multi_instance()
+            .account_leases()
+            .try_acquire(account_id)
+            .map(|lease| Self { _lease: lease })
     }
 }
 

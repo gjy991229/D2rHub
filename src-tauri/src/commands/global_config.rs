@@ -100,12 +100,21 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         candidate: GlobalConfig,
     ) -> Result<GlobalConfig, AppError> {
         let retired_account_ids = self.state.retired_account_ids_snapshot();
-        prepare_global_config_with_retired_accounts(
+        let prepared = prepare_global_config_with_retired_accounts(
             &self.state.app_data_dir,
             previous,
             candidate,
             &retired_account_ids,
-        )
+        )?;
+        if let Ok(bindings) = serde_json::from_str::<std::collections::HashMap<String, String>>(
+            &prepared.shortcut_bindings_json,
+        ) {
+            crate::input_listener::validate_core_shortcut_reservations(
+                bindings.values().map(String::as_str),
+            )
+            .map_err(AppError::ConfigWriteError)?;
+        }
+        Ok(prepared)
     }
 }
 
@@ -183,9 +192,10 @@ mod validation_tests {
     use super::{
         prepare_global_config, prepare_global_config_with_retired_accounts,
         saved_games_settings_exists, should_validate_installation_paths,
-        sync_configuration_staging, validate_installation_paths, GlobalConfig, LaunchGroup,
-        LaunchGroupMember, LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        sync_configuration_staging, validate_installation_paths, GlobalConfig, GlobalConfigPolicy,
+        LaunchGroup, LaunchGroupMember, LegacyPathMigration, CURRENT_CONFIG_VERSION,
     };
+    use crate::application::configuration::ConfigurationPolicy;
     use crate::commands::account::{AccountManager, AccountMeta};
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -220,6 +230,30 @@ mod validation_tests {
 
         assert!(validate_installation_paths(&config).is_ok());
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn global_save_rejects_a_core_shortcut_reserved_by_an_active_capability() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = crate::input_listener::register_capability_shortcuts(
+            "global-config-shortcut-collision-test",
+            [("Ctrl+F24".to_string(), "optional-action")],
+            sender,
+        )
+        .unwrap();
+        let candidate = GlobalConfig {
+            shortcut_bindings_json: r#"{"1":"Ctrl+F24"}"#.to_string(),
+            ..GlobalConfig::default()
+        };
+
+        let error = GlobalConfigPolicy::new(&state)
+            .prepare(None, candidate)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("global-config-shortcut-collision-test"));
+
+        drop(registration);
     }
 
     #[test]
@@ -2683,26 +2717,37 @@ impl GlobalConfig {
 }
 
 pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
-    let mut map = state.shortcut_map.write();
-    map.clear();
     let bindings: std::collections::HashMap<String, String> =
         serde_json::from_str(&cfg.shortcut_bindings_json).unwrap_or_default();
-    for (pos_str, shortcut) in &bindings {
-        if let Ok(pos) = pos_str.parse::<usize>() {
-            if pos >= 1 {
-                map.insert(shortcut.to_lowercase(), pos);
-            }
-        }
-    }
+    let normalized = bindings
+        .iter()
+        .filter_map(|(pos_str, shortcut)| {
+            pos_str
+                .parse::<usize>()
+                .ok()
+                .filter(|position| *position >= 1)
+                .map(|position| (shortcut.to_lowercase(), position))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    crate::input_listener::replace_core_shortcut_reservations(
+        normalized
+            .iter()
+            .map(|(shortcut, position)| (shortcut.clone(), *position)),
+    );
+    let mut map = state.shortcut_map.write();
+    map.clear();
+    map.extend(normalized);
 }
 
 /// Loads the global configuration through the shared application transaction
 /// runtime. Startup and command callers therefore publish the same snapshot.
 pub(crate) fn load_global_config_into_state(state: &SharedState) -> Result<GlobalConfig, AppError> {
-    let repository = GlobalConfigRepository::new(&state.app_data_dir);
-    let observer = RuntimeConfigurationObserver { state, app: None };
-    let loaded = state.configuration().get_or_load(&repository, &observer)?;
-    Ok(loaded.config)
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let observer = RuntimeConfigurationObserver { state, app: None };
+        let loaded = state.configuration().get_or_load(&repository, &observer)?;
+        Ok(loaded.config)
+    })
 }
 
 /// Applies a copy-on-write mutation only when configuration is already loaded.
@@ -2725,7 +2770,16 @@ where
     let mutation =
         state
             .configuration()
-            .mutate_if_loaded(&repository, &policy, &observer, mutate)?;
+            .mutate_if_loaded(&repository, &policy, &observer, |config| {
+                let shortcuts = config.shortcut_bindings_json.clone();
+                let changed = mutate(config)?;
+                if config.shortcut_bindings_json != shortcuts {
+                    return Err(AppError::ConfigWriteError(
+                        "内部配置变更不得绕过快捷键路由事务".to_string(),
+                    ));
+                }
+                Ok(changed)
+            })?;
     Ok(mutation)
 }
 
@@ -2749,7 +2803,16 @@ where
         &repository,
         &policy,
         &observer,
-        mutate,
+        |config| {
+            let shortcuts = config.shortcut_bindings_json.clone();
+            let changed = mutate(config)?;
+            if config.shortcut_bindings_json != shortcuts {
+                return Err(AppError::ConfigWriteError(
+                    "内部配置变更不得绕过快捷键路由事务".to_string(),
+                ));
+            }
+            Ok(changed)
+        },
         post_commit,
     )
 }
@@ -2767,15 +2830,17 @@ pub fn save_global_config(
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
-    let repository = GlobalConfigRepository::new(&state.app_data_dir);
-    let policy = GlobalConfigPolicy::new(state.inner());
-    let observer = RuntimeConfigurationObserver {
-        state: state.inner(),
-        app: Some(&app),
-    };
-    state
-        .configuration()
-        .save_candidate(&repository, &policy, &observer, config)
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let policy = GlobalConfigPolicy::new(state.inner());
+        let observer = RuntimeConfigurationObserver {
+            state: state.inner(),
+            app: Some(&app),
+        };
+        state
+            .configuration()
+            .save_candidate(&repository, &policy, &observer, config)
+    })
 }
 
 #[tauri::command]
@@ -2784,15 +2849,17 @@ pub fn patch_global_config(
     state: tauri::State<'_, SharedState>,
     patch: serde_json::Value,
 ) -> Result<GlobalConfig, AppError> {
-    let repository = GlobalConfigRepository::new(&state.app_data_dir);
-    let policy = GlobalConfigPolicy::new(state.inner());
-    let observer = RuntimeConfigurationObserver {
-        state: state.inner(),
-        app: Some(&app),
-    };
-    state
-        .configuration()
-        .patch_current(&repository, &policy, &observer, patch)
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let policy = GlobalConfigPolicy::new(state.inner());
+        let observer = RuntimeConfigurationObserver {
+            state: state.inner(),
+            app: Some(&app),
+        };
+        state
+            .configuration()
+            .patch_current(&repository, &policy, &observer, patch)
+    })
 }
 
 #[cfg(test)]

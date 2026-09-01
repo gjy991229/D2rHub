@@ -6,8 +6,9 @@ use crate::commands::account::{AccountManager, AccountMeta};
 use crate::commands::system;
 use crate::state::SharedState;
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
@@ -16,6 +17,203 @@ static MOUSE_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_m
 static BONGO_CAT_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 static BONGO_CAT_INPUT_VISIBLE: AtomicBool = AtomicBool::new(false);
 static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
+static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
+    OnceLock::new();
+static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+struct CapabilityShortcutRoute {
+    action: &'static str,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+}
+
+#[derive(Default)]
+struct CapabilityShortcutRegistry {
+    core: HashMap<String, usize>,
+    owners: HashMap<&'static str, (u64, HashMap<String, CapabilityShortcutRoute>)>,
+}
+
+/// RAII registration owned by an optional capability driver. Dropping the
+/// guard removes every route, so a disabled module cannot keep consuming a
+/// global shortcut.
+pub(crate) struct CapabilityShortcutRegistration {
+    owner_id: &'static str,
+    generation: u64,
+}
+
+fn capability_shortcuts() -> &'static parking_lot::RwLock<CapabilityShortcutRegistry> {
+    CAPABILITY_SHORTCUTS.get_or_init(|| parking_lot::RwLock::new(Default::default()))
+}
+
+/// Serializes durable core-shortcut commits with optional route registration.
+/// Callers may perform filesystem I/O while holding this lock, but must not
+/// call capability lifecycle hooks synchronously from the transaction.
+pub(crate) fn with_shortcut_routing_transaction<T>(operation: impl FnOnce() -> T) -> T {
+    let transaction = SHORTCUT_ROUTING_TRANSACTION.get_or_init(|| parking_lot::Mutex::new(()));
+    let _transaction = transaction.lock();
+    operation()
+}
+
+/// Replaces the committed core reservation projection. The caller must hold
+/// `with_shortcut_routing_transaction` whenever the values may differ from the
+/// previous commit.
+pub(crate) fn replace_core_shortcut_reservations(
+    shortcuts: impl IntoIterator<Item = (String, usize)>,
+) {
+    capability_shortcuts().write().core = shortcuts
+        .into_iter()
+        .filter_map(|(shortcut, position)| {
+            let shortcut = shortcut.trim().to_ascii_lowercase();
+            (!shortcut.is_empty()).then_some((shortcut, position))
+        })
+        .collect();
+}
+
+/// Rejects a core multi-instance shortcut that would be shadowed by an
+/// already-running optional capability. This closes the reverse registration
+/// order: capability startup already rejects core collisions, while global
+/// configuration saves must reject a later core assignment as well.
+pub(crate) fn validate_core_shortcut_reservations<'a>(
+    shortcuts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let registry = capability_shortcuts().read();
+    for shortcut in shortcuts {
+        let shortcut = shortcut.trim().to_ascii_lowercase();
+        if shortcut.is_empty() {
+            continue;
+        }
+        if let Some(owner) = registry
+            .owners
+            .iter()
+            .find_map(|(owner, (_, routes))| routes.contains_key(&shortcut).then_some(*owner))
+        {
+            return Err(format!(
+                "账号快捷键 {shortcut} 与已启用模块 {owner} 的快捷键冲突"
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn register_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(owner_id, routes, sender, false)
+}
+
+/// Atomically replaces one capability's routes while preserving every other
+/// owner's conflict checks. The previous guard becomes inert through its
+/// generation token, so dropping it cannot remove the replacement.
+pub(crate) fn replace_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(owner_id, routes, sender, true)
+}
+
+fn install_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+    replace_owner: bool,
+) -> Result<CapabilityShortcutRegistration, String> {
+    with_shortcut_routing_transaction(|| {
+        install_capability_shortcuts_in_transaction(owner_id, routes, sender, replace_owner)
+    })
+}
+
+fn install_capability_shortcuts_in_transaction(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+    replace_owner: bool,
+) -> Result<CapabilityShortcutRegistration, String> {
+    let mut normalized = HashMap::new();
+    for (shortcut, action) in routes {
+        let shortcut = shortcut.trim().to_ascii_lowercase();
+        if shortcut.is_empty() {
+            return Err(format!("capability {owner_id} 注册了空快捷键"));
+        }
+        if normalized
+            .insert(
+                shortcut.clone(),
+                CapabilityShortcutRoute {
+                    action,
+                    sender: sender.clone(),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!("capability {owner_id} 的快捷键重复: {shortcut}"));
+        }
+    }
+    if normalized.is_empty() {
+        return Err(format!("capability {owner_id} 没有可注册的快捷键"));
+    }
+
+    let mut registry = capability_shortcuts().write();
+    if !replace_owner && registry.owners.contains_key(owner_id) {
+        return Err(format!("capability {owner_id} 的快捷键已注册"));
+    }
+    for shortcut in normalized.keys() {
+        if let Some(position) = registry.core.get(shortcut) {
+            return Err(format!(
+                "快捷键 {shortcut} 已由多开核心账号位置 {position} 使用"
+            ));
+        }
+        if let Some(conflicting_owner) = registry
+            .owners
+            .iter()
+            .filter(|(owner, _)| **owner != owner_id)
+            .find_map(|(owner, (_, routes))| routes.contains_key(shortcut).then_some(*owner))
+        {
+            return Err(format!(
+                "快捷键 {shortcut} 已由 capability {conflicting_owner} 注册"
+            ));
+        }
+    }
+    let generation = CAPABILITY_SHORTCUT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    registry.owners.insert(owner_id, (generation, normalized));
+    Ok(CapabilityShortcutRegistration {
+        owner_id,
+        generation,
+    })
+}
+
+fn dispatch_capability_shortcut(shortcut: &str) -> bool {
+    let delivery = capability_shortcuts()
+        .read()
+        .owners
+        .values()
+        .find_map(|(_, routes)| {
+            routes
+                .get(shortcut)
+                .map(|route| (route.sender.clone(), route.action))
+        });
+    let Some((sender, action)) = delivery else {
+        return false;
+    };
+    match sender.try_send(action) {
+        Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => true,
+        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
+    }
+}
+
+impl Drop for CapabilityShortcutRegistration {
+    fn drop(&mut self) {
+        let mut registry = capability_shortcuts().write();
+        if registry
+            .owners
+            .get(self.owner_id)
+            .is_some_and(|(generation, _)| *generation == self.generation)
+        {
+            registry.owners.remove(self.owner_id);
+        }
+    }
+}
 
 pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
@@ -241,6 +439,13 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
                         return true; // 已处理，吞掉按键
                     }
                 }
+                // Multi-instance account focus is a core action and therefore
+                // always wins if a legacy or concurrently edited optional
+                // module happens to claim the same key. Module configuration
+                // validation still prevents new conflicts at rest.
+                if dispatch_capability_shortcut(&combo_lower) {
+                    return true;
+                }
             }
         }
     }
@@ -412,4 +617,117 @@ pub fn start_input_listener(app_handle: AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        dispatch_capability_shortcut, register_capability_shortcuts, replace_capability_shortcuts,
+        replace_core_shortcut_reservations, validate_core_shortcut_reservations,
+        with_shortcut_routing_transaction,
+    };
+
+    static SHORTCUT_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn capability_shortcuts_are_bounded_unique_and_owned_by_a_guard() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = register_capability_shortcuts(
+            "shortcut-router-test",
+            [(" Ctrl+Alt+R ".to_string(), "start-primary")],
+            sender.clone(),
+        )
+        .unwrap();
+
+        assert!(register_capability_shortcuts(
+            "shortcut-router-test",
+            [("Ctrl+Alt+J".to_string(), "start-followers")],
+            sender.clone(),
+        )
+        .is_err());
+        assert!(register_capability_shortcuts(
+            "shortcut-router-conflict-test",
+            [("ctrl+alt+r".to_string(), "conflict")],
+            sender,
+        )
+        .is_err());
+
+        assert!(dispatch_capability_shortcut("ctrl+alt+r"));
+        assert!(dispatch_capability_shortcut("ctrl+alt+r"));
+        assert_eq!(receiver.try_recv().unwrap(), "start-primary");
+        assert!(receiver.try_recv().is_err());
+
+        drop(registration);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+r"));
+    }
+
+    #[test]
+    fn capability_shortcut_replacement_is_atomic_and_old_guard_is_inert() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (old_sender, old_receiver) = std::sync::mpsc::sync_channel(1);
+        let old = register_capability_shortcuts(
+            "shortcut-replace-test",
+            [("Ctrl+Alt+R".to_string(), "old")],
+            old_sender,
+        )
+        .unwrap();
+        let (new_sender, new_receiver) = std::sync::mpsc::sync_channel(1);
+        let replacement = replace_capability_shortcuts(
+            "shortcut-replace-test",
+            [("Ctrl+Alt+J".to_string(), "new")],
+            new_sender,
+        )
+        .unwrap();
+
+        drop(old);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+r"));
+        assert!(dispatch_capability_shortcut("ctrl+alt+j"));
+        assert_eq!(new_receiver.recv().unwrap(), "new");
+        assert!(old_receiver.recv().is_err());
+
+        drop(replacement);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+j"));
+    }
+
+    #[test]
+    fn active_capability_reservation_rejects_a_later_core_shortcut() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = register_capability_shortcuts(
+            "shortcut-core-collision-test",
+            [("Ctrl+Alt+R".to_string(), "start-primary")],
+            sender,
+        )
+        .unwrap();
+
+        let error = validate_core_shortcut_reservations([" ctrl+ALT+r "]).unwrap_err();
+        assert!(error.contains("shortcut-core-collision-test"));
+        assert!(validate_core_shortcut_reservations(["Ctrl+1"]).is_ok());
+
+        drop(registration);
+        assert!(validate_core_shortcut_reservations(["Ctrl+Alt+R"]).is_ok());
+    }
+
+    #[test]
+    fn committed_core_shortcut_rejects_a_later_capability_route() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        with_shortcut_routing_transaction(|| {
+            replace_core_shortcut_reservations([("Ctrl+F23".to_string(), 2)]);
+        });
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+
+        let error = register_capability_shortcuts(
+            "shortcut-after-core-test",
+            [("ctrl+f23".to_string(), "optional")],
+            sender,
+        )
+        .err()
+        .expect("core collision must reject the optional route");
+        assert!(error.contains("多开核心账号位置 2"));
+
+        with_shortcut_routing_transaction(|| {
+            replace_core_shortcut_reservations(std::iter::empty());
+        });
+    }
 }

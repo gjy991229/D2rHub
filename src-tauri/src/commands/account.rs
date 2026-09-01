@@ -1090,6 +1090,21 @@ pub fn delete_account(
         .multi_instance()
         .instances()
         .remove(&deleted_account_id);
+    // The core transaction is complete. Release its account lease before
+    // optional modules observe the event so their cleanup cannot invert the
+    // shared lifecycle lock order.
+    drop(_account_lease);
+    for (capability_id, failure) in state
+        .capabilities()
+        .notify_account_removed(&deleted_account_id)
+    {
+        log::warn!(
+            "账号 {} 已删除，但可选模块 {} 清理账号引用失败（将在后续加载时再次归一化）: {}",
+            deleted_account_id,
+            capability_id,
+            failure.message
+        );
+    }
 
     Ok(())
 }

@@ -7,12 +7,12 @@
 mod model;
 mod status;
 
+#[cfg(test)]
+pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
-    canonicalize_shortcut, FlowStrategy, NormalizationReport, RoomAutomationConfig,
-    RoomAutomationConfigError, ShortcutValidationError, CURRENT_STRATEGY_VERSION,
-    MAX_ROOM_TEXT_LENGTH,
+    FlowStrategy, NormalizationReport, RoomAutomationConfig, RoomAutomationConfigError,
 };
 pub use status::{
-    PendingRoom, PrimaryTask, WaitingMode, WorkflowPhase, WorkflowStateError, WorkflowStatus,
+    WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus,
     WorkflowTaskId, WorkflowTaskState,
 };

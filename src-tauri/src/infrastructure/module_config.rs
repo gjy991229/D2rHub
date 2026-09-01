@@ -15,6 +15,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::durable_fs;
+
 /// Files written by this implementation use the first sidecar envelope
 /// format. A format change alters recovery or envelope semantics and therefore
 /// must fail closed in older binaries.
@@ -419,14 +421,14 @@ impl ModuleConfigStore {
                 fs::remove_file(&backup)
                     .map_err(|error| io_error("removing the old backup", &backup, error))?;
             }
-            fs::rename(&primary, &backup)
+            durable_fs::durable_sibling_rename(&primary, &backup)
                 .map_err(|error| io_error("rotating the primary into backup", &primary, error))?;
             sync_directory(&self.module_dir)?;
         }
 
-        if let Err(install_error) = fs::rename(&staging, &primary) {
+        if let Err(install_error) = durable_fs::durable_sibling_rename(&staging, &primary) {
             if had_primary {
-                if let Err(restore_error) = fs::rename(&backup, &primary) {
+                if let Err(restore_error) = durable_fs::durable_sibling_rename(&backup, &primary) {
                     return Err(ModuleConfigError::UnsafeRecovery {
                         reason: format!(
                             "installing staged config failed ({install_error}); restoring backup also failed ({restore_error})"
@@ -458,16 +460,19 @@ impl ModuleConfigStore {
         let staging = self.staging_path();
         if artifact_exists(&staging)? {
             let abandoned = self.unique_archive_path("staging-abandoned");
-            fs::rename(&staging, &abandoned)
+            durable_fs::durable_sibling_rename(&staging, &abandoned)
                 .map_err(|error| io_error("archiving abandoned staging", &staging, error))?;
             sync_directory(&self.module_dir)?;
         }
 
         let archived = self.unique_corrupt_path();
-        fs::rename(corrupt_primary, &archived)
+        durable_fs::durable_sibling_rename(corrupt_primary, &archived)
             .map_err(|error| io_error("archiving the corrupt primary", corrupt_primary, error))?;
-        if let Err(install_error) = fs::rename(safe_backup, corrupt_primary) {
-            if let Err(restore_error) = fs::rename(&archived, corrupt_primary) {
+        if let Err(install_error) = durable_fs::durable_sibling_rename(safe_backup, corrupt_primary)
+        {
+            if let Err(restore_error) =
+                durable_fs::durable_sibling_rename(&archived, corrupt_primary)
+            {
                 return Err(ModuleConfigError::UnsafeRecovery {
                     reason: format!(
                         "installing backup failed ({install_error}); restoring corrupt primary also failed ({restore_error})"
@@ -486,7 +491,7 @@ impl ModuleConfigStore {
     fn archive_corrupt(&self, path: &Path) -> Result<(), ModuleConfigError> {
         self.require_existing_directory_tree()?;
         let archived = self.unique_corrupt_path();
-        fs::rename(path, &archived)
+        durable_fs::durable_sibling_rename(path, &archived)
             .map_err(|error| io_error("archiving a corrupt artifact", path, error))?;
         sync_directory(&self.module_dir)
     }
@@ -497,7 +502,7 @@ impl ModuleConfigStore {
         primary: &Path,
     ) -> Result<(), ModuleConfigError> {
         self.require_existing_directory_tree()?;
-        fs::rename(candidate, primary)
+        durable_fs::durable_sibling_rename(candidate, primary)
             .map_err(|error| io_error("promoting a recovery candidate", candidate, error))?;
         sync_directory(&self.module_dir)
     }
@@ -572,6 +577,11 @@ fn ensure_real_directory(path: &Path, create_missing: bool) -> Result<bool, Modu
                 io_error("validating a created module config directory", path, error)
             })?;
             validate_directory_metadata(path, &metadata)?;
+            if let Some(parent) = path.parent() {
+                durable_fs::sync_directory(parent).map_err(|error| {
+                    io_error("syncing a newly created directory entry", parent, error)
+                })?;
+            }
             Ok(true)
         }
         Err(error) => Err(io_error("checking a module config directory", path, error)),
@@ -727,21 +737,9 @@ fn io_error(operation: &'static str, path: &Path, error: std::io::Error) -> Modu
     }
 }
 
-#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<(), ModuleConfigError> {
-    let directory = fs::File::open(path)
-        .map_err(|error| io_error("opening a directory for sync", path, error))?;
-    directory
-        .sync_all()
+    durable_fs::sync_directory(path)
         .map_err(|error| io_error("syncing directory metadata", path, error))
-}
-
-// The staged file itself is durably flushed before rename. Rust's portable
-// filesystem API cannot open Windows directories with the flags required for
-// a metadata flush; rename remains atomic on the same volume.
-#[cfg(not(unix))]
-fn sync_directory(_path: &Path) -> Result<(), ModuleConfigError> {
-    Ok(())
 }
 
 #[cfg(test)]
