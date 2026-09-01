@@ -30,6 +30,12 @@ pub trait AccountRepository: Send + Sync {
     fn save(&self, account: &AccountMeta) -> Result<(), AppError>;
 }
 
+/// Persistence checks required before an account may opt into its private
+/// `Settings.json` snapshot.
+pub trait AccountSettingsRepository: AccountRepository {
+    fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application

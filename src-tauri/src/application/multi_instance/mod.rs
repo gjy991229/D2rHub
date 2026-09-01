@@ -1,6 +1,7 @@
 mod account_ordering;
 mod account_positions;
 mod account_query;
+mod account_settings;
 mod facade;
 mod instances;
 mod launch;
@@ -10,13 +11,14 @@ mod ports;
 pub use account_ordering::AccountOrderingService;
 pub use account_positions::AccountPositionService;
 pub use account_query::AccountQueryService;
+pub use account_settings::AccountSettingsPreferenceService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
 pub use instances::{InstanceRegistry, RunningInstance};
 pub use launch::{CancellationTicket, LaunchOrchestrator};
 pub use leases::{AccountLeaseManager, AccountOperationLease, AccountOperationLeases};
 pub use ports::{
-    AccountCatalog, AccountRepository, AccountRuntimePort, GameWindowIdentity, GameWindowPort,
-    InstanceStatusPort, WindowPosition,
+    AccountCatalog, AccountRepository, AccountRuntimePort, AccountSettingsRepository,
+    GameWindowIdentity, GameWindowPort, InstanceStatusPort, WindowPosition,
 };
 
 #[derive(Default)]

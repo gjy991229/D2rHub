@@ -6,7 +6,8 @@ use tauri::Emitter;
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
     AccountCatalog, AccountOrderingService, AccountPositionService, AccountQueryService,
-    AccountRepository, AccountRuntimePort, CancellationTicket, WindowPosition,
+    AccountRepository, AccountRuntimePort, AccountSettingsPreferenceService,
+    AccountSettingsRepository, CancellationTicket, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -289,6 +290,28 @@ impl AccountRepository for AccountManagerCatalog<'_> {
 
     fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
         AccountManager::save_meta(&self.config.accounts_dir, account)
+    }
+}
+
+impl AccountSettingsRepository for AccountManagerCatalog<'_> {
+    fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError> {
+        let account_dir =
+            AccountManager::account_dir_checked(&self.config.accounts_dir, account_id)?;
+        let path = account_dir.join("Settings.json");
+        if !path.is_file() {
+            return Err(AppError::FileError(format!(
+                "账号 Settings.json 不存在: {}",
+                path.display()
+            )));
+        }
+        let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        if settings.as_object().is_none_or(|object| object.is_empty()) {
+            return Err(AppError::ConfigReadError(format!(
+                "账号 Settings.json 为空或根节点不是对象: {}",
+                path.display()
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -1125,44 +1148,19 @@ pub(crate) fn update_account_mods_inner(
         .map(AccountMeta::redacted_for_frontend)
 }
 
-/// 确认账号独立画质开关指向一份真实、非空的配置快照。
-fn ensure_account_settings_snapshot(account_dir: &Path) -> Result<(), AppError> {
-    let path = account_dir.join("Settings.json");
-    if !path.is_file() {
-        return Err(AppError::FileError(format!(
-            "账号 Settings.json 不存在: {}",
-            path.display()
-        )));
-    }
-    let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    if settings.as_object().is_none_or(|object| object.is_empty()) {
-        return Err(AppError::ConfigReadError(format!(
-            "账号 Settings.json 为空或根节点不是对象: {}",
-            path.display()
-        )));
-    }
-    Ok(())
-}
-
 /// 标记账号已自定义过设置（用于前端引导提示）
 #[tauri::command]
 pub fn mark_settings_customized(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
-    ensure_account_settings_snapshot(&account_dir)?;
-    meta.has_customized_settings = true;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountSettingsPreferenceService::new(&repository, state.multi_instance().account_leases())
+        .set_customized(&account_id, true)
 }
 
 /// 设置账号是否使用独立 Settings.json 覆盖系统游戏配置
@@ -1172,21 +1170,13 @@ pub fn set_settings_customized(
     account_id: String,
     customized: bool,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    if customized {
-        let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
-        ensure_account_settings_snapshot(&account_dir)?;
-    }
-    meta.has_customized_settings = customized;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountSettingsPreferenceService::new(&repository, state.multi_instance().account_leases())
+        .set_customized(&account_id, customized)
 }
 
 /// 设置账号的窗口位置（持久化到 account.json）
