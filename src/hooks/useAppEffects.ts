@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand, listenEvent } from "../platform/tauri";
 import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
 import { useAccounts } from "../store/accounts";
@@ -133,7 +132,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const stopListening = await listen<LaunchProgress>("launch-progress", (event) => {
+        const stopListening = await listenEvent<LaunchProgress>("launch-progress", (event) => {
           useLaunch.getState().addProgressAndLog(event.payload);
         });
         if (cancelled) {
@@ -154,7 +153,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
+    void listenEvent<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
       showToast("warning", event.payload.message);
     }).then((stopListening) => {
       if (cancelled) stopListening();
@@ -187,7 +186,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
 
     const timer = setTimeout(async () => {
       try {
-        await invoke("start_rune_audio_monitor");
+        await invokeCommand("start_rune_audio_monitor");
         showToast("success", "符文声纹监控已自动启动");
       } catch (e) {
         showToast("error", `符文声纹监控启动失败: ${e}`);
@@ -217,11 +216,11 @@ export function useAutoUpdate(
           version: string;
           download_url: string;
         }
-        const info = await invoke<CloudVersionInfo>("check_cloud_version");
+        const info = await invokeCommand<CloudVersionInfo>("check_cloud_version");
         const cloudVersion = info.version;
         const downloadUrl = info.download_url;
 
-        const currentVer = await invoke<string>("get_app_version");
+        const currentVer = await invokeCommand<string>("get_app_version");
         const cleanLocal = currentVer.replace(/^v/, "").trim();
         const cleanCloud = cloudVersion.replace(/^v/, "").trim();
 
@@ -257,7 +256,7 @@ export function useFirstLaunch(
 
     const timer = setTimeout(async () => {
       try {
-        await invoke("open_user_guide");
+        await invokeCommand("open_user_guide");
       } catch {}
       try {
         await patchConfig({ first_launch: false });

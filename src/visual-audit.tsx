@@ -20,6 +20,7 @@ type SettingsMap = Record<string, unknown>;
 const params = new URLSearchParams(window.location.search);
 const surface = ((params.get("surface") as Surface | null) || "main") as Surface;
 const requestedTheme = params.get("theme") === "dark" ? "onyx" : "light";
+const requestedLanguage = params.get("lang") === "en" ? "en-US" : "zh-CN";
 const auditFrame = params.get("frame");
 const settingsState = params.get("settingsState");
 const settingsTab = params.get("settingsTab");
@@ -241,7 +242,7 @@ const baseConfig: GlobalConfig = {
   overlay_opacity: 94,
   main_opacity: 96,
   font_scale: "default",
-  app_language: "zhCN",
+  app_language: requestedLanguage,
   agent_mode: 1,
   agent_delay_secs: 4,
   agent_threshold: 2,
@@ -575,8 +576,10 @@ function AuditRuntime() {
           ]);
           if (!cancelled) {
             setContent(
-              <AppShell>
-                <div className="flex-1" />
+              <>
+                <AppShell>
+                  <div className="flex-1" />
+                </AppShell>
                 <SettingsCenter
                   open
                   onClose={() => {}}
@@ -585,7 +588,7 @@ function AuditRuntime() {
                   initialTab={settingsTab}
                 />
                 <ToastContainer />
-              </AppShell>,
+              </>,
             );
           }
           return;

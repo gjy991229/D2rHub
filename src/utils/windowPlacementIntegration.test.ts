@@ -14,7 +14,11 @@ function source(...segments: string[]) {
 
 export function runTests() {
   const effects = source("src", "hooks", "useAppEffects.ts");
-  const settings = source("src", "components", "config", "SettingsCenter.tsx");
+  const settings = [
+    source("src", "components", "config", "SettingsCenter.tsx"),
+    source("src", "features", "settings", "panels", "OverlayPanel.tsx"),
+    source("src", "features", "settings", "panels", "PetPanel.tsx"),
+  ].join("\n");
   const overlay = source("src", "pages", "Overlay.tsx");
   const cat = source("src", "pages", "BongoCatWindow.tsx");
   const native = source("src-tauri", "src", "lib.rs");
@@ -29,7 +33,7 @@ export function runTests() {
   );
   assert(
     overlay.includes('await restoreWindowPlacement("overlay", saved);')
-      && overlay.includes('invoke("save_window_placement"')
+      && overlay.includes('invokeCommand("save_window_placement"')
       && overlay.includes("userWindowMovePendingRef"),
     "overlay restore and explicit user moves use the versioned physical placement service",
   );

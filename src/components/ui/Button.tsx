@@ -11,9 +11,9 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const sizeMap: Record<Size, string> = {
-  sm: "h-7 px-3 text-xs gap-1.5 rounded-xl",
-  md: "h-8 px-4 text-sm gap-2 rounded-xl",
-  lg: "h-9 px-5 text-sm gap-2 rounded-[14px]",
+  sm: "h-[28px] px-3 text-xs gap-1.5 rounded-xl",
+  md: "h-[32px] px-4 text-sm gap-2 rounded-xl",
+  lg: "h-[36px] px-5 text-sm gap-2 rounded-[14px]",
 };
 
 const variantMap: Record<Variant, { base: string; style: React.CSSProperties }> = {

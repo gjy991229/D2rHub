@@ -4,8 +4,7 @@ import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { useStats, isHighRune, getSessionRunKey, MANUAL_FINISH_SCENE } from "../store/stats";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand, listenEvent } from "../platform/tauri";
 import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
 import {
   aggregateOverlayDrops,
@@ -464,13 +463,13 @@ export function Overlay() {
         height: Math.round(size.height / scale),
       };
       await Promise.all([
-        invoke("save_window_placement", {
+        invokeCommand("save_window_placement", {
           label: isStatsOverlay ? "stats-overlay" : "overlay",
           positionOverride: position,
           dockEdge: dockEdgeOverride ?? dockStateRef.current?.placement.edge ?? null,
           userInitiated,
         }),
-        invoke(isStatsOverlay ? "save_stats_overlay_geometry" : "save_overlay_geometry", {
+        invokeCommand(isStatsOverlay ? "save_stats_overlay_geometry" : "save_overlay_geometry", {
           geometry: legacyGeometry,
         }),
       ]);
@@ -1036,7 +1035,7 @@ export function Overlay() {
 
   async function focusAccountWindow(displayName: string) {
     try {
-      const ok = await invoke<boolean>("bring_window_by_title_to_front", {
+      const ok = await invokeCommand<boolean>("bring_window_by_title_to_front", {
         windowTitle: displayName,
       });
       if (!ok) {
@@ -1233,7 +1232,7 @@ export function Overlay() {
 
     async function loadNextTerrorZone() {
       try {
-        const snapshot = await invoke<TerrorZoneSnapshot>("get_terror_zone_snapshot");
+        const snapshot = await invokeCommand<TerrorZoneSnapshot>("get_terror_zone_snapshot");
         if (cancelled) return;
         setTerrorZones(snapshot);
         setTerrorZoneStatus(snapshot.current || snapshot.next ? "ready" : "empty");
@@ -1275,7 +1274,7 @@ export function Overlay() {
 
     (async () => {
       try {
-        const saved = await invoke<any>(
+        const saved = await invokeCommand<any>(
           isStatsOverlay ? "load_stats_overlay_geometry" : "load_overlay_geometry",
         );
         if (cancelled) return;
@@ -1485,14 +1484,14 @@ export function Overlay() {
         startupCheckDoneRef.current = true;
 
         // 刷新账号运行状态（扫描 D2R 窗口匹配账号昵称 → 更新 active_games）
-        const matchedIds: string[] = await invoke("refresh_account_running_state");
+        const matchedIds: string[] = await invokeCommand("refresh_account_running_state");
         if (matchedIds.length > 0) {
           // 等待账号列表加载完成
           await loadAccounts();
         }
 
         // 如果任一 D2R 窗口标题包含被监控账号的昵称，直接设置为前台标题
-        const titles: string[] = await invoke("get_d2r_window_titles");
+        const titles: string[] = await invokeCommand("get_d2r_window_titles");
         if (titles.length > 0 && config?.rune_audio_target_account) {
           // 使用 getState() 读取最新账号列表，避免将 accounts 加入依赖造成循环
           const latestAccounts = useAccounts.getState().accounts;
@@ -1519,7 +1518,7 @@ export function Overlay() {
 
     const poll = async () => {
       try {
-        const title = await invoke<string>("get_foreground_window_title");
+        const title = await invokeCommand<string>("get_foreground_window_title");
         if (!cancelled) setForegroundTitle(title);
       } catch {}
       if (!cancelled) timer = window.setTimeout(poll, 1000);
@@ -1537,7 +1536,7 @@ export function Overlay() {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<RuneAudioEvent>("rune-audio-detected", (event) => {
+    void listenEvent<RuneAudioEvent>("rune-audio-detected", (event) => {
       if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
       stats.processRuneDrop({
         rune_number: event.payload.rune_number,
@@ -1558,7 +1557,7 @@ export function Overlay() {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<ItemAudioEvent>("item-audio-detected", (event) => {
+    void listenEvent<ItemAudioEvent>("item-audio-detected", (event) => {
       if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
       stats.processItemDrop(event.payload);
     }).then((stop) => {
@@ -1575,7 +1574,7 @@ export function Overlay() {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<TrackingSnapshot>("audio-tracking-state", (event) => {
+    void listenEvent<TrackingSnapshot>("audio-tracking-state", (event) => {
       if (cancelled || event.payload.account_id !== config.rune_audio_target_account) return;
       useStats.getState().applyTrackingSnapshot(event.payload);
     }).then((stop) => {
@@ -1593,8 +1592,8 @@ export function Overlay() {
     const target = accounts.find((account) => account.id === config.rune_audio_target_account);
     if (!target?.is_running) return;
     let cancelled = false;
-    void invoke<{ running: boolean }>("get_rune_audio_status").then((status) => {
-      if (!cancelled && !status.running) return invoke("start_rune_audio_monitor");
+    void invokeCommand<{ running: boolean }>("get_rune_audio_status").then((status) => {
+      if (!cancelled && !status.running) return invokeCommand("start_rune_audio_monitor");
     }).catch((error) => console.warn("启动符文声纹监控失败", error));
     return () => { cancelled = true; };
   }, [accounts, config?.rune_audio_target_account, isAudioTrackingActive]);

@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Heart, HeartHandshake, Copy, Check, ZoomIn, X, ChevronRight, ChevronDown, Github } from "lucide-react";
 import { Modal } from "../components/ui/Modal";
 import UpdateConfirmModal from "../components/ui/UpdateConfirmModal";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { showToast } from "../components/ui/Toast";
 
 interface Props {
@@ -67,7 +67,7 @@ export function AboutModal({ open, onClose }: Props) {
     if (!open) return;
     (async () => {
       try {
-        const ver = await invoke<string>("get_app_version");
+        const ver = await invokeCommand<string>("get_app_version");
         setVersion(ver);
 
         // Check if there is an update flag saved
@@ -124,7 +124,7 @@ export function AboutModal({ open, onClose }: Props) {
         version: string;
         download_url: string;
       }
-      const info = await invoke<CloudVersionInfo>("check_cloud_version");
+      const info = await invokeCommand<CloudVersionInfo>("check_cloud_version");
       const cloudVersion = info.version;
       const downloadUrl = info.download_url;
 

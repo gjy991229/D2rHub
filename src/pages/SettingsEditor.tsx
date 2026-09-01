@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Save, Monitor, Volume2, Gamepad2, Map, Image, X } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emitEvent, invokeCommand } from "../platform/tauri";
 import { Button } from "../components/ui/Button";
 import { Toggle } from "../components/ui/Toggle";
 import { showToast } from "../components/ui/Toast";
@@ -401,7 +400,7 @@ export function SettingsEditor({ account, onClose }: Props) {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const data = await invoke<SettingsMap>("get_account_settings", {
+      const data = await invokeCommand<SettingsMap>("get_account_settings", {
         accountId: account.id,
       });
       setSettings(data);
@@ -420,14 +419,14 @@ export function SettingsEditor({ account, onClose }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await invoke("save_account_settings", {
+      await invokeCommand("save_account_settings", {
         accountId: account.id,
         settings,
       });
       await markSettingsCustomized(account.id);
       setHasChanges(false);
       showToast("success", "设置已保存");
-      await emit("account-settings-updated", { accountId: account.id });
+      await emitEvent("account-settings-updated", { accountId: account.id });
     } catch (e) {
       showToast("error", `保存失败: ${e}`);
     } finally {
@@ -437,13 +436,13 @@ export function SettingsEditor({ account, onClose }: Props) {
 
   const snapshotSystemSettings = async () => {
     try {
-      const data = await invoke<SettingsMap>("snapshot_system_settings_to_account", {
+      const data = await invokeCommand<SettingsMap>("snapshot_system_settings_to_account", {
         accountId: account.id,
       });
       setSettings(data);
       setHasChanges(false);
       showToast("success", "已快照系统配置");
-      await emit("account-settings-updated", { accountId: account.id });
+      await emitEvent("account-settings-updated", { accountId: account.id });
     } catch (e) {
       showToast("error", `快照系统配置失败: ${e}`);
     }

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { listenEvent } from "../platform/tauri";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
 import { Lock, Check } from "lucide-react";
@@ -148,7 +148,7 @@ export function BongoCatWindow() {
 
   // Global events listener
   useEffect(() => {
-    const unlisten = listen<string>("global-input-event", (event) => {
+    const unlisten = listenEvent<string>("global-input-event", (event) => {
       const type = event.payload;
 
       // 1. Increment counter
@@ -182,7 +182,7 @@ export function BongoCatWindow() {
 
   // Listen for launch-ended events from store and trigger success/failure drops
   useEffect(() => {
-    const unlistenPromise = listen<{ success: boolean }>("launch-ended", (event) => {
+    const unlistenPromise = listenEvent<{ success: boolean }>("launch-ended", (event) => {
       const { success } = event.payload;
       if (success) {
         addDrop("启动成功！", "#189f18"); // Trigger green success pop-up

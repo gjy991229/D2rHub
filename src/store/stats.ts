@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import type { PersistedDropEntry, TrackingSnapshot } from "./types";
 
 const RUNE_NAMES: string[] = [
@@ -187,7 +187,7 @@ export const useStats = create<StatsState>((set, get) => ({
     }));
 
     try {
-      await invoke("save_scene_record", {
+      await invokeCommand("save_scene_record", {
         record: {
           absolute_time: absoluteTime,
           character_name: characterName || "未知角色",
@@ -239,7 +239,7 @@ export const useStats = create<StatsState>((set, get) => ({
   fetchDbStats: async (sceneName: string, tz = false) => {
     if (!sceneName || sceneName === "等待识别...") return;
     try {
-      const stats: { avg_time: number, total_runs: number } | null = await invoke("get_scene_stats", { sceneName, tz });
+      const stats: { avg_time: number, total_runs: number } | null = await invokeCommand("get_scene_stats", { sceneName, tz });
       // 竞态校验：如果当前场景已变（如已回城），丢弃迟到的历史数据
       if (
         (get().currentRunName !== sceneName && get().currentScene !== sceneName)

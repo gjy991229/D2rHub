@@ -6,8 +6,7 @@ import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
 import { useAccounts } from "../../store/accounts";
 import { useGlobalConfig } from "../../store/globalConfig";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand, listenEvent } from "../../platform/tauri";
 import { showToast } from "../ui/Toast";
 import type { AccountMeta, LaunchProgress } from "../../store/types";
 import {
@@ -175,7 +174,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
-    void listen<LaunchProgress>("launch-progress", ({ payload }) => {
+    void listenEvent<LaunchProgress>("launch-progress", ({ payload }) => {
       if (payload.account_id !== accountIdRef.current) return;
       const succeeded = payload.status === "ok";
       switch (payload.step) {
@@ -240,10 +239,10 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       });
       const cleanupAfterInitialization = async () => {
         if (config?.auto_close_browser && config.browser_type) {
-          await invoke("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
+          await invokeCommand("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
         }
         if (id) {
-          await invoke("delete_account", { accountId: id });
+          await invokeCommand("delete_account", { accountId: id });
         }
       };
 
@@ -387,13 +386,13 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       if (config?.browser_path && config?.browser_type) {
         try {
           const tokenUrl = getTokenUrl(region);
-          await invoke("open_url_in_browser", {
+          await invokeCommand("open_url_in_browser", {
             browserPath: config!.browser_path,
             accountId: id,
             url: tokenUrl,
           }).catch(() => {});
           await sleep(1200);
-          await invoke("bring_self_to_foreground").catch(() => {});
+          await invokeCommand("bring_self_to_foreground").catch(() => {});
         } catch (e) {
           showToast("warning", `浏览器启动失败（不影响核心功能）: ${e}`);
         }
@@ -418,7 +417,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     try {
       const id = accountIdRef.current;
       if (id && config?.browser_path && config?.browser_type) {
-        await invoke("open_url_in_browser", {
+        await invokeCommand("open_url_in_browser", {
           browserPath: config.browser_path,
           accountId: id,
           url: tokenUrl,
@@ -443,7 +442,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     const id = accountIdRef.current;
     if (id) {
       try {
-        await invoke("update_account_meta", {
+        await invokeCommand("update_account_meta", {
           accountId: id,
           authMode: "token",
           token: extractedToken,
@@ -771,7 +770,7 @@ async function requestInitializationCancellation(
   const attempts = Math.ceil(CANCEL_TIMEOUT_MS / CANCEL_RETRY_INTERVAL_MS);
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    void invoke("cancel_launch").catch((error) => {
+    void invokeCommand("cancel_launch").catch((error) => {
       console.warn("Failed to send initialization cancellation:", error);
     });
     if (await Promise.race([settled, sleep(CANCEL_RETRY_INTERVAL_MS).then(() => false)])) {

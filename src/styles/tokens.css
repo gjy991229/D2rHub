@@ -126,8 +126,8 @@
   --border-strong: rgba(24, 30, 42, 0.14);
   --border-focus: #1a1a1c;
   --text-primary: #1a1a1c;
-  --text-secondary: rgba(26,26,28,0.62);
-  --text-muted: rgba(26,26,28,0.45);
+  --text-secondary: rgba(26,26,28,0.74);
+  --text-muted: rgba(26,26,28,0.62);
   --input-text: #1d1d1f;
   --input-bg: rgba(255, 255, 255, 0.72);
   --accent: #1a1a1c;
@@ -136,10 +136,10 @@
   --accent-glow: rgba(26, 26, 28, 0.08);
   --cta-bg: #1a1a1c;
   --cta-text: #ffffff;
-  --success: #34c759;
-  --warning: #ff9f0a;
-  --error: #ff3b30;
-  --info: #5ac8fa;
+  --success: #18743b;
+  --warning: #8a4b00;
+  --error: #b42318;
+  --info: #1665a8;
   --tz-accent: #7e22ce;
 
   /* Toast notification variables */

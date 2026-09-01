@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emitEvent, invokeCommand, listenEvent } from "../platform/tauri";
 
 import { useAccounts } from "../store/accounts";
 
@@ -23,7 +22,7 @@ let settingsListenerPromise: Promise<void> | null = null;
 function ensureSettingsListener(): void {
   if (settingsListenerPromise) return;
 
-  settingsListenerPromise = listen<{ accountId: string }>(
+  settingsListenerPromise = listenEvent<{ accountId: string }>(
     "account-settings-updated",
     (event) => {
       settingsSubscribers.get(event.payload.accountId)?.forEach((subscriber) => subscriber());
@@ -82,7 +81,7 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
     if (loadPromiseRef.current) return loadPromiseRef.current;
 
     if (mountedRef.current) setLoading(true);
-    const request = invoke<Record<string, unknown>>("get_account_settings", { accountId })
+    const request = invokeCommand<Record<string, unknown>>("get_account_settings", { accountId })
       .then((raw) => {
         if (!mountedRef.current) return;
         setSettings(applyPendingPatch(parseSettings(raw), pendingPatchRef.current));
@@ -120,7 +119,7 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
 
     const request = (async () => {
       try {
-        const raw = await invoke<Record<string, unknown>>("get_account_settings", { accountId });
+        const raw = await invokeCommand<Record<string, unknown>>("get_account_settings", { accountId });
         const merged = { ...raw };
         if (patch.resolution !== undefined) {
           merged["Screen Resolution (Windowed)"] = patch.resolution;
@@ -129,15 +128,15 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
           merged["Framerate Target"] = patch.fps;
         }
 
-        await invoke("save_account_settings", { accountId, settings: merged });
-        await invoke("mark_settings_customized", { accountId });
+        await invokeCommand("save_account_settings", { accountId, settings: merged });
+        await invokeCommand("mark_settings_customized", { accountId });
 
         const account = useAccounts.getState().accounts.find((candidate) => candidate.id === accountId);
         if (account && !account.has_customized_settings) {
           useAccounts.getState().updateAccount({ ...account, has_customized_settings: true });
         }
 
-        await emit("account-settings-updated", { accountId });
+        await emitEvent("account-settings-updated", { accountId });
         if (mountedRef.current) setError(null);
       } catch (saveError) {
         // Preserve edits made while this request was running; newer values win.

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { FolderOpen, Check, HardDrive, Save, Search, ArrowRight, Wrench, AlertTriangle, Globe } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig } from "../store/types";
@@ -52,7 +52,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   const handleSelectBrowser = async (btype: "chrome" | "edge") => {
     try {
-      const path = await invoke<string | null>("detect_browser_path_by_type", { browserType: btype });
+      const path = await invokeCommand<string | null>("detect_browser_path_by_type", { browserType: btype });
       if (path) {
         setConfig(c => ({ ...c, browser_path: path, browser_type: btype }));
         showToast("success", `自动检测并选择 ${btype === "edge" ? "Microsoft Edge" : "Google Chrome"} 成功`);
@@ -170,7 +170,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         return;
       }
       try {
-        const exists = await invoke<boolean>("check_saved_games_settings", { path });
+        const exists = await invokeCommand<boolean>("check_saved_games_settings", { path });
         if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: exists }));
       } catch {
         if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: false }));
@@ -205,7 +205,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       }
 
       try {
-        const exists = await invoke<boolean>("check_path_exists", {
+        const exists = await invokeCommand<boolean>("check_path_exists", {
           path: step.value,
           isFile: step.isFile,
         });

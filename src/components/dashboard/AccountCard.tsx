@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../../platform/tauri";
 import {
   AlertTriangle,
   FolderOpen,
@@ -335,7 +335,7 @@ export function AccountGridItem({
   const handleOpenFolder = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await invoke("open_account_dir", { accountId: account.id });
+      await invokeCommand("open_account_dir", { accountId: account.id });
     } catch (e) {
       showToast("error", `打开文件夹失败: ${e}`);
     }
@@ -645,7 +645,7 @@ export function AccountGridItem({
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
-                        await invoke("move_game_window", { accountId: account.id });
+                        await invokeCommand("move_game_window", { accountId: account.id });
                         showToast("success", "已尝试复位游戏窗口");
                       } catch (err: any) {
                         showToast("error", "复位窗口失败: " + err);

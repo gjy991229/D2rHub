@@ -6,7 +6,7 @@ declare const __dirname: string;
 const fs = require("fs") as { readFileSync(path: string, encoding: string): string };
 const path = require("path") as { join(...parts: string[]): string };
 const source = fs.readFileSync(
-  path.join(__dirname, "../components/config/SettingsCenter.tsx"),
+  path.join(__dirname, "../features/settings/panels/AutomationPanel.tsx"),
   "utf8",
 );
 

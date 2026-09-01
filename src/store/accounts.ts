@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import type { AccountMeta, WindowPositionPreset } from "./types";
 import type { InternationalAccountRegion } from "../utils/regionPaths";
 import { showToast } from "../components/ui/Toast";
@@ -32,7 +32,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
   loadAccounts: async () => {
     set({ loading: true, error: null });
     try {
-      const accounts = await invoke<AccountMeta[]>("list_accounts");
+      const accounts = await invokeCommand<AccountMeta[]>("list_accounts");
       set({ accounts, loading: false });
     } catch (e) {
       set({ error: String(e), loading: false });
@@ -41,7 +41,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   createAccount: async (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => {
     try {
-      const id = await invoke<string>("create_account", {
+      const id = await invokeCommand<string>("create_account", {
         nickname,
         authMode: authMode || null,
         region: region || null,
@@ -60,7 +60,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   deleteAccount: async (id: string) => {
     try {
-      await invoke("delete_account", { accountId: id });
+      await invokeCommand("delete_account", { accountId: id });
       await get().loadAccounts();
     } catch (e) {
       set({ error: String(e) });
@@ -70,7 +70,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   renameAccount: async (id: string, newName: string) => {
     try {
-      await invoke("rename_account", { accountId: id, newName });
+      await invokeCommand("rename_account", { accountId: id, newName });
       await get().loadAccounts();
       return true;
     } catch (e) {
@@ -82,7 +82,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   addAccountMod: async (id: string, modConfiguration: string) => {
     try {
-      const added = await invoke<boolean>("add_account_mod", { accountId: id, modConfiguration });
+      const added = await invokeCommand<boolean>("add_account_mod", { accountId: id, modConfiguration });
       if (added) await get().loadAccounts();
       return added;
     } catch (e) {
@@ -94,7 +94,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   updateAccountMods: async (id: string, activeMod: string, modList: string[]) => {
     try {
-      await invoke("update_account_mods", { accountId: id, activeMod, modList });
+      await invokeCommand("update_account_mods", { accountId: id, activeMod, modList });
       await get().loadAccounts();
       return true;
     } catch (e) {
@@ -106,7 +106,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   updateAccountPositions: async (id, activePositionId, positionPresets) => {
     try {
-      await invoke("update_account_positions", { accountId: id, activePositionId, positionPresets });
+      await invokeCommand("update_account_positions", { accountId: id, activePositionId, positionPresets });
       await get().loadAccounts();
       return true;
     } catch (e) {
@@ -119,7 +119,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
   updateAccountRegion: async (id: string, region: InternationalAccountRegion) => {
     set({ error: null });
     try {
-      await invoke("update_account_region", { accountId: id, region });
+      await invokeCommand("update_account_region", { accountId: id, region });
       set((state) => ({
         accounts: state.accounts.map((account) =>
           account.id === id ? { ...account, region } : account
@@ -134,7 +134,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
   initializeBnetAccount: async (id: string) => {
     set({ error: null });
     try {
-      await invoke("initialize_bnet_account", { accountId: id });
+      await invokeCommand("initialize_bnet_account", { accountId: id });
       await get().loadAccounts();
     } catch (e) {
       set({ error: String(e) });
@@ -146,7 +146,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     // 使用自身 store 的 error 状态标记进行中操作，不再耦合 useLaunch
     set({ error: null });
     try {
-      await invoke("reinitialize_account", { accountId: id });
+      await invokeCommand("reinitialize_account", { accountId: id });
       await get().loadAccounts();
     } catch (e) {
       set({ error: String(e) });
@@ -165,7 +165,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   reorderAccounts: async (orderedIds: string[]) => {
     try {
-      await invoke("reorder_accounts", { orderedIds });
+      await invokeCommand("reorder_accounts", { orderedIds });
       await get().loadAccounts();
     } catch (e) {
       set({ error: String(e) });
@@ -175,7 +175,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
 
   markSettingsCustomized: async (id: string) => {
     try {
-      await invoke("mark_settings_customized", { accountId: id });
+      await invokeCommand("mark_settings_customized", { accountId: id });
       await get().loadAccounts();
     } catch (e) {
       console.error("mark_settings_customized failed:", e);

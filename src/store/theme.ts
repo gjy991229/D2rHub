@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useGlobalConfig } from "./globalConfig";
 
@@ -57,7 +57,7 @@ export const useTheme = create<ThemeState>((set) => ({
   setTheme: (t) => {
     applyTheme(t);
     set({ theme: t });
-    invoke("save_theme", { theme: t }).catch(() => {});
+    invokeCommand("save_theme", { theme: t }).catch(() => {});
 
     // 同步到 useGlobalConfig 以防状态重置循环
     const configState = useGlobalConfig.getState();

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertTriangle } from "lucide-react";
 import { useGlobalConfig, initConfigListener } from "./store/globalConfig";
@@ -86,7 +86,7 @@ function App() {
   const handleKillAllD2R = async () => {
     setKilling(true);
     try {
-      await invoke("kill_all_d2r_processes");
+      await invokeCommand("kill_all_d2r_processes");
       showToast("success", "清理完成，所有暗黑2进程已关闭。");
       setShowKillConfirm(false);
     } catch (e) {
@@ -106,8 +106,8 @@ function App() {
     setSharingReport(true);
     try {
       const [stats, preferences] = await Promise.all([
-        invoke<BattleReportStatsData>("get_stats_data"),
-        invoke<StatsPagePreferences | null>("get_stats_page_preferences"),
+        invokeCommand<BattleReportStatsData>("get_stats_data"),
+        invokeCommand<StatsPagePreferences | null>("get_stats_page_preferences"),
       ]);
       const syncedPreferences = preferences || {};
       const result = await copyBattleReportToClipboard(stats, {
@@ -204,7 +204,7 @@ function App() {
     }
 
     let cancelled = false;
-    void invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId: target.account.id })
+    void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: target.account.id })
       .then((state) => {
         if (!cancelled) setAudioModUpdate(state.update_required ? state : null);
       })
@@ -234,7 +234,7 @@ function App() {
                 为避免默认值覆盖现有数据，D2RHub 已停止配置初始化。原文件仍保留；如果存在可用备份，程序会在启动时自动恢复。
               </p>
               <p className="text-xs font-mono text-error mt-3 break-all leading-relaxed">{configError}</p>
-              <button type="button" onClick={() => void invoke("open_logs_dir")}
+              <button type="button" onClick={() => void invokeCommand("open_logs_dir")}
                 className="control-btn h-9 mt-4">
                 打开日志目录
               </button>
@@ -295,7 +295,7 @@ function App() {
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}
           onStats={async () => {
             try {
-              await invoke("open_stats_page");
+              await invokeCommand("open_stats_page");
             } catch (e) {
               showToast("error", `打开统计失败: ${e}`);
             }
@@ -304,7 +304,7 @@ function App() {
           sharingReport={sharingReport}
           onHelp={async () => {
             try {
-              await invoke("open_user_guide");
+              await invokeCommand("open_user_guide");
             } catch (e) {
               showToast("error", `打开帮助文档失败: ${e}`);
             }

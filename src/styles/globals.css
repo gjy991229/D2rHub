@@ -1530,6 +1530,7 @@ html, body, #root {
 }
 
 .account-option {
+  position: relative;
   min-height: 74px;
   border-radius: var(--radius-card);
   border: 1px solid var(--border-default);

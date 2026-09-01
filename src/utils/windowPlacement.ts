@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 
 export type AuxiliaryWindowLabel = "overlay" | "stats-overlay" | "bongo-cat";
 export type WindowPlacementTarget = "preserve" | "main" | "cursor" | "primary";
@@ -22,7 +22,7 @@ export async function restoreWindowPlacement(
   label: AuxiliaryWindowLabel,
   legacyGeometry?: LegacyWindowGeometry | null,
 ): Promise<WindowPlacementOutcome> {
-  return invoke<WindowPlacementOutcome>("restore_window_placement", {
+  return invokeCommand<WindowPlacementOutcome>("restore_window_placement", {
     label,
     legacyGeometry: legacyGeometry ?? null,
   });
@@ -33,7 +33,7 @@ export async function setAuxiliaryWindowVisible(
   visible: boolean,
   target: WindowPlacementTarget = "preserve",
 ): Promise<WindowPlacementOutcome> {
-  return invoke<WindowPlacementOutcome>("set_auxiliary_window_visible", {
+  return invokeCommand<WindowPlacementOutcome>("set_auxiliary_window_visible", {
     label,
     visible,
     target,
@@ -49,5 +49,5 @@ export async function locateAuxiliaryWindow(
 export async function recoverAuxiliaryWindows(
   target: Exclude<WindowPlacementTarget, "preserve"> = "main",
 ): Promise<AuxiliaryWindowLabel[]> {
-  return invoke<AuxiliaryWindowLabel[]>("recover_auxiliary_windows", { target });
+  return invokeCommand<AuxiliaryWindowLabel[]>("recover_auxiliary_windows", { target });
 }
