@@ -802,6 +802,7 @@ pub async fn launch_battle_net_only(
         .begin(
             TaskRequest::new("battle-net-launch")
                 .with_conflict_key("host-runtime-launch")
+                .with_retryable(false)
                 .with_initial_status("preflight", "正在检查 Battle.net 启动请求"),
         )
         .map_err(|error| AppError::Unknown(error.to_string()))?;
@@ -1417,6 +1418,7 @@ pub async fn launch_accounts(
         .begin(
             TaskRequest::new("account-launch")
                 .with_conflict_key("host-runtime-launch")
+                .with_retryable(false)
                 .with_initial_status("preflight", "正在检查账号启动请求"),
         )
         .map_err(|error| AppError::Unknown(error.to_string()))?;

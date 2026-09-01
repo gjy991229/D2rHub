@@ -34,6 +34,7 @@ import {
   type ModProcessingPurpose,
 } from "../../features/settings/panels/ModProcessingPanel";
 import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
+import { TaskRuntimePanel } from "../../features/tasks";
 import {
   AUDIO_TELEMETRY_FEATURE_ID,
   audioModFeatureInvokeOptions,
@@ -1335,6 +1336,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onKeyDown={handleShortcutKeyDown}
                 onClear={handleClearShortcut}
               />
+            )}
+
+            {/* Required application maintenance and compatibility tools. */}
+            {activeTab === "tasks" && config && (
+              <TaskRuntimePanel language={config.app_language} />
             )}
 
             {/* Required application maintenance and compatibility tools. */}

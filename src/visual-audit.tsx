@@ -32,6 +32,7 @@ const settingsTab = params.get("settingsTab");
 const audioModState = params.get("audioModState");
 const seedSampleDrops = params.get("drops") === "sample";
 const seedManyAccounts = params.get("accounts") === "many";
+const seedSampleTasks = params.get("tasks") === "sample";
 const currentWindowLabel =
   surface === "overlay"
     ? "overlay"
@@ -512,6 +513,66 @@ function installIpcMock() {
         };
       case "room_automation_get_config":
         return roomAutomationSnapshot;
+      case "get_tasks":
+        return seedSampleTasks ? [
+          {
+            revision: 4,
+            task_id: 42,
+            kind: "audio-mod-prepare",
+            subject: "sorc-01",
+            conflict_key: "audio-mod-build",
+            state: "running",
+            progress: 64,
+            step: "generating",
+            message: requestedLanguage === "en-US" ? "Generating localized data files" : "正在生成本地化数据文件",
+            error_code: null,
+            cancel_requested: false,
+            retryable: false,
+            retry_of: null,
+            started_at_ms: Date.now() - 38_000,
+            finished_at_ms: null,
+          },
+          {
+            revision: 7,
+            task_id: 41,
+            kind: "account-reinitialize",
+            subject: "barb-02",
+            conflict_key: "account:barb-02",
+            state: "failed",
+            progress: 20,
+            step: "failed",
+            message: requestedLanguage === "en-US" ? "Battle.net login timed out" : "等待 Battle.net 登录超时",
+            error_code: "account-initialization-failed",
+            cancel_requested: false,
+            retryable: true,
+            retry_of: null,
+            started_at_ms: Date.now() - 320_000,
+            finished_at_ms: Date.now() - 200_000,
+          },
+        ] : [];
+      case "get_task_timeline":
+        return [
+          {
+            revision: 1,
+            timestamp_ms: Date.now() - 38_000,
+            state: "running",
+            progress: 0,
+            step: "preflight",
+            message: requestedLanguage === "en-US" ? "Environment checked" : "运行环境检查完成",
+            error_code: null,
+            cancel_requested: false,
+          },
+          {
+            revision: 4,
+            timestamp_ms: Date.now() - 8_000,
+            state: "running",
+            progress: 64,
+            step: "generating",
+            message: requestedLanguage === "en-US" ? "Generating localized data files" : "正在生成本地化数据文件",
+            error_code: null,
+            cancel_requested: false,
+          },
+        ];
       case "room_automation_save_config": {
         const args = payload as { config?: RoomAutomationConfigSnapshot["config"] } | undefined;
         roomAutomationSnapshot = {

@@ -2721,6 +2721,7 @@ pub async fn prepare_audio_mod(
             TaskRequest::new("audio-mod-prepare")
                 .for_subject(&account_id)
                 .with_conflict_key("audio-mod-build")
+                .with_retryable(false)
                 .with_initial_status("preflight", "正在检查 Mod 加工环境"),
         )
         .map_err(|error| error.to_string())?;
@@ -2848,6 +2849,7 @@ pub async fn upgrade_audio_mod(
             TaskRequest::new("audio-mod-upgrade")
                 .for_subject(&account_id)
                 .with_conflict_key("audio-mod-build")
+                .with_retryable(false)
                 .with_initial_status("preflight", "正在检查 Mod 更新环境"),
         )
         .map_err(|error| error.to_string())?;

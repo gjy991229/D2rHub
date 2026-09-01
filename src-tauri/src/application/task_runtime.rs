@@ -93,6 +93,11 @@ impl TaskRequest {
         self
     }
 
+    pub fn with_retryable(mut self, retryable: bool) -> Self {
+        self.retryable = retryable;
+        self
+    }
+
     pub fn with_initial_status(
         mut self,
         step: impl Into<String>,

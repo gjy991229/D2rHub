@@ -1,5 +1,6 @@
 import {
   Cat,
+  Activity,
   Folder,
   Monitor,
   Palette,
@@ -25,6 +26,7 @@ export type SettingsTabId =
   | "room-automation"
   | "pet"
   | "shortcuts"
+  | "tasks"
   | "advanced";
 
 export type SettingsCapabilityKind = "core" | "platform" | "optional";
@@ -67,6 +69,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     agent: { label: "启动策略", description: "战网 Agent 与实例启动等待策略" },
     shortcuts: { label: "窗口快捷键", description: "快速聚焦并切换多开实例" },
     advanced: { label: "维护与迁移", description: "日志、路径向导与账号迁移" },
+    tasks: { label: "后台任务", description: "进度、取消、重试与诊断时间线" },
     appearance: { label: "外观与界面", description: "语言、主题、字体与主界面透明度" },
     overlays: { label: "桌面悬浮窗", description: "邪恶区域与场景统计悬浮窗口" },
     automation: { label: "识别与统计", description: "掉落识别、运行统计与协议诊断" },
@@ -80,6 +83,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     agent: { label: "Launch Strategy", description: "Battle.net Agent and instance launch timing" },
     shortcuts: { label: "Window Shortcuts", description: "Focus and switch between game instances" },
     advanced: { label: "Maintenance & Transfer", description: "Logs, setup assistant, and account transfer" },
+    tasks: { label: "Background Tasks", description: "Progress, cancellation, retries, and diagnostic timelines" },
     appearance: { label: "Appearance", description: "Language, theme, typography, and main window opacity" },
     overlays: { label: "Desktop Overlays", description: "Terror Zone and run statistics overlay windows" },
     automation: { label: "Recognition & Stats", description: "Audio recognition, run statistics, and diagnostics" },
@@ -136,6 +140,12 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
   {
     id: "appearance",
     icon: Palette,
+    kind: "platform",
+    group: "application",
+  },
+  {
+    id: "tasks",
+    icon: Activity,
     kind: "platform",
     group: "application",
   },

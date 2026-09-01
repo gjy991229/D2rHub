@@ -23,6 +23,7 @@ describe("settings feature registry", () => {
       "paths",
       "agent",
       "appearance",
+      "tasks",
       "advanced",
     ]);
     expect(getSettingsFeaturesByKind("optional").map((feature) => feature.id)).toEqual([
