@@ -117,3 +117,66 @@ pub fn get_task_retry_descriptor(
         retry_of: request.retry_of.unwrap_or(task_id),
     })
 }
+
+#[tauri::command]
+pub async fn retry_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<(), AppError> {
+    let request = state
+        .tasks()
+        .retry_request(task_id)
+        .map_err(map_task_error)?;
+    match request.kind.as_str() {
+        "account-initialize" | "account-reinitialize" => {
+            let account_id = request.subject.ok_or_else(|| {
+                AppError::Unknown("账号初始化任务缺少可重试的账号标识".to_string())
+            })?;
+            crate::commands::account::retry_account_initialization(
+                app,
+                state,
+                account_id,
+                task_id,
+                request.kind == "account-reinitialize",
+            )
+            .await
+        }
+        "account-launch" | "battle-net-launch" => {
+            let payload = request
+                .retry_payload
+                .ok_or_else(|| AppError::Unknown("启动任务缺少内部重试数据".to_string()))?;
+            let payload =
+                serde_json::from_str::<crate::commands::launch::LaunchTaskRetryPayload>(&payload)
+                    .map_err(|error| AppError::Unknown(format!("启动任务重试数据损坏: {error}")))?;
+            crate::commands::launch::retry_launch_task(app, state, task_id, payload)
+                .await
+                .map(|_| ())
+        }
+        "audio-mod-prepare" | "audio-mod-upgrade" => {
+            let payload = request
+                .retry_payload
+                .ok_or_else(|| AppError::Unknown("Mod 任务缺少内部重试数据".to_string()))?;
+            let payload =
+                serde_json::from_str::<crate::audio_mod::AudioModTaskRetryPayload>(&payload)
+                    .map_err(|error| AppError::Unknown(format!("Mod 任务重试数据损坏: {error}")))?;
+            crate::audio_mod::retry_audio_mod_task(app, state, task_id, payload)
+                .await
+                .map_err(AppError::Unknown)
+        }
+        "room-automation" => {
+            let command_state = app
+                .try_state::<
+                    crate::capabilities::room_automation_runtime::RoomAutomationCommandState,
+                >()
+                .ok_or_else(|| AppError::Unknown("自动跟房运行时未初始化".to_string()))?;
+            command_state
+                .manager()
+                .map_err(AppError::Unknown)?
+                .retry()
+                .map(|_| ())
+                .map_err(AppError::Unknown)
+        }
+        kind => Err(AppError::Unknown(format!("任务类型 {kind} 没有重试执行器"))),
+    }
+}

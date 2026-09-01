@@ -2423,19 +2423,22 @@ async fn execute_initialization_task(
     account_id: String,
     kind: AccountInitializationKind,
     cancellation_ticket: CancellationTicket,
+    retry_of: Option<u64>,
 ) -> Result<(), AppError> {
     let task_kind = match kind {
         AccountInitializationKind::New => "account-initialize",
         AccountInitializationKind::Reinitialize => "account-reinitialize",
     };
+    let mut request = TaskRequest::new(task_kind)
+        .for_subject(&account_id)
+        .with_conflict_key(format!("account:{account_id}"))
+        .with_initial_status("queued", "账号初始化任务已排队");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
     let task = state
         .tasks()
-        .begin(
-            TaskRequest::new(task_kind)
-                .for_subject(&account_id)
-                .with_conflict_key(format!("account:{account_id}"))
-                .with_initial_status("queued", "账号初始化任务已排队"),
-        )
+        .begin(request)
         .map_err(map_task_runtime_error)?;
     crate::logger::log_msg(
         "INFO",
@@ -2486,6 +2489,7 @@ pub async fn initialize_bnet_account(
         account_id,
         AccountInitializationKind::New,
         cancellation_ticket,
+        None,
     )
     .await
 }
@@ -2504,6 +2508,30 @@ pub async fn reinitialize_account(
         account_id,
         AccountInitializationKind::Reinitialize,
         cancellation_ticket,
+        None,
+    )
+    .await
+}
+
+pub(crate) async fn retry_account_initialization(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    retry_of: u64,
+    reinitialize: bool,
+) -> Result<(), AppError> {
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        if reinitialize {
+            AccountInitializationKind::Reinitialize
+        } else {
+            AccountInitializationKind::New
+        },
+        cancellation_ticket,
+        Some(retry_of),
     )
     .await
 }

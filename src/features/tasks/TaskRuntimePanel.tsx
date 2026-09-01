@@ -39,7 +39,7 @@ const COPY = {
     retry: "重试",
     timeline: "时间线",
     timelineFailed: "无法读取任务时间线",
-    retryFailed: "无法重试此任务，请返回对应功能面板操作。",
+    retryFailed: "无法重试此任务，请查看任务时间线中的错误详情。",
     cancelFailed: "取消请求未能提交",
     noMessage: "等待下一步状态",
     states: {
@@ -64,7 +64,7 @@ const COPY = {
     retry: "Retry",
     timeline: "Timeline",
     timelineFailed: "Could not load the task timeline",
-    retryFailed: "This task must be retried from its feature panel.",
+    retryFailed: "This task could not be retried. Review its timeline for details.",
     cancelFailed: "The cancellation request could not be submitted",
     noMessage: "Waiting for the next update",
     states: {

@@ -2715,15 +2715,56 @@ pub async fn prepare_audio_mod(
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
+    prepare_audio_mod_task(
+        app,
+        state,
+        AudioModTaskRetryPayload::Prepare {
+            account_id,
+            mod_name,
+            source_mod_name,
+            include_audio_telemetry,
+            include_room_tools,
+        },
+        None,
+    )
+    .await
+}
+
+async fn prepare_audio_mod_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    payload: AudioModTaskRetryPayload,
+    retry_of: Option<u64>,
+) -> Result<AudioModPrepareResult, String> {
+    let AudioModTaskRetryPayload::Prepare {
+        account_id,
+        mod_name,
+        source_mod_name,
+        include_audio_telemetry,
+        include_room_tools,
+    } = payload
+    else {
+        return Err("任务重试数据与 Mod 准备操作不匹配".to_string());
+    };
+    let retry_payload = serde_json::to_string(&AudioModTaskRetryPayload::Prepare {
+        account_id: account_id.clone(),
+        mod_name: mod_name.clone(),
+        source_mod_name: source_mod_name.clone(),
+        include_audio_telemetry,
+        include_room_tools,
+    })
+    .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
+    let mut request = TaskRequest::new("audio-mod-prepare")
+        .for_subject(&account_id)
+        .with_conflict_key("audio-mod-build")
+        .with_retry_payload(retry_payload)
+        .with_initial_status("preflight", "正在检查 Mod 加工环境");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
     let task = state
         .tasks()
-        .begin(
-            TaskRequest::new("audio-mod-prepare")
-                .for_subject(&account_id)
-                .with_conflict_key("audio-mod-build")
-                .with_retryable(false)
-                .with_initial_status("preflight", "正在检查 Mod 加工环境"),
-        )
+        .begin(request)
         .map_err(|error| error.to_string())?;
     let result = prepare_audio_mod_impl(
         app,
@@ -2843,15 +2884,53 @@ pub async fn upgrade_audio_mod(
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
+    upgrade_audio_mod_task(
+        app,
+        state,
+        AudioModTaskRetryPayload::Upgrade {
+            account_id,
+            source_mod_name,
+            include_audio_telemetry,
+            include_room_tools,
+        },
+        None,
+    )
+    .await
+}
+
+async fn upgrade_audio_mod_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    payload: AudioModTaskRetryPayload,
+    retry_of: Option<u64>,
+) -> Result<AudioModSetupState, String> {
+    let AudioModTaskRetryPayload::Upgrade {
+        account_id,
+        source_mod_name,
+        include_audio_telemetry,
+        include_room_tools,
+    } = payload
+    else {
+        return Err("任务重试数据与 Mod 更新操作不匹配".to_string());
+    };
+    let retry_payload = serde_json::to_string(&AudioModTaskRetryPayload::Upgrade {
+        account_id: account_id.clone(),
+        source_mod_name: source_mod_name.clone(),
+        include_audio_telemetry,
+        include_room_tools,
+    })
+    .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
+    let mut request = TaskRequest::new("audio-mod-upgrade")
+        .for_subject(&account_id)
+        .with_conflict_key("audio-mod-build")
+        .with_retry_payload(retry_payload)
+        .with_initial_status("preflight", "正在检查 Mod 更新环境");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
     let task = state
         .tasks()
-        .begin(
-            TaskRequest::new("audio-mod-upgrade")
-                .for_subject(&account_id)
-                .with_conflict_key("audio-mod-build")
-                .with_retryable(false)
-                .with_initial_status("preflight", "正在检查 Mod 更新环境"),
-        )
+        .begin(request)
         .map_err(|error| error.to_string())?;
     let result = upgrade_audio_mod_impl(
         app,
@@ -2875,6 +2954,44 @@ pub async fn upgrade_audio_mod(
         }
     }
     result
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case")]
+pub(crate) enum AudioModTaskRetryPayload {
+    Prepare {
+        account_id: String,
+        mod_name: String,
+        source_mod_name: Option<String>,
+        include_audio_telemetry: Option<bool>,
+        include_room_tools: Option<bool>,
+    },
+    Upgrade {
+        account_id: String,
+        source_mod_name: Option<String>,
+        include_audio_telemetry: Option<bool>,
+        include_room_tools: Option<bool>,
+    },
+}
+
+pub(crate) async fn retry_audio_mod_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    retry_of: u64,
+    payload: AudioModTaskRetryPayload,
+) -> Result<(), String> {
+    match payload {
+        payload @ AudioModTaskRetryPayload::Prepare { .. } => {
+            prepare_audio_mod_task(app, state, payload, Some(retry_of))
+                .await
+                .map(|_| ())
+        }
+        payload @ AudioModTaskRetryPayload::Upgrade { .. } => {
+            upgrade_audio_mod_task(app, state, payload, Some(retry_of))
+                .await
+                .map(|_| ())
+        }
+    }
 }
 
 async fn upgrade_audio_mod_impl(

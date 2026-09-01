@@ -66,6 +66,9 @@ pub struct TaskRequest {
     pub conflict_key: Option<String>,
     pub retryable: bool,
     pub retry_of: Option<u64>,
+    /// Adapter-owned, opaque replay data. It is never exposed in snapshots,
+    /// events, logs, or diagnostic bundles.
+    pub retry_payload: Option<String>,
     pub initial_step: String,
     pub initial_message: String,
 }
@@ -78,6 +81,7 @@ impl TaskRequest {
             conflict_key: None,
             retryable: true,
             retry_of: None,
+            retry_payload: None,
             initial_step: "queued".to_string(),
             initial_message: String::new(),
         }
@@ -93,8 +97,13 @@ impl TaskRequest {
         self
     }
 
-    pub fn with_retryable(mut self, retryable: bool) -> Self {
-        self.retryable = retryable;
+    pub fn with_retry_payload(mut self, payload: impl Into<String>) -> Self {
+        self.retry_payload = Some(payload.into());
+        self
+    }
+
+    pub fn with_retry_of(mut self, task_id: u64) -> Self {
+        self.retry_of = Some(task_id);
         self
     }
 
@@ -155,6 +164,7 @@ struct TaskRecord {
     snapshot: TaskSnapshot,
     timeline: Vec<TaskTimelineEntry>,
     cancellation: Arc<AtomicBool>,
+    retry_payload: Option<String>,
 }
 
 struct TaskRuntimeInner {
@@ -252,6 +262,7 @@ impl TaskRuntime {
                     snapshot: snapshot.clone(),
                     timeline,
                     cancellation: Arc::clone(&cancellation),
+                    retry_payload: request.retry_payload,
                 },
             );
             (snapshot, cancellation)
@@ -342,6 +353,7 @@ impl TaskRuntime {
             conflict_key: record.snapshot.conflict_key.clone(),
             retryable: true,
             retry_of: Some(task_id),
+            retry_payload: record.retry_payload.clone(),
             initial_step: "retrying".to_string(),
             initial_message: "正在重试".to_string(),
         })
@@ -648,9 +660,15 @@ mod tests {
     fn cancellation_is_cooperative_and_retry_keeps_lineage() {
         let runtime = runtime(10);
         let handle = runtime
-            .begin(TaskRequest::new("mod-install").for_subject("audio"))
+            .begin(
+                TaskRequest::new("mod-install")
+                    .for_subject("audio")
+                    .with_retry_payload(r#"{"account":"private"}"#),
+            )
             .unwrap();
         let task_id = handle.task_id();
+        let public_snapshot = serde_json::to_string(&runtime.snapshot(task_id).unwrap()).unwrap();
+        assert!(!public_snapshot.contains("private"));
         let requested = runtime.request_cancel(task_id).unwrap();
         assert!(requested.cancel_requested);
         assert!(handle.cancellation_requested());
@@ -658,6 +676,10 @@ mod tests {
 
         let retry = runtime.retry_request(task_id).unwrap();
         assert_eq!(retry.retry_of, Some(task_id));
+        assert_eq!(
+            retry.retry_payload.as_deref(),
+            Some(r#"{"account":"private"}"#)
+        );
         let retry_handle = runtime.begin(retry).unwrap();
         assert_eq!(
             runtime.snapshot(retry_handle.task_id()).unwrap().retry_of,

@@ -12,6 +12,7 @@ export const TAURI_COMMANDS = [
   "bring_window_by_title_to_front",
   "cancel_launch",
   "cancel_task",
+  "retry_task",
   "check_cloud_version",
   "check_path_exists",
   "check_saved_games_settings",

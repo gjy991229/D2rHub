@@ -21,23 +21,7 @@ export const taskGateway: TaskGateway = {
     { taskId },
   ),
   retry: async (taskId) => {
-    const descriptor = await invokeCommand<TaskRetryDescriptor>(
-      "get_task_retry_descriptor",
-      { taskId },
-    );
-    if (descriptor.kind === "account-initialize" && descriptor.subject) {
-      await invokeCommand("initialize_bnet_account", { accountId: descriptor.subject });
-      return;
-    }
-    if (descriptor.kind === "account-reinitialize" && descriptor.subject) {
-      await invokeCommand("reinitialize_account", { accountId: descriptor.subject });
-      return;
-    }
-    if (descriptor.kind === "room-automation") {
-      await invokeCommand("room_automation_retry");
-      return;
-    }
-    throw new Error(`Task kind ${descriptor.kind} must be retried from its feature panel`);
+    await invokeCommand("retry_task", { taskId });
   },
   subscribe: (listener) => listenEvent<TaskSnapshot>(
     "task-status-updated",

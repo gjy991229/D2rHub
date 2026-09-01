@@ -37,6 +37,18 @@ pub struct LaunchResult {
     pub mutex_killed: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "kebab-case")]
+pub(crate) enum LaunchTaskRetryPayload {
+    BattleNetOnly {
+        account_ids: Vec<String>,
+    },
+    Accounts {
+        account_ids: Option<Vec<String>>,
+        entries: Option<Vec<LaunchAccountEntry>>,
+    },
+}
+
 #[derive(Default)]
 struct BnetPreparationOptions<'a> {
     meta_override: Option<&'a AccountMeta>,
@@ -799,14 +811,29 @@ pub async fn launch_battle_net_only(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    launch_battle_net_only_task(app, state, account_ids, None).await
+}
+
+async fn launch_battle_net_only_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Vec<String>,
+    retry_of: Option<u64>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::BattleNetOnly {
+        account_ids: account_ids.clone(),
+    })
+    .map_err(|error| AppError::Unknown(format!("创建任务重试数据失败: {error}")))?;
+    let mut request = TaskRequest::new("battle-net-launch")
+        .with_conflict_key("host-runtime-launch")
+        .with_retry_payload(retry_payload)
+        .with_initial_status("preflight", "正在检查 Battle.net 启动请求");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
     let task = state
         .tasks()
-        .begin(
-            TaskRequest::new("battle-net-launch")
-                .with_conflict_key("host-runtime-launch")
-                .with_retryable(false)
-                .with_initial_status("preflight", "正在检查 Battle.net 启动请求"),
-        )
+        .begin(request)
         .map_err(|error| AppError::Unknown(error.to_string()))?;
     let result = launch_battle_net_only_impl(app, state, account_ids).await;
     finish_launch_task(task, &result);
@@ -1416,18 +1443,52 @@ pub async fn launch_accounts(
     account_ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
+    launch_accounts_task(app, state, account_ids, entries, None).await
+}
+
+async fn launch_accounts_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
+    retry_of: Option<u64>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::Accounts {
+        account_ids: account_ids.clone(),
+        entries: entries.clone(),
+    })
+    .map_err(|error| AppError::Unknown(format!("创建任务重试数据失败: {error}")))?;
+    let mut request = TaskRequest::new("account-launch")
+        .with_conflict_key("host-runtime-launch")
+        .with_retry_payload(retry_payload)
+        .with_initial_status("preflight", "正在检查账号启动请求");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
     let task = state
         .tasks()
-        .begin(
-            TaskRequest::new("account-launch")
-                .with_conflict_key("host-runtime-launch")
-                .with_retryable(false)
-                .with_initial_status("preflight", "正在检查账号启动请求"),
-        )
+        .begin(request)
         .map_err(|error| AppError::Unknown(error.to_string()))?;
     let result = launch_accounts_impl(app, state, account_ids, entries).await;
     finish_launch_task(task, &result);
     result
+}
+
+pub(crate) async fn retry_launch_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    retry_of: u64,
+    payload: LaunchTaskRetryPayload,
+) -> Result<Vec<LaunchResult>, AppError> {
+    match payload {
+        LaunchTaskRetryPayload::BattleNetOnly { account_ids } => {
+            launch_battle_net_only_task(app, state, account_ids, Some(retry_of)).await
+        }
+        LaunchTaskRetryPayload::Accounts {
+            account_ids,
+            entries,
+        } => launch_accounts_task(app, state, account_ids, entries, Some(retry_of)).await,
+    }
 }
 
 async fn launch_accounts_impl(

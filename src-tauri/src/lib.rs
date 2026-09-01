@@ -167,6 +167,7 @@ pub fn run() {
             commands::task::get_task_timeline,
             commands::task::get_task_retry_descriptor,
             commands::task::cancel_task,
+            commands::task::retry_task,
             commands::diagnostics::export_diagnostic_bundle,
             commands::room_automation::room_automation_get_config,
             commands::room_automation::room_automation_save_config,
