@@ -36,7 +36,7 @@ describe("settings feature registry", () => {
     expect(new Set(SETTINGS_FEATURES.map((feature) => feature.id)).size).toBe(SETTINGS_FEATURES.length);
   });
 
-  it("labels unsupervised optional modules as configured intent", () => {
+  it("maps supervised optional modules to backend capability ids", () => {
     const shortcuts = SETTINGS_FEATURES.find((feature) => feature.id === "shortcuts");
     const overlays = SETTINGS_FEATURES.find((feature) => feature.id === "overlays");
 
@@ -45,6 +45,8 @@ describe("settings feature registry", () => {
     expect(shortcuts?.isConfigured?.({ shortcut_bindings_json: "invalid" } as GlobalConfig)).toBe(false);
     expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: true } as GlobalConfig)).toBe(true);
     expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: false } as GlobalConfig)).toBe(false);
+    expect(overlays?.capabilityIds).toEqual(["terror-zone-overlay", "statistics-overlay"]);
+    expect(SETTINGS_FEATURES.find((feature) => feature.id === "automation")?.capabilityIds).toEqual(["audio-telemetry"]);
     expect(SETTINGS_FEATURES.find((feature) => feature.id === "pet")?.capabilityIds).toEqual(["desktop-pet"]);
     expect(SETTINGS_FEATURES.find((feature) => feature.id === "room-automation")?.capabilityIds).toEqual(["room-automation"]);
   });

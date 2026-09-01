@@ -127,9 +127,6 @@ impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
     fn publish(&self, config: &GlobalConfig) {
         update_shortcut_map(self.state, config);
         crate::capabilities::apply_configuration(self.state, self.app, config);
-        if !config.rune_audio_enabled || config.rune_audio_target_account.trim().is_empty() {
-            crate::rune_audio::monitor::stop_rune_audio_monitor();
-        }
         if let Some(app) = self.app {
             if let Err(error) = app.emit("global-config-updated", config) {
                 crate::logger::log_msg(

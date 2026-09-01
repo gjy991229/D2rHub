@@ -14,7 +14,6 @@ import { AppShell } from "./components/layout/AppShell";
 
 import {
   useBongoCatWindow,
-  useOverlayWindow,
   useLaunchEvents,
   useAutoUpdate,
   useFirstLaunch,
@@ -189,7 +188,6 @@ function App() {
 
   // Execute App Side Effects
   useBongoCatWindow(initialLoading, config);
-  useOverlayWindow(initialLoading, config);
   useLaunchEvents(config);
   useAutoUpdate(initialLoading, config, (version, url) => {
     setAutoUpdateVersion(version);

@@ -169,6 +169,7 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: Monitor,
     kind: "optional",
     group: "optional-features",
+    capabilityIds: ["terror-zone-overlay", "statistics-overlay"],
     isConfigured: (config) => config.enable_tz_overlay || config.enable_stats_overlay,
   },
   {
@@ -176,6 +177,7 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: ScanEye,
     kind: "optional",
     group: "optional-features",
+    capabilityIds: ["audio-telemetry"],
     isConfigured: (config) => config.rune_audio_enabled,
   },
   {

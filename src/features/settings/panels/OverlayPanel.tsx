@@ -3,10 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useGlobalConfig } from "../../../store/globalConfig";
 import type { GlobalConfig } from "../../../store/types";
-import {
-  setAuxiliaryWindowVisible,
-  type AuxiliaryWindowLabel,
-} from "../../../utils/windowPlacement";
+import { type AuxiliaryWindowLabel } from "../../../utils/windowPlacement";
 
 interface OverlayPanelProps {
   config: GlobalConfig;
@@ -149,7 +146,6 @@ export function OverlayPanel({
                   }, true);
                 }
                 try {
-                  await setAuxiliaryWindowVisible("overlay", visible);
                 } catch (error) {
                   console.error("切换 TZ 播报窗口失败", error);
                 }
@@ -194,7 +190,6 @@ export function OverlayPanel({
                   }, true);
                 }
                 try {
-                  await setAuxiliaryWindowVisible("stats-overlay", visible);
                 } catch (error) {
                   console.error("切换统计窗口失败", error);
                 }

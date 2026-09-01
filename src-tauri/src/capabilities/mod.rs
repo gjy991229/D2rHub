@@ -12,6 +12,7 @@ pub(crate) mod room_automation_runtime;
 #[cfg(target_os = "windows")]
 mod room_automation_windows;
 pub(crate) mod room_chat_binding;
+mod rune_audio;
 mod supervisor;
 
 use crate::application::capability::{
@@ -25,6 +26,9 @@ use supervisor::CapabilitySupervisor;
 use tauri::Manager;
 
 pub(crate) const DESKTOP_PET_ID: CapabilityId = CapabilityId::new("desktop-pet");
+pub(crate) const RUNE_AUDIO_ID: CapabilityId = CapabilityId::new("audio-telemetry");
+pub(crate) const TERROR_ZONE_OVERLAY_ID: CapabilityId = CapabilityId::new("terror-zone-overlay");
+pub(crate) const STATS_OVERLAY_ID: CapabilityId = CapabilityId::new("statistics-overlay");
 
 struct UnavailableCapability {
     failure: CapabilityFailure,
@@ -61,6 +65,18 @@ pub(crate) fn install(app: &tauri::App) {
                 Arc::new(UnavailableCapability { failure })
             }
         };
+    let rune_audio_driver: Arc<dyn CapabilityDriver> =
+        rune_audio::RuneAudioCapability::install(app);
+    let terror_zone_overlay_driver: Arc<dyn CapabilityDriver> =
+        overlay_windows::OverlayWindowCapability::install(
+            app,
+            crate::auxiliary_windows::TERROR_ZONE_OVERLAY_LABEL,
+        );
+    let stats_overlay_driver: Arc<dyn CapabilityDriver> =
+        overlay_windows::OverlayWindowCapability::install(
+            app,
+            crate::auxiliary_windows::STATS_OVERLAY_LABEL,
+        );
 
     let (room_driver, room_requested, room_command_state): (
         Arc<dyn CapabilityDriver>,
@@ -96,6 +112,18 @@ pub(crate) fn install(app: &tauri::App) {
         CapabilityRegistration {
             descriptor: CapabilityDescriptor::optional(DESKTOP_PET_ID),
             driver: desktop_pet_driver,
+        },
+        CapabilityRegistration {
+            descriptor: CapabilityDescriptor::optional(RUNE_AUDIO_ID),
+            driver: rune_audio_driver,
+        },
+        CapabilityRegistration {
+            descriptor: CapabilityDescriptor::optional(TERROR_ZONE_OVERLAY_ID),
+            driver: terror_zone_overlay_driver,
+        },
+        CapabilityRegistration {
+            descriptor: CapabilityDescriptor::optional(STATS_OVERLAY_ID),
+            driver: stats_overlay_driver,
         },
         CapabilityRegistration {
             descriptor: CapabilityDescriptor::optional(room_automation_runtime::ROOM_AUTOMATION_ID),
@@ -149,28 +177,74 @@ pub(crate) fn apply_configuration(
     app: Option<&tauri::AppHandle>,
     config: &GlobalConfig,
 ) {
-    match state
-        .capabilities()
-        .set_requested(DESKTOP_PET_ID, config.enable_bongo_cat)
-    {
-        Ok(_) => {
-            if let Some(supervisor) = app.and_then(|app| app.try_state::<CapabilitySupervisor>()) {
-                supervisor.schedule_reconcile();
-            }
+    for (id, requested, name) in configured_capabilities(config) {
+        match state.capabilities().set_requested(id, requested) {
+            Ok(_) => {}
+            // Initial global config loading happens before Tauri adapters are
+            // registered. Setup replays the cached snapshot after registration.
+            Err(CapabilityRegistryError::UnknownCapability(_)) if app.is_none() => {}
+            Err(error) => crate::logger::log_msg(
+                "ERROR",
+                "Capabilities",
+                &format!("应用{name}模块开关失败: {error}"),
+            ),
         }
-        // Initial global config loading happens before Tauri adapters are
-        // registered. Setup replays the cached snapshot after registration.
-        Err(CapabilityRegistryError::UnknownCapability(_)) if app.is_none() => {}
-        Err(error) => crate::logger::log_msg(
-            "ERROR",
-            "Capabilities",
-            &format!("应用桌宠模块开关失败: {error}"),
+    }
+    if let Some(supervisor) = app.and_then(|app| app.try_state::<CapabilitySupervisor>()) {
+        supervisor.schedule_reconcile();
+    }
+}
+
+fn configured_capabilities(config: &GlobalConfig) -> [(CapabilityId, bool, &'static str); 4] {
+    [
+        (DESKTOP_PET_ID, config.enable_bongo_cat, "桌宠"),
+        (RUNE_AUDIO_ID, config.rune_audio_enabled, "声纹识别"),
+        (
+            TERROR_ZONE_OVERLAY_ID,
+            config.enable_tz_overlay,
+            "恐怖区域悬浮窗",
         ),
+        (STATS_OVERLAY_ID, config.enable_stats_overlay, "统计悬浮窗"),
+    ]
+}
+
+pub(crate) fn schedule_reconcile(app: &tauri::AppHandle) {
+    if let Some(supervisor) = app.try_state::<CapabilitySupervisor>() {
+        supervisor.schedule_reconcile();
     }
 }
 
 pub(crate) fn shutdown(app: &tauri::AppHandle) {
     if let Some(supervisor) = app.try_state::<CapabilitySupervisor>() {
         supervisor.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn global_configuration_projects_every_supervised_optional_capability() {
+        let config = GlobalConfig {
+            enable_bongo_cat: true,
+            rune_audio_enabled: false,
+            enable_tz_overlay: true,
+            enable_stats_overlay: false,
+            ..GlobalConfig::default()
+        };
+
+        assert_eq!(
+            configured_capabilities(&config)
+                .into_iter()
+                .map(|(id, requested, _)| (id.as_str(), requested))
+                .collect::<Vec<_>>(),
+            [
+                ("desktop-pet", true),
+                ("audio-telemetry", false),
+                ("terror-zone-overlay", true),
+                ("statistics-overlay", false),
+            ]
+        );
     }
 }

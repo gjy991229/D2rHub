@@ -1022,7 +1022,7 @@ fn capture_loop(
     Err(error)
 }
 
-fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let config = resolve_monitor_config(&app)?;
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -1107,33 +1107,66 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn start_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || start_blocking(app))
+    let app_for_start = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_blocking(app_for_start))
         .await
-        .map_err(|error| format!("等待符文声纹监控器启动失败: {error}"))?
+        .map_err(|error| format!("等待符文声纹监控器启动失败: {error}"))??;
+    crate::capabilities::schedule_reconcile(&app);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn stop_rune_audio_monitor() {
+pub fn stop_rune_audio_monitor() -> Result<(), String> {
+    stop_blocking()
+}
+
+fn request_stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     RUNNING.store(false, Ordering::SeqCst);
     let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
     current.running = false;
 }
 
+pub(crate) fn stop_blocking() -> Result<(), String> {
+    request_stop();
+    for _ in 0..60 {
+        if !WORKER_ACTIVE.load(Ordering::SeqCst) {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err("符文声纹工作线程未能在 3 秒内退出".to_string())
+}
+
+pub(crate) fn lifecycle_health() -> Result<(), String> {
+    if RUNNING.load(Ordering::SeqCst) && WORKER_ACTIVE.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        let current = status().lock().unwrap_or_else(|error| error.into_inner());
+        Err(current
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "符文声纹工作线程未运行".to_string()))
+    }
+}
+
 #[tauri::command]
 pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
-    stop_rune_audio_monitor();
+    request_stop();
+    let app_for_start = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
         for _ in 0..60 {
             if !WORKER_ACTIVE.load(Ordering::SeqCst) {
-                return start_blocking(app);
+                return start_blocking(app_for_start);
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
         Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
     })
     .await
-    .map_err(|error| format!("等待符文声纹监控器重启失败: {error}"))?
+    .map_err(|error| format!("等待符文声纹监控器重启失败: {error}"))??;
+    crate::capabilities::schedule_reconcile(&app);
+    Ok(())
 }
 
 #[tauri::command]

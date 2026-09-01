@@ -27,10 +27,10 @@ export function runTests() {
   const i18n = source("src", "i18n.tsx");
 
   assert(
-    effects.includes("setAuxiliaryWindowVisible(entry.label, entry.enabled)")
+    !effects.includes("setAuxiliaryWindowVisible(entry.label, entry.enabled)")
       && !effects.includes("await overlayWin.show()")
       && !effects.includes("await catWin.show()"),
-    "automatic overlay visibility is routed through the native safe-show service",
+    "configuration-driven overlay visibility is owned by capability lifecycle",
   );
   assert(
     auxiliaryWindows.includes("WebviewWindowBuilder::from_config")

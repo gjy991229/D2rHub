@@ -7,23 +7,6 @@ import { showToast } from "../components/ui/Toast";
 import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
 import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
 import { validateTrackingTarget } from "../utils/trackingTarget";
-import { setAuxiliaryWindowVisible } from "../utils/windowPlacement";
-
-async function retryWindowAction(
-  action: () => Promise<boolean>,
-  isCancelled: () => boolean,
-  initialDelayMs: number,
-) {
-  const wait = (delayMs: number) =>
-    new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
-
-  await wait(initialDelayMs);
-  const deadline = Date.now() + 4_000;
-  while (!isCancelled() && Date.now() < deadline) {
-    if (await action()) return;
-    await wait(200);
-  }
-}
 
 export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null) {
   const prevScaleRef = useRef(config?.bongo_cat_scale);
@@ -51,39 +34,6 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
       cancelled = true;
     };
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
-}
-
-export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) {
-  useEffect(() => {
-    if (loading || !config) return;
-
-    let cancelled = false;
-
-    const manageOverlay = async () => {
-      try {
-        if (cancelled) return true;
-        const windows = [
-          { label: "overlay" as const, enabled: config.enable_tz_overlay },
-          {
-            label: "stats-overlay" as const,
-            enabled: config.enable_stats_overlay,
-          },
-        ];
-        for (const entry of windows) {
-          if (cancelled) continue;
-          await setAuxiliaryWindowVisible(entry.label, entry.enabled);
-        }
-        return true;
-      } catch {}
-      return false;
-    };
-
-    void retryWindowAction(manageOverlay, () => cancelled, 600);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, config?.enable_tz_overlay, config?.enable_stats_overlay]);
 }
 
 export function useLaunchEvents(config: GlobalConfig | null) {

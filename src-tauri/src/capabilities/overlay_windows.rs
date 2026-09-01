@@ -1,10 +1,67 @@
+use crate::application::capability::{CapabilityDriver, CapabilityFailure, CapabilityHealth};
 use crate::{commands, domain::config::GlobalConfig, window_placement};
+use std::sync::Arc;
 use tauri::Manager;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TERROR_ZONE_OVERLAY_LABEL: &str = "overlay";
 const STATS_OVERLAY_LABEL: &str = "stats-overlay";
 const PRESERVE_PLACEMENT_MODE: &str = "preserve";
+
+pub(crate) struct OverlayWindowCapability {
+    app: tauri::AppHandle,
+    label: &'static str,
+}
+
+impl OverlayWindowCapability {
+    pub(crate) fn install(app: &tauri::App, label: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            app: app.handle().clone(),
+            label,
+        })
+    }
+}
+
+impl CapabilityDriver for OverlayWindowCapability {
+    fn start(&self) -> Result<(), CapabilityFailure> {
+        crate::auxiliary_windows::ensure_window(&self.app, self.label)
+            .map_err(|error| CapabilityFailure::new("window-create-failed", error.to_string()))?;
+        window_placement::set_auxiliary_window_visible_for_app(
+            &self.app,
+            self.label,
+            true,
+            Some(PRESERVE_PLACEMENT_MODE),
+        )
+        .map(|_| ())
+        .map_err(|error| CapabilityFailure::new("window-show-failed", error.to_string()))
+    }
+
+    fn stop(&self) -> Result<(), CapabilityFailure> {
+        window_placement::set_auxiliary_window_visible_for_app(&self.app, self.label, false, None)
+            .map(|_| ())
+            .map_err(|error| CapabilityFailure::new("window-hide-failed", error.to_string()))
+    }
+
+    fn health(&self) -> CapabilityHealth {
+        let Some(window) = self.app.get_webview_window(self.label) else {
+            return CapabilityHealth::Failed(CapabilityFailure::new(
+                "window-unavailable",
+                "overlay window is unavailable",
+            ));
+        };
+        match window.is_visible() {
+            Ok(true) => CapabilityHealth::Healthy,
+            Ok(false) => CapabilityHealth::Degraded(CapabilityFailure::new(
+                "window-hidden",
+                "overlay window is hidden",
+            )),
+            Err(error) => CapabilityHealth::Failed(CapabilityFailure::new(
+                "window-status-unavailable",
+                error.to_string(),
+            )),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct OverlayVisibility {
