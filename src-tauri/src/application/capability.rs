@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -395,7 +396,7 @@ impl CapabilityRegistry {
             })
         };
         if should_probe {
-            self.commit_health(id, driver.health())?;
+            self.commit_health(id, call_health_hook(|| driver.health()))?;
         }
         Ok(())
     }
@@ -495,6 +496,10 @@ impl CapabilityRegistry {
                     entry.state = CapabilityState::Starting;
                     entry.reason_code = None;
                     entry.last_error = None;
+                    // A start hook may partially acquire resources before it
+                    // returns or panics. Success is the only transition that
+                    // clears this conservative cleanup requirement.
+                    entry.cleanup_required = true;
                     let driver = Arc::clone(&entry.driver);
                     bump_revision(&mut inner);
                     LifecycleAction::Start(driver)
@@ -535,7 +540,7 @@ impl CapabilityRegistry {
         match action {
             LifecycleAction::None => {}
             LifecycleAction::Start(driver) => {
-                let result = driver.start();
+                let result = call_lifecycle_hook("start", || driver.start());
                 let mut inner = self.inner.lock();
                 let entry = inner
                     .entries
@@ -558,7 +563,7 @@ impl CapabilityRegistry {
                 bump_revision(&mut inner);
             }
             LifecycleAction::Stop(driver) => {
-                let result = driver.stop();
+                let result = call_lifecycle_hook("stop", || driver.stop());
                 let mut inner = self.inner.lock();
                 let dependency_blocker = dependency_blocker(&inner, id);
                 let entry = inner
@@ -590,7 +595,7 @@ impl CapabilityRegistry {
                 bump_revision(&mut inner);
             }
             LifecycleAction::Health(driver) => {
-                let health = driver.health();
+                let health = call_health_hook(|| driver.health());
                 self.commit_health(id, health)?;
             }
         }
@@ -638,6 +643,27 @@ impl CapabilityRegistry {
         }
         Ok(())
     }
+}
+
+fn call_lifecycle_hook(
+    operation: &'static str,
+    call: impl FnOnce() -> Result<(), CapabilityFailure>,
+) -> Result<(), CapabilityFailure> {
+    catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
+        Err(CapabilityFailure::new(
+            "driver-panicked",
+            format!("capability driver panicked during {operation}"),
+        ))
+    })
+}
+
+fn call_health_hook(call: impl FnOnce() -> CapabilityHealth) -> CapabilityHealth {
+    catch_unwind(AssertUnwindSafe(call)).unwrap_or_else(|_| {
+        CapabilityHealth::Failed(CapabilityFailure::new(
+            "driver-panicked",
+            "capability driver panicked during health",
+        ))
+    })
 }
 
 enum LifecycleAction {
@@ -804,7 +830,7 @@ fn topological_order(entries: &BTreeMap<CapabilityId, CapabilityEntry>) -> Vec<C
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     const PLATFORM: CapabilityId = CapabilityId::new("platform");
     const MODULE: CapabilityId = CapabilityId::new("module");
@@ -817,6 +843,7 @@ mod tests {
         health: Mutex<CapabilityHealth>,
         fail_start: Mutex<Option<CapabilityFailure>>,
         fail_stop: Mutex<Option<CapabilityFailure>>,
+        panic_start: AtomicBool,
     }
 
     impl FakeDriver {
@@ -831,6 +858,10 @@ mod tests {
     impl CapabilityDriver for FakeDriver {
         fn start(&self) -> Result<(), CapabilityFailure> {
             self.starts.fetch_add(1, Ordering::SeqCst);
+            assert!(
+                !self.panic_start.load(Ordering::SeqCst),
+                "injected start panic"
+            );
             if let Some(failure) = self.fail_start.lock().clone() {
                 return Err(failure);
             }
@@ -1070,6 +1101,34 @@ mod tests {
                 .state,
             CapabilityState::Running
         );
+    }
+
+    #[test]
+    fn a_panicking_start_is_isolated_and_cleaned_before_retry() {
+        let registry = CapabilityRegistry::new();
+        let driver = FakeDriver::healthy();
+        driver.panic_start.store(true, Ordering::SeqCst);
+        registry
+            .register_all(vec![registration(
+                MODULE,
+                vec![],
+                true,
+                Arc::clone(&driver),
+            )])
+            .unwrap();
+
+        let failed = registry.reconcile_all().unwrap();
+        assert_eq!(failed.capabilities[0].state, CapabilityState::Failed);
+        assert_eq!(
+            failed.capabilities[0].reason_code.as_deref(),
+            Some("driver-panicked")
+        );
+
+        driver.panic_start.store(false, Ordering::SeqCst);
+        let recovered = registry.reconcile_all().unwrap();
+        assert_eq!(recovered.capabilities[0].state, CapabilityState::Running);
+        assert_eq!(driver.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(driver.starts.load(Ordering::SeqCst), 2);
     }
 
     #[test]
