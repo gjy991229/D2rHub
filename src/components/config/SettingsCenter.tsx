@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { emitEvent, invokeCommand, listenEvent } from "../../platform/tauri";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
@@ -7,18 +7,12 @@ import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
 import { parseShortcutFromKeyEvent, useShortcutRecorder } from "../../hooks/useShortcutRecorder";
 import type { SettingsMap } from "../../pages/SettingsEditor";
-import type { AudioModSetupState, GlobalConfig } from "../../store/types";
+import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
 import { diffGlobalConfig } from "../../utils/globalConfigPatch";
-import { validateAudioModName } from "../../utils/audioModName";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
 import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../../utils/gameSettings";
-import {
-  locateAuxiliaryWindow,
-  recoverAuxiliaryWindows,
-  type AuxiliaryWindowLabel,
-} from "../../utils/windowPlacement";
 import { PathsPanel } from "../../features/settings/panels/PathsPanel";
 import { SettingsShell } from "../../features/settings/SettingsShell";
 import { LaunchStrategyPanel } from "../../features/settings/panels/LaunchStrategyPanel";
@@ -31,22 +25,12 @@ import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
 import {
   ModProcessingPanel,
-  type ModProcessingPurpose,
 } from "../../features/settings/panels/ModProcessingPanel";
 import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
 import { TaskRuntimePanel } from "../../features/tasks";
-import {
-  AUDIO_TELEMETRY_FEATURE_ID,
-  audioModFeatureInvokeOptions,
-  audioSetupDefaults,
-  hasAudioTelemetry,
-  hasSelectedAudioModFeature,
-  IN_GAME_ROOM_TOOLS_FEATURE_ID,
-  selectedAudioModFeatureAddsCapability,
-  type AudioModPrepareProgress,
-  type AudioModPrepareResult,
-  type RuneAudioStatus,
-} from "../../features/settings/audioModuleModel";
+import { useAudioModuleController } from "../../features/settings/useAudioModuleController";
+import { useAuxiliaryWindowActions } from "../../features/settings/useAuxiliaryWindowActions";
+import { useMaintenanceController } from "../../features/settings/useMaintenanceController";
 import {
   isSettingsTabId,
   type SettingsTabId,
@@ -62,18 +46,6 @@ interface Props {
   initialAccountId?: string | null;
 }
 
-interface ExportAccountsSummary {
-  path: string;
-  account_count: number;
-  plaintext_token_count: number;
-}
-
-interface ImportAccountsSummary {
-  imported: { id: string; display_name: string; initialized: boolean }[];
-  warnings: string[];
-  reencrypted_token_count: number;
-}
-
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
@@ -87,123 +59,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
   const [roomAutomationDirty, setRoomAutomationDirty] = useState(false);
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
-  const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
-  const [audioModState, setAudioModState] = useState<AudioModSetupState | null>(null);
-  const [audioModStateLoading, setAudioModStateLoading] = useState(false);
-  const [audioSetupOpen, setAudioSetupOpen] = useState(false);
-  const [audioSetupPurpose, setAudioSetupPurpose] = useState<ModProcessingPurpose>("manage");
-  const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
-  const [audioSetupSource, setAudioSetupSource] = useState("");
-  const [audioSetupName, setAudioSetupName] = useState("");
-  const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
-  const [includeRoomTools, setIncludeRoomTools] = useState(true);
-  const [audioPreparing, setAudioPreparing] = useState(false);
-  const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
-  const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
-  const audioModStateCacheRef = useRef(new Map<string, { state: AudioModSetupState; scannedAt: number }>());
-  const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
-  const normalizedAudioSetupName = audioSetupName.trim();
-  const isAudioModUpgrade = !!audioModState?.current_mod_name && (
-    audioModState.update_required
-    || audioModState.ready
-    || audioModState.feature_groups.length > 0
+  const { windowPlacementBusy, locateWindow, recoverAllWindows } = useAuxiliaryWindowActions(
+    config?.app_language,
   );
-  const isAudioModFeatureManagement = isAudioModUpgrade && !audioModState?.update_required;
-  const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
-  const audioSetupNameError = isAudioModUpgrade
-    ? ""
-    : validateAudioModName(audioSetupName, installedAudioModNames);
-  const showAudioSetupNameError = !isAudioModUpgrade && audioSetupName.length > 0 && !!audioSetupNameError;
-  const hasInitializedAudioAccount = initializedTrackingAccounts.length > 0;
-  const hasAudioTarget = trackingTarget.valid;
-  const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
-  const isAudioEnableRequested = !!config?.rune_audio_enabled;
-  const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
-  const installedAudioFeatureGroups = audioModState?.feature_groups ?? [];
-  const selectedAudioSourceFeatureGroups = audioSetupMode === "existing"
-    ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)?.feature_groups ?? []
-    : [];
-  const inheritedAudioFeatureGroups = isAudioModUpgrade
-    ? installedAudioFeatureGroups
-    : selectedAudioSourceFeatureGroups;
-  const audioFeatureSelection = {
-    includeAudioTelemetry: includeAudioTelemetry
-      || audioSetupPurpose === "recognition"
-      || inheritedAudioFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID),
-    includeRoomTools: includeRoomTools
-      || inheritedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
-  };
-  const audioPrepareBlockedReason = !hasSelectedAudioModFeature(audioFeatureSelection)
-    ? config?.app_language === "en-US"
-      ? "Select at least one Mod feature"
-      : "请至少选择一个 Mod 功能"
-    : isAudioModFeatureManagement
-        && !selectedAudioModFeatureAddsCapability(
-          audioFeatureSelection,
-          installedAudioFeatureGroups,
-        )
-      ? config?.app_language === "en-US"
-        ? "The current Mod already contains every selected feature"
-        : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能"
-      : !isAudioModUpgrade && audioSetupNameError
-        ? audioSetupNameError
-        : !isAudioModFeatureManagement && audioSetupMode === "existing" && !audioSetupSource
-          ? config?.app_language === "en-US"
-            ? "Select the original Mod whose features should be preserved"
-            : "请选择一个要保留功能的原始 Mod"
-          : "";
-
-  const locateWindow = async (label: AuxiliaryWindowLabel) => {
-    const names = config?.app_language === "en-US"
-      ? { overlay: "Terror Zone Broadcast", "stats-overlay": "Run Statistics", "bongo-cat": "Cat Overlay" }
-      : { overlay: "邪恶区域播报窗口", "stats-overlay": "场景统计窗口", "bongo-cat": "猫咪悬浮窗" };
-    const name = names[label];
-    setWindowPlacementBusy(label);
-    try {
-      await locateAuxiliaryWindow(label);
-      showToast(
-        "success",
-        config?.app_language === "en-US"
-          ? `${name} was moved to this display`
-          : `${name}已移到当前屏幕`,
-      );
-    } catch (error) {
-      showToast(
-        "error",
-        config?.app_language === "en-US"
-          ? `Failed to locate ${name}: ${error}`
-          : `定位${name}失败: ${error}`,
-      );
-    } finally {
-      setWindowPlacementBusy(null);
-    }
-  };
-
-  const recoverAllWindows = async () => {
-    setWindowPlacementBusy("all");
-    try {
-      const recovered = await recoverAuxiliaryWindows("main");
-      if (recovered.length === 0) {
-        showToast("info", "当前没有已启用的悬浮窗");
-      } else {
-        showToast(
-          "success",
-          config?.app_language === "en-US"
-            ? `Moved ${recovered.length} overlay windows to this display`
-            : `已将 ${recovered.length} 个悬浮窗移到当前屏幕`,
-        );
-      }
-    } catch (error) {
-      showToast(
-        "error",
-        config?.app_language === "en-US"
-          ? `Failed to recover overlay windows: ${error}`
-          : `找回悬浮窗失败: ${error}`,
-      );
-    } finally {
-      setWindowPlacementBusy(null);
-    }
-  };
 
   // Config backup for rollback
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
@@ -230,99 +88,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     };
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
-  useEffect(() => {
-    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
-    let cancelled = false;
-    let timer: number | undefined;
-    const poll = async () => {
-      try {
-        const next = await invokeCommand<RuneAudioStatus>("get_rune_audio_status");
-        if (!cancelled) setAudioStatus(next);
-      } catch (error) {
-        console.warn("读取音频遥测状态失败", error);
-      }
-      if (!cancelled) timer = window.setTimeout(poll, 1000);
-    };
-    void poll();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [open, activeTab]);
-
-  useEffect(() => {
-    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing") || !trackingTargetId) return;
-    let cancelled = false;
-    const cached = audioModStateCacheRef.current.get(trackingTargetId);
-    if (cached) {
-      setAudioModState(cached.state);
-      setAudioModScannedAt(cached.scannedAt);
-      setAudioModStateLoading(false);
-      if (audioModState?.account_id === trackingTargetId) return;
-      const defaults = audioSetupDefaults(cached.state);
-      const availableSources = cached.state.installed_mods.filter((mod) => mod.source_eligible);
-      setAudioSetupSource((current) => (
-        current && availableSources.some((mod) => mod.name === current)
-          ? current
-          : defaults.source
-      ));
-      setAudioSetupMode(defaults.mode);
-      setAudioSetupName(defaults.name);
-      return;
-    }
-    setAudioModStateLoading(true);
-    void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: trackingTargetId })
-      .then((next) => {
-        const scannedAt = Date.now();
-        audioModStateCacheRef.current.set(trackingTargetId, { state: next, scannedAt });
-        if (cancelled) return;
-        setAudioModState(next);
-        setAudioModScannedAt(scannedAt);
-        const defaults = audioSetupDefaults(next);
-        const availableSources = next.installed_mods.filter((mod) => mod.source_eligible);
-        setAudioSetupSource((current) => (
-          current && availableSources.some((mod) => mod.name === current)
-            ? current
-            : defaults.source
-        ));
-        setAudioSetupMode(defaults.mode);
-        setAudioSetupName(defaults.name);
-        if (!next.ready && config?.rune_audio_enabled) {
-          setIncludeAudioTelemetry(true);
-          setIncludeRoomTools(true);
-          setAudioSetupOpen(true);
-        }
-      })
-      .catch((error) => {
-        if (!cancelled) {
-          setAudioModState(null);
-          console.warn("读取识别 Mod 状态失败", error);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setAudioModStateLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [open, activeTab, trackingTargetId]);
-
-  useEffect(() => {
-    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listenEvent<AudioModPrepareProgress>("audio-mod-prepare-progress", (event) => {
-      if (!cancelled) setAudioPrepareProgress(event.payload);
-    }).then((stopListening) => {
-      if (cancelled) stopListening();
-      else unlisten = stopListening;
-    });
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [open, activeTab]);
-
   // Game settings edit states (per account)
   const [selectedAccountId, setSelectedAccountId] = useState<string>("");
   const [gameSettings, setGameSettings] = useState<SettingsMap>({});
@@ -344,11 +109,21 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Local detected paths
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
-  const [exportPickerOpen, setExportPickerOpen] = useState(false);
-  const [exportAccountIds, setExportAccountIds] = useState<string[]>([]);
-  const [exportPlaintextRiskAcknowledged, setExportPlaintextRiskAcknowledged] = useState(false);
-  const [accountTransferBusy, setAccountTransferBusy] = useState<"export" | "import" | null>(null);
-  const [diagnosticExportBusy, setDiagnosticExportBusy] = useState(false);
+  const {
+    exportPickerOpen,
+    setExportPickerOpen,
+    exportAccountIds,
+    setExportAccountIds,
+    plaintextRiskAcknowledged: exportPlaintextRiskAcknowledged,
+    setPlaintextRiskAcknowledged: setExportPlaintextRiskAcknowledged,
+    transferBusy: accountTransferBusy,
+    diagnosticBusy: diagnosticExportBusy,
+    toggleExportAccount,
+    exportAccounts: handleExportAccounts,
+    importAccounts: handleImportAccounts,
+    openLogs: handleOpenLogs,
+    exportDiagnostics: handleExportDiagnostics,
+  } = useMaintenanceController(accounts, loadAccounts);
 
   // Auto initialize selected account and active tab
   // Backup config for rollback when modal opens
@@ -608,6 +383,56 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
+  const {
+    audioStatus,
+    audioModState,
+    audioModStateLoading,
+    audioSetupOpen,
+    setAudioSetupOpen,
+    audioSetupPurpose,
+    audioSetupMode,
+    setAudioSetupMode,
+    audioSetupSource,
+    setAudioSetupSource,
+    audioSetupName,
+    setAudioSetupName,
+    includeAudioTelemetry,
+    setIncludeAudioTelemetry,
+    includeRoomTools,
+    setIncludeRoomTools,
+    audioPreparing,
+    audioPrepareProgress,
+    audioModScannedAt,
+    normalizedAudioSetupName,
+    isAudioModUpgrade,
+    isAudioModFeatureManagement,
+    audioSetupNameError,
+    showAudioSetupNameError,
+    hasInitializedAudioAccount,
+    hasAudioTarget,
+    hasReadyAudioMod,
+    isAudioEnableRequested,
+    isAudioRecognitionActive,
+    audioPrepareBlockedReason,
+    refreshAudioModState,
+    handleAudioTargetChange,
+    handleAudioToggle,
+    handleOpenAudioSetup,
+    handleOpenModProcessing,
+    handlePrepareAudioMod,
+    toggleAudioDiagnosticRecording,
+  } = useAudioModuleController({
+    open,
+    activeTab,
+    config,
+    initializedAccounts: initializedTrackingAccounts,
+    trackingTargetId,
+    updateConfig,
+    persistConfig: persistGlobalDraft,
+    loadAccounts,
+    setActiveTab,
+  });
+
   const updateGameSetting = (key: string, value: unknown) => {
     if (gameSettingsLoadError) return;
     setGameSettings(prev => key === FRAMERATE_CAP_KEY
@@ -651,270 +476,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  const toggleAudioDiagnosticRecording = async () => {
-    try {
-      if (audioStatus?.diagnostic_recording) {
-        const path = await invokeCommand<string | null>("stop_rune_audio_diagnostic_recording");
-        setAudioStatus(previous => previous ? {
-          ...previous,
-          diagnostic_recording: false,
-          diagnostic_recording_path: path ?? previous.diagnostic_recording_path,
-        } : previous);
-        if (path) showToast("success", `诊断录音已保存：${path}`);
-      } else {
-        const path = await invokeCommand<string>("start_rune_audio_diagnostic_recording");
-        setAudioStatus(previous => previous ? {
-          ...previous,
-          diagnostic_recording: true,
-          diagnostic_recording_path: path,
-        } : previous);
-        showToast("success", "诊断录音已开始，仅录制目标 D2R 进程的声音");
-      }
-    } catch (error) {
-      showToast("error", `切换诊断录音失败: ${error}`);
-    }
-  };
-
-  const persistAudioEnabledState = async (accountId: string, enabled: boolean) => {
-    const current = useGlobalConfig.getState().config;
-    if (!current) return;
-    const next = {
-      ...current,
-      rune_audio_target_account: accountId,
-      rune_audio_enabled: enabled,
-    };
-    useGlobalConfig.setState({ config: next });
-    await persistGlobalDraft(next, true);
-  };
-
-  const refreshAudioModState = async () => {
-    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
-    if (!accountId) return;
-    setAudioModStateLoading(true);
-    try {
-      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
-      const scannedAt = Date.now();
-      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
-      setAudioModState(next);
-      setAudioModScannedAt(scannedAt);
-      const defaults = audioSetupDefaults(next);
-      setAudioSetupSource(defaults.source);
-      setAudioSetupMode(defaults.mode);
-      setAudioSetupName(defaults.name);
-    } catch (error) {
-      showToast("error", `重新扫描 Mod 失败: ${error}`);
-    } finally {
-      setAudioModStateLoading(false);
-    }
-  };
-
-  const handleAudioTargetChange = async (accountId: string) => {
-    const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
-    updateConfig(next => {
-      next.rune_audio_target_account = accountId;
-      next.rune_audio_enabled = false;
-    });
-    setAudioSetupOpen(false);
-    setAudioSetupName("");
-    setIncludeAudioTelemetry(true);
-    setIncludeRoomTools(true);
-    setAudioModStateLoading(true);
-    try {
-      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
-      const scannedAt = Date.now();
-      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
-      setAudioModState(next);
-      setAudioModScannedAt(scannedAt);
-      const defaults = audioSetupDefaults(next);
-      setAudioSetupSource(defaults.source);
-      setAudioSetupMode(defaults.mode);
-      setAudioSetupName(defaults.name);
-      if (wasEnabled && next.ready) {
-        await persistAudioEnabledState(accountId, true);
-      } else if (wasEnabled) {
-        setIncludeAudioTelemetry(true);
-        setIncludeRoomTools(true);
-        setAudioSetupPurpose("recognition");
-        setAudioSetupOpen(true);
-        setActiveTab("mod-processing");
-      }
-    } catch (error) {
-      showToast("error", `无法检查账号的识别 Mod：${error}`);
-    } finally {
-      setAudioModStateLoading(false);
-    }
-  };
-
-  const handleAudioToggle = async (enabled: boolean) => {
-    if (!enabled) {
-      if (trackingTargetId) await persistAudioEnabledState(trackingTargetId, false);
-      else updateConfig(next => { next.rune_audio_enabled = false; });
-      setAudioSetupOpen(false);
-      await invokeCommand("stop_rune_audio_monitor").catch(() => {});
-      return;
-    }
-
-    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
-    if (!accountId) {
-      showToast("warning", "请先初始化一个账号");
-      return;
-    }
-    setAudioModStateLoading(true);
-    try {
-      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
-      const scannedAt = Date.now();
-      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
-      setAudioModState(next);
-      setAudioModScannedAt(scannedAt);
-      if (next.ready) {
-        await persistAudioEnabledState(accountId, true);
-        setAudioSetupOpen(false);
-        if (next.update_required) {
-          showToast("warning", "旧版识别 Mod 仍可使用；建议更新以获得即时恐怖区域识别");
-        }
-        if (next.running_pid && next.active_session_ready === true) {
-          await invokeCommand("start_rune_audio_monitor").catch(() => {});
-        } else if (next.restart_required) {
-          showToast("warning", "设置已生效，请重启该账号的游戏后开始识别");
-        }
-        return;
-      }
-
-      const defaults = audioSetupDefaults(next);
-      setAudioSetupSource(defaults.source);
-      setAudioSetupMode(defaults.mode);
-      setAudioSetupName(defaults.name);
-      updateConfig(current => {
-        current.rune_audio_target_account = accountId;
-        current.rune_audio_enabled = false;
-      });
-      setIncludeAudioTelemetry(true);
-      setIncludeRoomTools(true);
-      setAudioSetupPurpose("recognition");
-      setAudioSetupOpen(true);
-      setActiveTab("mod-processing");
-    } catch (error) {
-      showToast("error", `无法开启声纹识别：${error}`);
-    } finally {
-      setAudioModStateLoading(false);
-    }
-  };
-
-  const handleOpenAudioSetup = (purpose: ModProcessingPurpose = "manage") => {
-    if (audioModState) {
-      const defaults = audioSetupDefaults(audioModState);
-      setAudioSetupMode(defaults.mode);
-      setAudioSetupSource(defaults.source);
-      setAudioSetupName(defaults.name);
-    }
-    setIncludeAudioTelemetry(true);
-    setIncludeRoomTools(true);
-    setAudioSetupPurpose(purpose);
-    setAudioSetupOpen(true);
-  };
-
-  const handleOpenModProcessing = (purpose: ModProcessingPurpose = "manage") => {
-    handleOpenAudioSetup(purpose);
-    setActiveTab("mod-processing");
-  };
-
-  const handlePrepareAudioMod = async () => {
-    const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
-    if (!accountId) return;
-    if (audioPrepareBlockedReason) {
-      showToast("warning", audioPrepareBlockedReason);
-      return;
-    }
-
-    const featureOptions = audioModFeatureInvokeOptions(audioFeatureSelection);
-
-    setAudioPreparing(true);
-    setAudioPrepareProgress({
-      account_id: accountId,
-      phase: "starting",
-      percent: 1,
-      message: "正在开始准备…",
-    });
-    try {
-      if (isAudioModUpgrade) {
-        const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
-        const next = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
-          accountId,
-          sourceModName: isAudioModFeatureManagement
-            ? null
-            : audioSetupMode === "existing" ? audioSetupSource : null,
-          ...featureOptions,
-        });
-        const scannedAt = Date.now();
-        audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
-        setAudioModState(next);
-        setAudioModScannedAt(scannedAt);
-        await persistAudioEnabledState(
-          accountId,
-          wasEnabled && hasAudioTelemetry(next.feature_groups),
-        );
-        setAudioSetupOpen(false);
-        showToast(
-          "success",
-          config?.app_language === "en-US"
-            ? `Mod “${next.current_mod_name ?? audioSetupName}” was updated in place; its name and launch arguments are unchanged`
-            : `Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`,
-        );
-        return;
-      }
-      const result = await invokeCommand<AudioModPrepareResult>("prepare_audio_mod", {
-        accountId,
-        modName: normalizedAudioSetupName,
-        sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
-        ...featureOptions,
-      });
-      const next = await invokeCommand<AudioModSetupState>("apply_audio_mod_to_account", {
-        accountId,
-        modName: result.mod_name,
-      });
-      const scannedAt = Date.now();
-      audioModStateCacheRef.current.set(accountId, { state: next, scannedAt });
-      await loadAccounts();
-      setAudioModState(next);
-      setAudioModScannedAt(scannedAt);
-      const preparedAudioTelemetry = hasAudioTelemetry(result.feature_groups)
-        && hasAudioTelemetry(next.feature_groups);
-      await persistAudioEnabledState(
-        accountId,
-        preparedAudioTelemetry,
-      );
-      setAudioSetupOpen(false);
-      setAudioSetupName("");
-      if (next.restart_required) {
-        showToast(
-          "warning",
-          config?.app_language === "en-US"
-            ? preparedAudioTelemetry
-              ? "The recognition Mod is ready. Restart this game session once to enable it"
-              : "The selected Mod features are ready. Restart this game session once to enable them"
-            : preparedAudioTelemetry
-              ? "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别"
-              : "所选 Mod 功能已准备完成。当前游戏需重启一次后生效",
-        );
-      } else {
-        showToast(
-          "success",
-          config?.app_language === "en-US"
-            ? preparedAudioTelemetry
-              ? "Audio recognition is ready and will start with the next game session"
-              : "The selected Mod features are ready for the next game session"
-            : preparedAudioTelemetry
-              ? "声纹识别已准备完成，下次启动会自动生效"
-              : "所选 Mod 功能已准备完成，下次启动游戏时生效",
-        );
-      }
-    } catch (error) {
-      showToast("error", `准备识别 Mod 失败：${error}`);
-    } finally {
-      setAudioPreparing(false);
-    }
-  };
-
   const applyDetectedPath = (field: keyof GlobalConfig, value: string | null) => {
     if (value) {
       updateConfig(c => {
@@ -923,99 +484,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       showToast("success", "成功自动应用检测到的路径");
     } else {
       showToast("warning", "未能检测到默认路径，请手动选择");
-    }
-  };
-
-  const toggleExportAccount = (accountId: string) => {
-    setExportAccountIds(current => current.includes(accountId)
-      ? current.filter(id => id !== accountId)
-      : [...current, accountId]);
-  };
-
-  const handleExportAccounts = async () => {
-    if (exportAccountIds.length === 0) {
-      showToast("warning", "请至少选择一个要导出的账号");
-      return;
-    }
-    if (!exportPlaintextRiskAcknowledged) {
-      showToast("warning", "请先确认已理解明文 Token 的账号安全风险");
-      return;
-    }
-    const date = new Date().toISOString().slice(0, 10);
-    const destination = await saveDialog({
-      title: "导出 D2RHub 账号",
-      defaultPath: `D2RHub-accounts-${date}.json`,
-      filters: [{ name: "D2RHub 账号包", extensions: ["json"] }],
-    });
-    if (!destination) return;
-
-    setAccountTransferBusy("export");
-    try {
-      const summary = await invokeCommand<ExportAccountsSummary>("export_accounts", {
-        accountIds: exportAccountIds,
-        destination,
-        acknowledgePlaintextRisk: true,
-      });
-      showToast("success", `已导出 ${summary.account_count} 个账号`);
-      showToast(
-        "warning",
-        summary.plaintext_token_count > 0
-          ? `导出文件包含 ${summary.plaintext_token_count} 个明文 Token；任何获得文件的人都可以登录对应账号，请妥善保管并在迁移后删除`
-          : "导出文件仍包含账号认证快照，请妥善保管并在迁移后删除",
-      );
-      setExportPickerOpen(false);
-      setExportPlaintextRiskAcknowledged(false);
-    } catch (error) {
-      showToast("error", `导出账号失败: ${error}`);
-    } finally {
-      setAccountTransferBusy(null);
-    }
-  };
-
-  const handleImportAccounts = async () => {
-    const source = await openDialog({
-      title: "选择 D2RHub 账号导出文件",
-      multiple: false,
-      filters: [{ name: "D2RHub 账号包", extensions: ["json"] }],
-    });
-    if (!source || Array.isArray(source)) return;
-
-    setAccountTransferBusy("import");
-    try {
-      const summary = await invokeCommand<ImportAccountsSummary>("import_accounts", { source });
-      await loadAccounts();
-      showToast(
-        "success",
-        `已导入 ${summary.imported.length} 个账号，本机重新加密 ${summary.reencrypted_token_count} 个 Token`,
-      );
-      if (summary.warnings.length > 0) {
-        const extra = summary.warnings.length > 1 ? `（另有 ${summary.warnings.length - 1} 项提示）` : "";
-        showToast("warning", `${summary.warnings[0]}${extra}`);
-      }
-    } catch (error) {
-      showToast("error", `导入账号失败: ${error}`);
-    } finally {
-      setAccountTransferBusy(null);
-    }
-  };
-
-  const handleOpenLogs = async () => {
-    try {
-      await invokeCommand("open_logs_dir");
-    } catch (error) {
-      showToast("error", `打开日志失败: ${error}`);
-    }
-  };
-
-  const handleExportDiagnostics = async () => {
-    setDiagnosticExportBusy(true);
-    try {
-      const path = await invokeCommand<string>("export_diagnostic_bundle");
-      showToast("success", `隐私脱敏诊断包已保存：${path}`);
-    } catch (error) {
-      showToast("error", `导出诊断包失败: ${error}`);
-    } finally {
-      setDiagnosticExportBusy(false);
     }
   };
 

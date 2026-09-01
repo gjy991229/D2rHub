@@ -362,6 +362,17 @@ assert(
   "[CONFIG-EVENT-001] only the backend transaction observer publishes global config commits",
 );
 
+const settingsCenterFile = path.join(g.process.cwd(), "src", "components", "config", "SettingsCenter.tsx");
+const settingsCenterSource = fs.readFileSync(settingsCenterFile, "utf8");
+const settingsCenterLines = settingsCenterSource.replace(/\r\n/g, "\n").split("\n").length;
+assert(
+  settingsCenterLines <= 900
+    && settingsCenterSource.includes("useAudioModuleController")
+    && settingsCenterSource.includes("useMaintenanceController")
+    && settingsCenterSource.includes("useAuxiliaryWindowActions"),
+  `[FRONTEND-SETTINGS-001] settings shell stays composition-only and below 900 lines (actual: ${settingsCenterLines})`,
+);
+
 for (const entryFile of [
   path.join(g.process.cwd(), "src", "App.tsx"),
   path.join(g.process.cwd(), "src", "pages", "Overlay.tsx"),

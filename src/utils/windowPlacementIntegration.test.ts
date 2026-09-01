@@ -18,6 +18,7 @@ export function runTests() {
     source("src", "components", "config", "SettingsCenter.tsx"),
     source("src", "features", "settings", "panels", "OverlayPanel.tsx"),
     source("src", "features", "settings", "panels", "PetPanel.tsx"),
+    source("src", "features", "settings", "useAuxiliaryWindowActions.ts"),
   ].join("\n");
   const overlay = source("src", "pages", "Overlay.tsx");
   const cat = source("src", "pages", "BongoCatWindow.tsx");
