@@ -23,6 +23,15 @@ const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 1;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 19;
+const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 267;
+const ROOM_TOOL_BUTTON_SCALE: f64 = 0.30;
+const ROOM_TOOL_BUTTON_Y: i64 = 12;
+const ROOM_TOOL_NEXT_X: i64 = -1_040;
+const ROOM_TOOL_CREATE_X: i64 = -760;
+const ROOM_TOOL_JOIN_X: i64 = -480;
+const ROOM_TOOL_CONFIRM_Y: i64 = 92;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
@@ -187,11 +196,37 @@ impl RequestedFeatureGroups {
                 "局内房间工具",
             ),
         ] {
-            if requested && !groups.iter().any(|group| group.id == id) {
-                return Err(format!("生成结果缺少已选择的{label}功能组"));
+            if requested {
+                let group = groups
+                    .iter()
+                    .find(|group| group.id == id)
+                    .ok_or_else(|| format!("生成结果缺少已选择的{label}功能组"))?;
+                validate_supported_feature_group(group)
+                    .map_err(|error| format!("生成结果中的{label}功能组无效：{error}"))?;
             }
         }
         Ok(())
+    }
+
+    fn include_existing_known(mut self, groups: &[GeneratorFeatureGroup]) -> Self {
+        self.audio_telemetry |= groups
+            .iter()
+            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
+        self.room_tools |= groups
+            .iter()
+            .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
+        self
+    }
+
+    fn all_present(self, groups: &[GeneratorFeatureGroup]) -> bool {
+        (!self.audio_telemetry
+            || groups
+                .iter()
+                .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID))
+            && (!self.room_tools
+                || groups
+                    .iter()
+                    .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID))
     }
 }
 
@@ -201,6 +236,8 @@ struct AudioModReplaceJournal {
     mod_name: String,
     staged_relative: PathBuf,
     backup_relative: PathBuf,
+    #[serde(default)]
+    required_feature_groups: Vec<GeneratorFeatureGroup>,
 }
 
 #[derive(Debug)]
@@ -421,11 +458,439 @@ fn validate_feature_group_entries(groups: &[GeneratorFeatureGroup]) -> Result<()
         {
             return Err(format!("D2RHub Mod 功能组元数据无效：{}", group.id));
         }
+        validate_supported_feature_group(group)?;
     }
     Ok(())
 }
 
-fn validate_audio_mod_directory(
+fn validate_preserved_feature_groups(
+    existing: &[GeneratorFeatureGroup],
+    candidate: &[GeneratorFeatureGroup],
+) -> Result<(), String> {
+    for required in existing {
+        let preserved = candidate.iter().any(|actual| {
+            actual.id == required.id
+                && actual.recipe_version == required.recipe_version
+                && actual.fingerprint == required.fingerprint
+        });
+        if !preserved {
+            return Err(format!(
+                "生成结果未无损保留现有功能组“{}”（r{}）；为避免删除未来版本数据，已停止原位更新",
+                required.id, required.recipe_version
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_supported_feature_group(group: &GeneratorFeatureGroup) -> Result<(), String> {
+    match group.id.as_str() {
+        AUDIO_TELEMETRY_FEATURE_ID => {
+            if group.recipe_version != AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION {
+                return Err(format!(
+                    "D2RHub Mod 的声纹识别功能组配方 r{} 不受支持（需要 r{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION}）",
+                    group.recipe_version
+                ));
+            }
+            validate_audio_feature_fingerprint(&group.fingerprint)
+        }
+        IN_GAME_ROOM_TOOLS_FEATURE_ID => {
+            if group.recipe_version != IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION {
+                return Err(format!(
+                    "D2RHub Mod 的局内房间工具配方 r{} 不受支持（需要 r{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}）",
+                    group.recipe_version
+                ));
+            }
+            let expected = format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}");
+            if group.fingerprint != expected {
+                return Err("D2RHub Mod 的局内房间工具指纹无效，请重新加工".to_string());
+            }
+            Ok(())
+        }
+        // Unknown groups are intentionally preserved and accepted. Their owner is responsible for
+        // interpreting the recipe and fingerprint once D2RHub learns that feature.
+        _ => Ok(()),
+    }
+}
+
+fn validate_audio_feature_fingerprint(fingerprint: &str) -> Result<(), String> {
+    let parts = fingerprint.split(';').collect::<Vec<_>>();
+    let expected_protocol = format!("protocol={PROTOCOL_VERSION}");
+    if parts.len() != 5
+        || parts[0] != format!("audio-v{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION}")
+        || parts[1] != expected_protocol
+        || !matches!(parts[2], "areas=countess_route" | "areas=all_areas")
+        || !parts[3].starts_with("track=")
+        || !parts[4].starts_with("gain_mdb=")
+    {
+        return Err("D2RHub Mod 的声纹识别功能组指纹无效，请重新加工".to_string());
+    }
+
+    let categories = parts[3].trim_start_matches("track=");
+    let supported = [
+        "charms", "essences", "gems", "jewels", "keys", "organs", "runes",
+    ];
+    let requested = if categories.is_empty() {
+        Vec::new()
+    } else {
+        categories.split(',').collect::<Vec<_>>()
+    };
+    if requested.windows(2).any(|pair| pair[0] >= pair[1])
+        || requested
+            .iter()
+            .any(|category| !supported.contains(category))
+        || parts[4]
+            .trim_start_matches("gain_mdb=")
+            .parse::<i32>()
+            .is_err()
+    {
+        return Err("D2RHub Mod 的声纹识别功能组指纹无效，请重新加工".to_string());
+    }
+    Ok(())
+}
+
+fn read_room_tool_layout(layout_directory: &Path, name: &str) -> Result<serde_json::Value, String> {
+    let path = layout_directory.join(name);
+    let bytes = std::fs::read(&path).map_err(|_| format!("局内房间工具缺少布局文件：{name}"))?;
+    serde_json::from_slice(&bytes).map_err(|_| format!("局内房间工具布局已损坏：{name}"))
+}
+
+fn layout_has_child_message(document: &serde_json::Value, field: &str, expected: &str) -> bool {
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                child
+                    .get("fields")
+                    .and_then(|fields| fields.get(field))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected)
+            })
+        })
+}
+
+fn layout_has_timed_child_message(
+    document: &serde_json::Value,
+    expected: &str,
+    expected_time: f64,
+) -> bool {
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                let fields = child.get("fields");
+                fields
+                    .and_then(|value| value.get("message"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(expected)
+                    && fields
+                        .and_then(|value| value.get("time"))
+                        .and_then(serde_json::Value::as_f64)
+                        .is_some_and(|time| (time - expected_time).abs() < f64::EPSILON)
+            })
+        })
+}
+
+fn find_layout_node<'a>(
+    document: &'a serde_json::Value,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    if document.get("name").and_then(serde_json::Value::as_str) == Some(name) {
+        return Some(document);
+    }
+    document
+        .get("children")
+        .and_then(serde_json::Value::as_array)?
+        .iter()
+        .find_map(|child| find_layout_node(child, name))
+}
+
+fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
+    let layout_directory = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let hud = read_room_tool_layout(&layout_directory, "HudWarningshd.json")?;
+    if !layout_has_child_message(&hud, "message", "PanelManager:OpenPanel:D2RHubRoomToolbar") {
+        return Err("局内房间工具没有挂载到游戏 HUD".to_string());
+    }
+
+    let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
+    for action in [
+        "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm",
+        "PanelManager:OpenPanel:D2RHubOpenCreateGame",
+        "PanelManager:OpenPanel:D2RHubOpenJoinGame",
+    ] {
+        if !layout_has_child_message(&toolbar, "onClickMessage", action) {
+            return Err("局内房间工具栏按钮不完整".to_string());
+        }
+    }
+    for (name, expected_x) in [
+        ("D2RHubNextGame", ROOM_TOOL_NEXT_X),
+        ("D2RHubCreateGame", ROOM_TOOL_CREATE_X),
+        ("D2RHubJoinGame", ROOM_TOOL_JOIN_X),
+    ] {
+        let button = find_layout_node(&toolbar, name)
+            .ok_or_else(|| format!("局内房间工具栏缺少按钮 {name}"))?;
+        let scale = button
+            .pointer("/fields/rect/scale")
+            .and_then(serde_json::Value::as_f64);
+        if button
+            .pointer("/fields/rect/x")
+            .and_then(serde_json::Value::as_i64)
+            != Some(expected_x)
+            || button
+                .pointer("/fields/rect/y")
+                .and_then(serde_json::Value::as_i64)
+                != Some(ROOM_TOOL_BUTTON_Y)
+            || scale.is_none_or(|value| (value - ROOM_TOOL_BUTTON_SCALE).abs() > f64::EPSILON)
+        {
+            return Err(format!("局内房间工具栏按钮尺寸或位置无效：{name}"));
+        }
+    }
+    let next_game = find_layout_node(&toolbar, "D2RHubNextGame")
+        .ok_or_else(|| "局内“下一局”按钮不完整".to_string())?;
+    if next_game
+        .pointer("/fields/tooltipString")
+        .and_then(serde_json::Value::as_str)
+        .is_none_or(|tooltip| tooltip.is_empty() || tooltip.starts_with('@'))
+        || next_game
+            .pointer("/fields/tooltipOffset/y")
+            .and_then(serde_json::Value::as_i64)
+            != Some(NEXT_GAME_TOOLTIP_OFFSET_Y)
+    {
+        return Err("局内“下一局”第一层提示位置或文字无效".to_string());
+    }
+
+    let confirmation =
+        read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateConfirmhd.json")?;
+    let confirm_next = find_layout_node(&confirmation, "D2RHubConfirmNextGame")
+        .ok_or_else(|| "局内“下一局”确认按钮不完整".to_string())?;
+    if confirmation
+        .pointer("/fields/isDismissable")
+        .and_then(serde_json::Value::as_bool)
+        != Some(true)
+        || confirmation
+            .pointer("/fields/acceptsEscKeyEverywhere")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || !layout_has_child_message(
+            &confirmation,
+            "onClickMessage",
+            "PanelManager:OpenPanel:D2RHubQuickRecreate",
+        )
+        || !layout_has_child_message(
+            &confirmation,
+            "message",
+            "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm",
+        )
+        || confirm_next
+            .pointer("/fields/rect/x")
+            .and_then(serde_json::Value::as_i64)
+            != Some(ROOM_TOOL_NEXT_X)
+        || confirm_next
+            .pointer("/fields/rect/y")
+            .and_then(serde_json::Value::as_i64)
+            != Some(ROOM_TOOL_CONFIRM_Y)
+        || confirm_next
+            .pointer("/fields/rect/scale")
+            .and_then(serde_json::Value::as_f64)
+            .is_none_or(|value| (value - ROOM_TOOL_BUTTON_SCALE).abs() > f64::EPSILON)
+    {
+        return Err("局内“下一局”确认条不完整".to_string());
+    }
+
+    let quick_recreate = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreatehd.json")?;
+    if !layout_has_child_message(
+        &quick_recreate,
+        "message",
+        "CharacterSelect:LoadCharacter:2",
+    ) {
+        return Err("局内“下一局”动作无效".to_string());
+    }
+    for (name, opener_name, native_target, opposite_target) in [
+        (
+            "D2RHubOpenCreateGamehd.json",
+            "D2RHubOpenCreateGame",
+            "CreateGamePanel",
+            "JoinGamePanel",
+        ),
+        (
+            "D2RHubOpenJoinGamehd.json",
+            "D2RHubOpenJoinGame",
+            "JoinGamePanel",
+            "CreateGamePanel",
+        ),
+    ] {
+        let opener = read_room_tool_layout(&layout_directory, name)?;
+        if opener.get("fields").is_some()
+            || !layout_has_timed_child_message(
+                &opener,
+                &format!("PanelManager:TogglePanel:{native_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &opener,
+                &format!("PanelManager:ClosePanel:{opposite_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &opener,
+                &format!("PanelManager:ClosePanel:{opener_name}"),
+                0.1,
+            )
+        {
+            return Err(format!("局内房间工具未按 MDK 时序打开 {native_target}"));
+        }
+    }
+
+    for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
+        let pause = read_room_tool_layout(&layout_directory, pause_name)?;
+        let safe_hub = find_layout_node(&pause, "D2RHubKeyboardGatewayHub")
+            .ok_or_else(|| format!("暂停布局缺少安全键盘焦点：{pause_name}"))?;
+        if pause
+            .pointer("/fields/defaultWidget")
+            .and_then(serde_json::Value::as_str)
+            != Some("D2RHubKeyboardGatewayHub")
+            || safe_hub
+                .pointer("/fields/acceptsReturnKey")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+        {
+            return Err(format!("暂停布局安全键盘焦点无效：{pause_name}"));
+        }
+        let return_to_game = find_layout_node(&pause, "ReturnToGame")
+            .ok_or_else(|| format!("暂停布局缺少 ReturnToGame：{pause_name}"))?;
+        if return_to_game
+            .pointer("/fields/navigation/left/name")
+            .and_then(serde_json::Value::as_str)
+            != Some("D2RHubKeyboardCreateGateway")
+            || return_to_game
+                .pointer("/fields/navigation/right/name")
+                .and_then(serde_json::Value::as_str)
+                != Some("D2RHubKeyboardJoinGateway")
+        {
+            return Err(format!("暂停布局没有连接创建/加入键盘入口：{pause_name}"));
+        }
+        for (gateway, action) in [
+            (
+                "D2RHubKeyboardCreateGateway",
+                "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate",
+            ),
+            (
+                "D2RHubKeyboardJoinGateway",
+                "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin",
+            ),
+        ] {
+            let node = find_layout_node(&pause, gateway)
+                .ok_or_else(|| format!("暂停布局缺少键盘入口 {gateway}：{pause_name}"))?;
+            if node
+                .pointer("/fields/onClickMessage")
+                .and_then(serde_json::Value::as_str)
+                != Some(action)
+                || node
+                    .pointer("/fields/acceptsReturnKey")
+                    .and_then(serde_json::Value::as_bool)
+                    != Some(true)
+            {
+                return Err(format!("暂停布局键盘入口无效 {gateway}：{pause_name}"));
+            }
+        }
+    }
+    for (helper_name, helper_panel, native_target, opposite_target) in [
+        (
+            "D2RHubKeyboardOpenCreatehd.json",
+            "D2RHubKeyboardOpenCreate",
+            "CreateGamePanel",
+            "JoinGamePanel",
+        ),
+        (
+            "D2RHubKeyboardOpenJoinhd.json",
+            "D2RHubKeyboardOpenJoin",
+            "JoinGamePanel",
+            "CreateGamePanel",
+        ),
+    ] {
+        let helper = read_room_tool_layout(&layout_directory, helper_name)?;
+        if !layout_has_timed_child_message(&helper, "PausePanelMessage:Close", 0.005)
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:TogglePanel:{native_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:ClosePanel:{opposite_target}"),
+                0.1,
+            )
+            || !layout_has_timed_child_message(
+                &helper,
+                &format!("PanelManager:ClosePanel:{helper_panel}"),
+                0.1,
+            )
+        {
+            return Err(format!("暂停菜单房间入口未复用 MDK 时序：{helper_name}"));
+        }
+    }
+
+    let form_specs: [(&str, &str, &[&str]); 2] = [
+        (
+            "creategamepanelhd.json",
+            "GameNameInput",
+            &["GameNameInput", "PasswordInput", "DescriptionInput"],
+        ),
+        (
+            "joingamepanelhd.json",
+            "NameInput",
+            &["NameInput", "PasswordInput"],
+        ),
+    ];
+    for (name, primary_input, input_names) in form_specs {
+        let form = read_room_tool_layout(&layout_directory, name)?;
+        if form
+            .pointer("/fields/defaultWidget")
+            .and_then(serde_json::Value::as_str)
+            != Some(primary_input)
+            || form
+                .pointer("/fields/isDismissable")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            || form
+                .pointer("/fields/acceptsEscKeyEverywhere")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+        {
+            return Err(format!("局内房间表单未正确加工：{name}"));
+        }
+        if input_names.iter().any(|input_name| {
+            let Some(node) = find_layout_node(&form, input_name) else {
+                return true;
+            };
+            node.pointer("/fields/imeEnabled")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+                || node.pointer("/fields/alwaysAcceptsKeyInput").is_some()
+        }) {
+            return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
+        }
+        let close_action = if primary_input == "NameInput" {
+            "PanelManager:ClosePanel:JoinGamePanel"
+        } else {
+            "PanelManager:ClosePanel:CreateGamePanel"
+        };
+        if find_layout_node(&form, "D2RHubCloseRoomForm")
+            .and_then(|node| node.pointer("/fields/onClickMessage"))
+            .and_then(serde_json::Value::as_str)
+            != Some(close_action)
+        {
+            return Err(format!("局内房间表单缺少关闭按钮：{name}"));
+        }
+    }
+    Ok(())
+}
+
+fn validate_compatible_audio_mod_directory(
     mods_directory: &Path,
     mod_name: &str,
     mod_directory: PathBuf,
@@ -434,6 +899,8 @@ fn validate_audio_mod_directory(
     if !mod_directory.is_dir() {
         return Err(format!("未找到 Mod：{mod_name}"));
     }
+    validate_safe_directory_tree(mods_directory, &mod_directory)
+        .map_err(|error| format!("Mod 目录安全校验失败：{error}"))?;
     if !mod_directory.join(format!("{mod_name}.mpq")).is_dir() {
         return Err("Mod 目录结构不完整".to_string());
     }
@@ -522,6 +989,12 @@ fn validate_audio_mod_directory(
             }
         }
     }
+    if feature_groups
+        .iter()
+        .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
+    {
+        validate_in_game_room_tool_layouts(&mod_directory, mod_name)?;
+    }
     Ok(ValidatedAudioMod {
         directory: mod_directory,
         recipe_version,
@@ -533,9 +1006,61 @@ fn validate_audio_mod_directory(
     })
 }
 
+fn validate_audio_mod_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    mod_directory: PathBuf,
+) -> Result<ValidatedAudioMod, String> {
+    let validated =
+        validate_compatible_audio_mod_directory(mods_directory, mod_name, mod_directory)?;
+    if validated
+        .recipe_version
+        .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || !validated.current_feature_protocol
+    {
+        return Err(format!(
+            "Mod 不是可验证的当前功能组产物（需要 r{REQUIRED_AUDIO_MOD_RECIPE_VERSION}+）"
+        ));
+    }
+    Ok(validated)
+}
+
+fn validate_required_feature_groups_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    mod_directory: PathBuf,
+    required_feature_groups: &[GeneratorFeatureGroup],
+) -> Result<ValidatedAudioMod, String> {
+    let validated = validate_audio_mod_directory(mods_directory, mod_name, mod_directory)?;
+    validate_preserved_feature_groups(required_feature_groups, &validated.feature_groups)?;
+    Ok(validated)
+}
+
+fn validate_recoverable_backup_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    backup_directory: &Path,
+    required_feature_groups: &[GeneratorFeatureGroup],
+) -> Result<(), String> {
+    if required_feature_groups.is_empty() {
+        return validate_recoverable_audio_mod_directory(
+            mods_directory,
+            mod_name,
+            backup_directory,
+        );
+    }
+    validate_required_feature_groups_directory(
+        mods_directory,
+        mod_name,
+        backup_directory.to_path_buf(),
+        required_feature_groups,
+    )
+    .map(|_| ())
+}
+
 fn validate_audio_mod(mods_directory: &Path, mod_name: &str) -> Result<ValidatedAudioMod, String> {
     let mod_name = plain_mod_name(mod_name)?;
-    validate_audio_mod_directory(mods_directory, mod_name, mods_directory.join(mod_name))
+    validate_compatible_audio_mod_directory(mods_directory, mod_name, mods_directory.join(mod_name))
 }
 
 fn validate_recoverable_audio_mod_directory(
@@ -543,10 +1068,21 @@ fn validate_recoverable_audio_mod_directory(
     mod_name: &str,
     mod_directory: &Path,
 ) -> Result<(), String> {
-    if validate_audio_mod_directory(mods_directory, mod_name, mod_directory.to_path_buf()).is_ok() {
+    let mod_name = plain_mod_name(mod_name)?;
+    // Compatibility fallback is deliberately permissive about old manifest fields, never about
+    // filesystem topology. A failed strict validator must not let a nested link/reparse point slip
+    // into the legacy recovery path.
+    validate_safe_directory_tree(mods_directory, mod_directory)
+        .map_err(|error| format!("Mod 恢复目录安全校验失败：{error}"))?;
+    if validate_compatible_audio_mod_directory(
+        mods_directory,
+        mod_name,
+        mod_directory.to_path_buf(),
+    )
+    .is_ok()
+    {
         return Ok(());
     }
-    let mod_name = plain_mod_name(mod_name)?;
     if !mod_directory.is_dir() || !mod_directory.join(format!("{mod_name}.mpq")).is_dir() {
         return Err("Mod 恢复目录结构不完整".to_string());
     }
@@ -834,6 +1370,65 @@ fn session_arguments(state: &SharedState, account: &AccountMeta) -> (String, Opt
         return (account.mod_args.clone(), Some(pid), false);
     }
     (account.mod_args.clone(), None, false)
+}
+
+fn require_verified_running_session(
+    account_name: &str,
+    session: (String, Option<u32>, bool),
+) -> Result<(String, u32), String> {
+    let (arguments, running_pid, session_verified) = session;
+    let pid = running_pid.ok_or_else(|| {
+        format!("账号“{account_name}”当前没有由 D2RHub 确认的运行实例；请先通过 D2RHub 启动该账号")
+    })?;
+    if !session_verified {
+        return Err(format!(
+            "账号“{account_name}”检测到运行进程（PID {pid}），但缺少与该进程匹配的可信启动快照；请关闭游戏后通过 D2RHub 重新启动该账号"
+        ));
+    }
+    Ok((arguments, pid))
+}
+
+pub(crate) fn validate_in_game_room_tools_for_account(
+    state: &SharedState,
+    account_id: &str,
+) -> Result<(), String> {
+    let (_config, account, context) = configured_account(state, account_id)?;
+    let account_name = if account.display_name.trim().is_empty() {
+        account.id.as_str()
+    } else {
+        account.display_name.as_str()
+    };
+    // Only a snapshot whose PID matches the active registry entry is authoritative. Discovered
+    // processes and AccountMeta.running_pid intentionally fail closed: persisted mod_args may have
+    // changed after that game process started.
+    let (launch_arguments, _running_pid) =
+        require_verified_running_session(account_name, session_arguments(state, &account))?;
+    let mod_name = active_mod_name(&launch_arguments)?
+        .ok_or_else(|| format!("账号“{account_name}”没有启用经过 D2RHub 加工的 Mod"))?;
+    if !has_txt_argument(&launch_arguments)? {
+        return Err(format!("账号“{account_name}”的 Mod 启动参数缺少 -txt"));
+    }
+    let mods_directory = context.installation.game_directory.join("mods");
+    let installed_name = find_existing_mod_name(&mods_directory, &mod_name)?
+        .ok_or_else(|| format!("账号“{account_name}”配置的 Mod 不存在"))?;
+    let validated = validate_audio_mod(&mods_directory, &installed_name)
+        .map_err(|error| format!("账号“{account_name}”：{error}"))?;
+    let room_group = validated
+        .feature_groups
+        .iter()
+        .find(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
+    if !validated.current_feature_protocol
+        || validated
+            .recipe_version
+            .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || room_group.is_none()
+    {
+        return Err(format!(
+            "账号“{account_name}”的识别 Mod 不含受支持的局内房间工具，请重新加工并重启该账号"
+        ));
+    }
+    // `validate_audio_mod` already checks the r19 recipe/fingerprint and every required layout.
+    Ok(())
 }
 
 fn running_accounts_using_mod(
@@ -1147,6 +1742,7 @@ fn validate_generator_output(
     requested_mod_name: &str,
     report: &GeneratorReport,
     requested_features: RequestedFeatureGroups,
+    required_existing_groups: &[GeneratorFeatureGroup],
 ) -> Result<ValidatedGeneratorOutput, String> {
     if report.protocol_version != PROTOCOL_VERSION {
         return Err(format!(
@@ -1166,6 +1762,7 @@ fn validate_generator_output(
     validate_feature_group_entries(&report.feature_groups)
         .map_err(|error| format!("生成器报告无效：{error}"))?;
     requested_features.validate_present(&report.feature_groups)?;
+    validate_preserved_feature_groups(required_existing_groups, &report.feature_groups)?;
     if report.mod_name != requested_mod_name {
         return Err("生成器返回的 Mod 名称与用户指定名称不一致".to_string());
     }
@@ -1184,6 +1781,7 @@ fn validate_generator_output(
         return Err("生成器报告的功能组与落盘清单不一致".to_string());
     }
     requested_features.validate_present(&validated.feature_groups)?;
+    validate_preserved_feature_groups(required_existing_groups, &validated.feature_groups)?;
     let reported_directory = std::fs::canonicalize(&report.mod_directory)
         .map_err(|error| format!("无法校验生成目录: {error}"))?;
     let validated_directory = std::fs::canonicalize(validated.directory)
@@ -1204,6 +1802,27 @@ fn is_safe_relative_path(path: &Path) -> bool {
             .all(|component| matches!(component, Component::Normal(_)))
 }
 
+fn valid_transaction_id(value: &str) -> bool {
+    value.len() == 32
+        && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+        && uuid::Uuid::parse_str(value).is_ok()
+}
+
+fn replacement_transaction_id(staged_relative: &Path, backup_relative: &Path) -> Option<String> {
+    let stage_parent =
+        staged_relative
+            .components()
+            .next()
+            .and_then(|component| match component {
+                Component::Normal(name) => name.to_str(),
+                _ => None,
+            })?;
+    let backup = backup_relative.file_name()?.to_str()?;
+    let stage_id = stage_parent.strip_prefix(".d2rhub-upgrade-stage-")?;
+    let backup_id = backup.strip_prefix(".d2rhub-upgrade-backup-")?;
+    (stage_id == backup_id && valid_transaction_id(stage_id)).then(|| stage_id.to_string())
+}
+
 fn replace_journal_paths_are_valid(
     mod_name: &str,
     staged_relative: &Path,
@@ -1217,19 +1836,332 @@ fn replace_journal_paths_are_valid(
     {
         return false;
     }
-    let stage_parent_is_valid = staged_relative
-        .components()
-        .next()
-        .and_then(|component| match component {
-            Component::Normal(name) => name.to_str(),
-            _ => None,
-        })
-        .is_some_and(|name| name.starts_with(".d2rhub-upgrade-stage-"));
-    let backup_is_valid = backup_relative
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.starts_with(".d2rhub-upgrade-backup-"));
-    stage_parent_is_valid && backup_is_valid
+    replacement_transaction_id(staged_relative, backup_relative).is_some()
+}
+
+fn journal_transaction_id(journal_path: &Path) -> Option<String> {
+    let name = journal_path.file_name()?.to_str()?;
+    let id = name
+        .strip_prefix(REPLACE_JOURNAL_PREFIX)?
+        .strip_suffix(REPLACE_JOURNAL_SUFFIX)?;
+    valid_transaction_id(id).then(|| id.to_string())
+}
+
+fn path_exists_no_follow(path: &Path) -> Result<bool, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("无法检查事务路径 {}：{error}", path.display())),
+    }
+}
+
+#[cfg(windows)]
+fn metadata_is_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0000_0400;
+    metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+#[cfg(not(windows))]
+fn metadata_is_reparse_point(_metadata: &std::fs::Metadata) -> bool {
+    false
+}
+
+fn canonical_safe_mods_root(mods_directory: &Path) -> Result<PathBuf, String> {
+    let metadata = std::fs::symlink_metadata(mods_directory)
+        .map_err(|error| format!("无法检查 mods 目录 {}：{error}", mods_directory.display()))?;
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata_is_reparse_point(&metadata)
+    {
+        return Err("mods 目录不能是符号链接、联接点或重解析点".to_string());
+    }
+    std::fs::canonicalize(mods_directory)
+        .map_err(|error| format!("无法规范化 mods 目录 {}：{error}", mods_directory.display()))
+}
+
+fn ensure_safe_existing_node(
+    canonical_mods: &Path,
+    path: &Path,
+    expect_directory: bool,
+    label: &str,
+) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|error| format!("无法检查{label} {}：{error}", path.display()))?;
+    if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+        return Err(format!("{label}不能是符号链接、联接点或重解析点"));
+    }
+    if expect_directory && !metadata.is_dir() {
+        return Err(format!("{label}不是目录：{}", path.display()));
+    }
+    if !expect_directory && !metadata.is_file() {
+        return Err(format!("{label}不是普通文件：{}", path.display()));
+    }
+    let canonical = std::fs::canonicalize(path)
+        .map_err(|error| format!("无法规范化{label} {}：{error}", path.display()))?;
+    if canonical == canonical_mods || !canonical.starts_with(canonical_mods) {
+        return Err(format!("{label}越过了 mods 目录边界：{}", path.display()));
+    }
+    Ok(())
+}
+
+fn ensure_safe_directory_if_present(
+    canonical_mods: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<bool, String> {
+    if !path_exists_no_follow(path)? {
+        return Ok(false);
+    }
+    ensure_safe_existing_node(canonical_mods, path, true, label)?;
+    Ok(true)
+}
+
+fn ensure_transaction_paths_safe(
+    mods_directory: &Path,
+    target_directory: &Path,
+    staged_directory: &Path,
+    backup_directory: &Path,
+) -> Result<PathBuf, String> {
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_directory_if_present(&canonical_mods, target_directory, "更新目标")?;
+    ensure_safe_directory_if_present(&canonical_mods, backup_directory, "更新备份")?;
+    let stage_parent = staged_directory
+        .parent()
+        .ok_or_else(|| "更新暂存目录缺少父目录".to_string())?;
+    ensure_safe_directory_if_present(&canonical_mods, stage_parent, "更新暂存父目录")?;
+    ensure_safe_directory_if_present(&canonical_mods, staged_directory, "更新暂存目录")?;
+    Ok(canonical_mods)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SafeTreeNodeKind {
+    File,
+    Directory,
+}
+
+fn traverse_safe_directory_tree<F>(
+    boundary_directory: &Path,
+    tree_root: &Path,
+    mut visitor: F,
+) -> Result<(), String>
+where
+    F: FnMut(&Path, SafeTreeNodeKind) -> Result<(), String>,
+{
+    let canonical_boundary = canonical_safe_mods_root(boundary_directory)?;
+    let mut pending = vec![(tree_root.to_path_buf(), false)];
+    while let Some((path, children_visited)) = pending.pop() {
+        let metadata = std::fs::symlink_metadata(&path)
+            .map_err(|error| format!("无法检查 Mod 目录树 {}：{error}", path.display()))?;
+        if metadata.file_type().is_symlink() || metadata_is_reparse_point(&metadata) {
+            return Err(format!(
+                "Mod 目录树不能包含符号链接、联接点或重解析点：{}",
+                path.display()
+            ));
+        }
+        let kind = if metadata.is_dir() {
+            SafeTreeNodeKind::Directory
+        } else if metadata.is_file() {
+            SafeTreeNodeKind::File
+        } else {
+            return Err(format!(
+                "Mod 目录树包含不受支持的文件类型：{}",
+                path.display()
+            ));
+        };
+        ensure_safe_existing_node(
+            &canonical_boundary,
+            &path,
+            kind == SafeTreeNodeKind::Directory,
+            "Mod 目录树节点",
+        )?;
+
+        if kind == SafeTreeNodeKind::Directory && !children_visited {
+            pending.push((path.clone(), true));
+            let mut children = std::fs::read_dir(&path)
+                .map_err(|error| format!("无法遍历 Mod 目录树 {}：{error}", path.display()))?
+                .map(|entry| {
+                    entry
+                        .map(|entry| entry.path())
+                        .map_err(|error| format!("无法读取 Mod 目录项：{error}"))
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            children.sort();
+            pending.extend(children.into_iter().rev().map(|child| (child, false)));
+            continue;
+        }
+
+        // Directories are visited after all descendants, making directory metadata flushes
+        // bottom-up. Re-checking each expanded directory also narrows the validation/mutation race.
+        visitor(&path, kind)?;
+    }
+    Ok(())
+}
+
+fn validate_safe_directory_tree(boundary_directory: &Path, tree_root: &Path) -> Result<(), String> {
+    traverse_safe_directory_tree(boundary_directory, tree_root, |_path, _kind| Ok(()))
+}
+
+fn sync_safe_directory_tree(mods_directory: &Path, tree_root: &Path) -> Result<(), String> {
+    traverse_safe_directory_tree(mods_directory, tree_root, |path, kind| match kind {
+        SafeTreeNodeKind::File => sync_regular_file(path),
+        SafeTreeNodeKind::Directory => sync_directory(path),
+    })?;
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    let stage_parent = tree_root
+        .parent()
+        .ok_or_else(|| "Mod 目录树缺少父目录".to_string())?;
+    if stage_parent != mods_directory {
+        ensure_safe_existing_node(&canonical_mods, stage_parent, true, "Mod 目录树父目录")?;
+        sync_directory(stage_parent)?;
+    }
+    sync_directory(mods_directory)
+}
+
+#[cfg(not(windows))]
+fn sync_regular_file(path: &Path) -> Result<(), String> {
+    std::fs::File::open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("无法持久化 Mod 文件 {}：{error}", path.display()))
+}
+
+#[cfg(windows)]
+fn sync_regular_file(path: &Path) -> Result<(), String> {
+    // FlushFileBuffers requires a handle opened for writing on Windows. File::open creates a
+    // read-only handle, which makes sync_all fail with ERROR_ACCESS_DENIED even for writable
+    // staged files.
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| format!("无法持久化 Mod 文件 {}：{error}", path.display()))
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &Path) -> Result<(), String> {
+    std::fs::File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|error| format!("无法同步目录元数据 {}：{error}", path.display()))
+}
+
+#[cfg(windows)]
+fn sync_directory(path: &Path) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+
+    type Handle = *mut c_void;
+    const GENERIC_WRITE: u32 = 0x4000_0000;
+    const FILE_SHARE_READ: u32 = 0x0000_0001;
+    const FILE_SHARE_WRITE: u32 = 0x0000_0002;
+    const FILE_SHARE_DELETE: u32 = 0x0000_0004;
+    const OPEN_EXISTING: u32 = 3;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+    const INVALID_HANDLE_VALUE: Handle = -1isize as Handle;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn CreateFileW(
+            file_name: *const u16,
+            desired_access: u32,
+            share_mode: u32,
+            security_attributes: *mut c_void,
+            creation_disposition: u32,
+            flags_and_attributes: u32,
+            template_file: Handle,
+        ) -> Handle;
+        fn FlushFileBuffers(file: Handle) -> i32;
+        fn CloseHandle(object: Handle) -> i32;
+    }
+
+    let wide = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let handle = unsafe {
+        CreateFileW(
+            wide.as_ptr(),
+            GENERIC_WRITE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        return Err(format!(
+            "无法打开目录以同步元数据 {}：{}",
+            path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    let flushed = unsafe { FlushFileBuffers(handle) };
+    let flush_error = (flushed == 0).then(std::io::Error::last_os_error);
+    unsafe {
+        CloseHandle(handle);
+    }
+    if let Some(error) = flush_error {
+        return Err(format!("无法同步目录元数据 {}：{error}", path.display()));
+    }
+    Ok(())
+}
+
+fn rename_directory_and_sync(
+    mods_directory: &Path,
+    from: &Path,
+    to: &Path,
+    operation: &str,
+) -> Result<(), String> {
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, from, true, operation)?;
+    for (parent, label) in [
+        (from.parent(), "重命名源目录的父目录"),
+        (to.parent(), "重命名目标目录的父目录"),
+    ] {
+        let parent = parent.ok_or_else(|| format!("{operation}路径缺少父目录"))?;
+        if parent != mods_directory {
+            ensure_safe_existing_node(&canonical_mods, parent, true, label)?;
+        }
+    }
+    if path_exists_no_follow(to)? {
+        return Err(format!("{operation}的目标路径已存在：{}", to.display()));
+    }
+    std::fs::rename(from, to).map_err(|error| format!("{operation}失败：{error}"))?;
+    // A cross-directory rename changes both directory entry sets. Flush the nested stage parent as
+    // well as the common mods parent; target/backup/quarantine renames only need the latter.
+    for parent in [from.parent(), to.parent()].into_iter().flatten() {
+        if parent != mods_directory && path_exists_no_follow(parent)? {
+            sync_directory(parent)?;
+        }
+    }
+    sync_directory(mods_directory)
+}
+
+fn remove_transaction_directory(
+    mods_directory: &Path,
+    path: &Path,
+    label: &str,
+) -> Result<(), String> {
+    if !path_exists_no_follow(path)? {
+        return Ok(());
+    }
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, path, true, label)?;
+    validate_safe_directory_tree(mods_directory, path)
+        .map_err(|error| format!("拒绝清理不安全的{label}：{error}"))?;
+    std::fs::remove_dir_all(path)
+        .map_err(|error| format!("清理{label}失败 {}：{error}", path.display()))?;
+    sync_directory(mods_directory)
+}
+
+fn remove_replace_journal(mods_directory: &Path, journal_path: &Path) -> Result<(), String> {
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, journal_path, false, "Mod 更新事务记录")?;
+    std::fs::remove_file(journal_path)
+        .map_err(|error| format!("清理 Mod 更新事务记录失败：{error}"))?;
+    sync_directory(mods_directory)
 }
 
 fn write_replace_journal(
@@ -1237,7 +2169,31 @@ fn write_replace_journal(
     mod_name: &str,
     staged_directory: &Path,
     backup_directory: &Path,
+    required_feature_groups: &[GeneratorFeatureGroup],
 ) -> Result<PathBuf, String> {
+    write_replace_journal_with_stage_sync(
+        mods_directory,
+        mod_name,
+        staged_directory,
+        backup_directory,
+        required_feature_groups,
+        sync_safe_directory_tree,
+    )
+}
+
+fn write_replace_journal_with_stage_sync<F>(
+    mods_directory: &Path,
+    mod_name: &str,
+    staged_directory: &Path,
+    backup_directory: &Path,
+    required_feature_groups: &[GeneratorFeatureGroup],
+    sync_staged_tree: F,
+) -> Result<PathBuf, String>
+where
+    F: FnOnce(&Path, &Path) -> Result<(), String>,
+{
+    validate_feature_group_entries(required_feature_groups)
+        .map_err(|error| format!("同名更新需要保留的功能组无效：{error}"))?;
     let staged_relative = staged_directory
         .strip_prefix(mods_directory)
         .map_err(|_| "同名更新的暂存目录必须位于 mods 目录内".to_string())?
@@ -1250,18 +2206,43 @@ fn write_replace_journal(
         return Err("同名更新的事务目录无效".to_string());
     }
 
-    let transaction_id = uuid::Uuid::new_v4().simple().to_string();
+    let transaction_id = replacement_transaction_id(&staged_relative, &backup_relative)
+        .ok_or_else(|| "同名更新的事务标识无效".to_string())?;
     let journal_path = mods_directory.join(format!(
         "{REPLACE_JOURNAL_PREFIX}{transaction_id}{REPLACE_JOURNAL_SUFFIX}"
     ));
     let temporary_path = mods_directory.join(format!(
         "{REPLACE_JOURNAL_PREFIX}{transaction_id}{REPLACE_JOURNAL_SUFFIX}.tmp"
     ));
+    let target_directory = mods_directory.join(mod_name);
+    let canonical_mods = ensure_transaction_paths_safe(
+        mods_directory,
+        &target_directory,
+        staged_directory,
+        backup_directory,
+    )?;
+    ensure_safe_existing_node(&canonical_mods, staged_directory, true, "更新暂存目录")?;
+    ensure_safe_existing_node(&canonical_mods, &target_directory, true, "更新目标")?;
+    if path_exists_no_follow(&journal_path)? || path_exists_no_follow(&temporary_path)? {
+        return Err("同名更新的事务记录发生冲突，请重试".to_string());
+    }
+    // The journal authorizes deletion of the last known-good backup later. It must never become
+    // visible until every staged file and directory entry is durable and the no-link tree has been
+    // revalidated immediately before the journal mutation.
+    sync_staged_tree(mods_directory, staged_directory)
+        .map_err(|error| format!("无法持久化同名更新的暂存 Mod：{error}"))?;
+    validate_safe_directory_tree(mods_directory, staged_directory)
+        .map_err(|error| format!("暂存 Mod 在写入事务记录前发生安全变化：{error}"))?;
+    let staged_validation =
+        validate_audio_mod_directory(mods_directory, mod_name, staged_directory.to_path_buf())
+            .map_err(|error| format!("暂存 Mod 在写入事务记录前严格校验失败：{error}"))?;
+    validate_preserved_feature_groups(required_feature_groups, &staged_validation.feature_groups)?;
     let journal = AudioModReplaceJournal {
         format_version: REPLACE_JOURNAL_FORMAT_VERSION,
         mod_name: mod_name.to_string(),
         staged_relative,
         backup_relative,
+        required_feature_groups: required_feature_groups.to_vec(),
     };
     let bytes = serde_json::to_vec_pretty(&journal)
         .map_err(|error| format!("无法创建 Mod 更新事务记录：{error}"))?;
@@ -1277,6 +2258,7 @@ fn write_replace_journal(
             .map_err(|error| format!("无法持久化 Mod 更新事务记录：{error}"))?;
         std::fs::rename(&temporary_path, &journal_path)
             .map_err(|error| format!("无法提交 Mod 更新事务记录：{error}"))?;
+        sync_directory(mods_directory)?;
         Ok(())
     })();
     if write_result.is_err() {
@@ -1286,21 +2268,54 @@ fn write_replace_journal(
 }
 
 fn cleanup_staged_directory(mods_directory: &Path, staged_directory: &Path) -> Result<(), String> {
-    if !staged_directory.exists() {
+    let stage_parent = staged_directory
+        .parent()
+        .ok_or_else(|| "更新暂存目录缺少父目录".to_string())?;
+    if !path_exists_no_follow(stage_parent)? {
         return Ok(());
     }
-    let removable = staged_directory
+    if stage_parent.parent() != Some(mods_directory)
+        || !stage_parent
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(".d2rhub-upgrade-stage-"))
+    {
+        return Err("拒绝清理事务范围外的 Mod 更新暂存目录".to_string());
+    }
+    remove_transaction_directory(mods_directory, stage_parent, "Mod 更新暂存目录")
+}
+
+fn ensure_rollback_marker(mods_directory: &Path, staged_directory: &Path) -> Result<(), String> {
+    if path_exists_no_follow(staged_directory)? {
+        return Ok(());
+    }
+    let stage_parent = staged_directory
         .parent()
-        .filter(|parent| parent.parent() == Some(mods_directory))
-        .filter(|parent| {
-            parent
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with(".d2rhub-upgrade-stage-"))
-        })
-        .unwrap_or(staged_directory);
-    std::fs::remove_dir_all(removable)
-        .map_err(|error| format!("清理 Mod 更新暂存目录失败：{error}"))
+        .ok_or_else(|| "更新暂存目录缺少父目录".to_string())?;
+    if !path_exists_no_follow(stage_parent)? {
+        std::fs::create_dir(stage_parent)
+            .map_err(|error| format!("创建回滚标记目录失败：{error}"))?;
+        sync_directory(mods_directory)?;
+    }
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, stage_parent, true, "更新暂存父目录")?;
+    std::fs::create_dir(staged_directory).map_err(|error| format!("创建回滚标记失败：{error}"))?;
+    sync_directory(stage_parent)?;
+    sync_directory(mods_directory)
+}
+
+fn quarantine_directory(
+    mods_directory: &Path,
+    path: &Path,
+    mod_name: &str,
+    kind: &str,
+) -> Result<PathBuf, String> {
+    let quarantine = mods_directory.join(format!(
+        ".d2rhub-upgrade-failed-{kind}-{}-{mod_name}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    rename_directory_and_sync(mods_directory, path, &quarantine, "隔离损坏的 Mod")?;
+    Ok(quarantine)
 }
 
 pub(crate) fn recover_audio_mod_replacements(mods_directory: &Path) -> Result<(), String> {
@@ -1318,74 +2333,260 @@ pub(crate) fn recover_audio_mod_replacements(mods_directory: &Path) -> Result<()
     journal_paths.sort();
 
     for journal_path in journal_paths {
+        let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+        ensure_safe_existing_node(&canonical_mods, &journal_path, false, "Mod 更新事务记录")?;
         let journal: AudioModReplaceJournal = serde_json::from_slice(
             &std::fs::read(&journal_path)
                 .map_err(|error| format!("无法读取 Mod 更新事务记录：{error}"))?,
         )
         .map_err(|error| format!("Mod 更新事务记录已损坏：{error}"))?;
         let mod_name = plain_mod_name(&journal.mod_name)?;
+        let transaction_id =
+            replacement_transaction_id(&journal.staged_relative, &journal.backup_relative);
         if journal.format_version != REPLACE_JOURNAL_FORMAT_VERSION
             || !replace_journal_paths_are_valid(
                 mod_name,
                 &journal.staged_relative,
                 &journal.backup_relative,
             )
+            || transaction_id != journal_transaction_id(&journal_path)
         {
             return Err("Mod 更新事务记录版本或路径无效，已停止自动恢复".to_string());
         }
+        validate_feature_group_entries(&journal.required_feature_groups)
+            .map_err(|error| format!("Mod 更新事务需要保留的功能组无效：{error}"))?;
         let target_directory = mods_directory.join(mod_name);
         let staged_directory = mods_directory.join(&journal.staged_relative);
         let backup_directory = mods_directory.join(&journal.backup_relative);
+        ensure_transaction_paths_safe(
+            mods_directory,
+            &target_directory,
+            &staged_directory,
+            &backup_directory,
+        )?;
+        let target_exists = path_exists_no_follow(&target_directory)?;
+        let staged_exists = path_exists_no_follow(&staged_directory)?;
+        let backup_exists = path_exists_no_follow(&backup_directory)?;
+        if target_exists && staged_exists && backup_exists {
+            return Err(
+                "Mod 更新事务同时存在目标、暂存和备份，状态不明确，已停止自动恢复".to_string(),
+            );
+        }
 
-        if target_directory.exists() {
-            let target_is_recoverable = validate_recoverable_audio_mod_directory(
-                mods_directory,
-                mod_name,
-                &target_directory,
-            )
-            .is_ok();
-            if !target_is_recoverable && backup_directory.exists() {
+        let mut final_is_strict = true;
+        let mut quarantine_bad_backup = false;
+        match (target_exists, staged_exists, backup_exists) {
+            // Journal persisted, but the first switch never happened. This is the only target state
+            // that may be an old published Mod and therefore uses the compatibility validator.
+            (true, true, false) => {
                 validate_recoverable_audio_mod_directory(
                     mods_directory,
                     mod_name,
-                    &backup_directory,
+                    &target_directory,
                 )
-                .map_err(|error| format!("新版与备份 Mod 都无法通过恢复校验：{error}"))?;
-                let quarantine = mods_directory.join(format!(
-                    ".d2rhub-upgrade-failed-{}-{}",
-                    uuid::Uuid::new_v4().simple(),
-                    mod_name
-                ));
-                std::fs::rename(&target_directory, &quarantine)
-                    .map_err(|error| format!("隔离损坏的新版 Mod 失败：{error}"))?;
-                if let Err(error) = std::fs::rename(&backup_directory, &target_directory) {
-                    let _ = std::fs::rename(&quarantine, &target_directory);
-                    return Err(format!("恢复旧版 Mod 失败：{error}"));
-                }
-            } else if !target_is_recoverable {
-                return Err("更新事务中的 Mod 已损坏，且没有可恢复的备份".to_string());
+                .map_err(|error| format!("未切换的旧版 Mod 无法通过恢复校验：{error}"))?;
+                final_is_strict = false;
             }
-        } else if backup_directory.exists() {
-            std::fs::rename(&backup_directory, &target_directory)
-                .map_err(|error| format!("自动恢复旧版 Mod 失败：{error}"))?;
-        } else if staged_directory.exists() {
-            validate_audio_mod_directory(mods_directory, mod_name, staged_directory.clone())
+            // Backup proves the staged directory was already switched into the target. Never accept
+            // that new target via the permissive legacy validator.
+            (true, false, true) => {
+                if let Err(target_error) = validate_required_feature_groups_directory(
+                    mods_directory,
+                    mod_name,
+                    target_directory.clone(),
+                    &journal.required_feature_groups,
+                ) {
+                    validate_recoverable_backup_directory(
+                        mods_directory,
+                        mod_name,
+                        &backup_directory,
+                        &journal.required_feature_groups,
+                    )
+                    .map_err(|backup_error| {
+                        format!(
+                            "新版与备份 Mod 都无法通过恢复校验；新版：{target_error}；备份：{backup_error}"
+                        )
+                    })?;
+                    // Keep the rejected new target in the staged slot. Besides preserving evidence,
+                    // this makes a crash after rollback unambiguously recover as an old target.
+                    let stage_parent = staged_directory
+                        .parent()
+                        .ok_or_else(|| "更新暂存目录缺少父目录".to_string())?;
+                    if !path_exists_no_follow(stage_parent)? {
+                        std::fs::create_dir(stage_parent)
+                            .map_err(|error| format!("创建损坏新版隔离目录失败：{error}"))?;
+                        sync_directory(mods_directory)?;
+                    }
+                    rename_directory_and_sync(
+                        mods_directory,
+                        &target_directory,
+                        &staged_directory,
+                        "隔离损坏的新版 Mod",
+                    )?;
+                    rename_directory_and_sync(
+                        mods_directory,
+                        &backup_directory,
+                        &target_directory,
+                        "恢复旧版 Mod",
+                    )?;
+                    final_is_strict = false;
+                }
+            }
+            // With no remaining transaction artifacts, the target can only be the newly installed
+            // candidate. A legacy/recoverable check here could bless a corrupted new target.
+            (true, false, false) => {}
+            (false, staged, true) => {
+                let backup_validation = validate_recoverable_backup_directory(
+                    mods_directory,
+                    mod_name,
+                    &backup_directory,
+                    &journal.required_feature_groups,
+                );
+                match backup_validation {
+                    Ok(()) => {
+                        if !staged {
+                            ensure_rollback_marker(mods_directory, &staged_directory)?;
+                        }
+                        rename_directory_and_sync(
+                            mods_directory,
+                            &backup_directory,
+                            &target_directory,
+                            "恢复旧版 Mod",
+                        )?;
+                        final_is_strict = false;
+                    }
+                    Err(backup_error) if staged => {
+                        let staged_validation = validate_audio_mod_directory(
+                            mods_directory,
+                            mod_name,
+                            staged_directory.clone(),
+                        )
+                        .map_err(|staged_error| {
+                            format!(
+                                "备份与暂存 Mod 都无法恢复；备份：{backup_error}；暂存：{staged_error}"
+                            )
+                        })?;
+                        validate_preserved_feature_groups(
+                            &journal.required_feature_groups,
+                            &staged_validation.feature_groups,
+                        )?;
+                        sync_safe_directory_tree(mods_directory, &staged_directory)?;
+                        validate_required_feature_groups_directory(
+                            mods_directory,
+                            mod_name,
+                            staged_directory.clone(),
+                            &journal.required_feature_groups,
+                        )
+                        .map_err(|error| format!("暂存 Mod 在安装前发生安全变化：{error}"))?;
+                        rename_directory_and_sync(
+                            mods_directory,
+                            &staged_directory,
+                            &target_directory,
+                            "完成暂存 Mod 安装",
+                        )?;
+                        quarantine_bad_backup = true;
+                    }
+                    Err(backup_error) => {
+                        return Err(format!(
+                            "更新备份无法通过恢复校验，且没有严格有效的暂存 Mod：{backup_error}"
+                        ));
+                    }
+                }
+            }
+            (false, true, false) => {
+                let staged_validation = validate_audio_mod_directory(
+                    mods_directory,
+                    mod_name,
+                    staged_directory.clone(),
+                )
                 .map_err(|error| format!("更新暂存 Mod 无法恢复：{error}"))?;
-            std::fs::rename(&staged_directory, &target_directory)
-                .map_err(|error| format!("自动完成暂存 Mod 安装失败：{error}"))?;
-        } else {
-            return Err("Mod 更新事务缺少目标、备份与暂存目录，无法自动恢复".to_string());
+                validate_preserved_feature_groups(
+                    &journal.required_feature_groups,
+                    &staged_validation.feature_groups,
+                )?;
+                sync_safe_directory_tree(mods_directory, &staged_directory)?;
+                validate_required_feature_groups_directory(
+                    mods_directory,
+                    mod_name,
+                    staged_directory.clone(),
+                    &journal.required_feature_groups,
+                )
+                .map_err(|error| format!("暂存 Mod 在安装前发生安全变化：{error}"))?;
+                rename_directory_and_sync(
+                    mods_directory,
+                    &staged_directory,
+                    &target_directory,
+                    "完成暂存 Mod 安装",
+                )?;
+            }
+            (false, false, false) => {
+                return Err("Mod 更新事务缺少目标、备份与暂存目录，无法自动恢复".to_string())
+            }
+            (true, true, true) => unreachable!("ambiguous state was rejected above"),
         }
 
-        validate_recoverable_audio_mod_directory(mods_directory, mod_name, &target_directory)
-            .map_err(|error| format!("Mod 更新事务恢复后校验失败：{error}"))?;
-        if backup_directory.exists() {
-            std::fs::remove_dir_all(&backup_directory)
-                .map_err(|error| format!("清理已恢复的 Mod 备份失败：{error}"))?;
+        if final_is_strict {
+            validate_required_feature_groups_directory(
+                mods_directory,
+                mod_name,
+                target_directory.clone(),
+                &journal.required_feature_groups,
+            )
+            .map_err(|error| format!("新版 Mod 恢复后严格校验失败：{error}"))?;
+            sync_safe_directory_tree(mods_directory, &target_directory)
+                .map_err(|error| format!("新版 Mod 恢复后持久化失败：{error}"))?;
+            validate_required_feature_groups_directory(
+                mods_directory,
+                mod_name,
+                target_directory.clone(),
+                &journal.required_feature_groups,
+            )
+            .map_err(|error| format!("新版 Mod 在清理备份前发生安全变化：{error}"))?;
+            if path_exists_no_follow(&backup_directory)? {
+                if quarantine_bad_backup {
+                    let _ = quarantine_directory(
+                        mods_directory,
+                        &backup_directory,
+                        mod_name,
+                        "backup",
+                    )?;
+                } else {
+                    remove_transaction_directory(
+                        mods_directory,
+                        &backup_directory,
+                        "Mod 更新备份",
+                    )?;
+                }
+            }
+            cleanup_staged_directory(mods_directory, &staged_directory)?;
+            remove_replace_journal(mods_directory, &journal_path)?;
+        } else {
+            if journal.required_feature_groups.is_empty() {
+                validate_recoverable_audio_mod_directory(
+                    mods_directory,
+                    mod_name,
+                    &target_directory,
+                )
+                .map_err(|error| format!("旧版 Mod 恢复后校验失败：{error}"))?;
+            } else {
+                let restored = validate_audio_mod_directory(
+                    mods_directory,
+                    mod_name,
+                    target_directory.clone(),
+                )
+                .map_err(|error| format!("原功能组 Mod 恢复后严格校验失败：{error}"))?;
+                validate_preserved_feature_groups(
+                    &journal.required_feature_groups,
+                    &restored.feature_groups,
+                )?;
+            }
+            // Keep the staged path as a rollback marker until the journal is durably removed. If
+            // cleanup or journal deletion is interrupted, target+staging still selects legacy-safe
+            // validation on the next launch rather than misclassifying the old target as new.
+            ensure_rollback_marker(mods_directory, &staged_directory)?;
+            remove_replace_journal(mods_directory, &journal_path)?;
+            cleanup_staged_directory(mods_directory, &staged_directory)?;
         }
-        cleanup_staged_directory(mods_directory, &staged_directory)?;
-        std::fs::remove_file(&journal_path)
-            .map_err(|error| format!("清理 Mod 更新事务记录失败：{error}"))?;
     }
     Ok(())
 }
@@ -1395,45 +2596,149 @@ fn replace_audio_mod_directory(
     mod_name: &str,
     staged_directory: &Path,
     backup_directory: &Path,
+    required_feature_groups: &[GeneratorFeatureGroup],
 ) -> Result<(), String> {
     recover_audio_mod_replacements(mods_directory)?;
     let target_directory = mods_directory.join(mod_name);
-    if !staged_directory.is_dir() {
+    let staged_relative = staged_directory
+        .strip_prefix(mods_directory)
+        .map_err(|_| "同名更新的暂存目录必须位于 mods 目录内".to_string())?;
+    let backup_relative = backup_directory
+        .strip_prefix(mods_directory)
+        .map_err(|_| "同名更新的备份目录必须位于 mods 目录内".to_string())?;
+    if !replace_journal_paths_are_valid(mod_name, staged_relative, backup_relative) {
+        return Err("同名更新的事务目录无效".to_string());
+    }
+    ensure_transaction_paths_safe(
+        mods_directory,
+        &target_directory,
+        staged_directory,
+        backup_directory,
+    )?;
+    if !path_exists_no_follow(staged_directory)? {
         return Err("同名更新的暂存目录不存在".to_string());
     }
-    if !target_directory.is_dir() {
+    if !path_exists_no_follow(&target_directory)? {
         return Err(format!("待更新的 Mod 不存在：{mod_name}"));
     }
-    if backup_directory.exists() {
+    if path_exists_no_follow(backup_directory)? {
         return Err("同名更新的备份目录发生冲突，请重试".to_string());
     }
+    let staged_validation =
+        validate_audio_mod_directory(mods_directory, mod_name, staged_directory.to_path_buf())
+            .map_err(|error| format!("同名更新的暂存 Mod 严格校验失败：{error}"))?;
+    validate_preserved_feature_groups(required_feature_groups, &staged_validation.feature_groups)?;
+    validate_recoverable_audio_mod_directory(mods_directory, mod_name, &target_directory)
+        .map_err(|error| format!("同名更新的旧版 Mod 无法安全备份：{error}"))?;
 
-    let journal_path =
-        write_replace_journal(mods_directory, mod_name, staged_directory, backup_directory)?;
-    if let Err(error) = std::fs::rename(&target_directory, backup_directory) {
-        let _ = std::fs::remove_file(&journal_path);
-        return Err(format!("无法备份旧 Mod；请确认游戏已经关闭：{error}"));
-    }
-    match std::fs::rename(staged_directory, &target_directory) {
-        Ok(()) => {
-            // 新目录已完成同盘原子切换，旧目录仅在切换成功后清理。
-            if std::fs::remove_dir_all(backup_directory).is_ok() {
-                let _ = std::fs::remove_file(journal_path);
+    let journal_path = match write_replace_journal(
+        mods_directory,
+        mod_name,
+        staged_directory,
+        backup_directory,
+        required_feature_groups,
+    ) {
+        Ok(path) => path,
+        Err(error) => {
+            // A directory-sync error can happen after the named journal is already visible. Recover
+            // it while the staged directory is still alive, so the caller's temporary-directory
+            // guard cannot turn a prepared legacy target into an ambiguous target-only journal.
+            let recovery = recover_audio_mod_replacements(mods_directory);
+            return Err(match recovery {
+                Ok(()) => error,
+                Err(recovery_error) => {
+                    format!("{error}；同时清理未提交事务失败：{recovery_error}")
+                }
+            });
+        }
+    };
+    let staged_validation =
+        validate_audio_mod_directory(mods_directory, mod_name, staged_directory.to_path_buf())
+            .map_err(|error| format!("暂存 Mod 在目录切换前发生安全变化：{error}"))?;
+    validate_preserved_feature_groups(required_feature_groups, &staged_validation.feature_groups)?;
+    if let Err(error) = rename_directory_and_sync(
+        mods_directory,
+        &target_directory,
+        backup_directory,
+        "备份旧 Mod",
+    ) {
+        let recovery = recover_audio_mod_replacements(mods_directory);
+        return Err(match recovery {
+            Ok(()) => format!("无法备份旧 Mod；请确认游戏已经关闭：{error}"),
+            Err(recovery_error) => {
+                format!("无法备份旧 Mod，且事务恢复需要人工处理：{error}；{recovery_error}")
             }
+        });
+    }
+    if let Err(error) =
+        validate_audio_mod_directory(mods_directory, mod_name, staged_directory.to_path_buf())
+            .and_then(|validated| {
+                validate_preserved_feature_groups(
+                    required_feature_groups,
+                    &validated.feature_groups,
+                )
+            })
+    {
+        let recovery = recover_audio_mod_replacements(mods_directory);
+        return Err(match recovery {
+            Ok(()) => format!("暂存 Mod 在安装前发生安全变化，已恢复旧版：{error}"),
+            Err(recovery_error) => format!(
+                "暂存 Mod 在安装前发生安全变化，且事务恢复需要人工处理：{error}；{recovery_error}"
+            ),
+        });
+    }
+    match rename_directory_and_sync(
+        mods_directory,
+        staged_directory,
+        &target_directory,
+        "安装新版 Mod",
+    ) {
+        Ok(()) => {
+            if let Err(validation_error) =
+                validate_audio_mod_directory(mods_directory, mod_name, target_directory.clone())
+                    .and_then(|validated| {
+                        validate_preserved_feature_groups(
+                            required_feature_groups,
+                            &validated.feature_groups,
+                        )
+                    })
+            {
+                let recovery = recover_audio_mod_replacements(mods_directory);
+                return Err(match recovery {
+                    Ok(()) => {
+                        format!("安装后的新版 Mod 严格校验失败，已恢复旧版：{validation_error}")
+                    }
+                    Err(recovery_error) => format!(
+                        "安装后的新版 Mod 严格校验失败，且事务恢复需要人工处理：{validation_error}；{recovery_error}"
+                    ),
+                });
+            }
+            sync_safe_directory_tree(mods_directory, &target_directory)
+                .map_err(|error| format!("安装后的新版 Mod 持久化失败：{error}"))?;
+            validate_required_feature_groups_directory(
+                mods_directory,
+                mod_name,
+                target_directory.clone(),
+                required_feature_groups,
+            )
+            .map_err(|error| format!("新版 Mod 在清理备份前发生安全变化：{error}"))?;
+            remove_transaction_directory(mods_directory, backup_directory, "Mod 更新备份")?;
+            cleanup_staged_directory(mods_directory, staged_directory)?;
+            remove_replace_journal(mods_directory, &journal_path)?;
             Ok(())
         }
-        Err(install_error) => match std::fs::rename(backup_directory, &target_directory) {
-            Ok(()) => {
-                let _ = std::fs::remove_file(journal_path);
-                Err(format!("安装新版 Mod 失败，已恢复旧版：{install_error}"))
-            }
-            Err(rollback_error) => Err(format!(
-                "安装新版 Mod 失败且自动恢复失败；旧版仍保留在 {}。安装错误：{}；恢复错误：{}",
-                backup_directory.display(),
-                install_error,
-                rollback_error
-            )),
-        },
+        Err(install_error) => {
+            let recovery = recover_audio_mod_replacements(mods_directory);
+            Err(match recovery {
+                Ok(()) => format!("安装新版 Mod 失败，已恢复旧版：{install_error}"),
+                Err(recovery_error) => format!(
+                    "安装新版 Mod 失败且自动恢复未完成；旧版仍保留在 {}。安装错误：{}；恢复错误：{}",
+                    backup_directory.display(),
+                    install_error,
+                    recovery_error
+                ),
+            })
+        }
     }
 }
 
@@ -1481,7 +2786,7 @@ pub async fn prepare_audio_mod(
     )
     .await?;
     let generated =
-        validate_generator_output(&mods_directory, &mod_name, &report, requested_features)?;
+        validate_generator_output(&mods_directory, &mod_name, &report, requested_features, &[])?;
     emit_prepare_progress(&app, &account_id, "complete", 100, "识别 Mod 已准备完成");
     Ok(AudioModPrepareResult {
         account_id,
@@ -1508,24 +2813,70 @@ pub async fn upgrade_audio_mod(
     let mods_directory = context.installation.game_directory.join("mods");
     recover_audio_mod_replacements(&mods_directory)?;
     let current = compatibility(&mods_directory, &account.mod_args);
-    if !current.update_required {
-        return Err("当前账号没有需要原位更新的旧版识别 Mod".to_string());
-    }
     let mod_name = current
         .mod_name
         .as_deref()
         .ok_or_else(|| "当前账号没有配置识别 Mod".to_string())?;
+    let mut explicitly_requested =
+        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
+    // Every pre-feature-group official release was an audio Mod. Preserve that known behavior even
+    // if a newer caller only asks to append room tools while performing the mandatory upgrade.
+    if current.update_required {
+        explicitly_requested.audio_telemetry = true;
+    }
+    let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
+    if current
+        .recipe_version
+        .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        && current_validated.is_none()
+    {
+        return Err(
+            "当前 r22+ Mod 无法通过完整安全校验，不能在未知功能组状态下原位更新；请保留原目录并重新准备"
+                .to_string(),
+        );
+    }
+    let required_existing_groups = current_validated
+        .as_ref()
+        .filter(|validated| validated.current_feature_protocol)
+        .map(|validated| validated.feature_groups.clone())
+        .unwrap_or_default();
+    let requested_features = current_validated
+        .as_ref()
+        .map_or(explicitly_requested, |validated| {
+            explicitly_requested.include_existing_known(&validated.feature_groups)
+        });
+    let requested_groups_are_present = current_validated
+        .as_ref()
+        .is_some_and(|validated| requested_features.all_present(&validated.feature_groups));
+    let can_add_missing_groups = current_validated
+        .as_ref()
+        .is_some_and(|validated| validated.current_feature_protocol)
+        && !requested_groups_are_present;
+    if !current.update_required && !can_add_missing_groups {
+        return Err(if requested_groups_are_present {
+            "当前识别 Mod 已包含所选功能组，无需更新".to_string()
+        } else {
+            "当前 Mod 不支持安全原位更新".to_string()
+        });
+    }
     ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
 
-    let requested_source = source_mod_name;
-    if current.build_mode.as_deref() == Some("augment") && requested_source.is_none() {
-        return Err("这个旧版识别 Mod 基于其他 Mod 生成；请选择当时未经加工的原始 Mod".to_string());
-    }
-    let (_source_name, source_directory) =
-        resolve_source_directory(&mods_directory, mod_name, requested_source)?;
-    let requested_features =
-        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
-
+    let current_r22_source = current_validated
+        .as_ref()
+        .filter(|validated| validated.current_feature_protocol)
+        .map(|validated| validated.directory.clone());
+    let source_directory = if let Some(current_source) = current_r22_source {
+        // Generate into a separate temporary root while using the current verified r22 Mod as the
+        // additive source. The generator carries opaque future groups forward from this manifest.
+        Some(current_source)
+    } else {
+        if current.build_mode.as_deref() == Some("augment") && source_mod_name.is_none() {
+            return Err(
+                "这个旧版识别 Mod 基于其他 Mod 生成；请选择当时未经加工的原始 Mod".to_string(),
+            );
+        }
+        resolve_source_directory(&mods_directory, mod_name, source_mod_name)?.1
+    };
     emit_prepare_progress(&app, &account_id, "starting", 1, "正在生成同名新版 Mod…");
     let temporary_output = TemporaryDirectory::create(std::env::temp_dir().join(format!(
         "d2rhub-audio-upgrade-output-{}",
@@ -1549,6 +2900,7 @@ pub async fn upgrade_audio_mod(
         mod_name,
         &report,
         requested_features,
+        &required_existing_groups,
     )?;
 
     emit_prepare_progress(&app, &account_id, "staging", 90, "正在校验并暂存新版 Mod…");
@@ -1568,6 +2920,7 @@ pub async fn upgrade_audio_mod(
         return Err("暂存的 Mod 未通过当前配方校验，旧版未被修改".to_string());
     }
     requested_features.validate_present(&staged.feature_groups)?;
+    validate_preserved_feature_groups(&required_existing_groups, &staged.feature_groups)?;
     if staged.feature_groups != generated.feature_groups {
         return Err("暂存 Mod 的功能组与已验证生成结果不一致，旧版未被修改".to_string());
     }
@@ -1581,6 +2934,7 @@ pub async fn upgrade_audio_mod(
         mod_name,
         &staged_directory,
         &backup_directory,
+        &required_existing_groups,
     )?;
     let installed = validate_audio_mod(&mods_directory, mod_name)?;
     if installed
@@ -1591,6 +2945,7 @@ pub async fn upgrade_audio_mod(
     {
         return Err("同名更新完成后校验异常，请重新准备识别 Mod".to_string());
     }
+    validate_preserved_feature_groups(&required_existing_groups, &installed.feature_groups)?;
     emit_prepare_progress(
         &app,
         &account_id,
@@ -1784,12 +3139,19 @@ mod tests {
     use super::{
         active_mod_name, arguments_with_audio_mod, compatibility, find_existing_mod_name,
         generated_audio_mod_name, has_txt_argument, installed_mods, recover_audio_mod_replacements,
-        replace_audio_mod_directory, replace_journal_paths_are_valid, resolve_source_directory,
-        validate_generator_output, write_replace_journal, GeneratorFeatureGroup, GeneratorReport,
-        RequestedFeatureGroups, AREA_CATALOG_FILE_NAME, AUDIO_TELEMETRY_FEATURE_ID,
-        IN_GAME_ROOM_TOOLS_FEATURE_ID, ITEM_CATALOG_FILE_NAME, PROTOCOL_VERSION,
-        REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+        replace_audio_mod_directory, replace_journal_paths_are_valid,
+        require_verified_running_session, resolve_source_directory, traverse_safe_directory_tree,
+        validate_audio_mod, validate_generator_output, validate_in_game_room_tool_layouts,
+        validate_preserved_feature_groups, validate_recoverable_audio_mod_directory,
+        write_replace_journal, write_replace_journal_with_stage_sync, GeneratorFeatureGroup,
+        GeneratorReport, RequestedFeatureGroups, SafeTreeNodeKind, AREA_CATALOG_FILE_NAME,
+        AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ITEM_CATALOG_FILE_NAME,
+        NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+        ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X,
+        ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
     };
+
+    const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
 
     fn write_test_audio_mod(
         mods_directory: &std::path::Path,
@@ -1815,6 +3177,12 @@ mod tests {
         std::env::temp_dir().join(format!("d2rhub_audio_mod_{label}_{}", uuid::Uuid::new_v4()))
     }
 
+    fn test_audio_fingerprint() -> String {
+        format!(
+            "audio-v1;protocol={PROTOCOL_VERSION};areas=all_areas;track=charms,essences,gems,jewels,keys,organs,runes;gain_mdb=0"
+        )
+    }
+
     fn current_audio_manifest(mod_name: &str) -> serde_json::Value {
         serde_json::json!({
             "manifest_format": "d2r-audio-telemetry-mod",
@@ -1826,9 +3194,140 @@ mod tests {
             "feature_groups": [{
                 "id": AUDIO_TELEMETRY_FEATURE_ID,
                 "recipe_version": 1,
-                "fingerprint": "audio-v1;fixture=true"
+                "fingerprint": test_audio_fingerprint()
             }]
         })
+    }
+
+    fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str) {
+        let layouts = mods_directory
+            .join(mod_name)
+            .join(format!("{mod_name}.mpq"))
+            .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+        std::fs::create_dir_all(&layouts).unwrap();
+        let pause_layout = || {
+            serde_json::json!({
+                "fields": {"defaultWidget": "D2RHubKeyboardGatewayHub"},
+                "children": [
+                    {"name": "D2RHubKeyboardGatewayHub", "fields": {"acceptsReturnKey": false}},
+                    {"name": "ReturnToGame", "fields": {"navigation": {
+                        "left": {"name": "D2RHubKeyboardCreateGateway"},
+                        "right": {"name": "D2RHubKeyboardJoinGateway"}
+                    }}},
+                    {"name": "D2RHubKeyboardCreateGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate"
+                    }},
+                    {"name": "D2RHubKeyboardJoinGateway", "fields": {
+                        "acceptsReturnKey": true,
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin"
+                    }}
+                ]
+            })
+        };
+        for (name, document) in [
+            (
+                "HudWarningshd.json",
+                serde_json::json!({"children": [{"fields": {"message": "PanelManager:OpenPanel:D2RHubRoomToolbar"}}]}),
+            ),
+            ("pauselayouthd.json", pause_layout()),
+            ("pauselayoutgardenhd.json", pause_layout()),
+            (
+                "D2RHubRoomToolbarhd.json",
+                serde_json::json!({"children": [
+                    {"name": "D2RHubNextGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        "tooltipString": "再次确认后进入下一局",
+                        "tooltipOffset": {"y": NEXT_GAME_TOOLTIP_OFFSET_Y},
+                        "onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"
+                    }},
+                    {"name": "D2RHubCreateGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_CREATE_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubOpenCreateGame"
+                    }},
+                    {"name": "D2RHubJoinGame", "fields": {
+                        "rect": {"x": ROOM_TOOL_JOIN_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubOpenJoinGame"
+                    }}
+                ]}),
+            ),
+            (
+                "D2RHubQuickRecreateConfirmhd.json",
+                serde_json::json!({
+                    "fields": {"isDismissable": true, "acceptsEscKeyEverywhere": true},
+                    "children": [
+                        {"name": "D2RHubConfirmNextGame", "fields": {
+                            "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_CONFIRM_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                            "onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"
+                        }},
+                        {"fields": {"message": "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm"}}
+                    ]
+                }),
+            ),
+            (
+                "D2RHubQuickRecreatehd.json",
+                serde_json::json!({"children": [{"fields": {"message": "CharacterSelect:LoadCharacter:2"}}]}),
+            ),
+            (
+                "D2RHubOpenCreateGamehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenCreateGame"}}
+                ]}),
+            ),
+            (
+                "D2RHubOpenJoinGamehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenJoinGame"}}
+                ]}),
+            ),
+            (
+                "D2RHubKeyboardOpenCreatehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenCreate"}}
+                ]}),
+            ),
+            (
+                "D2RHubKeyboardOpenJoinhd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenJoin"}}
+                ]}),
+            ),
+            (
+                "creategamepanelhd.json",
+                serde_json::json!({
+                    "fields": {"defaultWidget": "GameNameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
+                    "children": [
+                        {"name": "GameNameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
+                        {"name": "DescriptionInput", "fields": {"imeEnabled": true}},
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
+                    ]
+                }),
+            ),
+            (
+                "joingamepanelhd.json",
+                serde_json::json!({
+                    "fields": {"defaultWidget": "NameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
+                    "children": [
+                        {"name": "NameInput", "fields": {"imeEnabled": true}},
+                        {"name": "PasswordInput", "fields": {"imeEnabled": true}},
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
+                    ]
+                }),
+            ),
+        ] {
+            std::fs::write(layouts.join(name), serde_json::to_vec(&document).unwrap()).unwrap();
+        }
     }
 
     #[test]
@@ -1861,6 +3360,51 @@ mod tests {
         assert!(requested.audio_telemetry);
         assert!(!requested.room_tools);
         assert_eq!(requested.generator_value(), "audio");
+    }
+
+    #[test]
+    fn room_tools_require_a_running_pid_with_a_matching_launch_snapshot() {
+        assert!(
+            require_verified_running_session("offline", ("-mod new".into(), None, false))
+                .unwrap_err()
+                .contains("没有由 D2RHub 确认的运行实例")
+        );
+        let discovered = require_verified_running_session(
+            "discovered",
+            ("-mod persisted-new".into(), Some(42), false),
+        )
+        .unwrap_err();
+        assert!(discovered.contains("PID 42"));
+        assert!(discovered.contains("可信启动快照"));
+        let trusted = require_verified_running_session(
+            "trusted",
+            ("-mod actually-running -txt".into(), Some(43), true),
+        )
+        .unwrap();
+        assert_eq!(trusted, ("-mod actually-running -txt".to_string(), 43));
+    }
+
+    #[test]
+    fn audio_only_mod_can_be_upgraded_in_place_to_audio_and_room_tools() {
+        let audio = GeneratorFeatureGroup {
+            id: AUDIO_TELEMETRY_FEATURE_ID.to_string(),
+            recipe_version: 1,
+            fingerprint: test_audio_fingerprint(),
+            reused_from_source: false,
+        };
+        let requested = RequestedFeatureGroups::from_options(Some(true), Some(true))
+            .unwrap()
+            .include_existing_known(std::slice::from_ref(&audio));
+        assert!(!requested.all_present(std::slice::from_ref(&audio)));
+        assert_eq!(requested.generator_value(), "audio,rooms");
+
+        let room = GeneratorFeatureGroup {
+            id: IN_GAME_ROOM_TOOLS_FEATURE_ID.to_string(),
+            recipe_version: 19,
+            fingerprint: "room-tools-v19".to_string(),
+            reused_from_source: false,
+        };
+        assert!(requested.all_present(&[audio, room]));
     }
 
     #[test]
@@ -1909,8 +3453,8 @@ mod tests {
     fn replacement_journal_paths_cannot_alias_the_target_or_escape_the_transaction_layout() {
         assert!(replace_journal_paths_are_valid(
             "safe-mod",
-            std::path::Path::new(".d2rhub-upgrade-stage-test/safe-mod"),
-            std::path::Path::new(".d2rhub-upgrade-backup-test"),
+            std::path::Path::new(".d2rhub-upgrade-stage-0123456789abcdef0123456789abcdef/safe-mod",),
+            std::path::Path::new(".d2rhub-upgrade-backup-0123456789abcdef0123456789abcdef",),
         ));
         assert!(!replace_journal_paths_are_valid(
             "safe-mod",
@@ -1920,15 +3464,99 @@ mod tests {
         assert!(!replace_journal_paths_are_valid(
             "safe-mod",
             std::path::Path::new("../outside/safe-mod"),
-            std::path::Path::new(".d2rhub-upgrade-backup-test"),
+            std::path::Path::new(".d2rhub-upgrade-backup-0123456789abcdef0123456789abcdef",),
         ));
+        assert!(!replace_journal_paths_are_valid(
+            "safe-mod",
+            std::path::Path::new(".d2rhub-upgrade-stage-0123456789abcdef0123456789abcdef/safe-mod",),
+            std::path::Path::new(".d2rhub-upgrade-backup-fedcba9876543210fedcba9876543210",),
+        ));
+    }
+
+    #[test]
+    fn durability_traversal_visits_files_before_directories_bottom_up() {
+        let root = test_mods_directory("durability_order");
+        let mods = root.join("mods");
+        let staged = mods.join("stage");
+        let nested = staged.join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("payload.bin"), b"payload").unwrap();
+        let mut events = Vec::new();
+
+        traverse_safe_directory_tree(&mods, &staged, |path, kind| {
+            events.push((path.strip_prefix(&mods).unwrap().to_path_buf(), kind));
+            Ok(())
+        })
+        .unwrap();
+
+        let file_index = events
+            .iter()
+            .position(|(path, kind)| {
+                path == std::path::Path::new("stage/nested/payload.bin")
+                    && *kind == SafeTreeNodeKind::File
+            })
+            .unwrap();
+        let nested_index = events
+            .iter()
+            .position(|(path, kind)| {
+                path == std::path::Path::new("stage/nested") && *kind == SafeTreeNodeKind::Directory
+            })
+            .unwrap();
+        let root_index = events
+            .iter()
+            .position(|(path, kind)| {
+                path == std::path::Path::new("stage") && *kind == SafeTreeNodeKind::Directory
+            })
+            .unwrap();
+        assert!(file_index < nested_index && nested_index < root_index);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn staged_tree_is_synced_before_the_replace_journal_becomes_visible() {
+        let root = test_mods_directory("durability_before_journal");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("durable");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        let journal = mods.join(format!(
+            "{}{}{}",
+            super::REPLACE_JOURNAL_PREFIX,
+            TEST_TRANSACTION_ID,
+            super::REPLACE_JOURNAL_SUFFIX
+        ));
+        let temporary_journal = journal.with_extension("json.tmp");
+        std::fs::create_dir_all(&mods).unwrap();
+        write_test_audio_mod(&mods, "durable", current_audio_manifest("durable"));
+        write_test_audio_mod(&stage_parent, "durable", current_audio_manifest("durable"));
+        let sync_observed = std::cell::Cell::new(false);
+
+        let actual_journal = write_replace_journal_with_stage_sync(
+            &mods,
+            "durable",
+            &staged,
+            &backup,
+            &[],
+            |mods_directory, staged_directory| {
+                assert!(!journal.exists());
+                assert!(!temporary_journal.exists());
+                sync_observed.set(true);
+                super::sync_safe_directory_tree(mods_directory, staged_directory)
+            },
+        )
+        .unwrap();
+
+        assert!(sync_observed.get());
+        assert_eq!(actual_journal, journal);
+        assert!(journal.is_file());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn same_name_update_switches_only_after_staged_mod_is_ready() {
         let root = test_mods_directory("same_name_upgrade");
         let mods = root.join("mods");
-        let staging = mods.join(".d2rhub-upgrade-stage-test");
+        let staging = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
         std::fs::create_dir_all(&mods).unwrap();
         std::fs::create_dir_all(&staging).unwrap();
         write_test_audio_mod(
@@ -1943,9 +3571,10 @@ mod tests {
         std::fs::write(mods.join("jcy-tz").join("old-marker.txt"), b"old").unwrap();
         write_test_audio_mod(&staging, "jcy-tz", current_audio_manifest("jcy-tz"));
         std::fs::write(staging.join("jcy-tz").join("new-marker.txt"), b"new").unwrap();
-        let backup = mods.join(".d2rhub-upgrade-backup-test");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
 
-        replace_audio_mod_directory(&mods, "jcy-tz", &staging.join("jcy-tz"), &backup).unwrap();
+        replace_audio_mod_directory(&mods, "jcy-tz", &staging.join("jcy-tz"), &backup, &[])
+            .unwrap();
 
         assert!(mods.join("jcy-tz").join("new-marker.txt").is_file());
         assert!(!mods.join("jcy-tz").join("old-marker.txt").exists());
@@ -1953,6 +3582,142 @@ mod tests {
         let result = compatibility(&mods, "-mod jcy-tz -txt");
         assert!(result.ready);
         assert!(!result.update_required);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn same_name_upgrade_cannot_drop_an_unknown_existing_feature_group() {
+        let root = test_mods_directory("preserve_unknown_feature");
+        let mods = root.join("mods");
+        let staging = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        let unknown = GeneratorFeatureGroup {
+            id: "future_feature".to_string(),
+            recipe_version: 77,
+            fingerprint: "future-v77;opaque=true".to_string(),
+            reused_from_source: false,
+        };
+        let mut current_manifest = current_audio_manifest("preserve-me");
+        current_manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(&unknown).unwrap());
+        write_test_audio_mod(&mods, "preserve-me", current_manifest);
+        let existing = validate_audio_mod(&mods, "preserve-me")
+            .unwrap()
+            .feature_groups;
+
+        let mut candidate_manifest = current_audio_manifest("preserve-me");
+        candidate_manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
+                "recipe_version": 19,
+                "fingerprint": "room-tools-v19"
+            }));
+        write_test_audio_mod(&staging, "preserve-me", candidate_manifest.clone());
+        write_test_room_tool_layouts(&staging, "preserve-me");
+
+        let error = replace_audio_mod_directory(
+            &mods,
+            "preserve-me",
+            &staging.join("preserve-me"),
+            &backup,
+            &existing,
+        )
+        .unwrap_err();
+        assert!(error.contains("未无损保留现有功能组“future_feature”"));
+        assert!(validate_audio_mod(&mods, "preserve-me")
+            .unwrap()
+            .feature_groups
+            .iter()
+            .any(|group| group.id == "future_feature"));
+        assert!(!backup.exists());
+
+        let mut carried = unknown.clone();
+        carried.reused_from_source = true;
+        candidate_manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(carried).unwrap());
+        write_test_audio_mod(&staging, "preserve-me", candidate_manifest);
+        replace_audio_mod_directory(
+            &mods,
+            "preserve-me",
+            &staging.join("preserve-me"),
+            &backup,
+            &existing,
+        )
+        .unwrap();
+
+        let installed = validate_audio_mod(&mods, "preserve-me").unwrap();
+        validate_preserved_feature_groups(&existing, &installed.feature_groups).unwrap();
+        assert!(installed
+            .feature_groups
+            .iter()
+            .any(|group| group.id == "future_feature" && group.reused_from_source));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn crash_recovery_restores_backup_when_new_target_drops_an_unknown_group() {
+        let root = test_mods_directory("recover_unknown_feature");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("preserve-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        let unknown = GeneratorFeatureGroup {
+            id: "future_feature".to_string(),
+            recipe_version: 77,
+            fingerprint: "future-v77;opaque=true".to_string(),
+            reused_from_source: false,
+        };
+        let mut old_manifest = current_audio_manifest("preserve-me");
+        old_manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(&unknown).unwrap());
+        write_test_audio_mod(&mods, "preserve-me", old_manifest);
+        std::fs::write(mods.join("preserve-me").join("old-marker.txt"), b"old").unwrap();
+        let required = validate_audio_mod(&mods, "preserve-me")
+            .unwrap()
+            .feature_groups;
+
+        let mut incomplete_new = current_audio_manifest("preserve-me");
+        incomplete_new["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
+                "recipe_version": 19,
+                "fingerprint": "room-tools-v19"
+            }));
+        write_test_audio_mod(&stage_parent, "preserve-me", incomplete_new);
+        write_test_room_tool_layouts(&stage_parent, "preserve-me");
+        std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
+
+        // Simulate a journal produced just before preservation metadata was enforced, then a crash
+        // after both directory renames. Recovery must treat the missing opaque group as an invalid
+        // new target and restore the strict r22 backup instead of deleting it.
+        let journal = write_replace_journal(&mods, "preserve-me", &staged, &backup, &[]).unwrap();
+        let mut document: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+        document["required_feature_groups"] = serde_json::to_value(&required).unwrap();
+        std::fs::write(&journal, serde_json::to_vec_pretty(&document).unwrap()).unwrap();
+        std::fs::rename(mods.join("preserve-me"), &backup).unwrap();
+        std::fs::rename(&staged, mods.join("preserve-me")).unwrap();
+
+        recover_audio_mod_replacements(&mods).unwrap();
+
+        let restored = validate_audio_mod(&mods, "preserve-me").unwrap();
+        validate_preserved_feature_groups(&required, &restored.feature_groups).unwrap();
+        assert!(mods.join("preserve-me").join("old-marker.txt").is_file());
+        assert!(!mods.join("preserve-me").join("new-marker.txt").exists());
+        assert!(!backup.exists());
+        assert!(!journal.exists());
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2030,7 +3795,7 @@ mod tests {
         let audio_group = GeneratorFeatureGroup {
             id: AUDIO_TELEMETRY_FEATURE_ID.to_string(),
             recipe_version: 1,
-            fingerprint: "audio-v1;fixture=true".to_string(),
+            fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
         let mut report = GeneratorReport {
@@ -2049,9 +3814,29 @@ mod tests {
                 audio_telemetry: true,
                 room_tools: false,
             },
+            &[],
         )
         .unwrap();
         assert_eq!(actual.feature_groups, vec![audio_group]);
+
+        let required_future = GeneratorFeatureGroup {
+            id: "future_feature".to_string(),
+            recipe_version: 77,
+            fingerprint: "future-v77;opaque=true".to_string(),
+            reused_from_source: false,
+        };
+        assert!(validate_generator_output(
+            &root,
+            mod_name,
+            &report,
+            RequestedFeatureGroups {
+                audio_telemetry: true,
+                room_tools: false,
+            },
+            &[required_future],
+        )
+        .unwrap_err()
+        .contains("未无损保留现有功能组“future_feature”"));
 
         assert!(validate_generator_output(
             &root,
@@ -2061,6 +3846,7 @@ mod tests {
                 audio_telemetry: true,
                 room_tools: true,
             },
+            &[],
         )
         .unwrap_err()
         .contains("局内房间工具"));
@@ -2079,6 +3865,7 @@ mod tests {
                 audio_telemetry: true,
                 room_tools: true,
             },
+            &[],
         )
         .unwrap_err()
         .contains("落盘清单不一致"));
@@ -2096,6 +3883,7 @@ mod tests {
             "fingerprint": "room-tools-v19"
         }]);
         write_test_audio_mod(&root, name, manifest);
+        write_test_room_tool_layouts(&root, name);
         std::fs::remove_file(root.join(name).join(AREA_CATALOG_FILE_NAME)).unwrap();
         std::fs::remove_file(root.join(name).join(ITEM_CATALOG_FILE_NAME)).unwrap();
 
@@ -2112,12 +3900,80 @@ mod tests {
     }
 
     #[test]
+    fn claimed_room_tools_require_supported_metadata_and_complete_layouts() {
+        let root = test_mods_directory("claimed_room_tools");
+        let name = "room-tools";
+        let room_manifest = |recipe_version, fingerprint: &str| {
+            serde_json::json!({
+                "manifest_format": "d2r-audio-telemetry-mod",
+                "producer": "d2r-audio-mod",
+                "protocol_version": PROTOCOL_VERSION,
+                "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+                "build_mode": "minimal",
+                "mod_name": name,
+                "feature_groups": [{
+                    "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
+                    "recipe_version": recipe_version,
+                    "fingerprint": fingerprint
+                }]
+            })
+        };
+
+        write_test_audio_mod(&root, name, room_manifest(19, "room-tools-v19"));
+        let incomplete = validate_audio_mod(&root, name).unwrap_err();
+        assert!(incomplete.contains("缺少布局文件"));
+
+        write_test_room_tool_layouts(&root, name);
+        let validated = validate_audio_mod(&root, name).unwrap();
+        validate_in_game_room_tool_layouts(&validated.directory, name).unwrap();
+
+        write_test_audio_mod(&root, name, room_manifest(18, "room-tools-v18"));
+        assert!(validate_audio_mod(&root, name)
+            .unwrap_err()
+            .contains("配方 r18 不受支持"));
+        write_test_audio_mod(&root, name, room_manifest(19, "forged-room-tools"));
+        assert!(validate_audio_mod(&root, name)
+            .unwrap_err()
+            .contains("指纹无效"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn known_audio_metadata_is_strict_but_unknown_groups_remain_forward_compatible() {
+        let root = test_mods_directory("known_and_unknown_groups");
+        let name = "feature-metadata";
+        let mut manifest = current_audio_manifest(name);
+        manifest["feature_groups"][0]["recipe_version"] = serde_json::json!(2);
+        write_test_audio_mod(&root, name, manifest.clone());
+        assert!(validate_audio_mod(&root, name)
+            .unwrap_err()
+            .contains("配方 r2 不受支持"));
+
+        manifest["feature_groups"][0]["recipe_version"] = serde_json::json!(1);
+        manifest["feature_groups"][0]["fingerprint"] = serde_json::json!("audio-v1;fixture=forged");
+        write_test_audio_mod(&root, name, manifest.clone());
+        assert!(validate_audio_mod(&root, name)
+            .unwrap_err()
+            .contains("指纹无效"));
+
+        manifest["feature_groups"] = serde_json::json!([{
+            "id": "future_feature",
+            "recipe_version": 77,
+            "fingerprint": "future-v77;opaque=true"
+        }]);
+        write_test_audio_mod(&root, name, manifest);
+        let validated = validate_audio_mod(&root, name).unwrap();
+        assert_eq!(validated.feature_groups[0].id, "future_feature");
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn interrupted_directory_switch_restores_the_old_mod() {
         let root = test_mods_directory("replace_recovery_rollback");
         let mods = root.join("mods");
-        let stage_parent = mods.join(".d2rhub-upgrade-stage-recovery");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
         let staged = stage_parent.join("recover-me");
-        let backup = mods.join(".d2rhub-upgrade-backup-recovery");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
         std::fs::create_dir_all(&mods).unwrap();
         write_test_audio_mod(
             &mods,
@@ -2135,7 +3991,7 @@ mod tests {
             current_audio_manifest("recover-me"),
         );
         std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
-        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup).unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap();
         std::fs::rename(mods.join("recover-me"), &backup).unwrap();
 
         recover_audio_mod_replacements(&mods).unwrap();
@@ -2151,9 +4007,9 @@ mod tests {
     fn interrupted_directory_switch_commits_the_valid_new_mod() {
         let root = test_mods_directory("replace_recovery_commit");
         let mods = root.join("mods");
-        let stage_parent = mods.join(".d2rhub-upgrade-stage-recovery");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
         let staged = stage_parent.join("recover-me");
-        let backup = mods.join(".d2rhub-upgrade-backup-recovery");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
         std::fs::create_dir_all(&mods).unwrap();
         write_test_audio_mod(
             &mods,
@@ -2170,7 +4026,7 @@ mod tests {
             current_audio_manifest("recover-me"),
         );
         std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
-        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup).unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap();
         std::fs::rename(mods.join("recover-me"), &backup).unwrap();
         std::fs::rename(&staged, mods.join("recover-me")).unwrap();
 
@@ -2179,6 +4035,299 @@ mod tests {
         assert!(mods.join("recover-me").join("new-marker.txt").is_file());
         assert!(!backup.exists());
         assert!(!journal.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn recovery_never_accepts_a_legacy_shaped_new_target_over_a_good_backup() {
+        let root = test_mods_directory("replace_recovery_strict_new_target");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        write_test_audio_mod(
+            &mods,
+            "recover-me",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "build_mode": "minimal",
+                "mod_name": "recover-me"
+            }),
+        );
+        std::fs::write(mods.join("recover-me").join("old-marker.txt"), b"old").unwrap();
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap();
+        std::fs::rename(mods.join("recover-me"), &backup).unwrap();
+        std::fs::rename(&staged, mods.join("recover-me")).unwrap();
+        // It still passes the permissive published-release validator, but it is not a complete r22
+        // target and therefore must never make the good backup disposable.
+        write_test_audio_mod(
+            &mods,
+            "recover-me",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "build_mode": "minimal",
+                "mod_name": "recover-me"
+            }),
+        );
+
+        recover_audio_mod_replacements(&mods).unwrap();
+
+        assert!(mods.join("recover-me").join("old-marker.txt").is_file());
+        assert!(!mods.join("recover-me").join("new-marker.txt").exists());
+        assert!(!backup.exists());
+        assert!(!journal.exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn target_without_transaction_artifacts_requires_strict_current_validation() {
+        let root = test_mods_directory("replace_recovery_target_only_strict");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        write_test_audio_mod(
+            &mods,
+            "recover-me",
+            serde_json::json!({
+                "protocol_version": PROTOCOL_VERSION,
+                "build_mode": "minimal",
+                "mod_name": "recover-me"
+            }),
+        );
+        std::fs::write(mods.join("recover-me").join("only-copy.txt"), b"evidence").unwrap();
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap();
+        std::fs::remove_dir_all(&stage_parent).unwrap();
+
+        let error = recover_audio_mod_replacements(&mods).unwrap_err();
+
+        assert!(error.contains("严格校验"));
+        assert!(mods.join("recover-me").join("only-copy.txt").is_file());
+        assert!(
+            journal.is_file(),
+            "unsafe recovery must preserve its journal"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn valid_staged_candidate_wins_only_after_a_missing_target_backup_is_rejected() {
+        let root = test_mods_directory("replace_recovery_bad_backup");
+        let mods = root.join("mods");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(mods.join("recover-me").join("recover-me.mpq")).unwrap();
+        std::fs::write(mods.join("recover-me").join("bad-backup.txt"), b"bad").unwrap();
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        std::fs::write(staged.join("new-marker.txt"), b"new").unwrap();
+        let journal = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap();
+        std::fs::rename(mods.join("recover-me"), &backup).unwrap();
+
+        recover_audio_mod_replacements(&mods).unwrap();
+
+        assert!(mods.join("recover-me").join("new-marker.txt").is_file());
+        assert!(!backup.exists());
+        assert!(!journal.exists());
+        assert!(std::fs::read_dir(&mods)
+            .unwrap()
+            .filter_map(Result::ok)
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".d2rhub-upgrade-failed-backup-")
+            }));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn transaction_paths_reject_a_symlinked_stage_parent_outside_mods() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_mods_directory("replace_symlink_escape");
+        let mods = root.join("mods");
+        let outside = root.join("outside");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(outside.join("recover-me")).unwrap();
+        std::fs::write(outside.join("recover-me").join("evidence.txt"), b"outside").unwrap();
+        write_test_audio_mod(&mods, "recover-me", current_audio_manifest("recover-me"));
+        symlink(&outside, &stage_parent).unwrap();
+
+        let error = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap_err();
+
+        assert!(error.contains("符号链接"));
+        assert_eq!(
+            std::fs::read(outside.join("recover-me").join("evidence.txt")).unwrap(),
+            b"outside"
+        );
+        let journal = mods.join(format!(
+            "{}{}{}",
+            super::REPLACE_JOURNAL_PREFIX,
+            TEST_TRANSACTION_ID,
+            super::REPLACE_JOURNAL_SUFFIX
+        ));
+        std::fs::write(
+            &journal,
+            serde_json::to_vec(&serde_json::json!({
+                "format_version": 1,
+                "mod_name": "recover-me",
+                "staged_relative": format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}/recover-me"),
+                "backup_relative": format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}")
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(recover_audio_mod_replacements(&mods)
+            .unwrap_err()
+            .contains("符号链接"));
+        assert!(journal.is_file());
+        assert_eq!(
+            std::fs::read(outside.join("recover-me").join("evidence.txt")).unwrap(),
+            b"outside"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn validation_and_journaling_reject_nested_staged_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let root = test_mods_directory("nested_stage_symlink");
+        let mods = root.join("mods");
+        let outside = root.join("outside");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("evidence.txt"), b"outside").unwrap();
+        write_test_audio_mod(&mods, "recover-me", current_audio_manifest("recover-me"));
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        let nested_link = staged.join("recover-me.mpq").join("nested-link");
+        symlink(&outside, &nested_link).unwrap();
+
+        assert!(validate_audio_mod(&stage_parent, "recover-me")
+            .unwrap_err()
+            .contains("符号链接"));
+        assert!(
+            validate_recoverable_audio_mod_directory(&mods, "recover-me", &staged)
+                .unwrap_err()
+                .contains("符号链接")
+        );
+        assert!(
+            write_replace_journal(&mods, "recover-me", &staged, &backup, &[])
+                .unwrap_err()
+                .contains("符号链接")
+        );
+        assert_eq!(
+            std::fs::read(outside.join("evidence.txt")).unwrap(),
+            b"outside"
+        );
+        assert!(!mods
+            .join(format!(
+                "{}{}{}",
+                super::REPLACE_JOURNAL_PREFIX,
+                TEST_TRANSACTION_ID,
+                super::REPLACE_JOURNAL_SUFFIX
+            ))
+            .exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn transaction_paths_reject_windows_directory_reparse_points() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = test_mods_directory("replace_reparse_escape");
+        let mods = root.join("mods");
+        let outside = root.join("outside");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(outside.join("recover-me")).unwrap();
+        write_test_audio_mod(&mods, "recover-me", current_audio_manifest("recover-me"));
+        if symlink_dir(&outside, &stage_parent).is_err() {
+            // Windows may deny symlink creation when Developer Mode is disabled. Production also
+            // checks FILE_ATTRIBUTE_REPARSE_POINT, which covers directory junctions.
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+
+        let error = write_replace_journal(&mods, "recover-me", &staged, &backup, &[]).unwrap_err();
+        assert!(error.contains("重解析点") || error.contains("符号链接"));
+        std::fs::remove_dir(&stage_parent).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn validation_and_journaling_reject_nested_windows_reparse_points() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = test_mods_directory("nested_stage_reparse");
+        let mods = root.join("mods");
+        let outside = root.join("outside");
+        let stage_parent = mods.join(format!(".d2rhub-upgrade-stage-{TEST_TRANSACTION_ID}"));
+        let staged = stage_parent.join("recover-me");
+        let backup = mods.join(format!(".d2rhub-upgrade-backup-{TEST_TRANSACTION_ID}"));
+        std::fs::create_dir_all(&mods).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        write_test_audio_mod(&mods, "recover-me", current_audio_manifest("recover-me"));
+        write_test_audio_mod(
+            &stage_parent,
+            "recover-me",
+            current_audio_manifest("recover-me"),
+        );
+        let nested_link = staged.join("recover-me.mpq").join("nested-link");
+        if symlink_dir(&outside, &nested_link).is_err() {
+            std::fs::remove_dir_all(root).unwrap();
+            return;
+        }
+
+        assert!(validate_audio_mod(&stage_parent, "recover-me")
+            .unwrap_err()
+            .contains("重解析点"));
+        assert!(
+            validate_recoverable_audio_mod_directory(&mods, "recover-me", &staged)
+                .unwrap_err()
+                .contains("重解析点")
+        );
+        assert!(
+            write_replace_journal(&mods, "recover-me", &staged, &backup, &[])
+                .unwrap_err()
+                .contains("重解析点")
+        );
+        std::fs::remove_dir(&nested_link).unwrap();
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -2251,7 +4400,7 @@ mod tests {
                     "feature_groups": [{
                         "id": AUDIO_TELEMETRY_FEATURE_ID,
                         "recipe_version": 1,
-                        "fingerprint": "audio-v1;fixture=true"
+                        "fingerprint": test_audio_fingerprint()
                     }]
                 }),
             );
