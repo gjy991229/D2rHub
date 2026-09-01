@@ -2,11 +2,15 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::application::multi_instance::{
+    AccountGameSettingsRepository, AccountGameSettingsService, AccountRepository, GameSettings,
+};
 use crate::commands::account::{commit_account_settings_transaction, AccountManager};
+use crate::domain::account::AccountMeta;
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, HostRuntimeLease, LaunchContext};
-use crate::state::{AccountLifecycleLease, SharedState};
+use crate::state::SharedState;
 
 fn read_optional_settings_file(path: &Path) -> Result<HashMap<String, Value>, AppError> {
     if !path.exists() {
@@ -60,31 +64,89 @@ fn save_account_settings_with_config(
     commit_account_settings_transaction(&config.accounts_dir, &meta, &content)
 }
 
+struct AccountGameSettingsAdapter<'a> {
+    config: &'a GlobalConfig,
+    state: &'a SharedState,
+}
+
+impl AccountRepository for AccountGameSettingsAdapter<'_> {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
+        AccountManager::save_meta(&self.config.accounts_dir, account)
+    }
+}
+
+impl AccountGameSettingsRepository for AccountGameSettingsAdapter<'_> {
+    fn read_account_settings(&self, account_id: &str) -> Result<GameSettings, AppError> {
+        let settings_path =
+            AccountManager::account_dir_checked(&self.config.accounts_dir, account_id)?
+                .join("Settings.json");
+        read_required_settings_file(&settings_path, "账号 Settings.json")
+    }
+
+    fn read_system_settings_required(
+        &self,
+        account: &AccountMeta,
+    ) -> Result<GameSettings, AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::Settings)?;
+        let _host_runtime_lease = HostRuntimeLease::try_acquire(self.state)?;
+        let path = context
+            .required_saved_games_directory()?
+            .join("Settings.json");
+        read_required_settings_file(&path, "系统 Settings.json")
+    }
+
+    fn read_system_settings_optional(
+        &self,
+        account: &AccountMeta,
+    ) -> Result<GameSettings, AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::Settings)?;
+        let _host_runtime_lease = HostRuntimeLease::try_acquire(self.state)?;
+        let path = context
+            .required_saved_games_directory()?
+            .join("Settings.json");
+        read_optional_settings_file(&path)
+    }
+
+    fn save_account_settings(
+        &self,
+        account: &AccountMeta,
+        settings: &GameSettings,
+    ) -> Result<(), AppError> {
+        save_account_settings_with_config(self.config, &account.id, settings)
+    }
+
+    fn snapshot_system_settings(&self, account: &AccountMeta) -> Result<GameSettings, AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::Settings)?;
+        let _host_runtime_lease = HostRuntimeLease::try_acquire(self.state)?;
+        let path = context
+            .required_saved_games_directory()?
+            .join("Settings.json");
+        let settings = read_required_settings_file(&path, "系统 Settings.json")?;
+        save_account_settings_with_config(self.config, &account.id, &settings)?;
+        Ok(settings)
+    }
+}
+
 /// 获取指定账号的 Settings.json 内容
 #[tauri::command]
 pub fn get_account_settings(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<HashMap<String, Value>, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    if meta.has_customized_settings {
-        let settings_path = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?
-            .join("Settings.json");
-        read_required_settings_file(&settings_path, "账号 Settings.json")
-    } else {
-        let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
-        let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
-        let system_settings_path = context
-            .required_saved_games_directory()?
-            .join("Settings.json");
-        read_required_settings_file(&system_settings_path, "系统 Settings.json")
-    }
+    let adapter = AccountGameSettingsAdapter {
+        config: &cfg,
+        state: state.inner(),
+    };
+    AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
+        .get(&account_id)
 }
 
 /// 保存指定账号的 Settings.json
@@ -94,13 +156,16 @@ pub fn save_account_settings(
     account_id: String,
     settings: HashMap<String, Value>,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    save_account_settings_with_config(&cfg, &account_id, &settings)
+    let adapter = AccountGameSettingsAdapter {
+        config: &cfg,
+        state: state.inner(),
+    };
+    AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
+        .save(&account_id, settings)
 }
 
 /// 将系统 Saved Games 下的 Settings.json 快照到指定账号
@@ -109,24 +174,16 @@ pub fn snapshot_system_settings_to_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<HashMap<String, Value>, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
-    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
-    let src = context
-        .required_saved_games_directory()?
-        .join("Settings.json");
-    let settings = read_required_settings_file(&src, "系统 Settings.json")?;
-    meta.has_customized_settings = true;
-    let content = serde_json::to_string_pretty(&settings)?;
-    commit_account_settings_transaction(&cfg.accounts_dir, &meta, &content)?;
-
-    Ok(settings)
+    let adapter = AccountGameSettingsAdapter {
+        config: &cfg,
+        state: state.inner(),
+    };
+    AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
+        .snapshot_system(&account_id)
 }
 
 /// 获取游戏安装目录下的 Settings.json（如果存在，用于对比）
@@ -135,19 +192,16 @@ pub fn get_game_settings(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<HashMap<String, Value>, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::Settings)?;
-    let _host_runtime_lease = HostRuntimeLease::try_acquire(state.inner().as_ref())?;
-    let path = context
-        .required_saved_games_directory()?
-        .join("Settings.json");
-    read_optional_settings_file(&path)
+    let adapter = AccountGameSettingsAdapter {
+        config: &cfg,
+        state: state.inner(),
+    };
+    AccountGameSettingsService::new(&adapter, state.multi_instance().account_leases())
+        .get_system_optional(&account_id)
 }
 
 #[cfg(test)]

@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+use serde_json::Value;
 
 use crate::domain::account::AccountMeta;
 use crate::domain::config::GlobalConfig;
@@ -32,8 +35,28 @@ pub trait AccountRepository: Send + Sync {
 
 /// Persistence checks required before an account may opt into its private
 /// `Settings.json` snapshot.
-pub trait AccountSettingsRepository: AccountRepository {
+pub trait AccountSettingsPreferenceRepository: AccountRepository {
     fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError>;
+}
+
+pub type GameSettings = HashMap<String, Value>;
+
+pub trait AccountGameSettingsRepository: AccountRepository {
+    fn read_account_settings(&self, account_id: &str) -> Result<GameSettings, AppError>;
+    fn read_system_settings_required(
+        &self,
+        account: &AccountMeta,
+    ) -> Result<GameSettings, AppError>;
+    fn read_system_settings_optional(
+        &self,
+        account: &AccountMeta,
+    ) -> Result<GameSettings, AppError>;
+    fn save_account_settings(
+        &self,
+        account: &AccountMeta,
+        settings: &GameSettings,
+    ) -> Result<(), AppError>;
+    fn snapshot_system_settings(&self, account: &AccountMeta) -> Result<GameSettings, AppError>;
 }
 
 /// Atomic persistence boundary for account metadata plus any edition-specific

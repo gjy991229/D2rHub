@@ -1,4 +1,5 @@
 mod account_creation;
+mod account_game_settings;
 mod account_mods;
 mod account_naming;
 mod account_ordering;
@@ -13,6 +14,7 @@ mod leases;
 mod ports;
 
 pub use account_creation::{AccountCreationService, CreateAccountRequest, TimestampProvider};
+pub use account_game_settings::AccountGameSettingsService;
 pub use account_mods::AccountModService;
 pub use account_naming::AccountNamingService;
 pub use account_ordering::AccountOrderingService;
@@ -30,9 +32,10 @@ pub use leases::{
     AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,
 };
 pub use ports::{
-    AccountCatalog, AccountCreationRepository, AccountModRepository, AccountNameRepository,
-    AccountRepository, AccountRuntimePort, AccountSettingsRepository, GameWindowIdentity,
-    GameWindowPort, InstanceStatusPort, WindowPosition,
+    AccountCatalog, AccountCreationRepository, AccountGameSettingsRepository, AccountModRepository,
+    AccountNameRepository, AccountRepository, AccountRuntimePort,
+    AccountSettingsPreferenceRepository, GameSettings, GameWindowIdentity, GameWindowPort,
+    InstanceStatusPort, WindowPosition,
 };
 
 #[derive(Default)]

@@ -8,9 +8,10 @@ use crate::application::multi_instance::{
     AccountCatalog, AccountCreationRepository, AccountCreationService, AccountModRepository,
     AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
     AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
-    AccountQueryService, AccountRepository, AccountRuntimePort, AccountSettingsPreferenceService,
-    AccountSettingsRepository, CancellationTicket, CreateAccountRequest, ResolvedAccountProfile,
-    TimestampProvider, TokenProtector, WindowPosition,
+    AccountQueryService, AccountRepository, AccountRuntimePort,
+    AccountSettingsPreferenceRepository, AccountSettingsPreferenceService, CancellationTicket,
+    CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
+    WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -287,7 +288,7 @@ impl AccountRepository for AccountManagerCatalog<'_> {
     }
 }
 
-impl AccountSettingsRepository for AccountManagerCatalog<'_> {
+impl AccountSettingsPreferenceRepository for AccountManagerCatalog<'_> {
     fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError> {
         let account_dir =
             AccountManager::account_dir_checked(&self.config.accounts_dir, account_id)?;

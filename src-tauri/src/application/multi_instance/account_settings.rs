@@ -1,6 +1,6 @@
 use crate::error::AppError;
 
-use super::{AccountLeaseManager, AccountSettingsRepository};
+use super::{AccountLeaseManager, AccountSettingsPreferenceRepository};
 
 /// Controls whether an account uses its private game-settings snapshot.
 ///
@@ -8,13 +8,13 @@ use super::{AccountLeaseManager, AccountSettingsRepository};
 /// snapshot exists. Disabling does not delete the snapshot, preserving the
 /// user's ability to turn it back on later.
 pub struct AccountSettingsPreferenceService<'a> {
-    accounts: &'a dyn AccountSettingsRepository,
+    accounts: &'a dyn AccountSettingsPreferenceRepository,
     leases: &'a AccountLeaseManager,
 }
 
 impl<'a> AccountSettingsPreferenceService<'a> {
     pub fn new(
-        accounts: &'a dyn AccountSettingsRepository,
+        accounts: &'a dyn AccountSettingsPreferenceRepository,
         leases: &'a AccountLeaseManager,
     ) -> Self {
         Self { accounts, leases }
@@ -37,7 +37,7 @@ mod tests {
 
     use super::AccountSettingsPreferenceService;
     use crate::application::multi_instance::{
-        AccountLeaseManager, AccountRepository, AccountSettingsRepository,
+        AccountLeaseManager, AccountRepository, AccountSettingsPreferenceRepository,
     };
     use crate::domain::account::AccountMeta;
     use crate::error::AppError;
@@ -77,7 +77,7 @@ mod tests {
         }
     }
 
-    impl AccountSettingsRepository for FakeRepository {
+    impl AccountSettingsPreferenceRepository for FakeRepository {
         fn ensure_complete_snapshot(&self, _account_id: &str) -> Result<(), AppError> {
             *self.snapshot_checks.lock().unwrap() += 1;
             self.snapshot_result.clone()
