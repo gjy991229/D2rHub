@@ -49,6 +49,7 @@ export function useAudioModuleController({
   const [audioModStateLoading, setAudioModStateLoading] = useState(false);
   const [audioSetupOpen, setAudioSetupOpen] = useState(false);
   const [audioSetupPurpose, setAudioSetupPurpose] = useState<ModProcessingPurpose>("manage");
+  const [modProcessingTargetId, setModProcessingTargetId] = useState(trackingTargetId);
   const [audioSetupMode, setAudioSetupMode] = useState<AudioSetupMode>("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
@@ -58,6 +59,9 @@ export function useAudioModuleController({
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
   const cacheRef = useRef(new Map<string, { state: AudioModSetupState; scannedAt: number }>());
+  const setupAccountId = activeTab === "mod-processing"
+    ? modProcessingTargetId || trackingTargetId
+    : trackingTargetId;
 
   const normalizedAudioSetupName = audioSetupName.trim();
   const isAudioModUpgrade = !!audioModState?.current_mod_name && (
@@ -86,6 +90,7 @@ export function useAudioModuleController({
       || audioSetupPurpose === "recognition"
       || inheritedAudioFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID),
     includeRoomTools: includeRoomTools
+      || audioSetupPurpose === "room-tools"
       || inheritedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
   };
   const audioPrepareBlockedReason = !hasSelectedAudioModFeature(audioFeatureSelection)
@@ -139,14 +144,14 @@ export function useAudioModuleController({
   }, [open, activeTab]);
 
   useEffect(() => {
-    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing") || !trackingTargetId) return;
+    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing") || !setupAccountId) return;
     let cancelled = false;
-    const cached = cacheRef.current.get(trackingTargetId);
+    const cached = cacheRef.current.get(setupAccountId);
     if (cached) {
       setAudioModState(cached.state);
       setAudioModScannedAt(cached.scannedAt);
       setAudioModStateLoading(false);
-      if (audioModState?.account_id === trackingTargetId) return;
+      if (audioModState?.account_id === setupAccountId) return;
       const defaults = audioSetupDefaults(cached.state);
       const availableSources = cached.state.installed_mods.filter((mod) => mod.source_eligible);
       setAudioSetupSource((current) => (
@@ -159,10 +164,10 @@ export function useAudioModuleController({
       return;
     }
     setAudioModStateLoading(true);
-    void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: trackingTargetId })
+    void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: setupAccountId })
       .then((next) => {
         if (cancelled) return;
-        cacheState(trackingTargetId, next);
+        cacheState(setupAccountId, next);
         applySetupDefaults(next);
         if (!next.ready && config?.rune_audio_enabled) {
           setIncludeAudioTelemetry(true);
@@ -180,7 +185,7 @@ export function useAudioModuleController({
         if (!cancelled) setAudioModStateLoading(false);
       });
     return () => { cancelled = true; };
-  }, [open, activeTab, trackingTargetId]);
+  }, [open, activeTab, setupAccountId]);
 
   useEffect(() => {
     if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
@@ -207,7 +212,7 @@ export function useAudioModuleController({
   };
 
   const refreshAudioModState = async () => {
-    const accountId = trackingTargetId || initializedAccounts[0]?.id;
+    const accountId = setupAccountId || initializedAccounts[0]?.id;
     if (!accountId) return;
     setAudioModStateLoading(true);
     try {
@@ -222,6 +227,7 @@ export function useAudioModuleController({
   };
 
   const handleAudioTargetChange = async (accountId: string) => {
+    setModProcessingTargetId(accountId);
     const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
     updateConfig((next) => {
       next.rune_audio_target_account = accountId;
@@ -245,6 +251,28 @@ export function useAudioModuleController({
       }
     } catch (error) {
       showToast("error", `无法检查账号的识别 Mod：${error}`);
+    } finally {
+      setAudioModStateLoading(false);
+    }
+  };
+
+  const handleModProcessingTargetChange = async (accountId: string) => {
+    setModProcessingTargetId(accountId);
+    setAudioSetupOpen(true);
+    setAudioSetupName("");
+    setAudioModStateLoading(true);
+    try {
+      const cached = cacheRef.current.get(accountId);
+      const next = cached?.state
+        ?? await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      if (!cached) cacheState(accountId, next);
+      else {
+        setAudioModState(next);
+        setAudioModScannedAt(cached.scannedAt);
+      }
+      applySetupDefaults(next);
+    } catch (error) {
+      showToast("error", `无法检查账号的加工 Mod：${error}`);
     } finally {
       setAudioModStateLoading(false);
     }
@@ -305,13 +333,14 @@ export function useAudioModuleController({
     setAudioSetupOpen(true);
   };
 
-  const handleOpenModProcessing = (purpose: ModProcessingPurpose = "manage") => {
+  const handleOpenModProcessing = (purpose: ModProcessingPurpose = "manage", accountId?: string) => {
+    setModProcessingTargetId(accountId || trackingTargetId || initializedAccounts[0]?.id || "");
     handleOpenAudioSetup(purpose);
     setActiveTab("mod-processing");
   };
 
   const handlePrepareAudioMod = async () => {
-    const accountId = trackingTargetId || initializedAccounts[0]?.id;
+    const accountId = setupAccountId || initializedAccounts[0]?.id;
     if (!accountId) return;
     if (audioPrepareBlockedReason) {
       showToast("warning", audioPrepareBlockedReason);
@@ -322,7 +351,8 @@ export function useAudioModuleController({
     setAudioPrepareProgress({ account_id: accountId, phase: "starting", percent: 1, message: "正在开始准备…" });
     try {
       if (isAudioModUpgrade) {
-        const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
+        const currentAudioConfig = useGlobalConfig.getState().config;
+        const wasEnabled = !!currentAudioConfig?.rune_audio_enabled;
         const next = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
           accountId,
           sourceModName: isAudioModFeatureManagement
@@ -331,8 +361,11 @@ export function useAudioModuleController({
           ...featureOptions,
         });
         cacheState(accountId, next);
-        await persistAudioEnabledState(accountId, wasEnabled && hasAudioTelemetry(next.feature_groups));
+        if (audioSetupPurpose === "recognition" || currentAudioConfig?.rune_audio_target_account === accountId) {
+          await persistAudioEnabledState(accountId, wasEnabled && hasAudioTelemetry(next.feature_groups));
+        }
         setAudioSetupOpen(false);
+        if (audioSetupPurpose === "room-tools") setActiveTab("room-automation");
         showToast(
           "success",
           config?.app_language === "en-US"
@@ -355,9 +388,15 @@ export function useAudioModuleController({
       await loadAccounts();
       const preparedAudioTelemetry = hasAudioTelemetry(result.feature_groups)
         && hasAudioTelemetry(next.feature_groups);
-      await persistAudioEnabledState(accountId, preparedAudioTelemetry);
+      const currentAudioConfig = useGlobalConfig.getState().config;
+      if (audioSetupPurpose === "recognition") {
+        await persistAudioEnabledState(accountId, preparedAudioTelemetry);
+      } else if (currentAudioConfig?.rune_audio_target_account === accountId) {
+        await persistAudioEnabledState(accountId, !!currentAudioConfig.rune_audio_enabled && preparedAudioTelemetry);
+      }
       setAudioSetupOpen(false);
       setAudioSetupName("");
+      if (audioSetupPurpose === "room-tools") setActiveTab("room-automation");
       showToast(
         next.restart_required ? "warning" : "success",
         config?.app_language === "en-US"
@@ -406,6 +445,7 @@ export function useAudioModuleController({
     audioSetupOpen,
     setAudioSetupOpen,
     audioSetupPurpose,
+    modProcessingTargetId,
     audioSetupMode,
     setAudioSetupMode,
     audioSetupSource,
@@ -431,6 +471,7 @@ export function useAudioModuleController({
     audioPrepareBlockedReason,
     refreshAudioModState,
     handleAudioTargetChange,
+    handleModProcessingTargetChange,
     handleAudioToggle,
     handleOpenAudioSetup,
     handleOpenModProcessing,

@@ -6,12 +6,17 @@ import {
   Play,
   RotateCw,
 } from "lucide-react";
-import type { Dispatch, SetStateAction } from "react";
+import type { CSSProperties, Dispatch, SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
 import { invokeCommand } from "../../../platform/tauri";
-import type { AccountMeta, AudioModSetupState, GlobalConfig } from "../../../store/types";
+import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
+import {
+  AUDIO_TELEMETRY_CAPSULE_FEATURE,
+  capsuleSelectionForAccount,
+  compatibleCapsulesForAccount,
+} from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
@@ -38,6 +43,9 @@ interface AutomationPanelProps {
   audioStatus: RuneAudioStatus | null;
   audioModState: AudioModSetupState | null;
   audioModStateLoading: boolean;
+  modCapsulePool?: ModCapsulePool | null;
+  assigningCapsuleAccountId?: string | null;
+  onAssignModCapsule?: (accountId: string, modName: string) => Promise<unknown>;
   audioSetupOpen: boolean;
   showModProcessing?: boolean;
   onOpenModProcessing?: () => void;
@@ -82,6 +90,9 @@ export function AutomationPanel({
   audioStatus,
   audioModState,
   audioModStateLoading,
+  modCapsulePool = null,
+  assigningCapsuleAccountId = null,
+  onAssignModCapsule,
   audioSetupOpen,
   showModProcessing = false,
   onOpenModProcessing = () => undefined,
@@ -119,6 +130,10 @@ export function AutomationPanel({
   const isEnglish = config.app_language === "en-US";
   const installedAudioTelemetry = !!audioModState?.feature_groups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const installedRoomTools = !!audioModState?.feature_groups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
+  const trackingAccountId = trackingTarget.valid ? trackingTarget.account.id : "";
+  const audioCapsules = compatibleCapsulesForAccount(modCapsulePool, trackingAccountId)
+    .filter((capsule) => capsule.feature_groups.includes(AUDIO_TELEMETRY_CAPSULE_FEATURE));
+  const audioCapsuleSelection = capsuleSelectionForAccount(modCapsulePool, trackingAccountId);
   const featureCopy = isEnglish
     ? {
         title: "Mod features",
@@ -291,14 +306,29 @@ export function AutomationPanel({
             : "必须先选择目标账号；也可点击上方“选择首个账号”快速继续。"}
       </p>
       {trackingTarget.valid && (
-        <div className="flex items-center justify-between gap-3 rounded-lg bg-surface-hover px-2.5 py-2">
-          <span className="min-w-0 text-2xs text-text-muted">
+        <div className="recognition-capsule-selector">
+          <span className="recognition-capsule-copy">
             {audioModStateLoading
               ? "正在检查当前 Mod…"
               : audioModState?.ready
                 ? `${audioModState.current_mod_name} · ${audioModState.feature_groups.length} 个功能模块`
                 : "当前账号还没有可用的 D2RHub 加工 Mod"}
           </span>
+          {audioCapsules.length > 0 && (
+            <select
+              className="settings-input recognition-capsule-select"
+              aria-label="从公共胶囊池选择声纹 Mod"
+              value={audioCapsuleSelection?.selected_capsule_id ?? ""}
+              disabled={assigningCapsuleAccountId === trackingAccountId || !onAssignModCapsule}
+              onChange={(event) => {
+                const capsule = audioCapsules.find((candidate) => candidate.id === event.target.value);
+                if (capsule) void onAssignModCapsule?.(trackingAccountId, capsule.name);
+              }}
+            >
+              <option value="">公共胶囊池</option>
+              {audioCapsules.map((capsule) => <option value={capsule.id} key={capsule.id}>{capsule.name}</option>)}
+            </select>
+          )}
           <Button size="sm" variant="secondary" className="shrink-0" onClick={onOpenModProcessing}>
             <Package size={12} />
             {audioModState?.ready ? "管理 Mod" : "前往加工"}
@@ -796,6 +826,9 @@ export function AutomationPanel({
                   aria-label={`${filter.label}最低记录等级`}
                   onChange={event => filter.onChange(Number(event.target.value))}
                   className="tracking-filter-range mt-2 w-full"
+                  style={{
+                    "--range-progress": `${((filter.value - 1) / Math.max(1, filter.max - 1)) * 100}%`,
+                  } as CSSProperties}
                 />
                 <div className="mt-1 flex items-center justify-between text-2xs text-text-muted">
                   <span>{filter.detail}</span>

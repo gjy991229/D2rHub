@@ -2,12 +2,13 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  Layers3,
   PackageOpen,
   RefreshCw,
 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
-import type { AccountMeta, AudioModSetupState, GlobalConfig } from "../../../store/types";
+import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
@@ -18,7 +19,7 @@ import {
 
 type TrackingTarget = ReturnType<typeof validateTrackingTarget>;
 type AudioSetupMode = "original" | "existing";
-export type ModProcessingPurpose = "recognition" | "manage";
+export type ModProcessingPurpose = "recognition" | "room-tools" | "manage";
 
 interface ModProcessingPanelProps {
   config: GlobalConfig;
@@ -27,6 +28,9 @@ interface ModProcessingPanelProps {
   audioModState: AudioModSetupState | null;
   audioModStateLoading: boolean;
   audioModScannedAt: number | null;
+  modCapsulePool?: ModCapsulePool | null;
+  modCapsulePoolLoading?: boolean;
+  modCapsulePoolError?: string | null;
   purpose: ModProcessingPurpose;
   audioSetupMode: AudioSetupMode;
   setAudioSetupMode: Dispatch<SetStateAction<AudioSetupMode>>;
@@ -58,6 +62,9 @@ export function ModProcessingPanel({
   audioModState,
   audioModStateLoading,
   audioModScannedAt,
+  modCapsulePool = null,
+  modCapsulePoolLoading = false,
+  modCapsulePoolError = null,
   purpose,
   audioSetupMode,
   setAudioSetupMode,
@@ -89,14 +96,16 @@ export function ModProcessingPanel({
       ? selectedSource?.feature_groups ?? []
       : [];
   const audioRequired = purpose === "recognition";
+  const roomToolsRequired = purpose === "room-tools";
   const audioInherited = inheritedFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const roomToolsInherited = inheritedFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
   const audioSelected = audioRequired || audioInherited || includeAudioTelemetry;
-  const roomToolsSelected = roomToolsInherited || includeRoomTools;
+  const roomToolsSelected = roomToolsRequired || roomToolsInherited || includeRoomTools;
   const sourceMods = audioModState?.installed_mods.filter((mod) => mod.source_eligible) ?? [];
   const scannedLabel = audioModScannedAt
     ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : null;
+  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => capsule.ready) ?? [];
 
   return (
     <div className="mod-processing-panel">
@@ -140,6 +149,31 @@ export function ModProcessingPanel({
             <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
           ))}
         </select>
+        <div className="mod-capsule-pool-summary">
+          <div>
+            <Layers3 size={14} aria-hidden="true" />
+            <span>
+              <strong>{isEnglish ? "Shared processed-Mod pool" : "公共加工 Mod 胶囊池"}</strong>
+              <small>{modCapsulePoolLoading
+                ? (isEnglish ? "Scanning installed credentials…" : "正在扫描已安装凭证…")
+                : modCapsulePoolError
+                  ? (isEnglish ? "Pool unavailable" : "胶囊池暂不可用")
+                  : isEnglish
+                    ? `${readyCapsules.length} verified capsules; old account arguments are matched automatically`
+                    : `${readyCapsules.length} 个已验证胶囊；旧账号启动参数会自动匹配`}</small>
+            </span>
+          </div>
+          {!modCapsulePoolLoading && readyCapsules.length > 0 && (
+            <div className="mod-capsule-pool-list">
+              {readyCapsules.map((capsule) => (
+                <span key={capsule.id} title={`${capsule.edition} · ${capsule.feature_groups.join(", ")}`}>
+                  <b>{capsule.name}</b>
+                  <em>{capsule.assigned_account_ids.length}</em>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       {!trackingTarget.valid ? (
@@ -227,8 +261,10 @@ export function ModProcessingPanel({
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
                 detail={isEnglish ? "Create, recreate, and join rooms from the automation workflow" : "为自动跟房提供创建、重开与加入房间能力"}
                 checked={roomToolsSelected}
-                locked={roomToolsInherited}
-                lockLabel={isEnglish ? "Included in source" : "源 Mod 已有"}
+                locked={roomToolsRequired || roomToolsInherited}
+                lockLabel={roomToolsInherited
+                  ? (isEnglish ? "Included in source" : "源 Mod 已有")
+                  : (isEnglish ? "Required for room automation" : "自动跟房必选")}
                 disabled={audioPreparing}
                 onChange={setIncludeRoomTools}
               />

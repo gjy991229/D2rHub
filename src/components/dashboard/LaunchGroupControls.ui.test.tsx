@@ -37,6 +37,29 @@ const group: LaunchGroup = {
 afterEach(cleanup);
 
 describe("launch group controls", () => {
+  it("selects a launch scheme on the first click and launches it on the second", () => {
+    const onLaunch = vi.fn();
+    render(
+      <LaunchGroupPanel
+        groups={[group]}
+        accounts={[readyAccount]}
+        config={null}
+        onClose={vi.fn()}
+        onLaunch={onLaunch}
+        onCreate={vi.fn()}
+        onEdit={vi.fn()}
+        onToggleFavorite={vi.fn()}
+      />,
+    );
+
+    const launch = screen.getByTitle(`选择启动方案“${group.name}”；再次点击启动`);
+    fireEvent.click(launch);
+    expect(onLaunch).not.toHaveBeenCalled();
+    expect(launch.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(launch);
+    expect(onLaunch).toHaveBeenCalledWith(group);
+  });
+
   it("adds and removes a scheme from the main action bar through the star control", () => {
     const onToggleFavorite = vi.fn();
     const { rerender } = render(

@@ -113,6 +113,20 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(screen.getAllByText("源 Mod 已有").length).toBe(2);
   });
 
+  it("locks room tools when opened from automatic-room prerequisites", () => {
+    render(<ModProcessingPanel {...baseProps({
+      purpose: "room-tools",
+      audioSetupMode: "original",
+      audioSetupSource: "",
+      audioModState: { ...sourceState, installed_mods: [] },
+    })} />);
+
+    const rooms = screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement;
+    expect(rooms.checked).toBe(true);
+    expect(rooms.disabled).toBe(true);
+    expect(screen.getByText("自动跟房必选")).toBeTruthy();
+  });
+
   it("preserves installed modules while allowing additive management", () => {
     render(<ModProcessingPanel {...baseProps({
       purpose: "manage",

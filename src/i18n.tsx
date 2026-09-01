@@ -18,6 +18,8 @@ const keyedMessages = {
   "launch.scheme.editFirst": { zh: "请先编辑并选择账号", en: "Edit the scheme and select accounts first" },
   "launch.scheme.launchTitle": { zh: "启动“{name}”", en: "Launch “{name}”" },
   "launch.scheme.editLabel": { zh: "编辑启动方案“{name}”", en: "Edit launch scheme “{name}”" },
+  "launch.scheme.selectTitle": { zh: "选择启动方案“{name}”；再次点击启动", en: "Select launch scheme “{name}”; click again to launch" },
+  "launch.scheme.launchSelectedTitle": { zh: "再次点击启动方案“{name}”", en: "Click again to launch scheme “{name}”" },
   "launch.scheme.editTitle": { zh: "编辑“{name}”", en: "Edit “{name}”" },
   "launch.scheme.create": { zh: "新建启动方案", en: "New Launch Scheme" },
   "launch.favorite.groupLabel": { zh: "常用启动方案", en: "Favorite Launch Schemes" },

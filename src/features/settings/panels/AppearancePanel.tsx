@@ -1,4 +1,5 @@
 import { Check } from "lucide-react";
+import type { CSSProperties } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import type { ThemeKey } from "../../../store/theme";
@@ -57,7 +58,7 @@ export function AppearancePanel({
         </Button>
       </div>
 
-      <section className="spatial-panel appearance-section">
+      <section className="spatial-panel appearance-section appearance-language-section">
         <div className="appearance-section-heading">
           <h3>界面语言</h3>
           <p>只影响 D2RHub 界面，不改变游戏内容和符文名称。</p>
@@ -131,12 +132,12 @@ export function AppearancePanel({
           onChange={(event) => onChange({ main_opacity: sliderToPercent(Number(event.target.value)) })}
           className="appearance-opacity-slider"
           style={{
-            background: `linear-gradient(to right, var(--accent) ${sliderValue}%, var(--surface-hover) ${sliderValue}%)`,
-          }}
+            "--range-progress": `${sliderValue}%`,
+          } as CSSProperties}
         />
       </section>
 
-      <section className="spatial-panel appearance-section">
+      <section className="spatial-panel appearance-section appearance-font-section">
         <div className="appearance-section-heading">
           <h3>字体大小</h3>
           <p>导航、表单和状态文字会按同一比例调整。</p>

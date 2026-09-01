@@ -1,22 +1,23 @@
 import {
   AlertCircle,
-  CheckCircle2,
   ChevronDown,
   KeyRound,
-  Package,
   Play,
   RefreshCw,
-  RotateCcw,
   UsersRound,
-  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "../../../components/ui/Button";
-import { Modal } from "../../../components/ui/Modal";
-import { showToast } from "../../../components/ui/Toast";
 import { Toggle } from "../../../components/ui/Toggle";
 import { parseShortcutFromKeyEvent } from "../../../hooks/useShortcutRecorder";
-import type { AccountMeta } from "../../../store/types";
+import type { AccountMeta, ModCapsulePool } from "../../../store/types";
+import {
+  accountsMissingCapsuleFeature,
+  capsuleSelectionForAccount,
+  compatibleCapsulesForAccount,
+  ROOM_TOOLS_CAPSULE_FEATURE,
+  selectedCapsuleForAccount,
+} from "../../modCapsules/model";
 import { ROOM_AUTOMATION_COPY } from "../../roomAutomation/copy";
 import {
   roomAutomationGateway,
@@ -26,9 +27,6 @@ import {
   canonicalizeRoomAutomationShortcut,
   generatedRoomName,
   roomAutomationConfigsEqual,
-  shouldEnableFollowerAction,
-  shouldEnablePrimaryAction,
-  shouldEnableRetry,
   validateRoomAutomationConfig,
 } from "../../roomAutomation/model";
 import type {
@@ -43,10 +41,15 @@ interface RoomAutomationPanelProps {
   accounts: AccountMeta[];
   language?: string | null;
   gateway?: RoomAutomationGateway;
-  onOpenAudioModSettings?: () => void;
+  modCapsulePool?: ModCapsulePool | null;
+  modCapsulePoolLoading?: boolean;
+  modCapsulePoolError?: string | null;
+  assigningAccountId?: string | null;
+  onAssignModCapsule?: (accountId: string, modName: string) => Promise<unknown>;
+  onRequireRoomTools?: (accountId: string) => void;
 }
 
-type Operation = "save" | "primary" | "followers" | "retry" | "cancel" | "install" | "restore";
+type Operation = "save" | "primary" | "followers" | "install" | "restore";
 
 function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
@@ -76,7 +79,12 @@ export function RoomAutomationPanel({
   accounts,
   language,
   gateway = roomAutomationGateway,
-  onOpenAudioModSettings,
+  modCapsulePool = null,
+  modCapsulePoolLoading = false,
+  modCapsulePoolError = null,
+  assigningAccountId = null,
+  onAssignModCapsule,
+  onRequireRoomTools,
 }: RoomAutomationPanelProps) {
   const locale = normalizeSettingsLanguage(language);
   const copy = ROOM_AUTOMATION_COPY[locale];
@@ -94,11 +102,11 @@ export function RoomAutomationPanel({
   const [operation, setOperation] = useState<Operation | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [bindingReloadKey, setBindingReloadKey] = useState(0);
-  const [enablePromptOpen, setEnablePromptOpen] = useState(false);
   const snapshotRef = useRef<RoomAutomationConfigSnapshot | null>(null);
   const draftRef = useRef<RoomAutomationConfig | null>(null);
   const dirtyRef = useRef(false);
   const operationRef = useRef<Operation | null>(null);
+  const autoInstallAttemptRef = useRef<string | null>(null);
   const dirty = useMemo(
     () => !roomAutomationConfigsEqual(snapshot?.config ?? null, draft),
     [draft, snapshot],
@@ -223,14 +231,18 @@ export function RoomAutomationPanel({
     ? validateRoomAutomationConfig(draft, copy, eligibleAccounts.map((account) => account.id))
     : null, [copy, draft, eligibleAccounts]);
   const workflowActive = isWorkflowActive(status);
-  const manualWaiting = status?.phase === "waiting" && status.waiting_mode?.mode === "manual";
   const saving = operation === "save";
   const editorDisabled = loading || !!unavailable || (!!operation && operation !== "save");
   const operationBlocked = loading || !!unavailable || dirty || !!operation || !draft?.enabled;
   const workflowBlocked = operationBlocked || !binding?.ready || !!bindingError || bindingLoading;
-  const followerProgress = status
-    ? `${status.completed_follower_account_ids.length}/${status.follower_account_ids.length}`
-    : "0/0";
+  const participantAccountIds = useMemo(() => draft
+    ? [draft.primary_account_id, ...draft.follower_account_ids].filter(Boolean)
+    : [], [draft]);
+  const participantsMissingRoomTools = useMemo(() => accountsMissingCapsuleFeature(
+    modCapsulePool,
+    participantAccountIds,
+    ROOM_TOOLS_CAPSULE_FEATURE,
+  ), [modCapsulePool, participantAccountIds]);
 
   const persistDraft = useCallback(async (candidate: RoomAutomationConfig) => {
     const currentSnapshot = snapshotRef.current;
@@ -274,15 +286,17 @@ export function RoomAutomationPanel({
   }, [dirty, draft, persistDraft, saving, stale, validation?.valid]);
 
   const runWorkflowAction = async (
-    kind: Exclude<Operation, "save" | "install" | "restore">,
+    kind: "primary" | "followers",
     action: () => Promise<RoomAutomationWorkflowStatus>,
   ) => {
-    const blocked = kind === "cancel"
-      ? loading || !!unavailable || !workflowActive
-      : workflowBlocked
-        || (kind === "primary" && !shouldEnablePrimaryAction(status))
-        || (kind === "followers" && !shouldEnableFollowerAction(status))
-        || (kind === "retry" && !shouldEnableRetry(status));
+    const primaryBusy = status?.phase === "primary" || status?.phase === "followers"
+      || (status?.phase === "waiting" && status.waiting_mode?.mode === "automatic");
+    const canJoin = (status?.phase === "waiting" && status.waiting_mode?.mode === "manual")
+      || ((status?.phase === "error" || status?.phase === "cancelled")
+        && status.recovery_action === "resume_followers");
+    const blocked = workflowBlocked
+      || (kind === "primary" && primaryBusy)
+      || (kind === "followers" && !canJoin);
     if (blocked || operationRef.current) return;
     operationRef.current = kind;
     setOperation(kind);
@@ -332,6 +346,62 @@ export function RoomAutomationPanel({
     }
   };
 
+  const enableRoomAutomation = () => {
+    if (!draft) return;
+    const candidate = { ...draft, enabled: true };
+    const candidateValidation = validateRoomAutomationConfig(
+      candidate,
+      copy,
+      eligibleAccounts.map((account) => account.id),
+    );
+    if (!candidateValidation.valid) {
+      setOperationError(Object.values(candidateValidation.fieldErrors)[0] ?? copy.completeRequired);
+      return;
+    }
+    if (modCapsulePoolLoading) {
+      setOperationError(copy.capsulePoolLoading);
+      return;
+    }
+    if (modCapsulePoolError) {
+      setOperationError(`${copy.capsulePoolUnavailable}: ${modCapsulePoolError}`);
+      return;
+    }
+    const missingAccountId = participantsMissingRoomTools[0];
+    if (missingAccountId) {
+      const account = eligibleAccounts.find((candidate) => candidate.id === missingAccountId);
+      setOperationError(copy.capsuleRequired(account ? accountLabel(account) : missingAccountId));
+      onRequireRoomTools?.(missingAccountId);
+      return;
+    }
+    updateDraft(() => candidate);
+  };
+
+  useEffect(() => {
+    if (!draft?.enabled || dirty || bindingLoading || bindingError || !binding || binding.ready) {
+      if (!draft?.enabled || binding?.ready) autoInstallAttemptRef.current = null;
+      return;
+    }
+    if (binding.d2rRunning || operationRef.current) return;
+    const attemptKey = [
+      binding.d2rRunning,
+      binding.totalFiles,
+      binding.installedFiles,
+      binding.conflictedFiles,
+      binding.orphanBackupFiles,
+    ].join(":");
+    if (autoInstallAttemptRef.current === attemptKey) return;
+    autoInstallAttemptRef.current = attemptKey;
+    void updateBinding("install", gateway.installChatBinding);
+  }, [binding, bindingError, bindingLoading, dirty, draft?.enabled, gateway]);
+
+  useEffect(() => {
+    if (!draft?.enabled || binding?.ready || bindingLoading || bindingError) return;
+    const timer = window.setInterval(() => {
+      void gateway.getChatBinding().then(setBinding).catch(() => undefined);
+    }, 1500);
+    return () => window.clearInterval(timer);
+  }, [binding?.ready, bindingError, bindingLoading, draft?.enabled, gateway]);
+
   if (loading) {
     return (
       <div className="room-automation-state" role="status" aria-live="polite">
@@ -369,12 +439,6 @@ export function RoomAutomationPanel({
       : bindingNeedsAttention
         ? copy.bindingRequired
         : copy.ready;
-  const retryLabel = status?.recovery_action === "resume_followers"
-    ? copy.retryFollowers
-    : status?.recovery_action === "retry_primary"
-      ? copy.retryPrimary
-      : copy.retry;
-
   return (
     <div className="room-automation-panel">
       <header className="room-automation-header">
@@ -397,7 +461,7 @@ export function RoomAutomationPanel({
           ariaLabel={copy.enabled}
           descriptionId={!draft.enabled ? "room-automation-module-description" : undefined}
           onChange={(enabled) => {
-            if (enabled) setEnablePromptOpen(true);
+            if (enabled) enableRoomAutomation();
             else updateDraft((current) => ({ ...current, enabled: false }));
           }}
         />
@@ -407,42 +471,6 @@ export function RoomAutomationPanel({
           {copy.disabledDescription}
         </p>
       )}
-
-      <Modal
-        open={enablePromptOpen}
-        onClose={() => setEnablePromptOpen(false)}
-        title={copy.enablePromptTitle}
-        footer={(
-          <div className="flex w-full flex-wrap justify-end gap-2">
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => {
-                setEnablePromptOpen(false);
-                updateDraft((current) => ({ ...current, enabled: true }));
-              }}
-            >
-              {copy.continueEnable}
-            </Button>
-            {onOpenAudioModSettings && (
-              <Button
-                size="sm"
-                variant="primary"
-                onClick={() => {
-                  setEnablePromptOpen(false);
-                  showToast("info", copy.modRedirectHint);
-                  onOpenAudioModSettings();
-                }}
-              >
-                <Package size={13} aria-hidden="true" />
-                {copy.checkModFirst}
-              </Button>
-            )}
-          </div>
-        )}
-      >
-        <p className="text-sm leading-relaxed text-text-secondary">{copy.enablePromptDescription}</p>
-      </Modal>
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
@@ -519,6 +547,58 @@ export function RoomAutomationPanel({
               {validation?.fieldErrors.followers && <small role="alert">{validation.fieldErrors.followers}</small>}
             </fieldset>
 
+            {participantAccountIds.length > 0 && (
+              <div className="room-automation-capsules" aria-label={copy.participantCapsules}>
+                <div className="room-automation-capsules-heading">
+                  <strong>{copy.participantCapsules}</strong>
+                  <span>{copy.participantCapsulesHelp}</span>
+                </div>
+                {participantAccountIds.map((accountId) => {
+                  const account = eligibleAccounts.find((candidate) => candidate.id === accountId);
+                  if (!account) return null;
+                  const selection = capsuleSelectionForAccount(modCapsulePool, accountId);
+                  const selected = selectedCapsuleForAccount(modCapsulePool, accountId);
+                  const compatible = compatibleCapsulesForAccount(modCapsulePool, accountId)
+                    .filter((capsule) => capsule.feature_groups.includes(ROOM_TOOLS_CAPSULE_FEATURE));
+                  const ready = !!selected?.feature_groups.includes(ROOM_TOOLS_CAPSULE_FEATURE) && selected.ready;
+                  return (
+                    <div className="room-automation-capsule-row" data-ready={ready ? "true" : "false"} key={accountId}>
+                      <span className="room-automation-capsule-account">{accountLabel(account)}</span>
+                      {compatible.length > 0 ? (
+                        <select
+                          className="settings-input"
+                          aria-label={`${accountLabel(account)} ${copy.participantCapsules}`}
+                          value={selection?.selected_capsule_id ?? ""}
+                          disabled={editorDisabled || assigningAccountId === accountId || !onAssignModCapsule}
+                          onChange={(event) => {
+                            const capsule = compatible.find((candidate) => candidate.id === event.target.value);
+                            if (capsule) void onAssignModCapsule?.(accountId, capsule.name);
+                          }}
+                        >
+                          <option value="">{copy.selectCapsule}</option>
+                          {compatible.map((capsule) => (
+                            <option value={capsule.id} key={capsule.id}>{capsule.name}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          disabled={modCapsulePoolLoading || !onRequireRoomTools}
+                          onClick={() => onRequireRoomTools?.(accountId)}
+                        >
+                          {copy.prepareCapsule}
+                        </Button>
+                      )}
+                      <span className="room-automation-capsule-state" data-ready={ready ? "true" : "false"}>
+                        {ready ? copy.capsuleReady : selection?.issue || copy.capsuleMissing}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
           </>
         )}
       </section>
@@ -585,19 +665,10 @@ export function RoomAutomationPanel({
             <div><strong>{copy.roomNaming}</strong><span>{copy.roomNamingHelp}</span></div>
             <code>{generatedRoomName(draft)}</code>
           </div>
-          <div className="room-automation-room-text-fields">
+          <div className="room-automation-room-name-fields">
             <TextField label={copy.prefix} value={draft.name_prefix} maxLength={15} disabled={editorDisabled}
             invalid={!!validation?.fieldErrors.prefix}
             onChange={(name_prefix) => updateDraft((current) => ({ ...current, name_prefix }))} />
-            <TextField label={copy.password} value={draft.password} maxLength={15} disabled={editorDisabled}
-            invalid={!!validation?.fieldErrors.password}
-            onChange={(password) => updateDraft((current) => ({ ...current, password }))} />
-          </div>
-          <div className="room-automation-sequence-row">
-            <div className="room-automation-sequence-copy">
-              <strong>{copy.sequenceRule}</strong>
-              <span>{copy.sequenceRuleHelp}</span>
-            </div>
             <NumberField label={copy.sequence} value={draft.next_sequence} min={0} max={4_294_967_295} disabled={editorDisabled}
             invalid={!!validation?.fieldErrors.sequence}
             onChange={(next_sequence) => updateDraft((current) => ({ ...current, next_sequence }))} />
@@ -605,71 +676,43 @@ export function RoomAutomationPanel({
             invalid={!!validation?.fieldErrors.sequence}
             onChange={(sequence_width) => updateDraft((current) => ({ ...current, sequence_width }))} />
           </div>
+          <div className="room-automation-password-row">
+            <TextField label={copy.password} value={draft.password} maxLength={15} disabled={editorDisabled}
+            invalid={!!validation?.fieldErrors.password}
+            onChange={(password) => updateDraft((current) => ({ ...current, password }))} />
+            <span>{copy.passwordOptional}</span>
+          </div>
         </div>
         {(validation?.fieldErrors.shortcuts || validation?.fieldErrors.prefix || validation?.fieldErrors.password || validation?.fieldErrors.sequence) && (
           <p className="room-automation-field-error" role="alert">
             {validation.fieldErrors.shortcuts || validation.fieldErrors.prefix || validation.fieldErrors.password || validation.fieldErrors.sequence}
           </p>
         )}
-      </section>
-      </div>
 
-      <section className="spatial-panel room-automation-section room-automation-workflow" aria-labelledby="room-workflow-title">
-        <div className="room-automation-section-heading room-automation-workflow-heading">
-          {status?.phase === "complete"
-            ? <CheckCircle2 size={16} aria-hidden="true" />
-            : status?.phase === "error"
-              ? <AlertCircle size={16} aria-hidden="true" />
-              : <Play size={16} aria-hidden="true" />}
+        <div className="room-automation-command-bar">
           <div>
-            <h3 id="room-workflow-title">{copy.workflow}</h3>
-            <p aria-live="polite">{status ? copy.phase[status.phase] : copy.phase.idle}</p>
+            <strong>{copy.roomActions}</strong>
+            <span>{copy.roomActionsHelp}</span>
           </div>
-        </div>
-        {status && status.phase !== "idle" && (
-          <dl className="room-automation-workflow-data">
-            {status.room_name && <div><dt>{copy.room}</dt><dd>{status.room_name}</dd></div>}
-            <div><dt>{copy.attempt}</dt><dd>{status.attempt}</dd></div>
-            <div><dt>{copy.followerProgress}</dt><dd>{followerProgress}</dd></div>
-          </dl>
-        )}
-        {status?.waiting_mode && (
-          <p className="room-automation-waiting-note">
-            {status.waiting_mode.mode === "automatic"
-              ? copy.waitAutomatic(status.waiting_mode.delay_secs)
-              : copy.waitManual}
-          </p>
-        )}
-        {status?.last_error && <p className="room-automation-field-error" role="alert">{status.last_error}</p>}
-        <div className="room-automation-actions">
           <Button
             size="md"
             variant="primary"
             loading={operation === "primary"}
-            disabled={workflowBlocked || !shouldEnablePrimaryAction(status)}
+            disabled={workflowBlocked || status?.phase === "primary" || status?.phase === "followers"
+              || (status?.phase === "waiting" && status.waiting_mode?.mode === "automatic")}
             onClick={() => void runWorkflowAction("primary", gateway.startPrimary)}
-          ><Play size={13} aria-hidden="true" />{manualWaiting ? copy.nextPrimary : copy.startPrimary}</Button>
+          ><Play size={13} aria-hidden="true" />{copy.startPrimary}</Button>
           <Button
             size="md"
             loading={operation === "followers"}
-            disabled={workflowBlocked || !shouldEnableFollowerAction(status)}
+            disabled={workflowBlocked || !((status?.phase === "waiting" && status.waiting_mode?.mode === "manual")
+              || ((status?.phase === "error" || status?.phase === "cancelled")
+                && status.recovery_action === "resume_followers"))}
             onClick={() => void runWorkflowAction("followers", gateway.startFollowers)}
           ><UsersRound size={13} aria-hidden="true" />{copy.startFollowers}</Button>
-          <Button
-            size="md"
-            loading={operation === "retry"}
-            disabled={workflowBlocked || !shouldEnableRetry(status)}
-            onClick={() => void runWorkflowAction("retry", gateway.retry)}
-          ><RotateCcw size={13} aria-hidden="true" />{retryLabel}</Button>
-          <Button
-            size="md"
-            variant="danger"
-            loading={operation === "cancel"}
-            disabled={loading || !!unavailable || !!operation || !workflowActive}
-            onClick={() => void runWorkflowAction("cancel", gateway.cancel)}
-          ><X size={13} aria-hidden="true" />{copy.cancel}</Button>
         </div>
       </section>
+      </div>
 
       <details
         className="spatial-panel room-automation-advanced room-automation-binding-details"
@@ -690,7 +733,10 @@ export function RoomAutomationPanel({
             variant="ghost"
             loading={bindingLoading}
             disabled={bindingLoading || !!operation}
-            onClick={() => setBindingReloadKey((current) => current + 1)}
+            onClick={() => {
+              autoInstallAttemptRef.current = null;
+              setBindingReloadKey((current) => current + 1);
+            }}
           >
             <RefreshCw size={13} aria-hidden="true" />
             {copy.refreshBinding}
@@ -728,15 +774,8 @@ export function RoomAutomationPanel({
         <p className="room-automation-consent-copy">{copy.f13Consent}</p>
         {binding?.d2rRunning && <p className="room-automation-field-error" role="alert">{copy.gameMustClose}</p>}
         {binding?.lastWatcherError && <p className="room-automation-field-error" role="alert">{binding.lastWatcherError}</p>}
-        <div className="room-automation-actions">
-          <Button
-            size="md"
-            variant="primary"
-            loading={operation === "install"}
-            disabled={editorDisabled || dirty || !draft.enabled || !binding || bindingLoading
-              || !!bindingError || binding.d2rRunning}
-            onClick={() => void updateBinding("install", gateway.installChatBinding)}
-          >{copy.installBinding}</Button>
+        {!draft.enabled && (
+          <div className="room-automation-actions">
           <Button
             size="md"
             loading={operation === "restore"}
@@ -746,7 +785,8 @@ export function RoomAutomationPanel({
                 && !draft.chat_f13_auto_patch_enabled)}
             onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
           >{copy.restoreBinding}</Button>
-        </div>
+          </div>
+        )}
         </div>
       </details>
 

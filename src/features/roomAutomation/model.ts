@@ -1,4 +1,4 @@
-import type { RoomAutomationConfig, RoomAutomationWorkflowStatus } from "./types";
+import type { RoomAutomationConfig } from "./types";
 
 export interface RoomAutomationValidation {
   valid: boolean;
@@ -199,20 +199,4 @@ export function validateRoomAutomationConfig(
   }
 
   return { valid: Object.keys(fieldErrors).length === 0, fieldErrors };
-}
-
-export function shouldEnableFollowerAction(status: RoomAutomationWorkflowStatus | null): boolean {
-  return !!status && status.phase === "waiting" && status.waiting_mode?.mode === "manual";
-}
-
-export function shouldEnablePrimaryAction(status: RoomAutomationWorkflowStatus | null): boolean {
-  if (!status) return true;
-  if (status.phase === "waiting") return status.waiting_mode?.mode === "manual";
-  return status.phase !== "primary" && status.phase !== "followers";
-}
-
-export function shouldEnableRetry(status: RoomAutomationWorkflowStatus | null): boolean {
-  return !!status
-    && (status.phase === "error" || status.phase === "cancelled")
-    && status.recovery_action !== null;
 }

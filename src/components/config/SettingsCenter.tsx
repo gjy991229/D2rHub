@@ -20,20 +20,16 @@ import { ShortcutsPanel } from "../../features/settings/panels/ShortcutsPanel";
 import { MaintenancePanel } from "../../features/settings/panels/MaintenancePanel";
 import { PetPanel } from "../../features/settings/panels/PetPanel";
 import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
-import {
-  AppearancePanel,
-  type AppearanceSettingsDraft,
-} from "../../features/settings/panels/AppearancePanel";
+import { AppearancePanel, type AppearanceSettingsDraft } from "../../features/settings/panels/AppearancePanel";
 import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
-import {
-  ModProcessingPanel,
-} from "../../features/settings/panels/ModProcessingPanel";
+import { ModProcessingPanel } from "../../features/settings/panels/ModProcessingPanel";
 import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
 import { TaskRuntimePanel } from "../../features/tasks";
 import { useAudioModuleController } from "../../features/settings/useAudioModuleController";
 import { useAuxiliaryWindowActions } from "../../features/settings/useAuxiliaryWindowActions";
 import { useMaintenanceController } from "../../features/settings/useMaintenanceController";
+import { useModCapsulePool } from "../../features/modCapsules/useModCapsulePool";
 import {
   isSettingsTabId,
   type SettingsTabId,
@@ -434,6 +430,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     audioSetupOpen,
     setAudioSetupOpen,
     audioSetupPurpose,
+    modProcessingTargetId,
     audioSetupMode,
     setAudioSetupMode,
     audioSetupSource,
@@ -459,6 +456,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     audioPrepareBlockedReason,
     refreshAudioModState,
     handleAudioTargetChange,
+    handleModProcessingTargetChange,
     handleAudioToggle,
     handleOpenAudioSetup,
     handleOpenModProcessing,
@@ -474,6 +472,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     persistConfig: persistGlobalDraft,
     loadAccounts,
     setActiveTab,
+  });
+  const modProcessingTarget = validateTrackingTarget(modProcessingTargetId, accounts);
+  const modCapsules = useModCapsulePool({
+    active: open && ["automation", "mod-processing", "room-automation"].includes(activeTab),
+    onAssigned: loadAccounts,
   });
 
   const updateGameSetting = (key: string, value: unknown) => {
@@ -742,6 +745,13 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 audioStatus={audioStatus}
                 audioModState={audioModState}
                 audioModStateLoading={audioModStateLoading}
+                modCapsulePool={modCapsules.pool}
+                assigningCapsuleAccountId={modCapsules.assigningAccountId}
+                onAssignModCapsule={async (accountId, modName) => {
+                  const next = await modCapsules.assign(accountId, modName);
+                  if (next && accountId === trackingTargetId) await refreshAudioModState();
+                  return next;
+                }}
                 audioSetupOpen={audioSetupOpen}
                 onOpenModProcessing={() => handleOpenModProcessing("recognition")}
                 onOpenAudioSetup={handleOpenAudioSetup}
@@ -781,7 +791,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               <ModProcessingPanel
                 config={config}
                 initializedAccounts={initializedTrackingAccounts}
-                trackingTarget={trackingTarget}
+                trackingTarget={modProcessingTarget}
                 audioModState={audioModState}
                 audioModStateLoading={audioModStateLoading}
                 audioModScannedAt={audioModScannedAt}
@@ -803,9 +813,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 audioSetupNameError={audioSetupNameError}
                 showAudioSetupNameError={showAudioSetupNameError}
                 audioPrepareBlockedReason={audioPrepareBlockedReason}
-                onTargetChange={handleAudioTargetChange}
-                onPrepare={handlePrepareAudioMod}
-                onRefresh={refreshAudioModState}
+                modCapsulePool={modCapsules.pool}
+                modCapsulePoolLoading={modCapsules.loading}
+                modCapsulePoolError={modCapsules.error}
+                onTargetChange={handleModProcessingTargetChange}
+                onPrepare={async () => {
+                  await handlePrepareAudioMod();
+                  await modCapsules.refresh();
+                }}
+                onRefresh={async () => {
+                  await refreshAudioModState();
+                  await modCapsules.refresh();
+                }}
                 onBackToRecognition={() => setActiveTab("automation")}
               />
             )}
@@ -815,7 +834,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               <RoomAutomationPanel
                 accounts={accounts}
                 language={config?.app_language}
-                onOpenAudioModSettings={() => { handleOpenModProcessing("manage"); }}
+                modCapsulePool={modCapsules.pool}
+                modCapsulePoolLoading={modCapsules.loading}
+                modCapsulePoolError={modCapsules.error}
+                assigningAccountId={modCapsules.assigningAccountId}
+                onAssignModCapsule={modCapsules.assign}
+                onRequireRoomTools={(accountId) => { handleOpenModProcessing("room-tools", accountId); }}
               />
             )}
 

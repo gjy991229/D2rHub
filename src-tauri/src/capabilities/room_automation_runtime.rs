@@ -845,11 +845,11 @@ impl RoomAutomationManager {
         mut candidate: RoomAutomationConfig,
     ) -> Result<RoomAutomationSaveOutcome, String> {
         let _config_apply = self.config_apply.lock();
-        let operation = self.operation.lock();
         self.join_finished_workflow();
         if self.workflow_is_reserved() {
-            return Err("自动跟房正在执行或等待小号跟进；请完成或取消本轮后再修改配置".to_string());
+            self.cancel()?;
         }
+        let operation = self.operation.lock();
 
         let previous = self.get_config();
         if candidate.chat_f13_auto_patch_enabled != previous.config.chat_f13_auto_patch_enabled {
@@ -1718,13 +1718,14 @@ fn validate_primary_trigger(status: &WorkflowStatus) -> Result<(), String> {
     if status.running {
         return Err("已有一轮自动跟房正在运行".to_string());
     }
-    let allowed = matches!(status.phase, WorkflowPhase::Idle | WorkflowPhase::Complete)
-        || (status.phase == WorkflowPhase::Waiting
-            && status.waiting_mode == Some(WaitingMode::Manual))
-        || (matches!(
-            status.phase,
-            WorkflowPhase::Error | WorkflowPhase::Cancelled
-        ) && status.recovery_action == Some(WorkflowRecoveryAction::RetryPrimary));
+    let allowed = matches!(
+        status.phase,
+        WorkflowPhase::Idle
+            | WorkflowPhase::Complete
+            | WorkflowPhase::Error
+            | WorkflowPhase::Cancelled
+    ) || (status.phase == WorkflowPhase::Waiting
+        && status.waiting_mode == Some(WaitingMode::Manual));
     if allowed {
         Ok(())
     } else {

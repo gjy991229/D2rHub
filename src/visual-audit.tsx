@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
-import type { AccountMeta, GlobalConfig } from "./store/types";
+import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
 import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationWorkflowStatus,
@@ -349,6 +349,26 @@ const roomChatBindingStatus: RoomChatBindingStatus = {
   message: "F13 binding ready",
 };
 
+const modCapsulePool: ModCapsulePool = {
+  capsules: [{
+    id: "global:jcy-tz",
+    edition: "Global",
+    name: "jcy-tz",
+    feature_groups: ["audio_telemetry", "in_game_room_tools"],
+    update_required: false,
+    ready: true,
+    assigned_account_ids: ["sorc-01", "barb-02", "pala-03"],
+  }],
+  accounts: ["sorc-01", "barb-02", "pala-03"].map((accountId) => ({
+    account_id: accountId,
+    account_name: accounts.find((account) => account.id === accountId)?.display_name || accountId,
+    edition: "Global",
+    selected_capsule_id: "global:jcy-tz",
+    legacy_mod_arguments: "-mod jcy-tz -txt -assettestmode 1",
+    issue: null,
+  })),
+};
+
 const accountSettings: SettingsMap = {
   "Window Mode": 0,
   "Screen Resolution (Windowed)": "1280x720",
@@ -456,6 +476,8 @@ function installIpcMock() {
         return accountSettings;
       case "get_scene_stats":
         return { avg_time: 73.4, total_runs: 218 };
+      case "get_mod_capsule_pool":
+        return modCapsulePool;
       case "get_audio_mod_setup_state":
         if (audioModState === "legacy") {
           return {

@@ -1150,6 +1150,35 @@ pub(crate) fn lifecycle_health() -> Result<(), String> {
     }
 }
 
+fn is_expected_capability_idle(error: &str) -> bool {
+    error.contains("D2R 尚未运行")
+}
+
+/// Activates the optional recognition capability without treating an absent
+/// game process as a module crash. Capture starts when a verified target
+/// session exists; the capability itself remains healthy while waiting.
+pub(crate) fn start_capability(app: tauri::AppHandle) -> Result<(), String> {
+    match start_blocking(app) {
+        Ok(()) => Ok(()),
+        Err(error) if is_expected_capability_idle(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn capability_health(app: &tauri::AppHandle) -> Result<(), String> {
+    if RUNNING.load(Ordering::SeqCst) && WORKER_ACTIVE.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if !RUNNING.load(Ordering::SeqCst) && !WORKER_ACTIVE.load(Ordering::SeqCst) {
+        match resolve_monitor_config(app) {
+            Err(error) if is_expected_capability_idle(&error) => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => return start_blocking(app.clone()),
+        }
+    }
+    lifecycle_health()
+}
+
 #[tauri::command]
 pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
     request_stop();
@@ -1237,6 +1266,12 @@ pub fn get_rune_audio_status() -> RuneAudioStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_enabled_module_waiting_for_its_game_process_is_not_a_failure() {
+        assert!(is_expected_capability_idle("目标账号“山鬼”的 D2R 尚未运行"));
+        assert!(!is_expected_capability_idle("WASAPI 初始化失败"));
+    }
 
     fn test_monitor_config(min_rune_number: u32) -> MonitorConfig {
         MonitorConfig {

@@ -318,3 +318,27 @@ export interface AudioModSetupState {
   active_session_update_required: boolean | null;
   restart_required: boolean;
 }
+
+export interface ModCapsule {
+  id: string;
+  edition: "CN" | "Global" | string;
+  name: string;
+  feature_groups: string[];
+  update_required: boolean;
+  ready: boolean;
+  assigned_account_ids: string[];
+}
+
+export interface ModCapsuleAccountSelection {
+  account_id: string;
+  account_name: string;
+  edition: "CN" | "Global" | string | null;
+  selected_capsule_id: string | null;
+  legacy_mod_arguments: string;
+  issue: string | null;
+}
+
+export interface ModCapsulePool {
+  capsules: ModCapsule[];
+  accounts: ModCapsuleAccountSelection[];
+}

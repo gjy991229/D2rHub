@@ -1,4 +1,5 @@
 import { AlertTriangle, Pencil, Play, Plus, Star, X } from "lucide-react";
+import { useState } from "react";
 
 import { useI18n } from "../../i18n";
 import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
@@ -34,6 +35,7 @@ export function LaunchGroupPanel({
   onToggleFavorite,
 }: LaunchGroupPanelProps) {
   const { t } = useI18n();
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const favorites = new Set(favoriteGroupIds);
   const orderedGroups = groups
     .map((group, index) => ({ group, index }))
@@ -70,14 +72,25 @@ export function LaunchGroupPanel({
               ? t("launch.scheme.status.unavailable", { count: availability.issues.length })
               : t("launch.scheme.status.ready", { count: memberCount });
           const issueTitle = launchGroupIssueDetails(availability.issues);
+          const selected = selectedGroupId === group.id;
           return (
-            <article className="launch-group-panel-row" data-warning={!availability.can_launch ? "true" : undefined} key={group.id}>
+            <article
+              className="launch-group-panel-row"
+              data-selected={selected ? "true" : undefined}
+              data-warning={!availability.can_launch ? "true" : undefined}
+              key={group.id}
+            >
               <button
                 type="button"
                 className="launch-group-panel-launch"
-                disabled={disabled || !availability.can_launch}
-                title={issueTitle || t("launch.scheme.launchTitle", { name: group.name })}
-                onClick={() => onLaunch(group)}
+                disabled={disabled}
+                aria-pressed={selected}
+                aria-disabled={!availability.can_launch}
+                title={issueTitle || t(selected ? "launch.scheme.launchSelectedTitle" : "launch.scheme.selectTitle", { name: group.name })}
+                onClick={() => {
+                  if (selected && availability.can_launch) onLaunch(group);
+                  else setSelectedGroupId(group.id);
+                }}
               >
                 <span className="launch-group-play" aria-hidden="true">
                   {availability.can_launch

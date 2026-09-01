@@ -175,13 +175,12 @@ impl WorkflowTaskState {
         }
         let primary_allowed = matches!(
             self.status.phase,
-            WorkflowPhase::Idle | WorkflowPhase::Complete
+            WorkflowPhase::Idle
+                | WorkflowPhase::Complete
+                | WorkflowPhase::Error
+                | WorkflowPhase::Cancelled
         ) || (self.status.phase == WorkflowPhase::Waiting
-            && self.status.waiting_mode == Some(WaitingMode::Manual))
-            || (matches!(
-                self.status.phase,
-                WorkflowPhase::Error | WorkflowPhase::Cancelled
-            ) && self.status.recovery_action == Some(WorkflowRecoveryAction::RetryPrimary));
+            && self.status.waiting_mode == Some(WaitingMode::Manual));
         if !primary_allowed {
             return Err(WorkflowStateError::InvalidTransition {
                 operation: "begin primary",
@@ -665,6 +664,23 @@ mod tests {
         assert_eq!(state.status().phase, WorkflowPhase::Followers);
         assert!(state.status().running);
         assert_eq!(state.status().recovery_action, None);
+    }
+
+    #[test]
+    fn follower_failure_can_be_abandoned_for_a_fresh_primary_room() {
+        let mut config = enabled_config();
+        let mut state = WorkflowTaskState::default();
+        let first = state.begin_primary(&config, None).unwrap();
+        state.primary_ready(first.id, WaitingMode::Manual).unwrap();
+        state.begin_followers(first.id).unwrap();
+        state.fail(first.id, "join failed").unwrap();
+        config.next_sequence = 2;
+
+        let replacement = state.begin_primary(&config, None).unwrap();
+
+        assert_eq!(replacement.room.name, "run-002");
+        assert_eq!(state.status().phase, WorkflowPhase::Primary);
+        assert!(replacement.id > first.id);
     }
 
     #[test]

@@ -14,7 +14,7 @@ impl RuneAudioCapability {
 
 impl CapabilityDriver for RuneAudioCapability {
     fn start(&self) -> Result<(), CapabilityFailure> {
-        crate::rune_audio::monitor::start_blocking(self.app.clone())
+        crate::rune_audio::monitor::start_capability(self.app.clone())
             .map_err(|error| CapabilityFailure::new("monitor-start-failed", error))
     }
 
@@ -24,7 +24,7 @@ impl CapabilityDriver for RuneAudioCapability {
     }
 
     fn health(&self) -> CapabilityHealth {
-        match crate::rune_audio::monitor::lifecycle_health() {
+        match crate::rune_audio::monitor::capability_health(&self.app) {
             Ok(()) => CapabilityHealth::Healthy,
             Err(error) => {
                 CapabilityHealth::Failed(CapabilityFailure::new("monitor-unavailable", error))

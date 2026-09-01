@@ -10,6 +10,7 @@ import type {
   RoomChatBindingStatus,
 } from "../../roomAutomation/types";
 import { RoomAutomationPanel } from "./RoomAutomationPanel";
+import type { ModCapsulePool } from "../../../store/types";
 
 const config: RoomAutomationConfig = {
   enabled: true,
@@ -131,10 +132,26 @@ const accounts = [
   { id: "two", display_name: "Follower", initialized: true },
 ] as never;
 
+const capsulePool: ModCapsulePool = {
+  capsules: [{
+    id: "cn:rooms",
+    edition: "CN",
+    name: "Rooms",
+    feature_groups: ["in_game_room_tools"],
+    update_required: false,
+    ready: true,
+    assigned_account_ids: ["one"],
+  }],
+  accounts: [
+    { account_id: "one", account_name: "Leader", edition: "CN", selected_capsule_id: "cn:rooms", legacy_mod_arguments: "-mod Rooms -txt", issue: null },
+    { account_id: "two", account_name: "Follower", edition: "CN", selected_capsule_id: null, legacy_mod_arguments: "", issue: null },
+  ],
+};
+
 afterEach(cleanup);
 
 describe("RoomAutomationPanel", () => {
-  it("shows the Mod prerequisite only when enabling and can jump to Mod settings", async () => {
+  it("redirects the first participant missing a room-tools capsule without a confirmation modal", async () => {
     const { gateway } = makeGateway();
     const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
     gateway.startSync = vi.fn(async (handlers) => {
@@ -142,23 +159,22 @@ describe("RoomAutomationPanel", () => {
       handlers.onStatus(idleStatus);
       return () => undefined;
     });
-    const onOpenAudioModSettings = vi.fn();
+    const onRequireRoomTools = vi.fn();
     const user = userEvent.setup();
     render(
       <RoomAutomationPanel
         accounts={accounts}
         gateway={gateway}
-        onOpenAudioModSettings={onOpenAudioModSettings}
+        modCapsulePool={capsulePool}
+        onRequireRoomTools={onRequireRoomTools}
       />,
     );
 
     expect(await screen.findByText("配置会保留，但快捷键、文件监视和跟房任务均不会运行。")).toBeTruthy();
     expect(screen.queryByText("局内房间工具是必要条件")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "启用自动跟房模块" }));
-    expect(screen.getByRole("heading", { name: "启用自动跟房" })).toBeTruthy();
-    expect(screen.getByText(/参与账号需要使用包含/)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "先检查 Mod" }));
-    expect(onOpenAudioModSettings).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("heading", { name: "启用自动跟房" })).toBeNull();
+    expect(onRequireRoomTools).toHaveBeenCalledWith("two");
   });
 
   it("keeps module copy local, shows a room preview, and saves with generation CAS", async () => {
@@ -194,13 +210,13 @@ describe("RoomAutomationPanel", () => {
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
 
-    expect(await screen.findByText(/若房名重复/)).toBeTruthy();
+    expect(await screen.findByText(/手动模式下可反复创建新房/)).toBeTruthy();
     expect((screen.getByLabelText("房名开头") as HTMLInputElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: /应用配置/ })).toBeNull();
-    const nextPrimary = screen.getByRole("button", { name: /下一序号重新建房/ });
+    const nextPrimary = screen.getByRole("button", { name: /主账号创建房间/ });
     expect((nextPrimary as HTMLButtonElement).disabled).toBe(false);
     expect((screen.getByRole("button", { name: /让跟随账号加入/ }) as HTMLButtonElement).disabled).toBe(false);
-    expect((screen.getByRole("button", { name: /取消任务/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText("本次任务")).toBeNull();
     await user.click(nextPrimary);
     await waitFor(() => expect(gateway.startPrimary).toHaveBeenCalledTimes(1));
   });
@@ -221,12 +237,12 @@ describe("RoomAutomationPanel", () => {
     const { gateway } = makeGateway(automaticStatus);
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
 
-    expect(await screen.findByText("5 秒后自动继续")).toBeTruthy();
+    expect(await screen.findByRole("heading", { name: "自动跟房" })).toBeTruthy();
     expect((screen.getByRole("button", { name: /主账号创建房间/ }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: /让跟随账号加入/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("renders explicit migration consent and non-color binding state", async () => {
+  it("installs the F13 binding automatically when an enabled module needs it", async () => {
     const { gateway } = makeGateway(idleStatus, binding);
     const consentSnapshot = {
       ...snapshot,
@@ -244,8 +260,8 @@ describe("RoomAutomationPanel", () => {
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
 
     expect(await screen.findByText(/旧版配置中的自动授权已被撤销/)).toBeTruthy();
-    expect(screen.getByText("F13 绑定尚未就绪")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "授权并安装 F13 绑定" }) as HTMLButtonElement).disabled).toBe(false);
+    await waitFor(() => expect(gateway.installChatBinding).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "授权并安装 F13 绑定" })).toBeNull();
   });
 
   it("keeps configuration available when the binding status fails and releases sync on unmount", async () => {
@@ -318,7 +334,7 @@ describe("RoomAutomationPanel", () => {
     await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].shortcut).toBe("Ctrl+Num+"));
   });
 
-  it("can edit settings and cancel an externally-started workflow", async () => {
+  it("keeps settings editable without rendering the removed current-task controls", async () => {
     const { gateway, getHandlers, saveConfig } = makeGateway();
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
@@ -340,12 +356,9 @@ describe("RoomAutomationPanel", () => {
       follower_account_ids: ["two"],
     });
 
-    const cancel = await screen.findByRole("button", { name: "Cancel task" });
-    expect((cancel as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByRole("button", { name: "Cancel task" })).toBeNull();
+    expect(screen.queryByText("Current task")).toBeNull();
     expect((screen.getByLabelText("Room prefix") as HTMLInputElement).disabled).toBe(false);
-
-    await user.click(cancel);
-    await waitFor(() => expect(gateway.cancel).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].name_prefix).toBe("local-"));
   });
 
@@ -369,48 +382,6 @@ describe("RoomAutomationPanel", () => {
     expect((screen.getByLabelText("Room prefix") as HTMLInputElement).value).toBe("saved-");
     expect(screen.getByText("Settings applied")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
-  });
-
-  it("labels follower recovery as a same-room retry", async () => {
-    const recoveryStatus: RoomAutomationWorkflowStatus = {
-      ...idleStatus,
-      revision: 11,
-      task_id: 41,
-      phase: "error",
-      recovery_action: "resume_followers",
-      room_name: "run-007",
-      room_sequence: 7,
-      primary_account_id: "one",
-      follower_account_ids: ["two"],
-      last_error: "follower failed",
-    };
-    const { gateway } = makeGateway(recoveryStatus);
-    const user = userEvent.setup();
-    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
-
-    const retry = await screen.findByRole("button", { name: "Retry followers (same room)" });
-    expect((retry as HTMLButtonElement).disabled).toBe(false);
-    await user.click(retry);
-    expect(gateway.retry).toHaveBeenCalledTimes(1);
-  });
-
-  it("labels primary recovery as using the next durably reserved sequence", async () => {
-    const recoveryStatus: RoomAutomationWorkflowStatus = {
-      ...idleStatus,
-      revision: 12,
-      task_id: 42,
-      phase: "error",
-      recovery_action: "retry_primary",
-      room_name: "run-007",
-      room_sequence: 7,
-      primary_account_id: "one",
-      follower_account_ids: ["two"],
-      last_error: "primary failed",
-    };
-    const { gateway } = makeGateway(recoveryStatus);
-    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
-
-    expect(await screen.findByRole("button", { name: "Retry creation (next sequence)" })).toBeTruthy();
   });
 
   it("can refresh a healthy F13 binding status", async () => {

@@ -256,6 +256,7 @@ pub fn run() {
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
+            audio_mod::get_mod_capsule_pool,
             audio_mod::prepare_audio_mod,
             audio_mod::upgrade_audio_mod,
             audio_mod::apply_audio_mod_to_account,
