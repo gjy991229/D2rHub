@@ -1,4 +1,4 @@
-import { Check, ListChecks, Trash2, UserPlus } from "lucide-react";
+import { Check, ListChecks, PackageOpen, Trash2, UserPlus } from "lucide-react";
 
 import type { LaunchGroupController } from "../../hooks/useLaunchGroupController";
 import { useAccounts } from "../../store/accounts";
@@ -18,6 +18,7 @@ interface MainActionBarProps {
   onRequestKillAll: () => void;
   launchGroupPanelOpen: boolean;
   onToggleLaunchGroupPanel: () => void;
+  onOpenModManager: () => void;
 }
 
 export function MainActionBar({
@@ -30,6 +31,7 @@ export function MainActionBar({
   onRequestKillAll,
   launchGroupPanelOpen,
   onToggleLaunchGroupPanel,
+  onOpenModManager,
 }: MainActionBarProps) {
   const { config, saving } = useGlobalConfig();
   const { accounts } = useAccounts();
@@ -130,6 +132,10 @@ export function MainActionBar({
           </button>
         </div>
         <div className="flex-1" />
+        <button type="button" className="control-btn" onClick={onOpenModManager}>
+          <PackageOpen size={13} strokeWidth={1.9} aria-hidden="true" />
+          Mod 管理
+        </button>
         <LaunchGroupMenu
           count={config?.launch_groups.length ?? 0}
           open={launchGroupPanelOpen}

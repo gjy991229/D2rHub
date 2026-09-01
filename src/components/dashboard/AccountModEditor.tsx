@@ -1,296 +1,179 @@
-import {
-  type KeyboardEvent,
-  type MouseEvent,
-  type PointerEvent,
-  type WheelEvent,
-  useEffect,
-  useRef,
-  useState,
-} from "react";
-import { X } from "lucide-react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, ChevronDown, PackagePlus } from "lucide-react";
 
-import { useAccounts } from "../../store/accounts";
-import type { AccountMeta, LaunchGroupMember } from "../../store/types";
-import { showToast } from "../ui/Toast";
+import type { AccountMeta, LaunchGroupMember, ModCapsulePool } from "../../store/types";
+import {
+  capsuleSelectionForAccount,
+  compatibleCapsulesForAccount,
+} from "../../features/modCapsules/model";
 
 interface AccountModEditorProps {
   account: AccountMeta;
+  modCapsulePool?: ModCapsulePool | null;
+  assigning?: boolean;
   isSelectionMode?: boolean;
   schemeMember?: LaunchGroupMember;
   onSchemeMemberChange?: (id: string, patch: Partial<LaunchGroupMember>) => void;
-  getModSchemeUsage?: (id: string, modArgs: string) => string[];
+  onAssign?: (accountId: string, capsuleId: string | null) => Promise<unknown>;
+  onOpenModManager?: (action?: "add", edition?: string | null) => void;
 }
 
-function getModChipLabel(mod: string): string {
-  const tokens = mod.match(/"[^"]*"|'[^']*'|\S+/g) || [];
-  const names = tokens
-    .map(token => token.replace(/^(['"])(.*)\1$/, "$2"))
-    .filter(token => token && !token.startsWith("-"));
-
-  return names.join(" ") || mod;
+function legacyLabel(argumentsValue: string): string {
+  const match = /(?:^|\s)-mod(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s]+))/i.exec(argumentsValue);
+  return match?.[1] || match?.[2] || match?.[3] || "自定义参数";
 }
 
 export function AccountModEditor({
   account,
+  modCapsulePool = null,
+  assigning = false,
   isSelectionMode,
   schemeMember,
   onSchemeMemberChange,
-  getModSchemeUsage,
+  onAssign,
+  onOpenModManager,
 }: AccountModEditorProps) {
-  const { addAccountMod, updateAccountMods } = useAccounts();
-  const [confirmDeleteIndex, setConfirmDeleteIndex] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(account.mod_args || "");
-  const dragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    scrollLeft: number;
-    moved: boolean;
-    captured: boolean;
-  } | null>(null);
-  const suppressClickRef = useRef(false);
-  const suppressClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const commitInFlightRef = useRef(false);
-  const activeMod = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuId = `account-mod-picker-${useId().replaceAll(":", "")}`;
+  const activeArguments = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
+  const selection = capsuleSelectionForAccount(modCapsulePool, account.id);
+  const capsules = compatibleCapsulesForAccount(modCapsulePool, account.id);
+  const selected = capsules.find((capsule) => capsule.launch_arguments.trim() === activeArguments.trim()) ?? null;
+  const activeLabel = activeArguments.trim() ? selected?.name ?? legacyLabel(activeArguments) : "原版";
 
-  useEffect(() => setDraft(account.mod_args || ""), [account.mod_args]);
+  const updatePosition = useCallback(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const width = 330;
+    const height = Math.min(360, 104 + Math.max(1, capsules.length) * 52);
+    const gap = 6;
+    const padding = 8;
+    const opensUpward = window.innerHeight - rect.bottom < height + gap + padding
+      && rect.top > height + gap + padding;
+    setPosition({
+      left: Math.min(window.innerWidth - width - padding, Math.max(padding, rect.left)),
+      top: opensUpward ? Math.max(padding, rect.top - height - gap) : rect.bottom + gap,
+      opensUpward,
+    });
+  }, [capsules.length]);
 
-  useEffect(() => () => {
-    if (suppressClickTimerRef.current) clearTimeout(suppressClickTimerRef.current);
+  const close = useCallback((restoreFocus = false) => {
+    setOpen(false);
+    setPosition(null);
+    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
   }, []);
 
-  const commit = async () => {
-    if (commitInFlightRef.current) return;
-    setEditing(false);
-    const value = draft.trim();
-    if (!value) return;
+  useLayoutEffect(() => {
+    if (open) updatePosition();
+  }, [open, updatePosition]);
 
-    commitInFlightRef.current = true;
-    try {
-      if (isSelectionMode) {
-        const existing = (account.mod_list || []).find(mod => mod.trim() === value);
-        if (existing) {
-          onSchemeMemberChange?.(account.id, { mod_args: existing });
-          showToast("info", "已有完全相同的 Mod 配置，已为当前方案选中");
-          return;
-        }
-        const saved = await updateAccountMods(
-          account.id,
-          account.mod_args,
-          [...(account.mod_list || []), value],
-        );
-        if (saved) onSchemeMemberChange?.(account.id, { mod_args: value });
-        return;
-      }
-      const added = await addAccountMod(account.id, value);
-      if (added === false) showToast("info", "已有完全相同的 Mod 配置，已跳过添加");
-    } finally {
-      commitInFlightRef.current = false;
-    }
-  };
-
-  const handleWheel = (event: WheelEvent<HTMLDivElement>) => {
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    if (delta === 0) return;
-    const next = Math.min(row.scrollWidth - row.clientWidth, Math.max(0, row.scrollLeft + delta));
-    if (next === row.scrollLeft) return;
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollLeft = next;
-  };
-
-  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    if (event.button !== 0 || (event.target as HTMLElement).closest("input")) return;
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-    suppressClickRef.current = false;
-    dragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      scrollLeft: row.scrollLeft,
-      moved: false,
-      captured: false,
+  useEffect(() => {
+    if (!open || !position) return;
+    const outside = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      close();
     };
-  };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") close(true);
+    };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", escape);
+    window.addEventListener("resize", updatePosition);
+    return () => {
+      document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("keydown", escape);
+      window.removeEventListener("resize", updatePosition);
+    };
+  }, [close, open, position, updatePosition]);
 
-  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const distance = event.clientX - drag.startX;
-    if (!drag.moved && Math.abs(distance) >= 4) {
-      drag.moved = true;
-      drag.captured = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.currentTarget.dataset.dragging = "true";
+  const choose = async (capsuleId: string | null, launchArguments: string) => {
+    if (isSelectionMode) {
+      onSchemeMemberChange?.(account.id, { mod_args: launchArguments });
+    } else {
+      await onAssign?.(account.id, capsuleId);
     }
-    if (!drag.moved) return;
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.scrollLeft = drag.scrollLeft - distance;
-  };
-
-  const finishPointerDrag = (event: PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-    const row = event.currentTarget;
-    dragRef.current = null;
-    delete row.dataset.dragging;
-    if (drag.captured && row.hasPointerCapture(event.pointerId)) {
-      row.releasePointerCapture(event.pointerId);
-    }
-    event.stopPropagation();
-    if (!drag.moved) return;
-
-    suppressClickRef.current = true;
-    if (suppressClickTimerRef.current) clearTimeout(suppressClickTimerRef.current);
-    suppressClickTimerRef.current = setTimeout(() => {
-      suppressClickRef.current = false;
-      suppressClickTimerRef.current = null;
-    }, 0);
-  };
-
-  const handleClickCapture = (event: MouseEvent<HTMLDivElement>) => {
-    if (!suppressClickRef.current) return;
-    suppressClickRef.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-    let next: number | null = null;
-    if (event.key === "ArrowLeft") next = row.scrollLeft - 72;
-    if (event.key === "ArrowRight") next = row.scrollLeft + 72;
-    if (event.key === "Home") next = 0;
-    if (event.key === "End") next = row.scrollWidth;
-    if (next === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollTo({ left: next, behavior: "smooth" });
+    close(true);
   };
 
   return (
-    <div
-      className="mod-row inline-mod-row"
-      role="group"
-      aria-label="Mod 配置，横向滚动查看更多"
-      tabIndex={0}
-      onWheel={handleWheel}
-      onPointerDown={handlePointerDown}
-      onPointerMove={handlePointerMove}
-      onPointerUp={finishPointerDrag}
-      onPointerCancel={finishPointerDrag}
-      onLostPointerCapture={finishPointerDrag}
-      onClickCapture={handleClickCapture}
-      onKeyDown={handleKeyDown}
-    >
+    <div className="account-mod-selector" onClick={(event) => event.stopPropagation()}>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="hig-badge mod-chip account-mod-selector-trigger"
+        data-processed={selected?.processed ? "true" : undefined}
+        disabled={assigning}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-controls={open ? menuId : undefined}
+        title={`当前 Mod：${activeLabel}；点击选择共享 Mod`}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span>{activeLabel}</span>
+        <ChevronDown size={10} aria-hidden="true" />
+      </button>
       <button
         type="button"
-        onClick={event => {
-          event.stopPropagation();
-          if (activeMod === "") return;
-          if (isSelectionMode) onSchemeMemberChange?.(account.id, { mod_args: "" });
-          else void updateAccountMods(account.id, "", account.mod_list || []);
-        }}
-        className={`hig-badge mod-chip shrink-0 active:scale-[0.97] ${activeMod === "" ? "mod-chip-active" : ""}`}
-        title={activeMod === "" ? "当前不使用 Mod" : "不使用 Mod"}
+        className="hig-badge mod-chip account-mod-manage-trigger"
+        title="前往 Mod 管理新增共享参数"
+        onClick={() => onOpenModManager?.("add", selection?.edition)}
       >
-        无 Mod
+        <PackagePlus size={11} aria-hidden="true" />
       </button>
-      {(account.mod_list || []).map((mod, index) => {
-        const active = activeMod === mod;
-        const confirming = confirmDeleteIndex === index;
-        const label = getModChipLabel(mod);
-        return (
-          <div key={mod} className="group/mod relative flex items-center" onMouseLeave={() => setConfirmDeleteIndex(null)}>
-            <button
-              onClick={event => {
-                event.stopPropagation();
-                if (active) return;
-                if (isSelectionMode) onSchemeMemberChange?.(account.id, { mod_args: mod });
-                else void updateAccountMods(account.id, mod, account.mod_list || []);
-              }}
-              className={`hig-badge mod-chip max-w-[118px] truncate font-mono active:scale-[0.97] ${active ? "mod-chip-active" : ""}`}
-              title={active ? `${mod}（当前生效）` : `${mod}（点击生效）`}
-            >
-              {label}
-            </button>
-            <button
-              className={`absolute -right-1.5 -top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
-                confirming
-                  ? "scale-110 text-white opacity-100"
-                  : "text-text-muted opacity-0 hover:scale-110 group-hover/mod:opacity-100"
-              }`}
-              style={{
-                background: confirming ? "var(--error)" : "var(--surface-glass)",
-                border: "1px solid var(--border-default)",
-              }}
-              onClick={event => {
-                event.stopPropagation();
-                if (!confirming) {
-                  setConfirmDeleteIndex(index);
-                  return;
-                }
-                const usedBy = getModSchemeUsage?.(account.id, mod) ?? [];
-                if (usedBy.length > 0) {
-                  showToast("warning", `Mod“${label}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
-                  setConfirmDeleteIndex(null);
-                  return;
-                }
-                const nextMods = (account.mod_list || []).filter((_, candidate) => candidate !== index);
-                const nextActive = account.mod_args === mod ? (nextMods[0] || "") : account.mod_args;
-                void updateAccountMods(account.id, nextActive, nextMods).then(saved => {
-                  if (saved && isSelectionMode && active) {
-                    onSchemeMemberChange?.(account.id, { mod_args: "" });
-                  }
-                });
-                setConfirmDeleteIndex(null);
-              }}
-              title={confirming ? "确认删除" : "删除配置"}
-            >
-              <X size={9} />
-            </button>
-          </div>
-        );
-      })}
-      {editing ? (
-        <input
-          className="line-input h-[24px] w-28 px-2 font-mono text-xs"
-          value={draft}
-          onChange={event => setDraft(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === "Enter") {
-              event.stopPropagation();
-              void commit();
-            }
-            if (event.key === "Escape") {
-              event.stopPropagation();
-              setDraft("");
-              setEditing(false);
-            }
-          }}
-          onBlur={() => void commit()}
-          onClick={event => event.stopPropagation()}
-          placeholder="-mod xxx"
-          autoFocus
-        />
-      ) : (
-        <button
-          onClick={event => {
-            event.stopPropagation();
-            setDraft("");
-            setEditing(true);
-          }}
-          className="hig-badge mod-chip w-[24px] justify-center px-0"
-          title="添加 mod"
+      {open && position && createPortal(
+        <div
+          ref={menuRef}
+          id={menuId}
+          role="menu"
+          aria-label={`${account.display_name || account.id} 选择共享 Mod`}
+          className="account-mod-picker"
+          data-placement={position.opensUpward ? "top" : "bottom"}
+          style={{ left: position.left, top: position.top }}
         >
-          +
-        </button>
+          <div className="account-mod-picker-heading">
+            <div><strong>选择共享 Mod</strong><span>{selection?.edition ?? "版本未确定"}</span></div>
+            <button type="button" onClick={() => { close(); onOpenModManager?.(); }}>管理</button>
+          </div>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={!activeArguments.trim()}
+            className="account-mod-picker-option"
+            onClick={() => void choose(null, "")}
+          >
+            <span><strong>原版游戏</strong><small>不使用 Mod，也不保存“无 Mod”胶囊</small></span>
+            {!activeArguments.trim() && <Check size={13} aria-hidden="true" />}
+          </button>
+          {capsules.map((capsule) => {
+            const active = capsule.launch_arguments.trim() === activeArguments.trim();
+            return (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                className="account-mod-picker-option"
+                data-processed={capsule.processed ? "true" : undefined}
+                key={capsule.id}
+                onClick={() => void choose(capsule.id, capsule.launch_arguments)}
+              >
+                <span>
+                  <strong>{capsule.name}</strong>
+                  <small>{capsule.origin === "scanned" ? "游戏目录预设" : "自定义共享参数"} · {capsule.launch_arguments}</small>
+                </span>
+                {active ? <Check size={13} aria-hidden="true" /> : capsule.processed ? <em>已加工</em> : null}
+              </button>
+            );
+          })}
+          {capsules.length === 0 && <p className="account-mod-picker-empty">当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。</p>}
+        </div>,
+        document.body,
       )}
     </div>
   );

@@ -17,6 +17,7 @@ import type {
   GlobalConfig,
   LaunchGroupMember,
   LaunchProgress,
+  ModCapsulePool,
   WindowPositionPreset,
 } from "../../store/types";
 import { useAccounts } from "../../store/accounts";
@@ -53,7 +54,10 @@ export interface GridItemProps {
   onToggleSelect?: (id: string) => void;
   schemeMember?: LaunchGroupMember;
   onSchemeMemberChange?: (id: string, patch: Partial<LaunchGroupMember>) => void;
-  getModSchemeUsage?: (id: string, modArgs: string) => string[];
+  modCapsulePool?: ModCapsulePool | null;
+  modCapsuleAssigningAccountId?: string | null;
+  onAssignModCapsule?: (accountId: string, capsuleId: string | null) => Promise<unknown>;
+  onOpenModManager?: (action?: "add", edition?: string | null) => void;
   getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
@@ -156,7 +160,8 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config,
+  modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
+  getPositionSchemeUsage, onUpdateToken, config,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -435,7 +440,10 @@ export function AccountGridItem({
                   isSelectionMode={isSelectionMode}
                   schemeMember={schemeMember}
                   onSchemeMemberChange={onSchemeMemberChange}
-                  getModSchemeUsage={getModSchemeUsage}
+                  modCapsulePool={modCapsulePool}
+                  assigning={modCapsuleAssigningAccountId === account.id}
+                  onAssign={onAssignModCapsule}
+                  onOpenModManager={onOpenModManager}
                 />
               )}
             </div>

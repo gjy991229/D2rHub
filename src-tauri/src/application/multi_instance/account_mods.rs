@@ -13,16 +13,6 @@ impl<'a> AccountModService<'a> {
         Self { accounts, leases }
     }
 
-    pub fn add(&self, account_id: &str, configuration: &str) -> Result<bool, AppError> {
-        let _lease = self.leases.try_acquire(account_id)?;
-        let mut account = self.accounts.load(account_id)?;
-        if !account.add_mod_configuration(configuration) {
-            return Ok(false);
-        }
-        self.accounts.save_mod_configuration(account)?;
-        Ok(true)
-    }
-
     pub fn replace(
         &self,
         account_id: &str,
@@ -90,21 +80,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_add_is_a_noop_and_new_add_is_persisted_once() {
-        let repository = FakeRepository::new();
-        repository.account.lock().unwrap().mod_list = vec!["-mod one".to_string()];
-        let leases = AccountLeaseManager::default();
-        let service = AccountModService::new(&repository, &leases);
-
-        assert!(!service.add("acount1", " -mod one ").unwrap());
-        assert_eq!(*repository.saves.lock().unwrap(), 0);
-        assert!(service.add("acount1", " -mod two ").unwrap());
-        assert_eq!(*repository.saves.lock().unwrap(), 1);
-        assert_eq!(repository.account.lock().unwrap().mod_args, "-mod two");
-        assert!(leases.is_empty());
-    }
-
-    #[test]
     fn replacement_normalizes_and_redacts_the_response() {
         let repository = FakeRepository::new();
         let leases = AccountLeaseManager::default();
@@ -131,7 +106,13 @@ mod tests {
         let blocker = leases.try_acquire("acount1").unwrap();
         let service = AccountModService::new(&repository, &leases);
 
-        assert!(service.add("ACOUNT1", "-mod one").is_err());
+        assert!(service
+            .replace(
+                "ACOUNT1",
+                "-mod one".to_string(),
+                vec!["-mod one".to_string()]
+            )
+            .is_err());
         assert_eq!(*repository.saves.lock().unwrap(), 0);
         drop(blocker);
     }

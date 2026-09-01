@@ -323,9 +323,14 @@ export interface ModCapsule {
   id: string;
   edition: "CN" | "Global" | string;
   name: string;
+  origin: "scanned" | "custom" | string;
+  launch_arguments: string;
+  default_launch_arguments: string | null;
   feature_groups: string[];
+  processed: boolean;
   update_required: boolean;
   ready: boolean;
+  deletable: boolean;
   assigned_account_ids: string[];
 }
 
@@ -339,6 +344,8 @@ export interface ModCapsuleAccountSelection {
 }
 
 export interface ModCapsulePool {
+  generation: number;
+  scanned_at: string;
   capsules: ModCapsule[];
   accounts: ModCapsuleAccountSelection[];
 }

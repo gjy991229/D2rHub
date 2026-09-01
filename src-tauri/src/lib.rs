@@ -11,6 +11,7 @@ pub mod infrastructure;
 mod input_listener;
 mod launch_context;
 pub mod logger;
+mod mod_catalog;
 mod rune_audio;
 mod rune_data;
 mod state;
@@ -153,6 +154,8 @@ pub fn run() {
             // 启动全局输入监听
             input_listener::start_input_listener(app.handle().clone());
 
+            mod_catalog::refresh_on_startup(app_state.clone());
+
             capabilities::start(app);
 
             Ok(())
@@ -207,8 +210,6 @@ pub fn run() {
             commands::account::update_account_region,
             commands::account::delete_account,
             commands::account::rename_account,
-            commands::account::add_account_mod,
-            commands::account::update_account_mods,
             commands::account::mark_settings_customized,
             commands::account::set_settings_customized,
             commands::account::set_account_window_position,
@@ -256,7 +257,12 @@ pub fn run() {
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
-            audio_mod::get_mod_capsule_pool,
+            mod_catalog::get_mod_capsule_pool,
+            mod_catalog::scan_mod_capsule_pool,
+            mod_catalog::add_mod_capsule,
+            mod_catalog::update_mod_capsule,
+            mod_catalog::delete_mod_capsule,
+            mod_catalog::assign_mod_capsule_to_account,
             audio_mod::prepare_audio_mod,
             audio_mod::upgrade_audio_mod,
             audio_mod::apply_audio_mod_to_account,

@@ -350,13 +350,20 @@ const roomChatBindingStatus: RoomChatBindingStatus = {
 };
 
 const modCapsulePool: ModCapsulePool = {
+  generation: 1,
+  scanned_at: "2026-09-02T00:00:00+08:00",
   capsules: [{
     id: "global:jcy-tz",
     edition: "Global",
     name: "jcy-tz",
+    origin: "scanned",
+    launch_arguments: "-mod jcy-tz -txt -assettestmode 1",
+    default_launch_arguments: "-mod jcy-tz -txt -assettestmode 1",
     feature_groups: ["audio_telemetry", "in_game_room_tools"],
+    processed: true,
     update_required: false,
     ready: true,
+    deletable: false,
     assigned_account_ids: ["sorc-01", "barb-02", "pala-03"],
   }],
   accounts: ["sorc-01", "barb-02", "pala-03"].map((accountId) => ({
@@ -477,7 +484,13 @@ function installIpcMock() {
       case "get_scene_stats":
         return { avg_time: 73.4, total_runs: 218 };
       case "get_mod_capsule_pool":
+      case "scan_mod_capsule_pool":
+      case "add_mod_capsule":
+      case "update_mod_capsule":
+      case "delete_mod_capsule":
         return modCapsulePool;
+      case "assign_mod_capsule_to_account":
+        return null;
       case "get_audio_mod_setup_state":
         if (audioModState === "legacy") {
           return {

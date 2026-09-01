@@ -406,22 +406,6 @@ impl AccountMeta {
         Ok(())
     }
 
-    /// Adds a non-empty Mod configuration once and makes it active.
-    pub fn add_mod_configuration(&mut self, candidate: &str) -> bool {
-        let candidate = candidate.trim();
-        if candidate.is_empty()
-            || self
-                .mod_list
-                .iter()
-                .any(|existing| existing.trim() == candidate)
-        {
-            return false;
-        }
-        self.mod_args = candidate.to_string();
-        self.mod_list.push(candidate.to_string());
-        true
-    }
-
     /// Replaces the complete Mod configuration set while keeping first-seen
     /// order and guaranteeing that the active configuration is represented.
     pub fn replace_mod_configurations(&mut self, active_mod: String, mod_list: Vec<String>) {
@@ -705,9 +689,6 @@ mod tests {
 
         assert_eq!(account.mod_args, "-mod highres -txt");
         assert_eq!(account.mod_list, ["-mod highres -txt", "-direct -txt"]);
-        assert!(!account.add_mod_configuration(" -direct -txt "));
-        assert!(account.add_mod_configuration(" -mod another -txt "));
-        assert_eq!(account.mod_args, "-mod another -txt");
     }
 
     fn position(id: &str, name: &str, x: i32, y: i32) -> WindowPositionPreset {

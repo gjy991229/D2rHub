@@ -61,7 +61,7 @@ function appearanceSettingsEqual(config: GlobalConfig | null, draft: AppearanceS
 
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
-  const { accounts, loadAccounts, renameAccount, updateAccountMods } = useAccounts();
+  const { accounts, loadAccounts, renameAccount } = useAccounts();
   const { previewTheme } = useTheme();
   const initializedTrackingAccounts = accounts.filter((account) => account.initialized);
   const shortcutAccounts = sortAccountsByCardOrder(accounts);
@@ -114,7 +114,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Account card values draft states
   const [accountNicknameDraft, setAccountNicknameDraft] = useState("");
-  const [accountModArgsDraft, setAccountModArgsDraft] = useState("");
   const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
   const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
 
@@ -159,8 +158,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   // Auto initialize selected account and active tab
   useEffect(() => {
     if (open) {
-      if (isSettingsTabId(initialTab)) {
-        setActiveTab(initialTab);
+      if (initialTab?.startsWith("mod-processing") || isSettingsTabId(initialTab)) {
+        setActiveTab(initialTab?.startsWith("mod-processing") ? "mod-processing" : initialTab as SettingsTabId);
       } else {
         setActiveTab("accounts");
       }
@@ -199,7 +198,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       const acc = accounts.find(a => a.id === selectedAccountId);
       if (acc) {
         setAccountNicknameDraft(acc.display_name || acc.id);
-        setAccountModArgsDraft(acc.mod_args || "");
         setAccountWinXDraft(acc.window_x !== undefined ? acc.window_x : null);
         setAccountWinYDraft(acc.window_y !== undefined ? acc.window_y : null);
         loadGameSettings(selectedAccountId);
@@ -294,15 +292,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         if (!renamed) return false;
       }
 
-      // 2. Set Mod args if modified
-      if (accountModArgsDraft !== acc.mod_args) {
-        const mods = acc.mod_list || [];
-        const val = accountModArgsDraft.trim();
-        const newList = (val && !mods.includes(val)) ? [...mods, val] : mods;
-        await updateAccountMods(selectedAccountId, val, newList);
-      }
-
-      // 3. Set Window position if modified
+      // 2. Set Window position if modified
       if (accountWinXDraft !== acc.window_x || accountWinYDraft !== acc.window_y) {
         await invokeCommand("set_account_window_position", {
           accountId: selectedAccountId,
@@ -311,7 +301,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         });
       }
 
-      // 4. Save game settings if modified
+      // 3. Save game settings if modified
       if (gameSettingsChanged) {
         await invokeCommand("save_account_settings", {
           accountId: selectedAccountId,
@@ -597,7 +587,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (!acc) return false;
     return (
       (accountNicknameDraft.trim() && accountNicknameDraft.trim() !== (acc.display_name || acc.id)) ||
-      accountModArgsDraft !== (acc.mod_args || "") ||
       accountWinXDraft !== (acc.window_x ?? null) ||
       accountWinYDraft !== (acc.window_y ?? null) ||
       gameSettingsChanged
@@ -689,8 +678,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 snapshotSystemSettings={handleSnapshotSystemSettings}
                 accountNicknameDraft={accountNicknameDraft}
                 setAccountNicknameDraft={setAccountNicknameDraft}
-                accountModArgsDraft={accountModArgsDraft}
-                setAccountModArgsDraft={setAccountModArgsDraft}
+                onOpenModManager={() => { handleOpenAudioSetup("manage"); setActiveTab("mod-processing"); }}
                 accountWinXDraft={accountWinXDraft}
                 setAccountWinXDraft={setAccountWinXDraft}
                 accountWinYDraft={accountWinYDraft}
@@ -747,8 +735,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 audioModStateLoading={audioModStateLoading}
                 modCapsulePool={modCapsules.pool}
                 assigningCapsuleAccountId={modCapsules.assigningAccountId}
-                onAssignModCapsule={async (accountId, modName) => {
-                  const next = await modCapsules.assign(accountId, modName);
+                onAssignModCapsule={async (accountId, capsuleId) => {
+                  const next = await modCapsules.assign(accountId, capsuleId);
                   if (next && accountId === trackingTargetId) await refreshAudioModState();
                   return next;
                 }}
@@ -816,6 +804,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 modCapsulePool={modCapsules.pool}
                 modCapsulePoolLoading={modCapsules.loading}
                 modCapsulePoolError={modCapsules.error}
+                modCatalog={modCapsules} openAddRequest={initialTab?.startsWith("mod-processing:add")} initialEdition={initialTab?.split(":")[2]}
                 onTargetChange={handleModProcessingTargetChange}
                 onPrepare={async () => {
                   await handlePrepareAudioMod();

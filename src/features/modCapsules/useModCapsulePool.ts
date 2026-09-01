@@ -33,11 +33,45 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     void refresh();
   }, [active, refresh]);
 
-  const assign = useCallback(async (accountId: string, modName: string) => {
+  const scan = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await invokeCommand<ModCapsulePool>("scan_mod_capsule_pool");
+      setPool(next);
+      return next;
+    } catch (reason) {
+      setError(String(reason));
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const mutate = useCallback(async (
+    command: "add_mod_capsule" | "update_mod_capsule" | "delete_mod_capsule",
+    payload: Record<string, unknown>,
+  ) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const next = await invokeCommand<ModCapsulePool>(command, payload);
+      setPool(next);
+      await onAssigned?.();
+      return next;
+    } catch (reason) {
+      setError(String(reason));
+      throw reason;
+    } finally {
+      setLoading(false);
+    }
+  }, [onAssigned]);
+
+  const assign = useCallback(async (accountId: string, capsuleId: string | null) => {
     setAssigningAccountId(accountId);
     setError(null);
     try {
-      await invokeCommand("apply_audio_mod_to_account", { accountId, modName });
+      await invokeCommand("assign_mod_capsule_to_account", { accountId, capsuleId });
       await onAssigned?.();
       return await refresh();
     } catch (reason) {
@@ -54,6 +88,12 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     assigningAccountId,
     error,
     refresh,
+    scan,
+    add: (edition: string, launchArguments: string) => mutate("add_mod_capsule", { edition, launchArguments }),
+    update: (capsuleId: string, launchArguments: string) => mutate("update_mod_capsule", { capsuleId, launchArguments }),
+    remove: (capsuleId: string) => mutate("delete_mod_capsule", { capsuleId }),
     assign,
   };
 }
+
+export type ModCapsuleController = ReturnType<typeof useModCapsulePool>;

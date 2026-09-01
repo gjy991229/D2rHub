@@ -9,7 +9,7 @@ use crate::rune_audio::item_catalog::ITEM_CATALOG_FILE_NAME;
 use crate::rune_audio::protocol::PROTOCOL_VERSION;
 use crate::state::SharedState;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -70,39 +70,6 @@ pub struct AudioModSetupState {
     pub active_session_ready: Option<bool>,
     pub active_session_update_required: Option<bool>,
     pub restart_required: bool,
-}
-
-/// A verified D2RHub Mod exposed as a shared, edition-scoped asset.
-///
-/// Accounts keep their historical `mod_args`/`mod_list` fields as the durable
-/// compatibility mirror.  The pool is derived from installed manifests, so
-/// old account files are imported simply by matching their existing `-mod`
-/// argument instead of requiring a destructive schema migration.
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsule {
-    pub id: String,
-    pub edition: String,
-    pub name: String,
-    pub feature_groups: Vec<String>,
-    pub update_required: bool,
-    pub ready: bool,
-    pub assigned_account_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsuleAccountSelection {
-    pub account_id: String,
-    pub account_name: String,
-    pub edition: Option<String>,
-    pub selected_capsule_id: Option<String>,
-    pub legacy_mod_arguments: String,
-    pub issue: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModCapsulePool {
-    pub capsules: Vec<ModCapsule>,
-    pub accounts: Vec<ModCapsuleAccountSelection>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -372,7 +339,7 @@ fn find_existing_mod_name(
     Ok(None)
 }
 
-fn active_mod_name(mod_args: &str) -> Result<Option<String>, String> {
+pub(crate) fn active_mod_name(mod_args: &str) -> Result<Option<String>, String> {
     let args = parse_windows_command_line(mod_args)
         .map_err(|error| format!("无法解析账号启动参数: {error}"))?;
     let mut index = 0usize;
@@ -1454,7 +1421,7 @@ fn credential_compatibility(mods_directory: &Path, launch_arguments: &str) -> Co
     )
 }
 
-fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
+pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
     let mut mods = std::fs::read_dir(mods_directory)
         .ok()
         .into_iter()
@@ -1690,141 +1657,6 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
         active_session_update_required,
         restart_required,
     })
-}
-
-fn mod_capsule_id(edition: &str, mod_name: &str) -> String {
-    format!(
-        "{}:{}",
-        edition.trim().to_ascii_lowercase(),
-        mod_name.trim().to_ascii_lowercase()
-    )
-}
-
-fn mod_capsule_pool(state: &SharedState) -> Result<ModCapsulePool, String> {
-    let config = state
-        .configuration()
-        .snapshot()
-        .ok_or_else(|| "尚未完成首次配置".to_string())?;
-    let mut installed_by_edition = HashMap::<String, Vec<InstalledMod>>::new();
-    let mut selections = Vec::<ModCapsuleAccountSelection>::new();
-
-    for account_id in AccountManager::list_ids(&config.accounts_dir) {
-        let account = match AccountManager::load_meta(&config.accounts_dir, &account_id) {
-            Ok(account) if account.initialized => account,
-            Ok(_) => continue,
-            Err(error) => {
-                selections.push(ModCapsuleAccountSelection {
-                    account_id: account_id.clone(),
-                    account_name: account_id,
-                    edition: None,
-                    selected_capsule_id: None,
-                    legacy_mod_arguments: String::new(),
-                    issue: Some(error.to_string()),
-                });
-                continue;
-            }
-        };
-        let account_name = if account.display_name.trim().is_empty() {
-            account.id.clone()
-        } else {
-            account.display_name.clone()
-        };
-        let context =
-            match LaunchContext::for_account(&config, &account, ContextPurpose::LaunchGame) {
-                Ok(context) => context,
-                Err(error) => {
-                    selections.push(ModCapsuleAccountSelection {
-                        account_id: account.id,
-                        account_name,
-                        edition: None,
-                        selected_capsule_id: None,
-                        legacy_mod_arguments: account.mod_args,
-                        issue: Some(error.to_string()),
-                    });
-                    continue;
-                }
-            };
-        let edition = context.installation.edition.canonical().to_string();
-        installed_by_edition
-            .entry(edition.clone())
-            .or_insert_with(|| installed_mods(&context.installation.game_directory.join("mods")));
-        let active_name = active_mod_name(&account.mod_args).ok().flatten();
-        let selected_capsule_id = active_name.as_deref().and_then(|name| {
-            installed_by_edition.get(&edition).and_then(|installed| {
-                installed
-                    .iter()
-                    .find(|candidate| {
-                        candidate.name.eq_ignore_ascii_case(name)
-                            && (!candidate.feature_groups.is_empty() || candidate.update_required)
-                    })
-                    .map(|candidate| mod_capsule_id(&edition, &candidate.name))
-            })
-        });
-        let issue = if active_name.is_some() && selected_capsule_id.is_none() {
-            Some("当前账号的旧 Mod 参数未匹配到可验证的 D2RHub 加工胶囊".to_string())
-        } else {
-            None
-        };
-        selections.push(ModCapsuleAccountSelection {
-            account_id: account.id,
-            account_name,
-            edition: Some(edition),
-            selected_capsule_id,
-            legacy_mod_arguments: account.mod_args,
-            issue,
-        });
-    }
-
-    let mut assigned = HashMap::<String, Vec<String>>::new();
-    for selection in &selections {
-        if let Some(capsule_id) = &selection.selected_capsule_id {
-            assigned
-                .entry(capsule_id.clone())
-                .or_default()
-                .push(selection.account_id.clone());
-        }
-    }
-    let mut capsules = Vec::new();
-    for (edition, installed) in installed_by_edition {
-        for candidate in installed {
-            if candidate.feature_groups.is_empty() && !candidate.update_required {
-                continue;
-            }
-            let id = mod_capsule_id(&edition, &candidate.name);
-            capsules.push(ModCapsule {
-                id: id.clone(),
-                edition: edition.clone(),
-                name: candidate.name,
-                ready: !candidate.update_required && !candidate.feature_groups.is_empty(),
-                feature_groups: candidate.feature_groups,
-                update_required: candidate.update_required,
-                assigned_account_ids: assigned.remove(&id).unwrap_or_default(),
-            });
-        }
-    }
-    capsules.sort_by(|left, right| {
-        left.edition
-            .cmp(&right.edition)
-            .then_with(|| left.name.to_lowercase().cmp(&right.name.to_lowercase()))
-    });
-    selections.sort_by(|left, right| left.account_name.cmp(&right.account_name));
-    Ok(ModCapsulePool {
-        capsules,
-        accounts: selections,
-    })
-}
-
-#[tauri::command]
-pub async fn get_mod_capsule_pool(
-    state: tauri::State<'_, SharedState>,
-) -> Result<ModCapsulePool, String> {
-    let shared = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let _lease = BuildLease::acquire(&shared)?;
-        mod_capsule_pool(&shared)
-    })
-    .await
-    .map_err(|error| format!("读取 Mod 胶囊池的后台任务异常退出: {error}"))?
 }
 
 #[tauri::command]
@@ -3658,11 +3490,10 @@ pub(crate) fn emit_runtime_compatibility_warning(
 mod tests {
     use super::{
         active_mod_name, arguments_with_audio_mod, compatibility, find_existing_mod_name,
-        generated_audio_mod_name, has_txt_argument, installed_mods, mod_capsule_id,
-        recover_audio_mod_replacements, replace_audio_mod_directory,
-        replace_journal_paths_are_valid, require_verified_running_session,
-        resolve_source_directory, traverse_safe_directory_tree, validate_audio_mod,
-        validate_audio_mod_credential, validate_generator_output,
+        generated_audio_mod_name, has_txt_argument, installed_mods, recover_audio_mod_replacements,
+        replace_audio_mod_directory, replace_journal_paths_are_valid,
+        require_verified_running_session, resolve_source_directory, traverse_safe_directory_tree,
+        validate_audio_mod, validate_audio_mod_credential, validate_generator_output,
         validate_in_game_room_tool_layouts, validate_preserved_feature_groups,
         validate_recoverable_audio_mod_directory, write_replace_journal,
         write_replace_journal_with_stage_sync, GeneratorFeatureGroup, GeneratorReport,
@@ -3674,22 +3505,6 @@ mod tests {
     };
 
     const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
-
-    #[test]
-    fn shared_capsule_ids_match_legacy_mod_names_case_insensitively() {
-        assert_eq!(
-            mod_capsule_id("Global", "MyProcessedMod"),
-            "global:myprocessedmod"
-        );
-        assert_eq!(
-            mod_capsule_id("global", "myprocessedmod"),
-            "global:myprocessedmod"
-        );
-        assert_ne!(
-            mod_capsule_id("CN", "myprocessedmod"),
-            "global:myprocessedmod"
-        );
-    }
 
     fn write_test_audio_mod(
         mods_directory: &std::path::Path,

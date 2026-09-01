@@ -133,13 +133,20 @@ const accounts = [
 ] as never;
 
 const capsulePool: ModCapsulePool = {
+  generation: 1,
+  scanned_at: "2026-09-02T00:00:00+08:00",
   capsules: [{
     id: "cn:rooms",
     edition: "CN",
     name: "Rooms",
+    origin: "scanned",
+    launch_arguments: "-mod Rooms -txt -assettestmode 1",
+    default_launch_arguments: "-mod Rooms -txt -assettestmode 1",
     feature_groups: ["in_game_room_tools"],
+    processed: true,
     update_required: false,
     ready: true,
+    deletable: false,
     assigned_account_ids: ["one"],
   }],
   accounts: [

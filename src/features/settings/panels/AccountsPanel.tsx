@@ -33,8 +33,7 @@ interface AccountsPanelProps {
   snapshotSystemSettings: () => Promise<void>;
   accountNicknameDraft: string;
   setAccountNicknameDraft: Dispatch<SetStateAction<string>>;
-  accountModArgsDraft: string;
-  setAccountModArgsDraft: Dispatch<SetStateAction<string>>;
+  onOpenModManager: () => void;
   accountWinXDraft: number | null;
   setAccountWinXDraft: Dispatch<SetStateAction<number | null>>;
   accountWinYDraft: number | null;
@@ -69,8 +68,7 @@ export function AccountsPanel({
   snapshotSystemSettings: handleSnapshotSystemSettings,
   accountNicknameDraft,
   setAccountNicknameDraft,
-  accountModArgsDraft,
-  setAccountModArgsDraft,
+  onOpenModManager,
   accountWinXDraft,
   setAccountWinXDraft,
   accountWinYDraft,
@@ -213,12 +211,10 @@ export function AccountsPanel({
                   value={accountNicknameDraft}
                   onChange={e => setAccountNicknameDraft(e.target.value)}
                 />
-                <Input
-                  label="Mod 参数"
-                  value={accountModArgsDraft}
-                  onChange={e => setAccountModArgsDraft(e.target.value)}
-                  placeholder="-mod custom -txt"
-                />
+                <div className="account-mod-readonly">
+                  <span>当前 Mod</span>
+                  <div><code>{selectedAccount?.mod_args || "原版游戏"}</code><button type="button" className="control-btn" onClick={onOpenModManager}>Mod 管理</button></div>
+                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3 max-[720px]:grid-cols-1">

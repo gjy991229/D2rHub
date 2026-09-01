@@ -7,8 +7,11 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "../../../components/ui/Button";
+import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
+import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
@@ -16,6 +19,7 @@ import {
   IN_GAME_ROOM_TOOLS_FEATURE_ID,
   type AudioModPrepareProgress,
 } from "../audioModuleModel";
+import { ModCatalogManager } from "./ModCatalogManager";
 
 type TrackingTarget = ReturnType<typeof validateTrackingTarget>;
 type AudioSetupMode = "original" | "existing";
@@ -31,6 +35,9 @@ interface ModProcessingPanelProps {
   modCapsulePool?: ModCapsulePool | null;
   modCapsulePoolLoading?: boolean;
   modCapsulePoolError?: string | null;
+  modCatalog?: ModCapsuleController;
+  openAddRequest?: boolean;
+  initialEdition?: string;
   purpose: ModProcessingPurpose;
   audioSetupMode: AudioSetupMode;
   setAudioSetupMode: Dispatch<SetStateAction<AudioSetupMode>>;
@@ -65,6 +72,9 @@ export function ModProcessingPanel({
   modCapsulePool = null,
   modCapsulePoolLoading = false,
   modCapsulePoolError = null,
+  modCatalog,
+  openAddRequest,
+  initialEdition,
   purpose,
   audioSetupMode,
   setAudioSetupMode,
@@ -88,6 +98,10 @@ export function ModProcessingPanel({
   onRefresh,
   onBackToRecognition,
 }: ModProcessingPanelProps) {
+  const [workspace, setWorkspace] = useState<"catalog" | "processing">(purpose === "manage" ? "catalog" : "processing");
+  useEffect(() => {
+    setWorkspace(purpose === "manage" ? "catalog" : "processing");
+  }, [purpose]);
   const isEnglish = config.app_language === "en-US";
   const selectedSource = audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource);
   const inheritedFeatureGroups = isAudioModUpgrade
@@ -107,6 +121,29 @@ export function ModProcessingPanel({
     : null;
   const readyCapsules = modCapsulePool?.capsules.filter((capsule) => capsule.ready) ?? [];
 
+  if (workspace === "catalog" && modCatalog) {
+    return (
+      <ModCatalogManager
+        catalog={modCatalog}
+        accounts={initializedAccounts}
+        autoOpenAdd={openAddRequest}
+        initialEdition={initialEdition}
+        onProcess={async (capsule) => {
+          const target = modCatalog.pool?.accounts.find((entry) => entry.edition === capsule.edition
+            && initializedAccounts.some((account) => account.id === entry.account_id));
+          if (!target) {
+            showToast("warning", `没有可用于加工${capsule.edition === "CN" ? "国服" : "国际服"} Mod 的已初始化账号`);
+            return;
+          }
+          await onTargetChange(target.account_id);
+          setAudioSetupMode("existing");
+          setAudioSetupSource(capsule.name);
+          setWorkspace("processing");
+        }}
+      />
+    );
+  }
+
   return (
     <div className="mod-processing-panel">
       <header className="mod-processing-header">
@@ -118,17 +155,22 @@ export function ModProcessingPanel({
               : "选择源 Mod，完整保留它已有的功能，再增补这次需要的 D2RHub 模块。"}
           </p>
         </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          loading={audioModStateLoading}
-          disabled={!trackingTarget.valid || audioPreparing}
-          title={scannedLabel ? `上次扫描 ${scannedLabel}` : "重新扫描 Mod 目录"}
-          onClick={() => void onRefresh()}
-        >
-          <RefreshCw size={13} />
-          {isEnglish ? "Rescan" : "重新扫描"}
-        </Button>
+        <div className="mod-processing-header-actions">
+          {purpose === "manage" && modCatalog && (
+            <Button size="sm" variant="ghost" onClick={() => setWorkspace("catalog")}>返回 Mod 管理</Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            loading={audioModStateLoading}
+            disabled={!trackingTarget.valid || audioPreparing}
+            title={scannedLabel ? `上次扫描 ${scannedLabel}` : "重新扫描 Mod 目录"}
+            onClick={() => void onRefresh()}
+          >
+            <RefreshCw size={13} />
+            {isEnglish ? "Rescan" : "重新扫描"}
+          </Button>
+        </div>
       </header>
 
       <section className="spatial-panel mod-processing-section mod-processing-target">

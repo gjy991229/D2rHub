@@ -45,7 +45,7 @@ interface RoomAutomationPanelProps {
   modCapsulePoolLoading?: boolean;
   modCapsulePoolError?: string | null;
   assigningAccountId?: string | null;
-  onAssignModCapsule?: (accountId: string, modName: string) => Promise<unknown>;
+  onAssignModCapsule?: (accountId: string, capsuleId: string) => Promise<unknown>;
   onRequireRoomTools?: (accountId: string) => void;
 }
 
@@ -572,7 +572,7 @@ export function RoomAutomationPanel({
                           disabled={editorDisabled || assigningAccountId === accountId || !onAssignModCapsule}
                           onChange={(event) => {
                             const capsule = compatible.find((candidate) => candidate.id === event.target.value);
-                            if (capsule) void onAssignModCapsule?.(accountId, capsule.name);
+                            if (capsule) void onAssignModCapsule?.(accountId, capsule.id);
                           }}
                         >
                           <option value="">{copy.selectCapsule}</option>

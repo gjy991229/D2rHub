@@ -1,18 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AccountMeta } from "../../store/types";
+import type { AccountMeta, ModCapsulePool } from "../../store/types";
 import { AccountModEditor } from "./AccountModEditor";
-
-const mocks = vi.hoisted(() => ({
-  addAccountMod: vi.fn(async () => true),
-  updateAccountMods: vi.fn(async () => true),
-}));
-
-vi.mock("../../store/accounts", () => ({
-  useAccounts: () => mocks,
-}));
 
 const account: AccountMeta = {
   id: "account-1",
@@ -27,17 +18,55 @@ const account: AccountMeta = {
   is_running: false,
 };
 
+const pool: ModCapsulePool = {
+  generation: 1,
+  scanned_at: "2026-09-02T00:00:00+08:00",
+  capsules: [{
+    id: "scan:cn:shared",
+    edition: "CN",
+    name: "Shared",
+    origin: "scanned",
+    launch_arguments: "-mod Shared -txt -assettestmode 1",
+    default_launch_arguments: "-mod Shared -txt -assettestmode 1",
+    feature_groups: ["audio_telemetry"],
+    processed: true,
+    update_required: false,
+    ready: true,
+    deletable: false,
+    assigned_account_ids: [],
+  }],
+  accounts: [{
+    account_id: account.id,
+    account_name: account.display_name,
+    edition: "CN",
+    selected_capsule_id: null,
+    legacy_mod_arguments: "",
+    issue: null,
+  }],
+};
+
+afterEach(cleanup);
+
 describe("AccountModEditor", () => {
-  it("commits a Mod argument containing spaces as one configuration", async () => {
+  it("selects a shared capsule while keeping original game as a menu option", async () => {
     const user = userEvent.setup();
-    render(<AccountModEditor account={account} />);
+    const onAssign = vi.fn(async () => pool);
+    render(<AccountModEditor account={account} modCapsulePool={pool} onAssign={onAssign} />);
 
-    await user.click(screen.getByTitle("添加 mod"));
-    const input = screen.getByPlaceholderText("-mod xxx");
-    await user.type(input, "-mod alpha beta{Enter}");
+    await user.click(screen.getByTitle(/当前 Mod：原版/));
+    expect(screen.getByRole("menuitemradio", { name: /原版游戏/ })).toBeTruthy();
+    await user.click(screen.getByRole("menuitemradio", { name: /Shared/ }));
 
-    await waitFor(() => {
-      expect(mocks.addAccountMod).toHaveBeenCalledWith(account.id, "-mod alpha beta");
-    });
+    await waitFor(() => expect(onAssign).toHaveBeenCalledWith(account.id, "scan:cn:shared"));
+    expect(screen.queryByTitle("删除 Mod")).toBeNull();
+  });
+
+  it("routes additions to central Mod management", async () => {
+    const user = userEvent.setup();
+    const onOpenModManager = vi.fn();
+    render(<AccountModEditor account={account} modCapsulePool={pool} onOpenModManager={onOpenModManager} />);
+
+    await user.click(screen.getByTitle("前往 Mod 管理新增共享参数"));
+    expect(onOpenModManager).toHaveBeenCalledWith("add", "CN");
   });
 });

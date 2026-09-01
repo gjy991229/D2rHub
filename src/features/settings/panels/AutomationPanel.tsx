@@ -45,7 +45,7 @@ interface AutomationPanelProps {
   audioModStateLoading: boolean;
   modCapsulePool?: ModCapsulePool | null;
   assigningCapsuleAccountId?: string | null;
-  onAssignModCapsule?: (accountId: string, modName: string) => Promise<unknown>;
+  onAssignModCapsule?: (accountId: string, capsuleId: string) => Promise<unknown>;
   audioSetupOpen: boolean;
   showModProcessing?: boolean;
   onOpenModProcessing?: () => void;
@@ -322,7 +322,7 @@ export function AutomationPanel({
               disabled={assigningCapsuleAccountId === trackingAccountId || !onAssignModCapsule}
               onChange={(event) => {
                 const capsule = audioCapsules.find((candidate) => candidate.id === event.target.value);
-                if (capsule) void onAssignModCapsule?.(trackingAccountId, capsule.name);
+                if (capsule) void onAssignModCapsule?.(trackingAccountId, capsule.id);
               }}
             >
               <option value="">公共胶囊池</option>

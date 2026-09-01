@@ -1076,32 +1076,6 @@ fn persist_account_mod_configuration(
 }
 
 /// 新增一条 Mod 胶囊配置。完全相同的配置会被安全跳过，而不是作为错误返回。
-#[tauri::command]
-pub fn add_account_mod(
-    state: tauri::State<'_, SharedState>,
-    account_id: String,
-    mod_configuration: String,
-) -> Result<bool, AppError> {
-    let cfg = state
-        .configuration()
-        .snapshot()
-        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    let repository = AccountManagerCatalog::new(&cfg);
-    AccountModService::new(&repository, state.multi_instance().account_leases())
-        .add(&account_id, &mod_configuration)
-}
-
-/// 设置账号的当前 Mod 及完整胶囊列表；传入的重复项会按首次出现顺序静默合并。
-#[tauri::command]
-pub fn update_account_mods(
-    state: tauri::State<'_, SharedState>,
-    account_id: String,
-    active_mod: String,
-    mod_list: Vec<String>,
-) -> Result<AccountMeta, AppError> {
-    update_account_mods_inner(state.inner(), account_id, active_mod, mod_list)
-}
-
 pub(crate) fn update_account_mods_inner(
     state: &SharedState,
     account_id: String,

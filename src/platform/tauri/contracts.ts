@@ -6,8 +6,9 @@
  * payload shapes remain owned by the feature that consumes them.
  */
 export const TAURI_COMMANDS = [
-  "add_account_mod",
+  "add_mod_capsule",
   "apply_audio_mod_to_account",
+  "assign_mod_capsule_to_account",
   "bring_self_to_foreground",
   "bring_window_by_title_to_front",
   "cancel_launch",
@@ -18,6 +19,7 @@ export const TAURI_COMMANDS = [
   "check_saved_games_settings",
   "create_account",
   "delete_account",
+  "delete_mod_capsule",
   "detect_app_data_roaming_bnet_path",
   "detect_browser_path",
   "detect_browser_path_by_type",
@@ -87,6 +89,7 @@ export const TAURI_COMMANDS = [
   "save_theme",
   "save_window_geometry",
   "save_window_placement",
+  "scan_mod_capsule_pool",
   "set_account_window_position",
   "set_auxiliary_window_visible",
   "set_settings_customized",
@@ -96,9 +99,9 @@ export const TAURI_COMMANDS = [
   "stop_rune_audio_diagnostic_recording",
   "stop_rune_audio_monitor",
   "update_account_meta",
-  "update_account_mods",
   "update_account_positions",
   "update_account_region",
+  "update_mod_capsule",
   "upgrade_audio_mod",
 ] as const;
 

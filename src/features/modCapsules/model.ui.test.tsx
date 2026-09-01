@@ -8,23 +8,49 @@ import {
 } from "./model";
 
 const pool: ModCapsulePool = {
+  generation: 1,
+  scanned_at: "2026-09-02T00:00:00+08:00",
   capsules: [
     {
       id: "cn:shared",
       edition: "CN",
       name: "Shared",
+      origin: "scanned",
+      launch_arguments: "-mod Shared -txt -assettestmode 1",
+      default_launch_arguments: "-mod Shared -txt -assettestmode 1",
       feature_groups: [ROOM_TOOLS_CAPSULE_FEATURE],
+      processed: true,
       update_required: false,
       ready: true,
+      deletable: false,
       assigned_account_ids: ["primary"],
+    },
+    {
+      id: "cn:plain",
+      edition: "CN",
+      name: "Plain",
+      origin: "scanned",
+      launch_arguments: "-mod Plain -txt -assettestmode 1",
+      default_launch_arguments: "-mod Plain -txt -assettestmode 1",
+      feature_groups: [],
+      processed: false,
+      update_required: false,
+      ready: true,
+      deletable: false,
+      assigned_account_ids: [],
     },
     {
       id: "global:shared",
       edition: "Global",
       name: "Shared",
+      origin: "scanned",
+      launch_arguments: "-mod Shared -txt -assettestmode 1",
+      default_launch_arguments: "-mod Shared -txt -assettestmode 1",
       feature_groups: [],
+      processed: false,
       update_required: true,
       ready: false,
+      deletable: false,
       assigned_account_ids: [],
     },
   ],
@@ -40,7 +66,7 @@ describe("shared Mod capsule pool", () => {
   });
 
   it("only offers ready capsules from the account edition", () => {
-    expect(compatibleCapsulesForAccount(pool, "primary").map((capsule) => capsule.id)).toEqual(["cn:shared"]);
+    expect(compatibleCapsulesForAccount(pool, "primary").map((capsule) => capsule.id)).toEqual(["cn:shared", "cn:plain"]);
   });
 
   it("requires every room participant to select a room-tools capsule", () => {

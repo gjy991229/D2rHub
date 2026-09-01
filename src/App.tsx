@@ -51,6 +51,7 @@ import {
   type StatsPagePreferences,
 } from "./utils/battleReport";
 import { useLaunchGroupController } from "./hooks/useLaunchGroupController";
+import { useModCapsulePool } from "./features/modCapsules/useModCapsulePool";
 
 type View =
   | { type: "loading" }
@@ -101,6 +102,12 @@ function App() {
   const launchGroups = useLaunchGroupController();
   const launchGroupDraft = launchGroups.draft;
   const launchGroupPendingDelete = launchGroups.pendingDelete;
+  const modCapsules = useModCapsulePool({ active: view.type === "main", onAssigned: loadAccounts });
+  const openModManager = (action?: "add", edition?: string | null) => {
+    setSettingsTab(action === "add" ? `mod-processing:add:${edition ?? ""}` : "mod-processing");
+    setSettingsAccountId(null);
+    setShowSettings(true);
+  };
 
   const handleShareBattleReport = async (range: BattleReportQuickRange) => {
     if (sharingReport) return;
@@ -324,6 +331,7 @@ function App() {
             onRequestKillAll={() => setShowKillConfirm(true)}
             launchGroupPanelOpen={launchGroupPanelOpen}
             onToggleLaunchGroupPanel={() => setLaunchGroupPanelOpen((open) => !open)}
+            onOpenModManager={openModManager}
           />
 
           {audioModUpdate && (
@@ -384,11 +392,10 @@ function App() {
                     onToggleSelect={launchGroups.toggleAccount}
                     schemeMember={schemeMember}
                     onSchemeMemberChange={launchGroups.updateMember}
-                    getModSchemeUsage={(accountId, modArgs) => (config?.launch_groups ?? [])
-                      .filter(group => group.id !== launchGroupDraft?.id)
-                      .filter(group => group.members?.some(member =>
-                        member.account_id === accountId && member.mod_args === modArgs))
-                      .map(group => group.name)}
+                    modCapsulePool={modCapsules.pool}
+                    modCapsuleAssigningAccountId={modCapsules.assigningAccountId}
+                    onAssignModCapsule={modCapsules.assign}
+                    onOpenModManager={openModManager}
                     getPositionSchemeUsage={(accountId, positionId) => (config?.launch_groups ?? [])
                       .filter(group => group.id !== launchGroupDraft?.id)
                       .filter(group => group.members?.some(member =>
