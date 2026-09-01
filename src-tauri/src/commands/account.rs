@@ -4,6 +4,7 @@ use tauri::Emitter;
 
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{
     AuthMode, ClientEdition, ContextPurpose, EditionConventions, GameRegion, HostRuntimeLease,
@@ -1161,7 +1162,7 @@ fn normalize_mod_configuration(active_mod: String, mod_list: Vec<String>) -> (St
 }
 
 fn persist_account_mod_configuration(
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     mut meta: AccountMeta,
     active_mod: String,
     mod_list: Vec<String>,
@@ -2451,7 +2452,7 @@ fn prepare_battle_net_runtime_directory(
 /// 新账号必须从干净状态开始；重新初始化必须从该账号自己的快照精确替换。
 fn restore_account_to_system(
     account_dir: &Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
     kind: BnetInitializationKind,
@@ -2742,7 +2743,7 @@ fn run_bnet_initialization_transaction(
 
 /// 在账号目录副本中组装并校验完整状态，真实账号目录保持不变。
 fn stage_account_snapshot(
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     account_id: &str,
     context: &LaunchContext,
 ) -> Result<PendingAccountSnapshot, AppError> {
@@ -3271,7 +3272,7 @@ fn write_account_meta_to_directory(account_dir: &Path, meta: &AccountMeta) -> Re
 
 fn stage_runtime_snapshot(
     account_dir: &Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     edition: crate::launch_context::ClientEdition,
 ) -> Result<PendingRuntimeSnapshot, AppError> {
     let source_bnet = Path::new(&cfg.app_data_roaming_bnet_path);
@@ -3462,7 +3463,7 @@ fn replace_battle_net_snapshot(source: &Path, target: &Path) -> Result<PathBuf, 
 /// runtime、来源清单和 account.json 在账号目录副本中构建，最后一次交换生效。
 pub fn sync_back_to_account(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
 ) -> Result<(), AppError> {
     sync_back_to_account_inner(account_dir, cfg, None)
 }
@@ -3470,7 +3471,7 @@ pub fn sync_back_to_account(
 /// 方案启动回写认证快照时，显式保留账号默认 Mod，避免临时启动参数进入账号库。
 pub fn sync_back_to_account_preserving_mod(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     default_mod_args: &str,
 ) -> Result<(), AppError> {
     sync_back_to_account_inner(account_dir, cfg, Some(default_mod_args))
@@ -3478,7 +3479,7 @@ pub fn sync_back_to_account_preserving_mod(
 
 fn sync_back_to_account_inner(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     preserved_mod_args: Option<&str>,
 ) -> Result<(), AppError> {
     let meta_path = account_dir.join("account.json");

@@ -13,6 +13,7 @@ use crate::commands::account::{
 };
 use crate::commands::system::LaunchProgress;
 use crate::commands::utils::silent_cmd;
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{
     account_game_executable_identity, AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext,
@@ -263,7 +264,7 @@ fn launch_graphics_override(
 }
 
 fn graphics_settings_path(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
 ) -> Result<PathBuf, AppError> {
@@ -280,7 +281,7 @@ fn graphics_settings_path(
 }
 
 fn preflight_launch_graphics(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
     graphics: Option<&LaunchGraphicsOverride>,
@@ -478,7 +479,7 @@ fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String 
 }
 
 fn unique_account_window_executable(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &crate::commands::account::AccountMeta,
 ) -> Option<PathBuf> {
     let title = account_window_title(meta);
@@ -534,7 +535,7 @@ fn already_running_result(
 fn skip_existing_account_window(
     app: &tauri::AppHandle,
     state: &SharedState,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_id: &str,
     meta: &crate::commands::account::AccountMeta,
 ) -> Option<LaunchResult> {
@@ -565,7 +566,7 @@ fn skip_existing_account_window(
 }
 
 fn checked_account_dir(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_id: &str,
 ) -> Result<std::path::PathBuf, LaunchResult> {
     AccountManager::account_dir_checked(&config.accounts_dir, account_id)
@@ -641,7 +642,7 @@ fn replace_bnet_roaming_snapshot(source: &Path, target: &Path) -> Result<(), App
 }
 
 fn validate_bnet_snapshot(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &crate::commands::account::AccountMeta,
     expected_edition: crate::launch_context::ClientEdition,
 ) -> Result<(), AppError> {
@@ -666,7 +667,7 @@ fn validate_bnet_snapshot(
 }
 
 fn preflight_accounts(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_ids: &[String],
     purpose: ContextPurpose,
 ) -> Result<(), AppError> {
@@ -679,7 +680,7 @@ fn preflight_accounts(
 }
 
 fn preflight_account_meta(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     purpose: ContextPurpose,
 ) -> Result<(), AppError> {
@@ -769,7 +770,7 @@ fn kill_battle_net_for_context(context: &LaunchContext, flush_before_kill: bool)
 /// - 已登录（进程≥7）：先优雅关闭战网让其 flush 注册表，再回写备份
 /// - 运行中但未登录：直接强杀，不回写（注册表中是刚恢复的旧数据，无保存价值）
 async fn cancel_with_cleanup(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     context: &LaunchContext,
     account_id: &str,
     preserved_default_mod_args: Option<&str>,
@@ -1013,7 +1014,7 @@ pub async fn launch_battle_net_only(
 
 async fn prepare_bnet_environment(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
     account_id: &str,
     wait_login: bool,
@@ -1394,7 +1395,7 @@ async fn prepare_bnet_environment(
 
 async fn launch_single_bnet_only(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
     account_id: &str,
 ) -> LaunchResult {
@@ -1768,7 +1769,7 @@ fn emit_cancelled(app: &tauri::AppHandle, account_id: &str) {
 
 async fn launch_single(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
     account_id: &str,
     meta: AccountMeta,
@@ -2469,7 +2470,7 @@ async fn launch_single(
 
 async fn launch_single_token(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
     account_id: &str,
     meta: &crate::commands::account::AccountMeta,
@@ -3048,7 +3049,7 @@ mod tests {
         LaunchGraphicsOverride,
     };
     use crate::commands::account::{AccountManager, AccountMeta, WindowPositionPreset};
-    use crate::commands::global_config::GlobalConfig;
+    use crate::domain::config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
 

@@ -8,6 +8,41 @@ use std::sync::OnceLock;
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
 
+/// Bridge crates that use the standard `log` facade into D2RHub's local log.
+///
+/// Keeping one sink matters for recovery paths: configuration recovery runs
+/// before the UI exists and historically used `log::warn!`/`log::error!`, while
+/// the application only initialized this custom file writer. Those messages
+/// now follow the same retention and support-export path as direct `log_msg`
+/// calls.
+struct D2rHubLogger;
+
+static LOGGER: D2rHubLogger = D2rHubLogger;
+
+impl log::Log for D2rHubLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if self.enabled(record.metadata()) {
+            log_msg(
+                record.level().as_str(),
+                record.target(),
+                &record.args().to_string(),
+            );
+        }
+    }
+
+    fn flush(&self) {
+        if let Some(mutex) = LOG_FILE.get() {
+            if let Ok(mut file) = mutex.lock() {
+                let _ = file.flush();
+            }
+        }
+    }
+}
+
 /// 初始化日志模块。每次打开新建一个 YYYY-MM-DD_HH-MM-SS.log 日志文件，最多保留16个文件。
 pub fn init_logger() -> Result<(), String> {
     let logs_dir = std::env::current_exe()
@@ -53,6 +88,20 @@ pub fn init_logger() -> Result<(), String> {
 
     let _ = LOG_FILE.set(Mutex::new(file));
     let _ = LOGS_DIR.set(logs_dir);
+
+    // `set_logger` may legitimately fail when an embedding test/runtime has
+    // already installed a process-wide logger. Direct D2RHub logging remains
+    // available in that case, so initialization should not fail or alter the
+    // logger already owned by the host.
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    } else {
+        log_msg(
+            "WARN",
+            "Logger",
+            "标准日志桥接未安装：进程已存在其他日志实现",
+        );
+    }
 
     Ok(())
 }

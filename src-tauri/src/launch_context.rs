@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
 use crate::commands::account::AccountMeta;
-use crate::commands::global_config::GlobalConfig;
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::state::AppState;
 

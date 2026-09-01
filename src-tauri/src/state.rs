@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 
-use crate::commands::global_config::GlobalConfig;
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 
 #[derive(Debug, Clone)]
@@ -206,8 +206,17 @@ fn directory_global_config_has_user_data(path: &Path) -> bool {
     .any(|name| config_file_has_user_data(&path.join(name)))
 }
 
+fn directory_has_statistics_data(path: &Path) -> bool {
+    // `data.db` is the pre-stateData layout and remains a supported migration
+    // source. Any entry below stateData can include the database, screenshots,
+    // or exported statistics and must therefore be treated as user data.
+    path.join("data.db").is_file() || directory_has_entries(&path.join("stateData"))
+}
+
 fn directory_has_user_config(path: &Path) -> bool {
-    directory_global_config_has_user_data(path) || directory_has_account_data(path)
+    directory_global_config_has_user_data(path)
+        || directory_has_account_data(path)
+        || directory_has_statistics_data(path)
 }
 
 fn unique_migration_backup_path(target: &Path) -> Result<PathBuf, String> {
@@ -547,6 +556,32 @@ mod tests {
             r#"{"version":6,"first_run_complete":true,"cn_game_path":"C:\\CurrentD2R"}"#
         );
         assert!(source.join("global_config.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn portable_statistics_are_user_data_when_system_config_already_exists() {
+        let root = temp_dir("portable_statistics_conflict");
+        let source = root.join("portable").join("config");
+        let target = root.join("AppData").join("D2RHub");
+        std::fs::create_dir_all(source.join("stateData")).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(source.join("stateData").join("data.db"), "portable stats").unwrap();
+        std::fs::write(
+            target.join("global_config.json"),
+            r#"{"version":9,"first_run_complete":true,"cn_game_path":"C:\\CurrentD2R"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            migrate_legacy_config_dir(&source, &target).unwrap(),
+            LegacyConfigMigrationOutcome::Conflict
+        );
+        assert_eq!(
+            std::fs::read_to_string(source.join("stateData").join("data.db")).unwrap(),
+            "portable stats"
+        );
+        assert!(target.join("global_config.json").is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 

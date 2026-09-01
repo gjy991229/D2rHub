@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::commands::account::{commit_account_settings_transaction, AccountManager};
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, HostRuntimeLease, LaunchContext};
 use crate::state::{AccountLifecycleLease, SharedState};
@@ -45,7 +46,7 @@ fn read_required_settings_file(
 }
 
 fn save_account_settings_with_config(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_id: &str,
     settings: &HashMap<String, Value>,
 ) -> Result<(), AppError> {
@@ -161,7 +162,7 @@ pub fn get_game_settings(
 mod tests {
     use super::{ensure_nonempty_settings, save_account_settings_with_config};
     use crate::commands::account::{AccountManager, AccountMeta};
-    use crate::commands::global_config::GlobalConfig;
+    use crate::domain::config::GlobalConfig;
     use serde_json::Value;
     use std::collections::HashMap;
     use std::path::PathBuf;

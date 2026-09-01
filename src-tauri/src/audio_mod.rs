@@ -1,6 +1,6 @@
 use crate::commands::account::{update_account_mods_inner, AccountManager, AccountMeta};
-use crate::commands::global_config::GlobalConfig;
 use crate::commands::launch::parse_windows_command_line;
+use crate::domain::config::GlobalConfig;
 use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::rune_audio::catalog::AREA_CATALOG_FILE_NAME;
 use crate::rune_audio::item_catalog::ITEM_CATALOG_FILE_NAME;

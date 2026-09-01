@@ -1,6 +1,6 @@
 use crate::commands::account::AccountManager;
-use crate::commands::global_config::GlobalConfig;
 use crate::commands::utils::{sanitize_folder_name, shared_system, silent_cmd};
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{paths_have_same_identity, AuthMode};
 use crate::state::{AccountLifecycleLease, SharedState};
@@ -365,7 +365,7 @@ mod tests {
         browser_profile_name, browser_profile_paths, ensure_allowed_bnet_login_url,
         private_browser_arguments,
     };
-    use crate::commands::global_config::GlobalConfig;
+    use crate::domain::config::GlobalConfig;
     use std::path::Path;
 
     #[test]
