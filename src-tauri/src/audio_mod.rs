@@ -1,3 +1,4 @@
+use crate::application::task_runtime::{TaskHandle, TaskRequest};
 use crate::commands::account::{update_account_mods_inner, AccountManager, AccountMeta};
 use crate::commands::launch::parse_windows_command_line;
 use crate::domain::config::GlobalConfig;
@@ -1547,18 +1548,23 @@ pub fn get_audio_mod_setup_state(
 
 fn emit_prepare_progress(
     app: &tauri::AppHandle,
+    task: Option<&TaskHandle>,
     account_id: &str,
     phase: &str,
     percent: u8,
     message: impl Into<String>,
 ) {
+    let message = message.into();
+    if let Some(task) = task {
+        let _ = task.update(percent.min(99), phase, &message);
+    }
     let _ = app.emit(
         "audio-mod-prepare-progress",
         AudioModPrepareProgress {
             account_id: account_id.to_string(),
             phase: phase.to_string(),
             percent: percent.min(100),
-            message: message.into(),
+            message,
         },
     );
 }
@@ -1621,6 +1627,7 @@ fn resolve_source_directory(
 
 async fn run_audio_mod_generator(
     app: &tauri::AppHandle,
+    task: &TaskHandle,
     invocation: GeneratorInvocation<'_>,
 ) -> Result<GeneratorReport, String> {
     let GeneratorInvocation {
@@ -1658,7 +1665,7 @@ async fn run_audio_mod_generator(
         arguments.push(source.to_string_lossy().into_owned());
     }
 
-    let (mut receiver, _child) = app
+    let (mut receiver, child) = app
         .shell()
         .sidecar("d2r-audio-mod")
         .map_err(|error| format!("识别 Mod 生成器不可用: {error}"))?
@@ -1669,7 +1676,27 @@ async fn run_audio_mod_generator(
     let mut report: Option<GeneratorReport> = None;
     let mut stderr = String::new();
     let mut exit_code = None;
-    while let Some(event) = receiver.recv().await {
+    loop {
+        let event = match tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            receiver.recv(),
+        )
+        .await
+        {
+            Ok(event) => event,
+            Err(_) => {
+                if task.cancellation_requested() {
+                    child
+                        .kill()
+                        .map_err(|error| format!("取消识别 Mod 生成器失败: {error}"))?;
+                    return Err("识别 Mod 生成已取消".to_string());
+                }
+                continue;
+            }
+        };
+        let Some(event) = event else {
+            break;
+        };
         match event {
             CommandEvent::Stdout(bytes) => {
                 let line = String::from_utf8_lossy(&bytes);
@@ -1685,6 +1712,7 @@ async fn run_audio_mod_generator(
                             .unwrap_or(0);
                         emit_prepare_progress(
                             app,
+                            Some(task),
                             account_id,
                             value
                                 .get("phase")
@@ -2687,6 +2715,63 @@ pub async fn prepare_audio_mod(
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
+    let task = state
+        .tasks()
+        .begin(
+            TaskRequest::new("audio-mod-prepare")
+                .for_subject(&account_id)
+                .with_conflict_key("audio-mod-build")
+                .with_initial_status("preflight", "正在检查 Mod 加工环境"),
+        )
+        .map_err(|error| error.to_string())?;
+    let result = prepare_audio_mod_impl(
+        app,
+        state,
+        PrepareAudioModRequest {
+            account_id,
+            mod_name,
+            source_mod_name,
+            include_audio_telemetry,
+            include_room_tools,
+        },
+        &task,
+    )
+    .await;
+    match &result {
+        Ok(_) => {
+            let _ = task.succeed("识别 Mod 已准备完成");
+        }
+        Err(error) if task.cancellation_requested() => {
+            let _ = task.cancelled(error);
+        }
+        Err(error) => {
+            let _ = task.fail("audio-mod-prepare-failed", error);
+        }
+    }
+    result
+}
+
+struct PrepareAudioModRequest {
+    account_id: String,
+    mod_name: String,
+    source_mod_name: Option<String>,
+    include_audio_telemetry: Option<bool>,
+    include_room_tools: Option<bool>,
+}
+
+async fn prepare_audio_mod_impl(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    request: PrepareAudioModRequest,
+    task: &TaskHandle,
+) -> Result<AudioModPrepareResult, String> {
+    let PrepareAudioModRequest {
+        account_id,
+        mod_name,
+        source_mod_name,
+        include_audio_telemetry,
+        include_room_tools,
+    } = request;
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
     let (_config, _account, context) = configured_account(&shared_state, &account_id)?;
@@ -2706,9 +2791,17 @@ pub async fn prepare_audio_mod(
     let requested_features =
         RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
 
-    emit_prepare_progress(&app, &account_id, "starting", 1, "正在开始准备…");
+    emit_prepare_progress(
+        &app,
+        Some(task),
+        &account_id,
+        "starting",
+        1,
+        "正在开始准备…",
+    );
     let report = run_audio_mod_generator(
         &app,
+        task,
         GeneratorInvocation {
             account_id: &account_id,
             game_directory: &game_directory,
@@ -2722,7 +2815,14 @@ pub async fn prepare_audio_mod(
     .await?;
     let generated =
         validate_generator_output(&mods_directory, &mod_name, &report, requested_features, &[])?;
-    emit_prepare_progress(&app, &account_id, "complete", 100, "识别 Mod 已准备完成");
+    emit_prepare_progress(
+        &app,
+        None,
+        &account_id,
+        "complete",
+        100,
+        "识别 Mod 已准备完成",
+    );
     Ok(AudioModPrepareResult {
         account_id,
         mod_name: report.mod_name,
@@ -2741,6 +2841,48 @@ pub async fn upgrade_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+) -> Result<AudioModSetupState, String> {
+    let task = state
+        .tasks()
+        .begin(
+            TaskRequest::new("audio-mod-upgrade")
+                .for_subject(&account_id)
+                .with_conflict_key("audio-mod-build")
+                .with_initial_status("preflight", "正在检查 Mod 更新环境"),
+        )
+        .map_err(|error| error.to_string())?;
+    let result = upgrade_audio_mod_impl(
+        app,
+        state,
+        account_id,
+        source_mod_name,
+        include_audio_telemetry,
+        include_room_tools,
+        &task,
+    )
+    .await;
+    match &result {
+        Ok(_) => {
+            let _ = task.succeed("同名识别 Mod 已更新完成");
+        }
+        Err(error) if task.cancellation_requested() => {
+            let _ = task.cancelled(error);
+        }
+        Err(error) => {
+            let _ = task.fail("audio-mod-upgrade-failed", error);
+        }
+    }
+    result
+}
+
+async fn upgrade_audio_mod_impl(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    source_mod_name: Option<String>,
+    include_audio_telemetry: Option<bool>,
+    include_room_tools: Option<bool>,
+    task: &TaskHandle,
 ) -> Result<AudioModSetupState, String> {
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
@@ -2812,13 +2954,21 @@ pub async fn upgrade_audio_mod(
         }
         resolve_source_directory(&mods_directory, mod_name, source_mod_name)?.1
     };
-    emit_prepare_progress(&app, &account_id, "starting", 1, "正在生成同名新版 Mod…");
+    emit_prepare_progress(
+        &app,
+        Some(task),
+        &account_id,
+        "starting",
+        1,
+        "正在生成同名新版 Mod…",
+    );
     let temporary_output = TemporaryDirectory::create(std::env::temp_dir().join(format!(
         "d2rhub-audio-upgrade-output-{}",
         uuid::Uuid::new_v4()
     )))?;
     let report = run_audio_mod_generator(
         &app,
+        task,
         GeneratorInvocation {
             account_id: &account_id,
             game_directory: &context.installation.game_directory,
@@ -2838,7 +2988,17 @@ pub async fn upgrade_audio_mod(
         &required_existing_groups,
     )?;
 
-    emit_prepare_progress(&app, &account_id, "staging", 90, "正在校验并暂存新版 Mod…");
+    if task.cancellation_requested() {
+        return Err("识别 Mod 更新已取消".to_string());
+    }
+    emit_prepare_progress(
+        &app,
+        Some(task),
+        &account_id,
+        "staging",
+        90,
+        "正在校验并暂存新版 Mod…",
+    );
     let transaction_id = uuid::Uuid::new_v4().simple().to_string();
     let staging_parent = TemporaryDirectory::create(
         mods_directory.join(format!(".d2rhub-upgrade-stage-{transaction_id}")),
@@ -2860,7 +3020,17 @@ pub async fn upgrade_audio_mod(
         return Err("暂存 Mod 的功能组与已验证生成结果不一致，旧版未被修改".to_string());
     }
 
-    emit_prepare_progress(&app, &account_id, "switching", 96, "正在替换同名旧版 Mod…");
+    if task.cancellation_requested() {
+        return Err("识别 Mod 更新已取消".to_string());
+    }
+    emit_prepare_progress(
+        &app,
+        Some(task),
+        &account_id,
+        "switching",
+        96,
+        "正在替换同名旧版 Mod…",
+    );
     // 生成过程可能持续数分钟；切换前再次检查，避免另一账号中途启动同名 Mod。
     ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
     let backup_directory = mods_directory.join(format!(".d2rhub-upgrade-backup-{transaction_id}"));
@@ -2883,6 +3053,7 @@ pub async fn upgrade_audio_mod(
     validate_preserved_feature_groups(&required_existing_groups, &installed.feature_groups)?;
     emit_prepare_progress(
         &app,
+        None,
         &account_id,
         "complete",
         100,
