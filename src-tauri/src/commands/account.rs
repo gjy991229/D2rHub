@@ -5,18 +5,16 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountModRepository, AccountModService, AccountNameRepository,
-    AccountNamingService, AccountOrderingService, AccountPositionService, AccountProfilePatch,
-    AccountProfilePolicy, AccountProfileService, AccountQueryService, AccountRepository,
-    AccountRuntimePort, AccountSettingsPreferenceService, AccountSettingsRepository,
-    CancellationTicket, ResolvedAccountProfile, TokenProtector, WindowPosition,
+    AccountCatalog, AccountCreationRepository, AccountCreationService, AccountModRepository,
+    AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
+    AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
+    AccountQueryService, AccountRepository, AccountRuntimePort, AccountSettingsPreferenceService,
+    AccountSettingsRepository, CancellationTicket, CreateAccountRequest, ResolvedAccountProfile,
+    TimestampProvider, TokenProtector, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
-use crate::domain::account::{
-    normalize_account_display_name, validate_account_display_name, AuthMode, ClientEdition,
-    GameRegion,
-};
+use crate::domain::account::{normalize_account_display_name, AuthMode, ClientEdition, GameRegion};
 pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
@@ -357,6 +355,94 @@ impl TokenProtector for CurrentUserTokenProtector {
     }
 }
 
+struct SystemTimestampProvider;
+
+impl TimestampProvider for SystemTimestampProvider {
+    fn now_rfc3339(&self) -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
+}
+
+struct AccountCreationAdapter<'a> {
+    config: &'a GlobalConfig,
+    state: &'a SharedState,
+}
+
+impl AccountRepository for AccountCreationAdapter<'_> {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
+        AccountManager::save_meta(&self.config.accounts_dir, account)
+    }
+}
+
+impl AccountNameRepository for AccountCreationAdapter<'_> {
+    fn ensure_display_name_available(
+        &self,
+        requested_name: &str,
+        excluded_account_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        ensure_account_display_name_available(
+            &self.config.accounts_dir,
+            requested_name,
+            excluded_account_id,
+        )
+    }
+}
+
+impl AccountCreationRepository for AccountCreationAdapter<'_> {
+    fn next_account_id(&self) -> String {
+        AccountManager::next_id(&self.config.accounts_dir)
+    }
+
+    fn create(&self, account: &AccountMeta) -> Result<(), AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::LaunchGame)?;
+        let dir = AccountManager::account_dir_checked(&self.config.accounts_dir, &account.id)?;
+        if path_exists(&dir)? {
+            return Err(AppError::FileError(format!(
+                "账号目录已存在: {}",
+                dir.display()
+            )));
+        }
+        let _host_runtime_lease = if context.auth_mode == AuthMode::Token {
+            None
+        } else {
+            Some(HostRuntimeLease::try_acquire(self.state)?)
+        };
+        let staged = sibling_with_suffix(&dir, ".tmp")?;
+        let backup = sibling_with_suffix(&dir, ".bak")?;
+        remove_path_if_exists(&staged)?;
+        std::fs::create_dir_all(&staged)?;
+        if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
+            if let Err(error) =
+                copy_system_settings_to_account_if_available(saved_games_directory, &staged)
+            {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Account",
+                    &format!("创建账号时跳过可选 Settings.json 快照: {error}"),
+                );
+            }
+        } else {
+            crate::logger::log_msg(
+                "WARN",
+                "Account",
+                &format!(
+                    "创建账号 {} 时未配置可用的存档目录；核心账号已创建，画质快照暂不可用",
+                    account.id
+                ),
+            );
+        }
+        if let Err(error) = write_account_meta_to_directory(&staged, account) {
+            let _ = remove_path_if_exists(&staged);
+            return Err(error);
+        }
+        replace_path_with_backup(&staged, &dir, &backup)
+    }
+}
+
 struct AccountManagerRuntime<'a> {
     state: &'a SharedState,
 }
@@ -525,10 +611,6 @@ impl AccountManager {
 
 pub(crate) fn normalized_account_display_name(name: &str) -> String {
     normalize_account_display_name(name)
-}
-
-fn validated_account_display_name(name: &str) -> Result<String, AppError> {
-    validate_account_display_name(name).map_err(AppError::from)
 }
 
 fn ensure_account_display_name_available(
@@ -707,88 +789,27 @@ pub fn create_account(
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let nickname = validated_account_display_name(&nickname)?;
-    // 锁序固定为 Catalog -> Account。名称检查与目录提交必须处于同一临界区，
-    // 防止两个并发创建请求同时通过判重。
-    let _catalog_guard = state.multi_instance().catalog_leases().acquire();
-    ensure_account_display_name_available(&cfg.accounts_dir, &nickname, None)?;
-    let id = AccountManager::next_id(&cfg.accounts_dir);
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &id)?;
-    let mut meta = AccountMeta::new(&id);
-    meta.display_name = nickname;
-    meta.auth_mode = auth_mode;
-    meta.region = region;
-
-    let context = LaunchContext::for_draft(
-        &cfg,
-        meta.region.as_deref(),
-        meta.auth_mode.as_deref(),
-        ContextPurpose::LaunchGame,
-    )?;
-    meta.region = Some(context.game_region.canonical().to_string());
-
-    let is_token_auth = context.auth_mode == AuthMode::Token;
-    if is_token_auth {
-        meta.language = language.or(Some(context.region.default_locale.to_string()));
-        meta.voicelanguage = voicelanguage.or(Some(context.region.default_locale.to_string()));
-        meta.initialized = true;
-    }
-
-    // Token 使用 DPAPI 加密后存储，防止明文落盘
-    meta.token = if let Some(ref t) = token {
-        let encrypted = crate::commands::crypto::protect_token(t)
-            .map_err(|e| AppError::Unknown(format!("Token 加密失败: {}", e)))?;
-        Some(crate::commands::crypto::hex_encode(&encrypted))
-    } else {
-        None
+    let repository = AccountCreationAdapter {
+        config: &cfg,
+        state: state.inner(),
     };
-    meta.last_reset_at = Some(chrono::Utc::now().to_rfc3339());
-
-    let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &id)?;
-    if path_exists(&dir)? {
-        return Err(AppError::FileError(format!(
-            "账号目录已存在: {}",
-            dir.display()
-        )));
-    }
-    // Token-only 创建只写账号私有元数据，并且读取 Settings.json 不会修改宿主状态。
-    // Battle.net 账号仍沿用宿主租约，避免其初始化前快照与认证流程交错。
-    let _host_runtime_lease = if is_token_auth {
-        None
-    } else {
-        Some(HostRuntimeLease::try_acquire(state.inner().as_ref())?)
-    };
-    let staged = sibling_with_suffix(&dir, ".tmp")?;
-    let backup = sibling_with_suffix(&dir, ".bak")?;
-    remove_path_if_exists(&staged)?;
-    std::fs::create_dir_all(&staged)?;
-    if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
-        if let Err(error) =
-            copy_system_settings_to_account_if_available(saved_games_directory, &staged)
-        {
-            crate::logger::log_msg(
-                "WARN",
-                "Account",
-                &format!("创建账号时跳过可选 Settings.json 快照: {}", error),
-            );
-        }
-    } else {
-        crate::logger::log_msg(
-            "WARN",
-            "Account",
-            &format!(
-                "创建账号 {} 时未配置可用的存档目录；核心账号已创建，画质快照暂不可用",
-                id
-            ),
-        );
-    }
-    if let Err(error) = write_account_meta_to_directory(&staged, &meta) {
-        let _ = remove_path_if_exists(&staged);
-        return Err(error);
-    }
-    replace_path_with_backup(&staged, &dir, &backup)?;
-
-    Ok(id)
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountCreationService::new(
+        &repository,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+        &SystemTimestampProvider,
+    )
+    .create(CreateAccountRequest {
+        display_name: nickname,
+        auth_mode,
+        token,
+        region,
+        language,
+        voice_language: voicelanguage,
+    })
 }
 
 /// 更新已创建的账号的 Token / 语言 / 区服等字段

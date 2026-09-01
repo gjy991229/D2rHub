@@ -94,6 +94,7 @@ impl LaunchContext {
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn for_draft(
         config: &GlobalConfig,
         region: Option<&str>,

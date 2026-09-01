@@ -50,6 +50,11 @@ pub trait AccountNameRepository: AccountRepository {
     ) -> Result<(), AppError>;
 }
 
+pub trait AccountCreationRepository: AccountNameRepository {
+    fn next_account_id(&self) -> String;
+    fn create(&self, account: &AccountMeta) -> Result<(), AppError>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application
