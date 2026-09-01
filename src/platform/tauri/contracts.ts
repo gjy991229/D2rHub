@@ -11,6 +11,7 @@ export const TAURI_COMMANDS = [
   "bring_self_to_foreground",
   "bring_window_by_title_to_front",
   "cancel_launch",
+  "cancel_task",
   "check_cloud_version",
   "check_path_exists",
   "check_saved_games_settings",
@@ -27,6 +28,10 @@ export const TAURI_COMMANDS = [
   "get_app_version",
   "get_audio_mod_setup_state",
   "get_capability_statuses",
+  "get_task",
+  "get_task_retry_descriptor",
+  "get_task_timeline",
+  "get_tasks",
   "get_d2r_window_titles",
   "get_foreground_window_title",
   "get_global_config",
@@ -109,6 +114,7 @@ export const TAURI_EVENTS = [
   "rune-audio-detected",
   "room-automation://config-committed",
   "room-automation://status-changed",
+  "task-status-updated",
 ] as const;
 
 export type TauriEventName = (typeof TAURI_EVENTS)[number];

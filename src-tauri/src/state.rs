@@ -7,6 +7,7 @@ use std::sync::Arc;
 use crate::application::capability::CapabilityRegistry;
 use crate::application::configuration::ConfigurationRuntime;
 use crate::application::multi_instance::{AccountOperationLease, MultiInstanceRuntime};
+use crate::application::task_runtime::TaskRuntime;
 use crate::error::AppError;
 
 /// 应用全局运行时状态
@@ -19,6 +20,8 @@ pub struct AppState {
     pub app_data_dir: String,
     /// 多开核心运行时。账号实例与操作取消只能通过其公开接口访问，避免模块直接操作锁。
     multi_instance: MultiInstanceRuntime,
+    /// Unified status, cancellation and timeline registry for long-running work.
+    tasks: TaskRuntime,
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
@@ -51,6 +54,7 @@ impl AppState {
             capabilities: Arc::new(CapabilityRegistry::new()),
             app_data_dir: app_data.to_string_lossy().to_string(),
             multi_instance: MultiInstanceRuntime::default(),
+            tasks: TaskRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
             retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
@@ -69,6 +73,10 @@ impl AppState {
 
     pub fn multi_instance(&self) -> &MultiInstanceRuntime {
         &self.multi_instance
+    }
+
+    pub fn tasks(&self) -> &TaskRuntime {
+        &self.tasks
     }
 
     pub fn retire_account_id(&self, account_id: &str) {

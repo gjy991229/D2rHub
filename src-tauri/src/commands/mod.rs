@@ -8,5 +8,6 @@ pub mod launch;
 pub mod room_automation;
 pub mod settings;
 pub mod system;
+pub mod task;
 pub mod terror_zone;
 pub mod utils;

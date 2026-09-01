@@ -145,6 +145,7 @@ pub fn run() {
             }
 
             capabilities::install(app);
+            commands::task::install_observer(app.handle(), &app_state);
 
             // 初始化托盘
             let _ = tray::create_tray(app.handle());
@@ -160,6 +161,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::global_config::get_global_config,
             commands::capability::get_capability_statuses,
+            commands::task::get_tasks,
+            commands::task::get_task,
+            commands::task::get_task_timeline,
+            commands::task::get_task_retry_descriptor,
+            commands::task::cancel_task,
             commands::room_automation::room_automation_get_config,
             commands::room_automation::room_automation_save_config,
             commands::room_automation::room_automation_get_status,

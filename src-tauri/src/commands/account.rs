@@ -15,6 +15,7 @@ use crate::application::multi_instance::{
     CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
     WindowPosition,
 };
+use crate::application::task_runtime::{TaskRequest, TaskRuntimeError};
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
 use crate::domain::account::{normalize_account_display_name, AuthMode, ClientEdition, GameRegion};
@@ -2412,6 +2413,65 @@ impl AccountInitializationTransaction for BnetInitializationTransactionAdapter<'
     }
 }
 
+fn map_task_runtime_error(error: TaskRuntimeError) -> AppError {
+    AppError::Unknown(error.to_string())
+}
+
+async fn execute_initialization_task(
+    app: tauri::AppHandle,
+    state: SharedState,
+    account_id: String,
+    kind: AccountInitializationKind,
+    cancellation_ticket: CancellationTicket,
+) -> Result<(), AppError> {
+    let task_kind = match kind {
+        AccountInitializationKind::New => "account-initialize",
+        AccountInitializationKind::Reinitialize => "account-reinitialize",
+    };
+    let task = state
+        .tasks()
+        .begin(
+            TaskRequest::new(task_kind)
+                .for_subject(&account_id)
+                .with_conflict_key(format!("account:{account_id}"))
+                .with_initial_status("queued", "账号初始化任务已排队"),
+        )
+        .map_err(map_task_runtime_error)?;
+    crate::logger::log_msg(
+        "INFO",
+        "Task",
+        &format!("账号初始化已登记为统一任务 {}", task.task_id()),
+    );
+    let _ = task.update(5, "preflight", "正在检查账号与客户端环境");
+
+    tokio::task::spawn_blocking(move || {
+        let transaction = BnetInitializationTransactionAdapter {
+            app: &app,
+            state: &state,
+        };
+        let result = AccountInitializationService::new(
+            &transaction,
+            state.multi_instance().account_leases(),
+        )
+        .execute(&account_id, kind, cancellation_ticket);
+        let cancellation_requested = task.cancellation_requested();
+        match &result {
+            Ok(()) => {
+                let _ = task.succeed("账号初始化完成");
+            }
+            Err(error) if cancellation_requested => {
+                let _ = task.cancelled(&error.to_string());
+            }
+            Err(error) => {
+                let _ = task.fail("account-initialization-failed", &error.to_string());
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?
+}
+
 /// 首次初始化 Battle.net 账号。
 #[tauri::command]
 pub async fn initialize_bnet_account(
@@ -2420,21 +2480,14 @@ pub async fn initialize_bnet_account(
     account_id: String,
 ) -> Result<(), AppError> {
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
-    let state_arc = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let transaction = BnetInitializationTransactionAdapter {
-            app: &app,
-            state: &state_arc,
-        };
-        AccountInitializationService::new(&transaction, state_arc.multi_instance().account_leases())
-            .execute(
-                &account_id,
-                AccountInitializationKind::New,
-                cancellation_ticket,
-            )
-    })
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        AccountInitializationKind::New,
+        cancellation_ticket,
+    )
     .await
-    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?
 }
 
 /// 重新初始化账号；Battle.net 账号复用与首次初始化完全相同的宿主事务。
@@ -2445,21 +2498,14 @@ pub async fn reinitialize_account(
     account_id: String,
 ) -> Result<(), AppError> {
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
-    let state_arc = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        let transaction = BnetInitializationTransactionAdapter {
-            app: &app,
-            state: &state_arc,
-        };
-        AccountInitializationService::new(&transaction, state_arc.multi_instance().account_leases())
-            .execute(
-                &account_id,
-                AccountInitializationKind::Reinitialize,
-                cancellation_ticket,
-            )
-    })
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        AccountInitializationKind::Reinitialize,
+        cancellation_ticket,
+    )
     .await
-    .map_err(|error| AppError::Unknown(format!("账号重新初始化任务异常退出: {error}")))?
 }
 
 fn run_bnet_initialization_transaction(

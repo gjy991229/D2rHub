@@ -9,6 +9,7 @@ use crate::application::multi_instance::{
     launch_queue_can_continue, CancellationTicket, GameWindowIdentity, GameWindowPort,
     LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride, WindowPosition,
 };
+use crate::application::task_runtime::{TaskHandle, TaskRequest, TaskState};
 use crate::battle_net_config::update_mod_args;
 use crate::commands::account::{
     copy_account_settings_to_system, recover_interrupted_replacement, remove_path_if_exists,
@@ -331,8 +332,46 @@ fn persist_window_position(
 /// 前端点「停止」时调用，后端在下一个检查点中止所有未完成的账号
 #[tauri::command]
 pub fn cancel_launch(state: tauri::State<'_, SharedState>) -> Result<(), AppError> {
+    for task in state.tasks().snapshots().into_iter().filter(|task| {
+        task.state == TaskState::Running
+            && matches!(
+                task.kind.as_str(),
+                "account-launch"
+                    | "battle-net-launch"
+                    | "account-initialize"
+                    | "account-reinitialize"
+            )
+    }) {
+        let _ = state.tasks().request_cancel(task.task_id);
+    }
     state.multi_instance().facade().cancel_current_operation();
     Ok(())
+}
+
+fn finish_launch_task(task: TaskHandle, result: &Result<Vec<LaunchResult>, AppError>) {
+    let cancellation_requested = task.cancellation_requested();
+    match result {
+        Ok(_) if cancellation_requested => {
+            let _ = task.cancelled("启动已取消");
+        }
+        Ok(results) => {
+            let failures = results.iter().filter(|result| !result.success).count();
+            if failures == 0 {
+                let _ = task.succeed("启动任务完成");
+            } else {
+                let _ = task.fail(
+                    "account-launch-partial-failure",
+                    &format!("启动任务完成，其中 {failures} 个账号未成功"),
+                );
+            }
+        }
+        Err(error) if cancellation_requested => {
+            let _ = task.cancelled(&error.to_string());
+        }
+        Err(error) => {
+            let _ = task.fail("account-launch-failed", &error.to_string());
+        }
+    }
 }
 
 /// 当前操作票据是否已被后续取消请求作废。
@@ -754,6 +793,24 @@ async fn cancel_with_cleanup(
 /// 只启动战网（不走游戏、互斥、连接等后续步骤）
 #[tauri::command]
 pub async fn launch_battle_net_only(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Vec<String>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let task = state
+        .tasks()
+        .begin(
+            TaskRequest::new("battle-net-launch")
+                .with_conflict_key("host-runtime-launch")
+                .with_initial_status("preflight", "正在检查 Battle.net 启动请求"),
+        )
+        .map_err(|error| AppError::Unknown(error.to_string()))?;
+    let result = launch_battle_net_only_impl(app, state, account_ids).await;
+    finish_launch_task(task, &result);
+    result
+}
+
+async fn launch_battle_net_only_impl(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
@@ -1350,6 +1407,25 @@ async fn launch_single_bnet_only(
 /// 再开始下一个。两个账号之间留 2 秒缓冲。
 #[tauri::command]
 pub async fn launch_accounts(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let task = state
+        .tasks()
+        .begin(
+            TaskRequest::new("account-launch")
+                .with_conflict_key("host-runtime-launch")
+                .with_initial_status("preflight", "正在检查账号启动请求"),
+        )
+        .map_err(|error| AppError::Unknown(error.to_string()))?;
+    let result = launch_accounts_impl(app, state, account_ids, entries).await;
+    finish_launch_task(task, &result);
+    result
+}
+
+async fn launch_accounts_impl(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_ids: Option<Vec<String>>,
