@@ -28,6 +28,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **一键准备识别 Mod**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器。无论从原版还是现有 Mod 准备，用户都需要为新 Mod 命名；软件随后生成新 Mod、复核清单并安全配置账号启动参数。游戏、源 Mod 与输出目录支持中文、空格及 Windows 允许的特殊字符；源 Mod 数据表兼容 UTF-8、UTF-16、GBK/GB18030 与常见 Windows ANSI 编码，JSON 资源兼容常见 JSON5 写法，0 字节 FLAC 静音占位也会保持静音。现有 Mod 只需包含自己改动过的数据表，缺失表会逐个从本机游戏数据补齐。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可同时勾选并编辑女伯爵、地穴、安达利尔、墨菲斯托、Chaos、巴尔等常用 Farm 策略组，也可创建和编辑自定义路线。策略组内分段先合计耗时，再作为一场参与场次与平均耗时计算；重叠策略不会重复计数，原始数据保持不变。筛选器可折叠，离群优化默认开启，短空场阈值默认 1 秒且可调。
 - **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部，并支持贴边自动隐藏。
+- **可选自动跟房**：以多开核心中的已运行账号为边界，主号建房成功后可手动或延时让小号并行跟进；任务支持取消、同房间失败重试、账号租约和下一房序号持久化。启用前会验证受信任的启动快照、局内房间工具与 F13 聊天键位，停用后自动回收快捷键、watcher 和工作线程。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
 ### 快速开始
@@ -47,6 +48,7 @@ D2RHub 通过 Windows 进程、句柄、注册表、文件、窗口和 WASAPI �
 运行数据保存在当前 Windows 用户的 `%APPDATA%\D2RHub` 目录；日志仍保存在程序同级 `logs` 目录：
 
 - `%APPDATA%\D2RHub\global_config.json`：全局配置；
+- `%APPDATA%\D2RHub\modules\`：可选模块的版本化 sidecar 配置、备份与自动恢复数据；
 - `%APPDATA%\D2RHub\accounts\`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照与账号设置；
 - `%APPDATA%\D2RHub\stateData\data.db`：场次、历史记录和符文声纹观测数据库；
 - `logs/`：运行日志，最多自动保留 16 个。
@@ -84,6 +86,7 @@ D2RHub is maintained as one complete desktop edition. Account management, audio 
 - Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates. Hiding the statistics overlay does not stop enabled audio tracking.
 - A bundled but independently maintained `d2r-audio-mod.exe` generator for creating a minimal Mod or augmenting an existing unpacked Mod without coupling either codebase or data model. Game, source-Mod, and output paths support Unicode, spaces, and other Windows-valid characters; source tables accept UTF-8, UTF-16, GBK/GB18030, and common Windows ANSI encodings, JSON resources accept common JSON5 syntax, and empty FLAC silence overrides remain silent. Existing Mods may provide only the tables they override; each missing table is filled from the matching local game data.
 - Grouped overlay drops with counts, short-lived new-drop notices, a compact latest-five view, and edge-docked auto-hide.
+- Optional room automation built on trusted running instances, with staged primary/follower actions, cancellation, same-room retry, account leases, durable sequence updates, and lifecycle-owned shortcuts/F13 binding.
 - Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
 
 ### Quick start
