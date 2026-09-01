@@ -28,9 +28,15 @@ import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
 import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
 import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
+import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
 import {
+  AUDIO_TELEMETRY_FEATURE_ID,
+  audioModFeatureInvokeOptions,
   audioSetupDefaults,
   hasAudioTelemetry,
+  hasSelectedAudioModFeature,
+  IN_GAME_ROOM_TOOLS_FEATURE_ID,
+  selectedAudioModFeatureAddsCapability,
   type AudioModPrepareProgress,
   type AudioModPrepareResult,
   type RuneAudioStatus,
@@ -73,6 +79,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Tab and search state
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
+  const [roomAutomationDirty, setRoomAutomationDirty] = useState(false);
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
   const [audioModState, setAudioModState] = useState<AudioModSetupState | null>(null);
@@ -81,11 +88,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [audioSetupMode, setAudioSetupMode] = useState<"original" | "existing">("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
+  const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(true);
+  const [includeRoomTools, setIncludeRoomTools] = useState(true);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [windowPlacementBusy, setWindowPlacementBusy] = useState<string | null>(null);
   const normalizedAudioSetupName = audioSetupName.trim();
-  const isAudioModUpgrade = !!audioModState?.update_required;
+  const isAudioModUpgrade = !!audioModState?.current_mod_name && (
+    audioModState.update_required
+    || audioModState.ready
+    || audioModState.feature_groups.length > 0
+  );
+  const isAudioModFeatureManagement = isAudioModUpgrade && !audioModState?.update_required;
   const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
   const audioSetupNameError = isAudioModUpgrade
     ? ""
@@ -96,11 +110,32 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
   const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
-  const audioPrepareBlockedReason = !isAudioModUpgrade && audioSetupNameError
-    ? audioSetupNameError
-    : audioSetupMode === "existing" && !audioSetupSource
-      ? "请选择一个要保留功能的原始 Mod"
-      : "";
+  const installedAudioFeatureGroups = audioModState?.feature_groups ?? [];
+  const audioFeatureSelection = {
+    includeAudioTelemetry: includeAudioTelemetry
+      || (isAudioModUpgrade && installedAudioFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID)),
+    includeRoomTools: includeRoomTools
+      || (isAudioModUpgrade && installedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID)),
+  };
+  const audioPrepareBlockedReason = !hasSelectedAudioModFeature(audioFeatureSelection)
+    ? config?.app_language === "en-US"
+      ? "Select at least one Mod feature"
+      : "请至少选择一个 Mod 功能"
+    : isAudioModFeatureManagement
+        && !selectedAudioModFeatureAddsCapability(
+          audioFeatureSelection,
+          installedAudioFeatureGroups,
+        )
+      ? config?.app_language === "en-US"
+        ? "The current Mod already contains every selected feature"
+        : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能"
+      : !isAudioModUpgrade && audioSetupNameError
+        ? audioSetupNameError
+        : !isAudioModFeatureManagement && audioSetupMode === "existing" && !audioSetupSource
+          ? config?.app_language === "en-US"
+            ? "Select the original Mod whose features should be preserved"
+            : "请选择一个要保留功能的原始 Mod"
+          : "";
 
   const locateWindow = async (label: AuxiliaryWindowLabel) => {
     const names = config?.app_language === "en-US"
@@ -219,7 +254,11 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         ));
         setAudioSetupMode(defaults.mode);
         setAudioSetupName(defaults.name);
-        if (!next.ready && config?.rune_audio_enabled) setAudioSetupOpen(true);
+        if (!next.ready && config?.rune_audio_enabled) {
+          setIncludeAudioTelemetry(true);
+          setIncludeRoomTools(true);
+          setAudioSetupOpen(true);
+        }
       })
       .catch((error) => {
         if (!cancelled) {
@@ -289,6 +328,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (!open) {
       setExportPickerOpen(false);
       setExportPlaintextRiskAcknowledged(false);
+      setRoomAutomationDirty(false);
     }
   }, [open]);
 
@@ -383,6 +423,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
   // Close / Rollback
   const handleClose = () => {
+    if (roomAutomationDirty) {
+      setActiveTab("room-automation");
+      showToast(
+        "warning",
+        config?.app_language === "en-US"
+          ? "Apply or discard the Room Automation changes before closing settings"
+          : "请先应用或放弃自动跟房的更改，再关闭设置",
+      );
+      return;
+    }
     if (config && installationPathEditsAreInvalid(originalConfig, config)) {
       setActiveTab("paths");
       showToast("error", "请至少保留一组国服或国际服的游戏安装目录；Battle.net 仅供国服兼容模式使用");
@@ -609,6 +659,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     });
     setAudioSetupOpen(false);
     setAudioSetupName("");
+    setIncludeAudioTelemetry(true);
+    setIncludeRoomTools(true);
     setAudioModStateLoading(true);
     try {
       const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
@@ -620,6 +672,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       if (wasEnabled && next.ready) {
         await persistAudioEnabledState(accountId, true);
       } else if (wasEnabled) {
+        setIncludeAudioTelemetry(true);
+        setIncludeRoomTools(true);
         setAudioSetupOpen(true);
       }
     } catch (error) {
@@ -669,6 +723,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         current.rune_audio_target_account = accountId;
         current.rune_audio_enabled = false;
       });
+      setIncludeAudioTelemetry(true);
+      setIncludeRoomTools(true);
       setAudioSetupOpen(true);
     } catch (error) {
       showToast("error", `无法开启声纹识别：${error}`);
@@ -677,17 +733,27 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
+  const handleOpenAudioSetup = () => {
+    if (audioModState) {
+      const defaults = audioSetupDefaults(audioModState);
+      setAudioSetupMode(defaults.mode);
+      setAudioSetupSource(defaults.source);
+      setAudioSetupName(defaults.name);
+    }
+    setIncludeAudioTelemetry(true);
+    setIncludeRoomTools(true);
+    setAudioSetupOpen(true);
+  };
+
   const handlePrepareAudioMod = async () => {
     const accountId = trackingTargetId || initializedTrackingAccounts[0]?.id;
     if (!accountId) return;
-    if (audioSetupMode === "existing" && !audioSetupSource) {
-      showToast("warning", "请选择要保留功能的现有 Mod");
+    if (audioPrepareBlockedReason) {
+      showToast("warning", audioPrepareBlockedReason);
       return;
     }
-    if (audioSetupNameError) {
-      showToast("warning", audioSetupNameError);
-      return;
-    }
+
+    const featureOptions = audioModFeatureInvokeOptions(audioFeatureSelection);
 
     setAudioPreparing(true);
     setAudioPrepareProgress({
@@ -701,7 +767,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         const wasEnabled = !!useGlobalConfig.getState().config?.rune_audio_enabled;
         const next = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
           accountId,
-          sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+          sourceModName: isAudioModFeatureManagement
+            ? null
+            : audioSetupMode === "existing" ? audioSetupSource : null,
+          ...featureOptions,
         });
         setAudioModState(next);
         await persistAudioEnabledState(
@@ -709,13 +778,19 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
           wasEnabled && hasAudioTelemetry(next.feature_groups),
         );
         setAudioSetupOpen(false);
-        showToast("success", `识别 Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`);
+        showToast(
+          "success",
+          config?.app_language === "en-US"
+            ? `Mod “${next.current_mod_name ?? audioSetupName}” was updated in place; its name and launch arguments are unchanged`
+            : `Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`,
+        );
         return;
       }
       const result = await invokeCommand<AudioModPrepareResult>("prepare_audio_mod", {
         accountId,
         modName: normalizedAudioSetupName,
         sourceModName: audioSetupMode === "existing" ? audioSetupSource : null,
+        ...featureOptions,
       });
       const next = await invokeCommand<AudioModSetupState>("apply_audio_mod_to_account", {
         accountId,
@@ -723,16 +798,36 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       });
       await loadAccounts();
       setAudioModState(next);
+      const preparedAudioTelemetry = hasAudioTelemetry(result.feature_groups)
+        && hasAudioTelemetry(next.feature_groups);
       await persistAudioEnabledState(
         accountId,
-        hasAudioTelemetry(result.feature_groups) && hasAudioTelemetry(next.feature_groups),
+        preparedAudioTelemetry,
       );
       setAudioSetupOpen(false);
       setAudioSetupName("");
       if (next.restart_required) {
-        showToast("warning", "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别");
+        showToast(
+          "warning",
+          config?.app_language === "en-US"
+            ? preparedAudioTelemetry
+              ? "The recognition Mod is ready. Restart this game session once to enable it"
+              : "The selected Mod features are ready. Restart this game session once to enable them"
+            : preparedAudioTelemetry
+              ? "识别 Mod 已准备完成。当前游戏需重启一次，之后会自动识别"
+              : "所选 Mod 功能已准备完成。当前游戏需重启一次后生效",
+        );
       } else {
-        showToast("success", "声纹识别已准备完成，下次启动会自动生效");
+        showToast(
+          "success",
+          config?.app_language === "en-US"
+            ? preparedAudioTelemetry
+              ? "Audio recognition is ready and will start with the next game session"
+              : "The selected Mod features are ready for the next game session"
+            : preparedAudioTelemetry
+              ? "声纹识别已准备完成，下次启动会自动生效"
+              : "所选 Mod 功能已准备完成，下次启动游戏时生效",
+        );
       }
     } catch (error) {
       showToast("error", `准备识别 Mod 失败：${error}`);
@@ -905,6 +1000,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   })();
 
   const hasUnsavedChanges = globalHasChanges || accountHasChanges;
+  const hasAnyUnsavedChanges = hasUnsavedChanges || roomAutomationDirty;
 
   const autoSaveKey = JSON.stringify({
     selectedAccountId,
@@ -948,9 +1044,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     region === "KR" ? "亚服" : region === "NA" ? "美服" : region === "EU" ? "欧服" : region === "Global" ? "国际服" : "国服";
   const saveStatusText = gameSettingsSaving
     ? "自动保存中"
-    : hasUnsavedChanges
+    : hasAnyUnsavedChanges
       ? "有未保存改动"
       : "已自动保存";
+
+  const handleTabChange = (nextTab: SettingsTabId) => {
+    if (roomAutomationDirty && nextTab !== "room-automation") {
+      showToast(
+        "warning",
+        config?.app_language === "en-US"
+          ? "Apply or discard the Room Automation changes before leaving this section"
+          : "请先应用或放弃自动跟房的更改，再离开此页面",
+      );
+      return false;
+    }
+    setActiveTab(nextTab);
+    return true;
+  };
 
   return (
     <SettingsShell
@@ -959,7 +1069,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       activeTab={activeTab}
       config={config}
       onClose={handleClose}
-      onTabChange={setActiveTab}
+      onTabChange={handleTabChange}
     >
             {/* 1. Paths Tab */}
             {activeTab === "paths" && config && (
@@ -1045,17 +1155,23 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 audioModState={audioModState}
                 audioModStateLoading={audioModStateLoading}
                 audioSetupOpen={audioSetupOpen}
-                setAudioSetupOpen={setAudioSetupOpen}
+                onOpenAudioSetup={handleOpenAudioSetup}
+                onCloseAudioSetup={() => setAudioSetupOpen(false)}
                 audioSetupMode={audioSetupMode}
                 setAudioSetupMode={setAudioSetupMode}
                 audioSetupSource={audioSetupSource}
                 setAudioSetupSource={setAudioSetupSource}
                 audioSetupName={audioSetupName}
                 setAudioSetupName={setAudioSetupName}
+                includeAudioTelemetry={includeAudioTelemetry}
+                setIncludeAudioTelemetry={setIncludeAudioTelemetry}
+                includeRoomTools={includeRoomTools}
+                setIncludeRoomTools={setIncludeRoomTools}
                 audioPreparing={audioPreparing}
                 audioPrepareProgress={audioPrepareProgress}
                 normalizedAudioSetupName={normalizedAudioSetupName}
                 isAudioModUpgrade={isAudioModUpgrade}
+                isAudioModFeatureManagement={isAudioModFeatureManagement}
                 audioSetupNameError={audioSetupNameError}
                 showAudioSetupNameError={showAudioSetupNameError}
                 hasInitializedAudioAccount={hasInitializedAudioAccount}
@@ -1070,6 +1186,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onToggleDiagnosticRecording={toggleAudioDiagnosticRecording}
                 onClose={onClose}
                 onInitializeAccount={onInitializeAccount}
+              />
+            )}
+
+            {/* Optional keyboard-only room creation and follower joining module. */}
+            {activeTab === "room-automation" && (
+              <RoomAutomationPanel
+                accounts={accounts}
+                language={config?.app_language}
+                onDirtyChange={setRoomAutomationDirty}
+                onOpenAudioModSettings={() => { handleTabChange("automation"); }}
               />
             )}
 

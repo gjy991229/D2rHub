@@ -186,3 +186,547 @@
     transition: none;
   }
 }
+
+.room-automation-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-width: 760px;
+  margin: 0 auto;
+}
+
+.room-automation-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 2px 2px 4px;
+}
+
+.room-automation-header h2 {
+  color: var(--text-primary);
+  font-size: var(--text-lg);
+  font-weight: 780;
+  line-height: 1.3;
+}
+
+.room-automation-header p,
+.room-automation-section-heading p {
+  max-width: 70ch;
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.room-automation-title-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.room-automation-semantic-status,
+.room-automation-watcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 20px;
+  padding: 2px 7px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+}
+
+.room-automation-semantic-status[data-tone="success"] {
+  border-color: color-mix(in srgb, var(--success) 38%, var(--border-default));
+  color: var(--success);
+}
+
+.room-automation-semantic-status[data-tone="warning"] {
+  border-color: color-mix(in srgb, var(--warning) 38%, var(--border-default));
+  color: var(--warning);
+}
+
+.room-automation-semantic-status[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--error) 38%, var(--border-default));
+  color: var(--error);
+}
+
+.room-automation-state-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--text-muted);
+}
+
+.room-automation-state-dot[data-tone="success"] { background: var(--success); }
+.room-automation-state-dot[data-tone="warning"] { background: var(--warning); }
+.room-automation-state-dot[data-tone="danger"] { background: var(--error); }
+
+.room-automation-disabled-note,
+.room-automation-consent-notice,
+.room-automation-consent-copy,
+.room-automation-waiting-note {
+  margin: -5px 2px 0;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+}
+
+.room-automation-consent-notice,
+.room-automation-waiting-note {
+  margin: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border-default));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-card));
+}
+
+.room-automation-apply-bar {
+  position: sticky;
+  top: -1px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 7px 9px 7px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: var(--surface-modal, var(--surface-card));
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.room-automation-apply-bar[data-dirty="true"] {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border-default));
+  color: var(--text-primary);
+}
+
+.room-automation-generation {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.room-automation-apply-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.room-automation-section,
+.room-automation-advanced {
+  padding: 13px;
+}
+
+.room-automation-section {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.room-automation-section-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.room-automation-section-heading > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--text-secondary);
+}
+
+.room-automation-section-heading-action > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.room-automation-section-heading-action > button {
+  flex: 0 0 auto;
+}
+
+.room-automation-section-heading h3,
+.room-automation-advanced strong {
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.room-automation-field {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.room-automation-field > span,
+.room-automation-followers > legend {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+}
+
+.room-automation-field small,
+.room-automation-followers > small,
+.room-automation-field-error {
+  color: var(--error);
+  font-size: var(--text-xs);
+  line-height: 1.45;
+}
+
+.room-automation-field > .room-automation-field-hint {
+  color: var(--text-muted);
+}
+
+.room-automation-field-wide {
+  max-width: 360px;
+}
+
+.room-automation-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.room-automation-field .settings-input,
+.room-automation-flow-bindings .settings-input {
+  width: 100%;
+}
+
+.room-automation-field .settings-input[aria-invalid="true"] {
+  border-color: color-mix(in srgb, var(--error) 55%, var(--border-default));
+}
+
+.room-automation-shortcut-input {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.room-automation-shortcut-input[data-recording="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-card));
+  color: var(--accent);
+}
+
+.room-automation-followers {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.room-automation-followers > legend {
+  margin-bottom: 7px;
+}
+
+.room-automation-account-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.room-automation-account-row {
+  display: grid;
+  grid-template-columns: auto minmax(60px, auto) minmax(50px, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border-default);
+  border-radius: 9px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.room-automation-account-row:hover,
+.room-automation-account-row[data-selected="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.room-automation-account-row:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.room-automation-account-row input {
+  accent-color: var(--accent);
+}
+
+.room-automation-account-name,
+.room-automation-account-id {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+}
+
+.room-automation-account-name { color: var(--text-primary); font-weight: 650; }
+.room-automation-account-id { color: var(--text-muted); }
+
+.room-automation-flow-bindings {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 7px;
+  padding-top: 2px;
+}
+
+.room-automation-flow-bindings label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(90px, 0.8fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.room-automation-flow-bindings label > span:first-child {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-automation-mode-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.room-automation-mode-options > label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 66px;
+  padding: 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
+}
+
+.room-automation-mode-options > label:hover,
+.room-automation-mode-options > label[data-selected="true"] {
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+.room-automation-mode-options input { margin-top: 2px; accent-color: var(--accent); }
+.room-automation-mode-options span,
+.room-automation-mode-options small { display: block; }
+.room-automation-mode-options strong { color: var(--text-primary); font-size: var(--text-xs); }
+.room-automation-mode-options small { margin-top: 3px; color: var(--text-muted); font-size: var(--text-2xs); line-height: 1.45; }
+
+.room-automation-preview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.room-automation-preview code {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--text-sm);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-automation-workflow-heading {
+  color: var(--text-secondary);
+}
+
+.room-automation-workflow-data {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.room-automation-workflow-data > div {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 27px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
+
+.room-automation-workflow-data dt { color: var(--text-muted); font-size: var(--text-2xs); }
+.room-automation-workflow-data dd { color: var(--text-primary); font-size: var(--text-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+
+.room-automation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.room-automation-binding-status {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-hover);
+}
+
+.room-automation-binding-status[data-ready="true"] {
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border-default));
+}
+
+.room-automation-binding-status strong,
+.room-automation-binding-status span {
+  display: block;
+}
+
+.room-automation-binding-status strong { color: var(--text-primary); font-size: var(--text-xs); }
+.room-automation-binding-status div > span { margin-top: 3px; color: var(--text-muted); font-size: var(--text-2xs); }
+.room-automation-watcher { color: var(--success) !important; white-space: nowrap; }
+
+.room-automation-advanced > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.room-automation-advanced > summary::-webkit-details-marker { display: none; }
+.room-automation-advanced > summary small { display: block; margin-top: 3px; color: var(--text-muted); font-size: var(--text-xs); font-weight: 400; }
+.room-automation-advanced > summary svg { transition: transform 180ms ease; }
+.room-automation-advanced[open] > summary svg { transform: rotate(180deg); }
+.room-automation-advanced > fieldset { margin-top: 12px; }
+
+.room-automation-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 10px 12px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+}
+
+.room-automation-state-block {
+  border: 1px solid var(--border-default);
+  border-radius: 11px;
+  background: var(--surface-card);
+}
+
+.room-automation-state-block[data-tone="danger"] {
+  border-color: color-mix(in srgb, var(--error) 38%, var(--border-default));
+}
+
+.room-automation-state-block > svg { flex: 0 0 auto; color: var(--error); }
+.room-automation-state-block > div { min-width: 0; flex: 1; }
+.room-automation-state-block strong { color: var(--text-primary); }
+.room-automation-state-block p { margin-top: 2px; overflow-wrap: anywhere; color: var(--text-muted); line-height: 1.45; }
+.room-automation-empty { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+
+.room-automation-prerequisite {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border-default));
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-card));
+}
+
+.room-automation-prerequisite > svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--accent);
+}
+
+.room-automation-prerequisite > div {
+  min-width: 0;
+  flex: 1;
+}
+
+.room-automation-prerequisite strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.room-automation-prerequisite p {
+  max-width: 72ch;
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+}
+
+.room-automation-prerequisite code {
+  display: inline-block;
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  overflow-wrap: anywhere;
+}
+
+.room-automation-prerequisite > button {
+  flex: 0 0 auto;
+}
+
+@media (max-width: 620px) {
+  .room-automation-header { align-items: center; }
+  .room-automation-fields,
+  .room-automation-mode-options,
+  .room-automation-flow-bindings { grid-template-columns: minmax(0, 1fr); }
+  .room-automation-field-wide { max-width: none; }
+  .room-automation-account-row { flex: 1 1 220px; }
+  .room-automation-apply-bar { top: -1px; }
+}
+
+@media (max-width: 430px) {
+  .room-automation-header { align-items: flex-start; }
+  .room-automation-title-line { display: block; }
+  .room-automation-semantic-status { margin-top: 6px; }
+  .room-automation-apply-bar,
+  .room-automation-binding-status { align-items: stretch; flex-direction: column; }
+  .room-automation-apply-actions > button { flex: 1 1 auto; }
+  .room-automation-actions > button { flex: 1 1 160px; }
+  .room-automation-flow-bindings label { grid-template-columns: minmax(0, 1fr); }
+  .room-automation-section-heading-action { flex-wrap: wrap; }
+  .room-automation-section-heading-action > button { margin-left: 25px; }
+  .room-automation-prerequisite { flex-wrap: wrap; }
+  .room-automation-prerequisite > button { margin-left: 27px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .room-automation-account-row,
+  .room-automation-mode-options > label,
+  .room-automation-advanced > summary svg {
+    transition: none;
+  }
+}

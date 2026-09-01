@@ -11,7 +11,7 @@ interface SettingsShellProps {
   activeTab: SettingsTabId;
   config: GlobalConfig | null;
   onClose: () => void;
-  onTabChange: (tab: SettingsTabId) => void;
+  onTabChange: (tab: SettingsTabId) => boolean | void;
   children: ReactNode;
 }
 

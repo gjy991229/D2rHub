@@ -1,7 +1,37 @@
 import { describe, expect, it } from "vitest";
-import { hasAudioTelemetry } from "./audioModuleModel";
+import {
+  audioModFeatureInvokeOptions,
+  hasAudioTelemetry,
+  hasSelectedAudioModFeature,
+  selectedAudioModFeatureAddsCapability,
+} from "./audioModuleModel";
 
 describe("audio feature group truth", () => {
+  it("maps every selection to the camelCase Tauri command arguments", () => {
+    expect(audioModFeatureInvokeOptions({
+      includeAudioTelemetry: false,
+      includeRoomTools: true,
+    })).toEqual({
+      includeAudioTelemetry: false,
+      includeRoomTools: true,
+    });
+  });
+
+  it("requires one feature for a new Mod and detects additive management", () => {
+    expect(hasSelectedAudioModFeature({
+      includeAudioTelemetry: false,
+      includeRoomTools: false,
+    })).toBe(false);
+    expect(selectedAudioModFeatureAddsCapability({
+      includeAudioTelemetry: true,
+      includeRoomTools: true,
+    }, ["audio_telemetry"])).toBe(true);
+    expect(selectedAudioModFeatureAddsCapability({
+      includeAudioTelemetry: true,
+      includeRoomTools: true,
+    }, ["audio_telemetry", "in_game_room_tools"])).toBe(false);
+  });
+
   it("uses the final persisted group IDs returned by setup state", () => {
     expect(hasAudioTelemetry(["in_game_room_tools"])).toBe(false);
     expect(hasAudioTelemetry(["audio_telemetry", "in_game_room_tools"])).toBe(true);

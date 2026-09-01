@@ -20,7 +20,7 @@ interface SettingsNavigationProps {
   capabilityStatus?: CapabilityStatusSnapshot | null;
   capabilityStatusUnavailable?: boolean;
   language?: string | null;
-  onSelect: (tab: SettingsTabId) => void;
+  onSelect: (tab: SettingsTabId) => boolean | void;
 }
 
 const STATUS_COPY: Record<"zh-CN" | "en-US", Record<CapabilityRuntimeState, string>> = {
@@ -88,8 +88,14 @@ export function SettingsNavigation({
           ? (currentIndex + 1) % SETTINGS_FEATURES.length
           : (currentIndex - 1 + SETTINGS_FEATURES.length) % SETTINGS_FEATURES.length;
     const next = SETTINGS_FEATURES[nextIndex];
-    onSelect(next.id);
-    buttonRefs.current.get(next.id)?.focus();
+    const accepted = onSelect(next.id) !== false;
+    buttonRefs.current.get(accepted ? next.id : activeTab)?.focus();
+  };
+
+  const selectFromClick = (next: SettingsTabId) => {
+    if (onSelect(next) === false) {
+      buttonRefs.current.get(activeTab)?.focus();
+    }
   };
 
   return (
@@ -145,7 +151,7 @@ export function SettingsNavigation({
                     tabIndex={selected ? 0 : -1}
                     className="settings-navigation-item"
                     data-active={selected ? "true" : "false"}
-                    onClick={() => onSelect(feature.id)}
+                    onClick={() => selectFromClick(feature.id)}
                     onKeyDown={(event) => moveFocus(event, feature.id)}
                   >
                     <Icon size={15} aria-hidden="true" />

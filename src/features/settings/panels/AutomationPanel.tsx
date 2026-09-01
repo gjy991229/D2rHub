@@ -16,10 +16,11 @@ import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
   AGGREGATE_ITEM_FILTERS,
-  audioSetupDefaults,
+  AUDIO_TELEMETRY_FEATURE_ID,
   CHARM_FILTERS,
   DEFAULT_TRACKING_CATEGORIES,
   GEM_LEVELS,
+  IN_GAME_ROOM_TOOLS_FEATURE_ID,
   TRACKING_CATEGORIES,
   type AudioModPrepareProgress,
   type RuneAudioStatus,
@@ -38,17 +39,23 @@ interface AutomationPanelProps {
   audioModState: AudioModSetupState | null;
   audioModStateLoading: boolean;
   audioSetupOpen: boolean;
-  setAudioSetupOpen: Dispatch<SetStateAction<boolean>>;
+  onOpenAudioSetup: () => void;
+  onCloseAudioSetup: () => void;
   audioSetupMode: AudioSetupMode;
   setAudioSetupMode: Dispatch<SetStateAction<AudioSetupMode>>;
   audioSetupSource: string;
   setAudioSetupSource: Dispatch<SetStateAction<string>>;
   audioSetupName: string;
   setAudioSetupName: Dispatch<SetStateAction<string>>;
+  includeAudioTelemetry: boolean;
+  setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
+  includeRoomTools: boolean;
+  setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
   normalizedAudioSetupName: string;
   isAudioModUpgrade: boolean;
+  isAudioModFeatureManagement: boolean;
   audioSetupNameError: string | null;
   showAudioSetupNameError: boolean;
   hasInitializedAudioAccount: boolean;
@@ -75,17 +82,23 @@ export function AutomationPanel({
   audioModState,
   audioModStateLoading,
   audioSetupOpen,
-  setAudioSetupOpen,
+  onOpenAudioSetup,
+  onCloseAudioSetup,
   audioSetupMode,
   setAudioSetupMode,
   audioSetupSource,
   setAudioSetupSource,
   audioSetupName,
   setAudioSetupName,
+  includeAudioTelemetry,
+  setIncludeAudioTelemetry,
+  includeRoomTools,
+  setIncludeRoomTools,
   audioPreparing,
   audioPrepareProgress,
   normalizedAudioSetupName,
   isAudioModUpgrade,
+  isAudioModFeatureManagement,
   audioSetupNameError,
   showAudioSetupNameError,
   hasInitializedAudioAccount,
@@ -101,6 +114,41 @@ export function AutomationPanel({
   onClose,
   onInitializeAccount,
 }: AutomationPanelProps) {
+  const isEnglish = config.app_language === "en-US";
+  const installedAudioTelemetry = !!audioModState?.feature_groups.includes(AUDIO_TELEMETRY_FEATURE_ID);
+  const installedRoomTools = !!audioModState?.feature_groups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
+  const previewModName = isAudioModUpgrade
+    ? audioModState?.current_mod_name ?? normalizedAudioSetupName
+    : normalizedAudioSetupName;
+  const featureCopy = isEnglish
+    ? {
+        title: "Mod features",
+        description: isAudioModFeatureManagement
+          ? "Add capabilities to the current Mod. Installed features are preserved and cannot be removed here."
+          : "Choose the capabilities to package into this Mod. You can enable either feature or both.",
+        audioTitle: "Audio recognition",
+        audioDetail: "Recognize scenes, drops, and Terror Zones",
+        roomTitle: "In-game room tools",
+        roomDetail: "Quickly recreate, create, and join rooms",
+        installed: "Installed · kept",
+        manage: "Manage features",
+        cancel: "Cancel",
+        manageTitle: "Manage Mod features",
+      }
+    : {
+        title: "Mod 功能",
+        description: isAudioModFeatureManagement
+          ? "为当前 Mod 增补能力；已经安装的功能会保留，无法在这里移除。"
+          : "选择要打包进这个 Mod 的能力；可以只选一项，也可以同时启用。",
+        audioTitle: "声纹识别",
+        audioDetail: "场景、掉落与恐怖区域识别",
+        roomTitle: "局内房间工具",
+        roomDetail: "快速重开、创建与加入房间",
+        installed: "已安装 · 保留",
+        manage: "管理功能",
+        cancel: "取消",
+        manageTitle: "管理 Mod 功能",
+      };
   return (
 <div className="settings-content-grid">
   <div className="spatial-panel p-3 space-y-2">
@@ -281,16 +329,12 @@ export function AutomationPanel({
             </div>
             <button
               type="button"
-              onClick={() => {
-                const defaults = audioSetupDefaults(audioModState);
-                setAudioSetupMode(defaults.mode);
-                setAudioSetupSource(defaults.source);
-                setAudioSetupName(defaults.name);
-                setAudioSetupOpen(true);
-              }}
+              onClick={onOpenAudioSetup}
               className="shrink-0 text-2xs font-medium text-text-secondary hover:text-text-primary"
             >
-              {audioModState.update_required ? "更新" : "重新准备"}
+              {audioModState.update_required
+                ? isEnglish ? "Update" : "更新"
+                : featureCopy.manage}
             </button>
           </div>
         ) : audioSetupOpen ? (
@@ -299,69 +343,147 @@ export function AutomationPanel({
               <Package size={16} className="mt-0.5 shrink-0 text-accent" />
               <div>
                 <p className="text-xs font-semibold text-text-primary">
-                  {audioModState?.update_required ? "更新识别 Mod" : "准备识别 Mod"}
+                  {isAudioModFeatureManagement
+                    ? featureCopy.manageTitle
+                    : audioModState?.update_required
+                      ? isEnglish ? "Update recognition Mod" : "更新识别 Mod"
+                      : isEnglish ? "Prepare D2RHub Mod" : "准备 D2RHub Mod"}
                 </p>
                 <p className="mt-0.5 text-2xs leading-relaxed text-text-secondary">
-                  {audioModState?.update_required
+                  {isAudioModFeatureManagement
+                    ? isEnglish
+                      ? `D2RHub will rebuild and verify “${audioModState?.current_mod_name}” before replacing it in place. Its existing content and launch arguments stay intact.`
+                      : `D2RHub 会先重建并校验“${audioModState?.current_mod_name}”，再原位替换；已有内容和启动参数保持不变。`
+                    : audioModState?.update_required
                     ? `关闭该账号游戏后，D2RHub 会先完整生成并校验新版，再原位替换“${audioModState.current_mod_name}”；名称和启动参数不变。`
                     : "选择准备方式并命名新 Mod，其他内容由 D2RHub 自动完成。"}
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 flex gap-2" role="radiogroup" aria-label="识别 Mod 类型">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={audioSetupMode === "original"}
-                disabled={audioPreparing}
-                onClick={() => setAudioSetupMode("original")}
-                className={`audio-mod-choice flex-1 ${audioSetupMode === "original" ? "is-selected" : ""}`}
-              >
-                <span className="block text-xs font-semibold">我玩原版</span>
-                <span className="mt-0.5 block text-2xs text-text-muted">只加入识别能力</span>
-              </button>
-              <button
-                type="button"
-                role="radio"
-                aria-checked={audioSetupMode === "existing"}
-                disabled={audioPreparing || !audioModState?.installed_mods.some((mod) => mod.source_eligible)}
-                onClick={() => setAudioSetupMode("existing")}
-                className={`audio-mod-choice flex-1 ${audioSetupMode === "existing" ? "is-selected" : ""}`}
-              >
-                <span className="block text-xs font-semibold">我使用 Mod</span>
-                <span className="mt-0.5 block text-2xs text-text-muted">保留原 Mod 功能</span>
-              </button>
-            </div>
+            {!isAudioModFeatureManagement && (
+              <>
+                <div className="mt-3 flex gap-2" role="radiogroup" aria-label="识别 Mod 类型">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={audioSetupMode === "original"}
+                    disabled={audioPreparing}
+                    onClick={() => setAudioSetupMode("original")}
+                    className={`audio-mod-choice flex-1 ${audioSetupMode === "original" ? "is-selected" : ""}`}
+                  >
+                    <span className="block text-xs font-semibold">我玩原版</span>
+                    <span className="mt-0.5 block text-2xs text-text-muted">直接生成所选功能</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={audioSetupMode === "existing"}
+                    disabled={audioPreparing || !audioModState?.installed_mods.some((mod) => mod.source_eligible)}
+                    onClick={() => setAudioSetupMode("existing")}
+                    className={`audio-mod-choice flex-1 ${audioSetupMode === "existing" ? "is-selected" : ""}`}
+                  >
+                    <span className="block text-xs font-semibold">我使用 Mod</span>
+                    <span className="mt-0.5 block text-2xs text-text-muted">保留原 Mod 功能</span>
+                  </button>
+                </div>
 
-            {audioSetupMode === "existing" && (
-              <label className="mt-2 block">
-                <span className="sr-only">选择现有 Mod</span>
-                <select
-                  value={audioSetupSource}
-                  disabled={audioPreparing}
-                  onChange={event => setAudioSetupSource(event.target.value)}
-                  className="h-8 w-full rounded-lg border border-border-default bg-surface-card px-2.5 text-xs text-text-primary"
-                >
-                  <option value="" disabled>请选择未经加工的原始 Mod</option>
-                  {!audioModState?.installed_mods.some((mod) => mod.source_eligible) && (
-                    <option value="">未找到可用的原始 Mod</option>
-                  )}
-                  {audioModState?.installed_mods
-                    .filter((mod) => mod.source_eligible)
-                    .map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
-                </select>
-                {audioModState?.update_required && audioModState.build_mode === "augment" && !audioSetupSource && (
-                  <span className="mt-1 block text-2xs text-warning">
-                    旧版基于其他 Mod 生成，但未能自动确定原始 Mod；请选择当时那个未经加工的 Mod，或明确改选“我玩原版”。
-                  </span>
+                {audioSetupMode === "existing" && (
+                  <label className="mt-2 block">
+                    <span className="sr-only">选择现有 Mod</span>
+                    <select
+                      value={audioSetupSource}
+                      disabled={audioPreparing}
+                      onChange={event => setAudioSetupSource(event.target.value)}
+                      className="h-8 w-full rounded-lg border border-border-default bg-surface-card px-2.5 text-xs text-text-primary"
+                    >
+                      <option value="" disabled>请选择未经加工的原始 Mod</option>
+                      {!audioModState?.installed_mods.some((mod) => mod.source_eligible) && (
+                        <option value="">未找到可用的原始 Mod</option>
+                      )}
+                      {audioModState?.installed_mods
+                        .filter((mod) => mod.source_eligible)
+                        .map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
+                    </select>
+                    {audioModState?.update_required && audioModState.build_mode === "augment" && !audioSetupSource && (
+                      <span className="mt-1 block text-2xs text-warning">
+                        旧版基于其他 Mod 生成，但未能自动确定原始 Mod；请选择当时那个未经加工的 Mod，或明确改选“我玩原版”。
+                      </span>
+                    )}
+                  </label>
                 )}
-              </label>
+              </>
             )}
+
+            <fieldset className="mt-3 border-t border-border-default/50 pt-3">
+              <legend className="sr-only">{featureCopy.title}</legend>
+              <div className="mb-2">
+                <p className="text-xs font-semibold text-text-primary">{featureCopy.title}</p>
+                <p className="mt-0.5 max-w-[70ch] text-2xs leading-relaxed text-text-muted">
+                  {featureCopy.description}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 max-[620px]:grid-cols-1">
+                <label
+                  className={`audio-mod-choice flex min-h-[62px] cursor-pointer items-start gap-2.5 ${
+                    includeAudioTelemetry || installedAudioTelemetry ? "is-selected" : ""
+                  } ${installedAudioTelemetry ? "cursor-default" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeAudioTelemetry || installedAudioTelemetry}
+                    disabled={audioPreparing || installedAudioTelemetry}
+                    onChange={event => setIncludeAudioTelemetry(event.target.checked)}
+                    className="mt-0.5 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
+                      {featureCopy.audioTitle}
+                      {installedAudioTelemetry && (
+                        <span className="rounded-md bg-success/10 px-1.5 py-0.5 text-[9px] font-semibold text-success">
+                          {featureCopy.installed}
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 block text-2xs leading-relaxed text-text-muted">
+                      {featureCopy.audioDetail}
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={`audio-mod-choice flex min-h-[62px] cursor-pointer items-start gap-2.5 ${
+                    includeRoomTools || installedRoomTools ? "is-selected" : ""
+                  } ${installedRoomTools ? "cursor-default" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeRoomTools || installedRoomTools}
+                    disabled={audioPreparing || installedRoomTools}
+                    onChange={event => setIncludeRoomTools(event.target.checked)}
+                    className="mt-0.5 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
+                      {featureCopy.roomTitle}
+                      {installedRoomTools && (
+                        <span className="rounded-md bg-success/10 px-1.5 py-0.5 text-[9px] font-semibold text-success">
+                          {featureCopy.installed}
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 block text-2xs leading-relaxed text-text-muted">
+                      {featureCopy.roomDetail}
+                    </span>
+                  </span>
+                </label>
+              </div>
+            </fieldset>
 
             {isAudioModUpgrade ? (
               <div className="mt-3 rounded-lg border border-border-default bg-surface-card px-2.5 py-2">
-                <span className="block text-2xs font-semibold text-text-muted">原位更新，Mod 名称保持不变</span>
+                <span className="block text-2xs font-semibold text-text-muted">
+                  {isEnglish ? "Update in place · Mod name unchanged" : "原位更新，Mod 名称保持不变"}
+                </span>
                 <span className="mt-0.5 block truncate font-mono text-xs font-semibold text-text-primary">
                   {audioModState?.current_mod_name}
                 </span>
@@ -405,7 +527,7 @@ export function AutomationPanel({
               </>
             )}
             <p className="mt-1 truncate rounded-md bg-surface-card px-2 py-1 font-mono text-2xs text-text-secondary">
-              -mod {audioSetupNameError ? "<名称>" : normalizedAudioSetupName} -txt -assettestmode 1
+              -mod {audioSetupNameError ? "<名称>" : previewModName} -txt -assettestmode 1
             </p>
 
             {audioPreparing && audioPrepareProgress && (
@@ -430,29 +552,55 @@ export function AutomationPanel({
                 role="status"
               >
                 <AlertTriangle size={13} className="mt-0.5 shrink-0 text-warning" />
-                <span><strong className="text-warning">还不能开始：</strong>{audioPrepareBlockedReason}。</span>
+                <span>
+                  <strong className="text-warning">
+                    {isEnglish ? "Cannot continue: " : "还不能开始："}
+                  </strong>
+                  {audioPrepareBlockedReason}{isEnglish ? "." : "。"}
+                </span>
               </div>
             )}
 
-            <Button
-              variant="primary"
-              size="md"
-              loading={audioPreparing}
-              disabled={!!audioPrepareBlockedReason}
-              aria-describedby={audioPrepareBlockedReason ? "audio-prepare-blocked-reason" : undefined}
-              onClick={handlePrepareAudioMod}
-              className="mt-3 w-full"
-            >
-              {audioPreparing
-                ? "正在准备，请勿关闭软件"
-                : audioPrepareBlockedReason
-                  ? audioSetupNameError === "请输入新 Mod 名称"
-                    ? "填写 Mod 名称后即可准备"
-                    : "完成上方配置后即可准备"
-                  : audioModState?.update_required ? "同名更新并替换旧版" : "一键准备并开启"}
-            </Button>
+            <div className="mt-3 flex gap-2">
+              <Button
+                variant="secondary"
+                size="md"
+                disabled={audioPreparing}
+                onClick={onCloseAudioSetup}
+                className="shrink-0"
+              >
+                {featureCopy.cancel}
+              </Button>
+              <Button
+                variant="primary"
+                size="md"
+                loading={audioPreparing}
+                disabled={!!audioPrepareBlockedReason}
+                aria-describedby={audioPrepareBlockedReason ? "audio-prepare-blocked-reason" : undefined}
+                onClick={handlePrepareAudioMod}
+                className="min-w-0 flex-1"
+              >
+                {audioPreparing
+                  ? isEnglish ? "Preparing — keep D2RHub open" : "正在准备，请勿关闭软件"
+                  : audioPrepareBlockedReason
+                    ? isEnglish
+                      ? "Complete the choices above"
+                      : !isAudioModUpgrade && audioSetupNameError === "请输入新 Mod 名称"
+                        ? "填写 Mod 名称后即可准备"
+                        : "完成上方配置后即可准备"
+                    : isAudioModFeatureManagement
+                      ? isEnglish ? "Add selected features" : "增补所选功能"
+                      : audioModState?.update_required
+                        ? isEnglish ? "Update safely in place" : "同名更新并替换旧版"
+                        : isEnglish ? "Prepare and apply" : "一键准备并应用"}
+              </Button>
+            </div>
             <p className="mt-2 text-center text-2xs leading-relaxed text-text-muted">
-              {isAudioModUpgrade
+              {isAudioModFeatureManagement
+                ? isEnglish
+                  ? "The current verified Mod is used as the source; existing and future feature groups are carried forward."
+                  : "以当前已校验 Mod 为来源重建；已有功能与未来版本功能都会一并保留。"
+                : isAudioModUpgrade
                 ? "不会拿旧版识别 Mod 再加工；会从原版或所选原始 Mod 重建，校验成功后才替换旧目录。"
                 : "不修改源 Mod；账号参数固定配置为 -mod 名称 -txt -assettestmode 1。"}
             </p>
@@ -460,15 +608,7 @@ export function AutomationPanel({
         ) : (
           <button
             type="button"
-            onClick={() => {
-              if (audioModState) {
-                const defaults = audioSetupDefaults(audioModState);
-                setAudioSetupMode(defaults.mode);
-                setAudioSetupSource(defaults.source);
-                setAudioSetupName(defaults.name);
-              }
-              setAudioSetupOpen(true);
-            }}
+            onClick={onOpenAudioSetup}
             className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-hover px-3 py-2.5 text-left hover:bg-surface-active"
           >
             <span className="flex min-w-0 items-start gap-2.5">

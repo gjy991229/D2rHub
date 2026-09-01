@@ -2,6 +2,11 @@ import React, { useEffect, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { mockConvertFileSrc, mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import type { AccountMeta, GlobalConfig } from "./store/types";
+import type {
+  RoomAutomationConfigSnapshot,
+  RoomAutomationWorkflowStatus,
+  RoomChatBindingStatus,
+} from "./features/roomAutomation/types";
 import "./styles/globals.css";
 import "./styles/visualAudit.css";
 
@@ -279,6 +284,72 @@ const baseConfig: GlobalConfig = {
 
 let persistedGlobalConfig: GlobalConfig = { ...baseConfig };
 
+let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
+  schema_version: 1,
+  generation: 6,
+  config: {
+    enabled: true,
+    chat_f13_auto_patch_enabled: true,
+    primary_account_id: "sorc-01",
+    follower_account_ids: ["barb-02", "pala-03"],
+    auto_followers_enabled: false,
+    auto_followers_delay_secs: 5,
+    shortcut: "Ctrl+Alt+R",
+    join_shortcut: "Ctrl+Alt+J",
+    name_prefix: "chaos-",
+    password: "pw",
+    next_sequence: 27,
+    sequence_width: 3,
+    background_text_strategy: "post_keys",
+    strategy_version: 16,
+    standard_flow: { step_delay_ms: 80, character_delay_ms: 10 },
+    direct_lobby_flow: { step_delay_ms: 60, character_delay_ms: 10 },
+    account_flow_bindings: { "sorc-01": "standard", "barb-02": "direct_lobby" },
+  },
+  normalization: {
+    source_strategy_version: 16,
+    target_strategy_version: 16,
+    changed: false,
+    requires_chat_binding_consent: false,
+  },
+  consent_notice: null,
+};
+
+const roomAutomationStatus: RoomAutomationWorkflowStatus = {
+  revision: 4,
+  task_id: null,
+  running: false,
+  phase: "idle",
+  recovery_action: null,
+  waiting_mode: null,
+  room_name: null,
+  room_sequence: null,
+  attempt: 0,
+  primary_account_id: null,
+  follower_account_ids: [],
+  completed_follower_account_ids: [],
+  started_at: null,
+  last_error: null,
+};
+
+const roomChatBindingStatus: RoomChatBindingStatus = {
+  ready: true,
+  totalFiles: 3,
+  installedFiles: 3,
+  eligibleFiles: 0,
+  conflictedFiles: 0,
+  backupFiles: 3,
+  orphanBackupFiles: 0,
+  transactionArtifacts: 0,
+  d2rRunning: false,
+  consentGranted: true,
+  watcherRunning: true,
+  autoPatchEnabled: true,
+  directories: ["Saved Games\\Diablo II Resurrected"],
+  lastWatcherError: null,
+  message: "F13 binding ready",
+};
+
 const accountSettings: SettingsMap = {
   "Window Mode": 0,
   "Screen Resolution (Windowed)": "1280x720",
@@ -346,6 +417,14 @@ function installIpcMock() {
     switch (cmd) {
       case "get_global_config":
         return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
+      case "get_capability_statuses":
+        return {
+          revision: 3,
+          capabilities: [
+            { id: "desktop-pet", requested_enabled: true, state: "running", reason_code: null },
+            { id: "room-automation", requested_enabled: true, state: "running", reason_code: null },
+          ],
+        };
       case "save_global_config": {
         persistedGlobalConfig = (payload as { config?: GlobalConfig } | undefined)?.config
           ?? persistedGlobalConfig;
@@ -392,11 +471,12 @@ function installIpcMock() {
             required_recipe_version: 2,
             build_mode: "augment",
             source_mod_name: null,
+            feature_groups: ["audio_telemetry"],
             reason_code: "update_available",
             message: "旧版识别 Mod 仍可使用；更新后可获得即时恐怖区域识别",
             installed_mods: [
-              { name: "jcy", audio_ready: false, update_required: false, source_eligible: true },
-              { name: "jcy-tz", audio_ready: true, update_required: true, source_eligible: false },
+              { name: "jcy", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false },
+              { name: "jcy-tz", audio_ready: true, update_required: true, source_eligible: false, feature_groups: ["audio_telemetry"], audio_reusable: false },
             ],
             running_pid: 28420,
             session_verified: true,
@@ -417,11 +497,12 @@ function installIpcMock() {
           required_recipe_version: 2,
           build_mode: null,
           source_mod_name: null,
+          feature_groups: [],
           reason_code: "missing_mod",
           message: "当前账号还没有使用识别 Mod",
           installed_mods: [
-            { name: "ReMoDDeD", audio_ready: false, update_required: false, source_eligible: true },
-            { name: "VanillaPlus", audio_ready: false, update_required: false, source_eligible: true },
+            { name: "ReMoDDeD", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false },
+            { name: "VanillaPlus", audio_ready: false, update_required: false, source_eligible: true, feature_groups: [], audio_reusable: false },
           ],
           running_pid: null,
           session_verified: false,
@@ -429,6 +510,27 @@ function installIpcMock() {
           active_session_update_required: null,
           restart_required: false,
         };
+      case "room_automation_get_config":
+        return roomAutomationSnapshot;
+      case "room_automation_save_config": {
+        const args = payload as { config?: RoomAutomationConfigSnapshot["config"] } | undefined;
+        roomAutomationSnapshot = {
+          ...roomAutomationSnapshot,
+          generation: roomAutomationSnapshot.generation + 1,
+          config: args?.config ?? roomAutomationSnapshot.config,
+        };
+        return { snapshot: roomAutomationSnapshot, apply_warning: null };
+      }
+      case "room_automation_get_status":
+      case "room_automation_start_primary":
+      case "room_automation_start_followers":
+      case "room_automation_retry":
+      case "room_automation_cancel":
+        return roomAutomationStatus;
+      case "room_automation_get_chat_binding":
+      case "room_automation_install_chat_binding":
+      case "room_automation_restore_chat_binding":
+        return roomChatBindingStatus;
       case "get_terror_zone_snapshot":
         return {
           current: {

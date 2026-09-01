@@ -23,9 +23,17 @@ assert(
   isTauriCommandName("get_capability_statuses"),
   "the capability status snapshot command is part of the frontend contract",
 );
+assert(
+  isTauriCommandName("room_automation_save_config"),
+  "the room automation sidecar save command is part of the frontend contract",
+);
 assert(!isTauriCommandName("launch_account"), "unknown commands fail runtime validation");
 assert(isTauriEventName("launch-progress"), "known events pass runtime validation");
 assert(
   isTauriEventName("capability-status-updated"),
   "the capability status commit event is part of the frontend contract",
+);
+assert(
+  isTauriEventName("room-automation://status-changed"),
+  "the room automation status event is part of the frontend contract",
 );

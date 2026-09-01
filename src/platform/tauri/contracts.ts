@@ -59,6 +59,16 @@ export const TAURI_COMMANDS = [
   "rename_account",
   "reorder_accounts",
   "restart_rune_audio_monitor",
+  "room_automation_cancel",
+  "room_automation_get_chat_binding",
+  "room_automation_get_config",
+  "room_automation_get_status",
+  "room_automation_install_chat_binding",
+  "room_automation_restore_chat_binding",
+  "room_automation_retry",
+  "room_automation_save_config",
+  "room_automation_start_followers",
+  "room_automation_start_primary",
   "restore_window_placement",
   "save_account_settings",
   "save_global_config",
@@ -97,6 +107,8 @@ export const TAURI_EVENTS = [
   "launch-ended",
   "launch-progress",
   "rune-audio-detected",
+  "room-automation://config-committed",
+  "room-automation://status-changed",
 ] as const;
 
 export type TauriEventName = (typeof TAURI_EVENTS)[number];

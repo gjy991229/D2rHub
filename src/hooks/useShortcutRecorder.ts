@@ -6,7 +6,7 @@ import { normalizeShortcut } from "../utils/shortcut";
  * 返回 null 表示仅按下了修饰键（Ctrl/Alt/Shift），应忽略。
  * 不支持 Win 键。
  */
-export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLInputElement>): string | null {
+export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLElement>): string | null {
   const key = e.key;
 
   // 忽略纯修饰键
@@ -25,7 +25,17 @@ export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLInputElemen
 
   // 完整按键名映射（与后端 vk_to_key_string 保持一致）
   let keyName: string;
-  if (key === " ") {
+  if (e.code === "NumpadAdd") {
+    keyName = "Num+";
+  } else if (e.code === "NumpadMultiply") {
+    keyName = "Num*";
+  } else if (e.code === "NumpadSubtract") {
+    keyName = "Num-";
+  } else if (e.code === "NumpadDecimal") {
+    keyName = "Num.";
+  } else if (e.code === "NumpadDivide") {
+    keyName = "Num/";
+  } else if (key === " ") {
     keyName = "Space";
   } else if (key.length === 1) {
     keyName = key.toUpperCase();

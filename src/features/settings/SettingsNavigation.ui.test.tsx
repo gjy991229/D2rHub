@@ -29,6 +29,7 @@ describe("settings feature registry", () => {
       "shortcuts",
       "overlays",
       "automation",
+      "room-automation",
       "pet",
     ]);
     expect(new Set(SETTINGS_FEATURES.map((feature) => feature.id)).size).toBe(SETTINGS_FEATURES.length);
@@ -44,6 +45,7 @@ describe("settings feature registry", () => {
     expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: true } as GlobalConfig)).toBe(true);
     expect(overlays?.isConfigured?.({ enable_tz_overlay: false, enable_stats_overlay: false } as GlobalConfig)).toBe(false);
     expect(SETTINGS_FEATURES.find((feature) => feature.id === "pet")?.capabilityIds).toEqual(["desktop-pet"]);
+    expect(SETTINGS_FEATURES.find((feature) => feature.id === "room-automation")?.capabilityIds).toEqual(["room-automation"]);
   });
 });
 
@@ -68,6 +70,20 @@ describe("SettingsNavigation", () => {
     fireEvent.keyDown(coreTab, { key: "ArrowRight" });
 
     expect(screen.getByRole("tab", { name: /运行环境/ }).getAttribute("aria-selected")).toBe("true");
+  });
+
+  it("keeps focus on the active tab when a guarded selection is rejected", () => {
+    render(<SettingsNavigation activeTab="room-automation" onSelect={() => false} />);
+    const active = screen.getByRole("tab", { name: /自动跟房/ }) as HTMLButtonElement;
+    const next = screen.getByRole("tab", { name: /桌面伴随/ }) as HTMLButtonElement;
+
+    next.focus();
+    fireEvent.click(next);
+    expect(document.activeElement).toBe(active);
+
+    fireEvent.keyDown(active, { key: "ArrowRight" });
+    expect(document.activeElement).toBe(active);
+    expect(active.getAttribute("aria-selected")).toBe("true");
   });
 
   it("renders the registry copy in English when the application language is English", () => {

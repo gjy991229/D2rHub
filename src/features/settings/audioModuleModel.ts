@@ -34,12 +34,45 @@ export interface AudioModPrepareResult {
   feature_groups: AudioModFeatureGroup[];
 }
 
+export interface AudioModFeatureSelection {
+  includeAudioTelemetry: boolean;
+  includeRoomTools: boolean;
+}
+
+export const AUDIO_TELEMETRY_FEATURE_ID = "audio_telemetry";
+export const IN_GAME_ROOM_TOOLS_FEATURE_ID = "in_game_room_tools";
+
+export function audioModFeatureInvokeOptions(
+  selection: AudioModFeatureSelection,
+): AudioModFeatureSelection {
+  return {
+    includeAudioTelemetry: selection.includeAudioTelemetry,
+    includeRoomTools: selection.includeRoomTools,
+  };
+}
+
+export function hasSelectedAudioModFeature(
+  selection: AudioModFeatureSelection,
+): boolean {
+  return selection.includeAudioTelemetry || selection.includeRoomTools;
+}
+
+export function selectedAudioModFeatureAddsCapability(
+  selection: AudioModFeatureSelection,
+  installedGroups: readonly string[],
+): boolean {
+  return (
+    (selection.includeAudioTelemetry && !installedGroups.includes(AUDIO_TELEMETRY_FEATURE_ID))
+    || (selection.includeRoomTools && !installedGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID))
+  );
+}
+
 export function hasAudioTelemetry(
   groups: readonly string[] | readonly AudioModFeatureGroup[],
 ): boolean {
   return groups.some((group) => (
     typeof group === "string" ? group : group.id
-  ) === "audio_telemetry");
+  ) === AUDIO_TELEMETRY_FEATURE_ID);
 }
 
 export function audioSetupDefaults(state: AudioModSetupState): {
