@@ -1,3 +1,4 @@
+mod account_ordering;
 mod account_query;
 mod facade;
 mod instances;
@@ -5,6 +6,7 @@ mod launch;
 mod leases;
 mod ports;
 
+pub use account_ordering::{AccountOrderRepository, AccountOrderingService};
 pub use account_query::AccountQueryService;
 pub use facade::{MultiInstanceFacade, WindowMatch};
 pub use instances::{InstanceRegistry, RunningInstance};

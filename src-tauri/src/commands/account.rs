@@ -5,7 +5,8 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountQueryService, AccountRuntimePort, CancellationTicket, WindowPosition,
+    AccountCatalog, AccountOrderRepository, AccountOrderingService, AccountQueryService,
+    AccountRuntimePort, CancellationTicket, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -278,6 +279,16 @@ impl AccountCatalog for AccountManagerCatalog<'_> {
 
     fn get(&self, account_id: &str) -> Result<AccountMeta, AppError> {
         AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+}
+
+impl AccountOrderRepository for AccountManagerCatalog<'_> {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
+        AccountManager::save_meta(&self.config.accounts_dir, account)
     }
 }
 
@@ -617,74 +628,19 @@ pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<Account
     AccountQueryService::new(&account_catalog, &account_runtime).list(&cfg)
 }
 
-/// 重新排序账号（更新 order 字段）
-fn ensure_unique_account_ids(account_ids: &[String]) -> Result<(), AppError> {
-    let mut canonical_ids: Vec<String> = account_ids
-        .iter()
-        .map(|account_id| account_id.to_ascii_lowercase())
-        .collect();
-    canonical_ids.sort();
-    canonical_ids.dedup();
-    if canonical_ids.len() != account_ids.len() {
-        return Err(AppError::ConfigWriteError(
-            "账号排序列表包含重复账号，已拒绝写入".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn apply_account_order(accounts_dir: &str, ordered_ids: &[String]) -> Result<(), AppError> {
-    // 所有账号必须先成功读取，避免“前几个已写入、后一个不存在”的输入型部分提交。
-    let originals = ordered_ids
-        .iter()
-        .map(|id| AccountManager::load_meta(accounts_dir, id))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut updated = originals.clone();
-    for (index, meta) in updated.iter_mut().enumerate() {
-        meta.order = index as u32;
-    }
-
-    for (index, meta) in updated.iter().enumerate() {
-        if let Err(write_error) = AccountManager::save_meta(accounts_dir, meta) {
-            let mut rollback_errors = Vec::new();
-            for original in &originals[..index] {
-                if let Err(error) = AccountManager::save_meta(accounts_dir, original) {
-                    rollback_errors.push(format!("{}: {error}", original.id));
-                }
-            }
-            if rollback_errors.is_empty() {
-                return Err(write_error);
-            }
-            return Err(AppError::FileError(format!(
-                "账号排序写入失败且部分回滚失败。写入错误: {write_error}；回滚错误: {}",
-                rollback_errors.join("；")
-            )));
-        }
-    }
-    Ok(())
-}
-
+/// 重新排序账号（更新 order 字段）。校验、冲突控制与回滚由核心应用用例负责。
 #[tauri::command]
 pub fn reorder_accounts(
     state: tauri::State<'_, SharedState>,
     ordered_ids: Vec<String>,
 ) -> Result<(), AppError> {
-    for id in &ordered_ids {
-        AccountManager::validate_account_id(id)?;
-    }
-    ensure_unique_account_ids(&ordered_ids)?;
-    let mut lock_ids = ordered_ids.clone();
-    lock_ids.sort_by_key(|account_id| account_id.to_ascii_lowercase());
-    let _account_leases: Vec<AccountLifecycleLease> = lock_ids
-        .iter()
-        .map(|id| AccountLifecycleLease::try_acquire(state.inner(), id))
-        .collect::<Result<_, _>>()?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    apply_account_order(&cfg.accounts_dir, &ordered_ids)
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountOrderingService::new(&repository, state.multi_instance().account_leases())
+        .reorder(&ordered_ids)
 }
 
 /// 打开账号配置目录（直接用 Explorer 打开）
@@ -1445,19 +1401,19 @@ fn cleanup_after_snapshot() -> Result<(), AppError> {
 #[cfg(test)]
 mod settings_json_tests {
     use super::{
-        append_unique_mod_configuration, apply_account_order, commit_account_settings_transaction,
+        append_unique_mod_configuration, commit_account_settings_transaction,
         complete_staged_account_deletion_after_config_commit, config_references_account,
         copy_account_settings_to_system, copy_system_settings_to_account_if_available,
-        ensure_account_display_name_available, ensure_unique_account_ids,
-        hydrate_meta_from_runtime_snapshot, mark_account_deletion_committed,
-        normalize_mod_configuration, normalized_account_display_name,
-        prepare_battle_net_runtime_directory, recover_account_transactions,
-        remove_account_directory_without_resurrection, replace_battle_net_snapshot,
-        replace_path_with_backup, replace_registry_snapshot_with, resolve_account_runtime_snapshot,
-        restore_staged_account_deletion, sibling_with_suffix, stage_account_directory,
-        stage_account_directory_for_deletion, switch_international_account_region,
-        validate_runtime_snapshot_root, AccountDeletionPhase, AccountManager, AccountMeta,
-        BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        ensure_account_display_name_available, hydrate_meta_from_runtime_snapshot,
+        mark_account_deletion_committed, normalize_mod_configuration,
+        normalized_account_display_name, prepare_battle_net_runtime_directory,
+        recover_account_transactions, remove_account_directory_without_resurrection,
+        replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
+        resolve_account_runtime_snapshot, restore_staged_account_deletion, sibling_with_suffix,
+        stage_account_directory, stage_account_directory_for_deletion,
+        switch_international_account_region, validate_runtime_snapshot_root, AccountDeletionPhase,
+        AccountManager, AccountMeta, BnetInitializationKind, RegistryValueBackup,
+        ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
     use crate::domain::config::GlobalConfig;
     use crate::error::AppError;
@@ -2026,40 +1982,6 @@ mod settings_json_tests {
 
         assert!(matches!(error, AppError::AccountNotFound(_)));
         assert!(!accounts.join("acount1").exists());
-        let _ = std::fs::remove_dir_all(accounts);
-    }
-
-    #[test]
-    fn account_reorder_rejects_case_aliases() {
-        let ids = vec![
-            "ABCDEF01-2345-6789-ABCD-EF0123456789".to_string(),
-            "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
-        ];
-
-        assert!(ensure_unique_account_ids(&ids).is_err());
-    }
-
-    #[test]
-    fn account_reorder_preflights_every_id_before_writing() {
-        let accounts = temp_dir("reorder_preflight");
-        let account_dir = accounts.join("acount1");
-        std::fs::create_dir_all(&account_dir).unwrap();
-        let mut meta = AccountMeta::new("acount1");
-        meta.order = 41;
-        AccountManager::save_meta(accounts.to_str().unwrap(), &meta).unwrap();
-
-        let result = apply_account_order(
-            accounts.to_str().unwrap(),
-            &["acount1".to_string(), "acount2".to_string()],
-        );
-
-        assert!(result.is_err());
-        assert_eq!(
-            AccountManager::load_meta(accounts.to_str().unwrap(), "acount1")
-                .unwrap()
-                .order,
-            41
-        );
         let _ = std::fs::remove_dir_all(accounts);
     }
 
