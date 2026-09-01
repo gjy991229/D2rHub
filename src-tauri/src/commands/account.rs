@@ -5,8 +5,8 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountOrderRepository, AccountOrderingService, AccountQueryService,
-    AccountRuntimePort, CancellationTicket, WindowPosition,
+    AccountCatalog, AccountOrderingService, AccountPositionService, AccountQueryService,
+    AccountRepository, AccountRuntimePort, CancellationTicket, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -282,7 +282,7 @@ impl AccountCatalog for AccountManagerCatalog<'_> {
     }
 }
 
-impl AccountOrderRepository for AccountManagerCatalog<'_> {
+impl AccountRepository for AccountManagerCatalog<'_> {
     fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
         AccountManager::load_meta(&self.config.accounts_dir, account_id)
     }
@@ -403,7 +403,7 @@ impl AccountManager {
             }
         }
 
-        normalize_legacy_window_position(&mut meta);
+        meta.normalize_legacy_window_position();
 
         if let Some(account_dir) = path.parent() {
             hydrate_meta_from_runtime_snapshot(account_dir, &mut meta);
@@ -456,81 +456,6 @@ impl AccountManager {
     pub fn next_id(_accounts_dir: &str) -> String {
         uuid::Uuid::new_v4().to_string()
     }
-}
-
-fn next_legacy_position_id(presets: &[WindowPositionPreset]) -> String {
-    let base = "legacy-window-position";
-    if !presets.iter().any(|preset| preset.id == base) {
-        return base.to_string();
-    }
-    let mut suffix = 2;
-    loop {
-        let candidate = format!("{base}-{suffix}");
-        if !presets.iter().any(|preset| preset.id == candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
-fn next_legacy_position_name(presets: &[WindowPositionPreset]) -> String {
-    let base = "原位置";
-    if !presets.iter().any(|preset| preset.name == base) {
-        return base.to_string();
-    }
-    let mut suffix = 2;
-    loop {
-        let candidate = format!("{base} {suffix}");
-        if !presets.iter().any(|preset| preset.name == candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
-/// 旧版本只有 window_x/window_y。它们继续作为跨版本兼容的权威镜像：
-/// 旧版修改坐标或清空坐标后，新版重新读取时也会得到相同默认位置。
-fn normalize_legacy_window_position(meta: &mut AccountMeta) {
-    let mut seen_ids = std::collections::HashSet::new();
-    meta.position_presets.retain_mut(|preset| {
-        preset.id = preset.id.trim().to_string();
-        preset.name = preset.name.trim().to_string();
-        !preset.id.is_empty() && !preset.name.is_empty() && seen_ids.insert(preset.id.clone())
-    });
-
-    let Some((x, y)) = meta.window_x.zip(meta.window_y) else {
-        meta.active_position_id = None;
-        return;
-    };
-
-    if let Some(active_id) = meta.active_position_id.as_deref() {
-        if meta
-            .position_presets
-            .iter()
-            .any(|preset| preset.id == active_id && preset.x == x && preset.y == y)
-        {
-            return;
-        }
-    }
-
-    if let Some(existing) = meta
-        .position_presets
-        .iter()
-        .find(|preset| preset.x == x && preset.y == y)
-    {
-        meta.active_position_id = Some(existing.id.clone());
-        return;
-    }
-
-    let id = next_legacy_position_id(&meta.position_presets);
-    let name = next_legacy_position_name(&meta.position_presets);
-    meta.position_presets.push(WindowPositionPreset {
-        id: id.clone(),
-        name,
-        x,
-        y,
-    });
-    meta.active_position_id = Some(id);
 }
 
 pub(crate) fn normalized_account_display_name(name: &str) -> String {
@@ -1272,53 +1197,13 @@ pub fn set_account_window_position(
     window_x: Option<i32>,
     window_y: Option<i32>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    meta.window_x = window_x;
-    meta.window_y = window_y;
-    match window_x.zip(window_y) {
-        Some((x, y)) => {
-            if let Some(active_id) = meta.active_position_id.clone() {
-                if let Some(active) = meta
-                    .position_presets
-                    .iter_mut()
-                    .find(|preset| preset.id == active_id)
-                {
-                    active.x = x;
-                    active.y = y;
-                } else {
-                    meta.active_position_id = None;
-                }
-            }
-            if meta.active_position_id.is_none() {
-                if let Some(existing) = meta
-                    .position_presets
-                    .iter()
-                    .find(|preset| preset.x == x && preset.y == y)
-                {
-                    meta.active_position_id = Some(existing.id.clone());
-                } else {
-                    let id = next_legacy_position_id(&meta.position_presets);
-                    let name = next_legacy_position_name(&meta.position_presets);
-                    meta.position_presets.push(WindowPositionPreset {
-                        id: id.clone(),
-                        name,
-                        x,
-                        y,
-                    });
-                    meta.active_position_id = Some(id);
-                }
-            }
-        }
-        None => meta.active_position_id = None,
-    }
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountPositionService::new(&repository, state.multi_instance().account_leases())
+        .set_window_position(&account_id, window_x, window_y)
 }
 
 /// 保存账号的位置胶囊库与主界面默认选择，并同步旧版 window_x/window_y 字段。
@@ -1329,58 +1214,13 @@ pub fn update_account_positions(
     active_position_id: Option<String>,
     position_presets: Vec<WindowPositionPreset>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut normalized = Vec::with_capacity(position_presets.len());
-    let mut ids = std::collections::HashSet::new();
-    let mut names = std::collections::HashSet::new();
-    for mut preset in position_presets {
-        preset.id = preset.id.trim().to_string();
-        preset.name = preset.name.trim().to_string();
-        if preset.id.is_empty() || preset.name.is_empty() {
-            return Err(AppError::ConfigWriteError(
-                "位置名称和唯一标识不能为空".to_string(),
-            ));
-        }
-        if !ids.insert(preset.id.clone()) {
-            return Err(AppError::ConfigWriteError(format!(
-                "位置唯一标识重复: {}",
-                preset.id
-            )));
-        }
-        if !names.insert(preset.name.to_lowercase()) {
-            return Err(AppError::ConfigWriteError(format!(
-                "位置名称重复: {}",
-                preset.name
-            )));
-        }
-        normalized.push(preset);
-    }
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let active_position_id = active_position_id
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty());
-    let selected = active_position_id
-        .as_deref()
-        .map(|id| {
-            normalized
-                .iter()
-                .find(|preset| preset.id == id)
-                .ok_or_else(|| AppError::ConfigWriteError(format!("所选位置不存在: {id}")))
-        })
-        .transpose()?;
-
-    meta.window_x = selected.map(|preset| preset.x);
-    meta.window_y = selected.map(|preset| preset.y);
-    meta.position_presets = normalized;
-    meta.active_position_id = active_position_id;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountPositionService::new(&repository, state.multi_instance().account_leases())
+        .replace_positions(&account_id, active_position_id, position_presets)
 }
 
 /// 初始化/重新初始化完成后：杀战网、清空 UnifiedAuth 注册表

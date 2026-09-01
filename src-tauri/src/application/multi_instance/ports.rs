@@ -21,6 +21,15 @@ pub trait AccountCatalog: Send + Sync {
     }
 }
 
+/// Mutable persistence boundary used by core account use cases.
+///
+/// Capability modules receive read-only account ports; mutation stays behind
+/// application services that also own lifecycle leases and rollback policy.
+pub trait AccountRepository: Send + Sync {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError>;
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application

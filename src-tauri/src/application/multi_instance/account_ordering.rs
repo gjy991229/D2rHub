@@ -1,24 +1,15 @@
-use crate::domain::account::{is_valid_account_id, AccountMeta};
+use crate::domain::account::is_valid_account_id;
 use crate::error::AppError;
 
-use super::AccountLeaseManager;
-
-/// Persistence boundary for the core account ordering use case.
-///
-/// The application layer owns validation, conflict control and rollback. The
-/// filesystem adapter only loads and saves one account metadata record.
-pub trait AccountOrderRepository: Send + Sync {
-    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError>;
-    fn save(&self, account: &AccountMeta) -> Result<(), AppError>;
-}
+use super::{AccountLeaseManager, AccountRepository};
 
 pub struct AccountOrderingService<'a> {
-    accounts: &'a dyn AccountOrderRepository,
+    accounts: &'a dyn AccountRepository,
     leases: &'a AccountLeaseManager,
 }
 
 impl<'a> AccountOrderingService<'a> {
-    pub fn new(accounts: &'a dyn AccountOrderRepository, leases: &'a AccountLeaseManager) -> Self {
+    pub fn new(accounts: &'a dyn AccountRepository, leases: &'a AccountLeaseManager) -> Self {
         Self { accounts, leases }
     }
 
@@ -89,8 +80,8 @@ mod tests {
     use std::collections::{HashMap, HashSet};
     use std::sync::Mutex;
 
-    use super::{AccountOrderRepository, AccountOrderingService};
-    use crate::application::multi_instance::AccountLeaseManager;
+    use super::AccountOrderingService;
+    use crate::application::multi_instance::{AccountLeaseManager, AccountRepository};
     use crate::domain::account::AccountMeta;
     use crate::error::AppError;
 
@@ -124,7 +115,7 @@ mod tests {
         }
     }
 
-    impl AccountOrderRepository for FakeRepository {
+    impl AccountRepository for FakeRepository {
         fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
             self.accounts
                 .lock()
