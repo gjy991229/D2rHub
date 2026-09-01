@@ -36,6 +36,12 @@ pub trait AccountSettingsRepository: AccountRepository {
     fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError>;
 }
 
+/// Atomic persistence boundary for account metadata plus any edition-specific
+/// Battle.net runtime snapshot that mirrors Mod arguments.
+pub trait AccountModRepository: AccountRepository {
+    fn save_mod_configuration(&self, account: AccountMeta) -> Result<AccountMeta, AppError>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application
