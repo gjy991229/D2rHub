@@ -158,8 +158,8 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
   {
     id: "shortcuts",
     icon: Settings,
-    kind: "optional",
-    group: "optional-features",
+    kind: "core",
+    group: "multi-instance",
     isConfigured: (config) => {
       try {
         const bindings: unknown = JSON.parse(config.shortcut_bindings_json || "{}");

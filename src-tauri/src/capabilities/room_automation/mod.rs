@@ -7,7 +7,6 @@
 mod model;
 mod status;
 
-#[cfg(test)]
 pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
     FlowStrategy, NormalizationReport, RoomAutomationConfig, RoomAutomationConfigError,

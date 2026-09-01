@@ -161,6 +161,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::global_config::get_global_config,
             commands::capability::get_capability_statuses,
+            commands::capability::get_capability_descriptors,
             commands::task::get_tasks,
             commands::task::get_task,
             commands::task::get_task_timeline,

@@ -18,7 +18,10 @@ afterEach(cleanup);
 
 describe("settings feature registry", () => {
   it("keeps the multi-instance core separate from optional capabilities", () => {
-    expect(getSettingsFeaturesByKind("core").map((feature) => feature.id)).toEqual(["accounts"]);
+    expect(getSettingsFeaturesByKind("core").map((feature) => feature.id)).toEqual([
+      "accounts",
+      "shortcuts",
+    ]);
     expect(getSettingsFeaturesByKind("platform").map((feature) => feature.id)).toEqual([
       "paths",
       "agent",
@@ -27,7 +30,6 @@ describe("settings feature registry", () => {
       "advanced",
     ]);
     expect(getSettingsFeaturesByKind("optional").map((feature) => feature.id)).toEqual([
-      "shortcuts",
       "overlays",
       "automation",
       "mod-processing",

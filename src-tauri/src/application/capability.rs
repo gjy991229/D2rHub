@@ -33,18 +33,59 @@ impl fmt::Display for CapabilityId {
 #[derive(Clone, Debug)]
 pub struct CapabilityDescriptor {
     pub id: CapabilityId,
+    pub version: &'static str,
+    pub category: CapabilityCategory,
     pub dependencies: Vec<CapabilityId>,
     pub enabled_by_default: bool,
+    pub config_schema_version: u32,
+    pub settings_section: &'static str,
+    pub commands: &'static [&'static str],
+    pub events: &'static [&'static str],
 }
 
 impl CapabilityDescriptor {
-    pub fn optional(id: CapabilityId) -> Self {
+    pub fn first_party(
+        id: CapabilityId,
+        category: CapabilityCategory,
+        config_schema_version: u32,
+        settings_section: &'static str,
+        commands: &'static [&'static str],
+        events: &'static [&'static str],
+    ) -> Self {
         Self {
             id,
+            version: env!("CARGO_PKG_VERSION"),
+            category,
             dependencies: Vec::new(),
             enabled_by_default: false,
+            config_schema_version,
+            settings_section,
+            commands,
+            events,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CapabilityCategory {
+    Automation,
+    Companion,
+    Overlay,
+    Telemetry,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CapabilityDescriptorSnapshot {
+    pub id: String,
+    pub version: String,
+    pub category: CapabilityCategory,
+    pub dependencies: Vec<String>,
+    pub enabled_by_default: bool,
+    pub config_schema_version: u32,
+    pub settings_section: String,
+    pub commands: Vec<String>,
+    pub events: Vec<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -324,6 +365,40 @@ impl CapabilityRegistry {
 
     pub fn snapshot(&self) -> CapabilityStatusSnapshot {
         snapshot_from_inner(&self.inner.lock())
+    }
+
+    pub fn descriptors(&self) -> Vec<CapabilityDescriptorSnapshot> {
+        self.inner
+            .lock()
+            .entries
+            .values()
+            .map(|entry| CapabilityDescriptorSnapshot {
+                id: entry.descriptor.id.to_string(),
+                version: entry.descriptor.version.to_string(),
+                category: entry.descriptor.category,
+                dependencies: entry
+                    .descriptor
+                    .dependencies
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                enabled_by_default: entry.descriptor.enabled_by_default,
+                config_schema_version: entry.descriptor.config_schema_version,
+                settings_section: entry.descriptor.settings_section.to_string(),
+                commands: entry
+                    .descriptor
+                    .commands
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                events: entry
+                    .descriptor
+                    .events
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+            })
+            .collect()
     }
 
     /// Broadcasts an account-removal notification without coupling the core
@@ -945,8 +1020,14 @@ mod tests {
         CapabilityRegistration {
             descriptor: CapabilityDescriptor {
                 id,
+                version: "test",
+                category: CapabilityCategory::Automation,
                 dependencies,
                 enabled_by_default,
+                config_schema_version: 1,
+                settings_section: "test",
+                commands: &[],
+                events: &[],
             },
             driver,
         }
@@ -984,6 +1065,29 @@ mod tests {
             Err(CapabilityRegistryError::DependencyCycle(_))
         ));
         assert!(registry.snapshot().capabilities.is_empty());
+    }
+
+    #[test]
+    fn descriptor_snapshot_exposes_the_complete_internal_module_contract() {
+        let registry = CapabilityRegistry::new();
+        registry
+            .register_all(vec![registration(
+                MODULE,
+                vec![],
+                false,
+                FakeDriver::healthy(),
+            )])
+            .unwrap();
+
+        let descriptors = registry.descriptors();
+        assert_eq!(descriptors.len(), 1);
+        assert_eq!(descriptors[0].id, "module");
+        assert_eq!(descriptors[0].version, "test");
+        assert_eq!(descriptors[0].category, CapabilityCategory::Automation);
+        assert_eq!(descriptors[0].config_schema_version, 1);
+        assert_eq!(descriptors[0].settings_section, "test");
+        assert!(descriptors[0].commands.is_empty());
+        assert!(descriptors[0].events.is_empty());
     }
 
     #[test]

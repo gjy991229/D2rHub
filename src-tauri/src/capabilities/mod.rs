@@ -16,10 +16,10 @@ mod rune_audio;
 mod supervisor;
 
 use crate::application::capability::{
-    CapabilityDescriptor, CapabilityDriver, CapabilityFailure, CapabilityHealth, CapabilityId,
-    CapabilityRegistration, CapabilityRegistryError,
+    CapabilityCategory, CapabilityDescriptor, CapabilityDriver, CapabilityFailure,
+    CapabilityHealth, CapabilityId, CapabilityRegistration, CapabilityRegistryError,
 };
-use crate::domain::config::GlobalConfig;
+use crate::domain::config::{GlobalConfig, CURRENT_CONFIG_VERSION};
 use crate::state::SharedState;
 use std::sync::Arc;
 use supervisor::CapabilitySupervisor;
@@ -110,23 +110,80 @@ pub(crate) fn install(app: &tauri::App) {
     let state = app.state::<SharedState>();
     if let Err(error) = state.capabilities().register_all(vec![
         CapabilityRegistration {
-            descriptor: CapabilityDescriptor::optional(DESKTOP_PET_ID),
+            descriptor: CapabilityDescriptor::first_party(
+                DESKTOP_PET_ID,
+                CapabilityCategory::Companion,
+                CURRENT_CONFIG_VERSION,
+                "pet",
+                &["set_bongo_cat_input_visible"],
+                &["global-input-event"],
+            ),
             driver: desktop_pet_driver,
         },
         CapabilityRegistration {
-            descriptor: CapabilityDescriptor::optional(RUNE_AUDIO_ID),
+            descriptor: CapabilityDescriptor::first_party(
+                RUNE_AUDIO_ID,
+                CapabilityCategory::Telemetry,
+                CURRENT_CONFIG_VERSION,
+                "automation",
+                &[
+                    "get_rune_audio_status",
+                    "start_rune_audio_monitor",
+                    "restart_rune_audio_monitor",
+                    "stop_rune_audio_monitor",
+                    "start_rune_audio_diagnostic_recording",
+                    "stop_rune_audio_diagnostic_recording",
+                ],
+                &[
+                    "audio-tracking-state",
+                    "rune-audio-detected",
+                    "item-audio-detected",
+                ],
+            ),
             driver: rune_audio_driver,
         },
         CapabilityRegistration {
-            descriptor: CapabilityDescriptor::optional(TERROR_ZONE_OVERLAY_ID),
+            descriptor: CapabilityDescriptor::first_party(
+                TERROR_ZONE_OVERLAY_ID,
+                CapabilityCategory::Overlay,
+                CURRENT_CONFIG_VERSION,
+                "overlays",
+                &["set_auxiliary_window_visible", "recover_auxiliary_windows"],
+                &[],
+            ),
             driver: terror_zone_overlay_driver,
         },
         CapabilityRegistration {
-            descriptor: CapabilityDescriptor::optional(STATS_OVERLAY_ID),
+            descriptor: CapabilityDescriptor::first_party(
+                STATS_OVERLAY_ID,
+                CapabilityCategory::Overlay,
+                CURRENT_CONFIG_VERSION,
+                "overlays",
+                &["set_auxiliary_window_visible", "recover_auxiliary_windows"],
+                &[],
+            ),
             driver: stats_overlay_driver,
         },
         CapabilityRegistration {
-            descriptor: CapabilityDescriptor::optional(room_automation_runtime::ROOM_AUTOMATION_ID),
+            descriptor: CapabilityDescriptor::first_party(
+                room_automation_runtime::ROOM_AUTOMATION_ID,
+                CapabilityCategory::Automation,
+                room_automation::CURRENT_STRATEGY_VERSION.into(),
+                "room-automation",
+                &[
+                    "room_automation_get_config",
+                    "room_automation_save_config",
+                    "room_automation_get_status",
+                    "room_automation_start_primary",
+                    "room_automation_start_followers",
+                    "room_automation_retry",
+                    "room_automation_cancel",
+                ],
+                &[
+                    room_automation_runtime::STATUS_EVENT,
+                    room_automation_runtime::CONFIG_EVENT,
+                ],
+            ),
             driver: room_driver,
         },
     ]) {

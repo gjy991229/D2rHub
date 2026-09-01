@@ -23,6 +23,8 @@ export function runTests() {
   const cat = source("src", "pages", "BongoCatWindow.tsx");
   const native = source("src-tauri", "src", "lib.rs");
   const auxiliaryWindows = source("src-tauri", "src", "auxiliary_windows.rs");
+  const overlayCapability = source("src-tauri", "src", "capabilities", "overlay_windows.rs");
+  const petCapability = source("src-tauri", "src", "capabilities", "bongo_cat.rs");
   const tray = source("src-tauri", "src", "tray.rs");
   const i18n = source("src", "i18n.tsx");
 
@@ -38,6 +40,13 @@ export function runTests() {
       && auxiliaryWindows.includes("ensure_window")
       && native.includes("AuxiliaryWindowLifecycle::default()"),
     "auxiliary WebViews are created from their native config on startup demand and first use",
+  );
+  assert(
+    auxiliaryWindows.includes("pub(crate) fn destroy_window")
+      && auxiliaryWindows.includes(".destroy()")
+      && overlayCapability.includes("destroy_window(&self.app, self.label)")
+      && petCapability.includes("destroy_window(&self.app, WINDOW_LABEL)"),
+    "disabled overlay capabilities destroy their WebViews instead of retaining hidden renderers",
   );
   assert(
     overlay.includes('await restoreWindowPlacement("overlay", saved);')

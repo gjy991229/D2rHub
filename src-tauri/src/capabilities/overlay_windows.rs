@@ -37,9 +37,9 @@ impl CapabilityDriver for OverlayWindowCapability {
     }
 
     fn stop(&self) -> Result<(), CapabilityFailure> {
-        window_placement::set_auxiliary_window_visible_for_app(&self.app, self.label, false, None)
+        crate::auxiliary_windows::destroy_window(&self.app, self.label)
             .map(|_| ())
-            .map_err(|error| CapabilityFailure::new("window-hide-failed", error.to_string()))
+            .map_err(|error| CapabilityFailure::new("window-destroy-failed", error.to_string()))
     }
 
     fn health(&self) -> CapabilityHealth {

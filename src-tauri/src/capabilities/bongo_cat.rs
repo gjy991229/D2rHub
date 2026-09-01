@@ -234,14 +234,15 @@ impl CapabilityDriver for BongoCatCapability {
         } else {
             Ok(())
         };
-        let window_result = crate::window_placement::set_auxiliary_window_visible_for_app(
-            &self.app,
-            WINDOW_LABEL,
-            false,
-            None,
-        )
-        .map_err(|error| CapabilityFailure::new("window-hide-failed", error.to_string()));
+        if let Ok(mut window) = self.window.lock() {
+            *window = None;
+        }
+        let window_result = crate::auxiliary_windows::destroy_window(&self.app, WINDOW_LABEL)
+            .map(|_| ())
+            .map_err(|error| CapabilityFailure::new("window-destroy-failed", error.to_string()));
 
+        // Always attempt both cleanup paths. A panicked cursor worker must not
+        // leave a hidden renderer alive, and a window failure must not skip join.
         worker_result?;
         window_result?;
         Ok(())

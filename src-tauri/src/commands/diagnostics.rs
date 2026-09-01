@@ -91,8 +91,10 @@ pub fn export_diagnostic_bundle(state: tauri::State<'_, SharedState>) -> Result<
         platform: std::env::consts::OS.to_string(),
         architecture: std::env::consts::ARCH.to_string(),
         configuration,
-        capabilities: serde_json::to_value(state.capabilities().snapshot())
-            .unwrap_or_else(|_| serde_json::json!({ "serialization_error": true })),
+        capabilities: serde_json::json!({
+            "descriptors": state.capabilities().descriptors(),
+            "status": state.capabilities().snapshot(),
+        }),
         tasks: serde_json::Value::Array(tasks),
     };
     let output_directory = PathBuf::from(&state.app_data_dir).join("diagnostics");

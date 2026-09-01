@@ -56,8 +56,8 @@ pub(crate) fn create_configured_windows(
 }
 
 /// Returns an existing auxiliary WebView or creates it from the corresponding
-/// `create: false` entry in `tauri.conf.json`. Once created, windows are reused
-/// for the rest of the process and disabling a feature only hides its window.
+/// `create: false` entry in `tauri.conf.json`. Capability stop destroys the
+/// WebView; a later start recreates it from this same static configuration.
 pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, AppError> {
     validate_label(label)?;
     if let Some(window) = app.get_webview_window(label) {
@@ -92,6 +92,19 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindo
         .map_err(|error| AppError::Unknown(format!("读取辅助窗口配置失败 {label}: {error}")))?
         .build()
         .map_err(|error| AppError::Unknown(format!("创建辅助窗口失败 {label}: {error}")))
+}
+
+/// Releases the renderer and native window owned by a disabled capability.
+/// Placement survives in the versioned placement file, not in a hidden WebView.
+pub(crate) fn destroy_window(app: &AppHandle, label: &str) -> Result<bool, AppError> {
+    validate_label(label)?;
+    let Some(window) = app.get_webview_window(label) else {
+        return Ok(false);
+    };
+    window
+        .destroy()
+        .map_err(|error| AppError::Unknown(format!("销毁辅助窗口失败 {label}: {error}")))?;
+    Ok(true)
 }
 
 #[cfg(test)]
