@@ -135,7 +135,7 @@ trait RuntimeHost: Send + Sync {
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
-        account_id: &str,
+        _account_id: &str,
         pid: u32,
         room_name: &str,
         cancel: &CancellationSignal,
@@ -276,7 +276,7 @@ impl RuntimeHost for WindowsRuntimeHost {
     ) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
-            let flow = config.flow_for_account(&config.primary_account_id);
+            let flow = config.flow();
             if retrying {
                 windows::confirm_retry(
                     pid,
@@ -308,7 +308,7 @@ impl RuntimeHost for WindowsRuntimeHost {
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
-        account_id: &str,
+        _account_id: &str,
         pid: u32,
         room_name: &str,
         cancel: &CancellationSignal,
@@ -323,7 +323,7 @@ impl RuntimeHost for WindowsRuntimeHost {
                     open_form: true,
                     name: room_name,
                     password: &config.password,
-                    flow: config.flow_for_account(account_id),
+                    flow: config.flow(),
                 },
                 cancel,
             )
@@ -363,20 +363,6 @@ fn canonicalize_account_references(
         .iter()
         .filter_map(|account_id| canonical(account_id).transpose())
         .collect::<Result<Vec<_>, _>>()?;
-    let selected = std::iter::once(config.primary_account_id.as_str())
-        .chain(config.follower_account_ids.iter().map(String::as_str))
-        .filter(|account_id| !account_id.is_empty())
-        .map(|account_id| account_id.to_ascii_lowercase())
-        .collect::<BTreeSet<_>>();
-    let mut bindings = BTreeMap::new();
-    for (account_id, profile) in std::mem::take(&mut config.account_flow_bindings) {
-        if let Some(account_id) = canonical(&account_id)? {
-            if selected.contains(&account_id.to_ascii_lowercase()) {
-                bindings.insert(account_id, profile);
-            }
-        }
-    }
-    config.account_flow_bindings = bindings;
     Ok(())
 }
 
@@ -1836,7 +1822,6 @@ fn prune_missing_accounts(
         referenced.push(snapshot.config.primary_account_id.clone());
     }
     referenced.extend(snapshot.config.follower_account_ids.clone());
-    referenced.extend(snapshot.config.account_flow_bindings.keys().cloned());
     referenced.sort_by_key(|account_id| account_id.to_ascii_lowercase());
     referenced.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     for account_id in referenced {
@@ -2702,10 +2687,6 @@ mod tests {
             enabled: false,
             primary_account_id: " stored-account ".to_string(),
             follower_account_ids: vec!["missing-account".to_string()],
-            account_flow_bindings: BTreeMap::from([
-                ("stored-account".to_string(), "standard".to_string()),
-                ("missing-account".to_string(), "direct_lobby".to_string()),
-            ]),
             ..RoomAutomationConfig::default()
         };
 
@@ -2713,10 +2694,6 @@ mod tests {
 
         assert_eq!(config.primary_account_id, "Stored-Account");
         assert!(config.follower_account_ids.is_empty());
-        assert_eq!(
-            config.account_flow_bindings,
-            BTreeMap::from([("Stored-Account".to_string(), "standard".to_string())])
-        );
         config.validate(std::iter::empty::<&str>()).unwrap();
     }
 

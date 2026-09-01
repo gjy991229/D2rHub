@@ -208,13 +208,6 @@ impl RoomAutomationConfigController {
                 }
             }
 
-            let binding_count = config.account_flow_bindings.len();
-            config
-                .account_flow_bindings
-                .retain(|selected, _| !selected.eq_ignore_ascii_case(account_id));
-            if config.account_flow_bindings.len() != binding_count {
-                changed = true;
-            }
             changed
         })
     }
@@ -526,10 +519,7 @@ mod tests {
         let root = TestDirectory::new("account_removal");
         let controller = controller(&root);
         let initial = controller.load_or_initialize(None, &[]).unwrap();
-        let mut enabled = enabled_config();
-        enabled
-            .account_flow_bindings
-            .insert("follower-a".to_string(), "direct_lobby".to_string());
+        let enabled = enabled_config();
         let configured = controller.save(initial.generation, enabled, &[]).unwrap();
 
         let without_one_follower = controller.remove_account("FOLLOWER-A").unwrap();
@@ -538,7 +528,6 @@ mod tests {
             without_one_follower.config.follower_account_ids,
             vec!["follower-b"]
         );
-        assert!(without_one_follower.config.account_flow_bindings.is_empty());
 
         let without_last_follower = controller.remove_account("follower-b").unwrap();
         assert!(!without_last_follower.config.enabled);

@@ -70,7 +70,6 @@ function baseProps(
     setIncludeRoomTools: vi.fn(),
     audioPreparing: false,
     audioPrepareProgress: null,
-    normalizedAudioSetupName: "D2rHubTools",
     isAudioModUpgrade: false,
     isAudioModFeatureManagement: false,
     audioSetupNameError: "",
@@ -129,7 +128,7 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(installedAudio.checked).toBe(true);
     expect(installedAudio.disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement).disabled).toBe(false);
-    expect(screen.getByText("-mod D2rHubTools -txt -assettestmode 1")).toBeTruthy();
+    expect(screen.queryByText("-mod D2rHubTools -txt -assettestmode 1")).toBeNull();
     expect(screen.getByRole("button", { name: /增补所选模块/ })).toBeTruthy();
   });
 

@@ -403,7 +403,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     audioPreparing,
     audioPrepareProgress,
     audioModScannedAt,
-    normalizedAudioSetupName,
     isAudioModUpgrade,
     isAudioModFeatureManagement,
     audioSetupNameError,
@@ -732,7 +731,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeRoomTools={setIncludeRoomTools}
                 audioPreparing={audioPreparing}
                 audioPrepareProgress={audioPrepareProgress}
-                normalizedAudioSetupName={normalizedAudioSetupName}
                 isAudioModUpgrade={isAudioModUpgrade}
                 isAudioModFeatureManagement={isAudioModFeatureManagement}
                 audioSetupNameError={audioSetupNameError}
@@ -773,7 +771,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeRoomTools={setIncludeRoomTools}
                 audioPreparing={audioPreparing}
                 audioPrepareProgress={audioPrepareProgress}
-                normalizedAudioSetupName={normalizedAudioSetupName}
                 isAudioModUpgrade={isAudioModUpgrade}
                 isAudioModFeatureManagement={isAudioModFeatureManagement}
                 audioSetupNameError={audioSetupNameError}

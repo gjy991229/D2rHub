@@ -63,8 +63,8 @@ function InstallationProfileFields({
           <p className="text-xs font-semibold text-text-secondary">{label}</p>
           <p className="text-2xs text-text-muted mt-0.5">
             {isCn
-              ? "游戏目录可支撑核心启动；战网认证还需客户端路径，存档目录仅供画质覆盖。"
-              : "亚/美/欧服共用，仅支持 Token 直启；存档目录仅供画质覆盖。"}
+              ? "支持战网或 Token；存档目录仅用于账号独立画质。"
+              : "亚/美/欧服共用，仅 Token；存档目录仅用于账号独立画质。"}
           </p>
         </div>
         {hasConfiguration && <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={clearProfile}>清除此版本</Button>}
@@ -79,26 +79,26 @@ function InstallationProfileFields({
       {isCn && (
         <>
           <label className="text-xs text-text-muted block">国服战网客户端 (Battle.net.exe)</label>
-          <div className="flex gap-2">
+          <div className="path-input-row">
             <input aria-label="国服战网客户端 (Battle.net.exe)" type="text" value={config.cn_battle_net_path} readOnly className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
-            <Button size="sm" onClick={() => pickFile("cn_battle_net_path", "国服 Battle.net.exe", ["exe"])}>浏览</Button>
+            <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFile("cn_battle_net_path", "国服 Battle.net.exe", ["exe"])}>浏览</Button>
           </div>
         </>
       )}
 
       <label className="text-xs text-text-muted block">游戏安装目录</label>
-      <div className="flex gap-2">
+      <div className="path-input-row">
         <input aria-label={`${label}游戏安装目录`} type="text" value={config[fields.game]} readOnly className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
-        <Button size="sm" onClick={() => pickFolder(fields.game, `${label}游戏安装目录`)}>浏览</Button>
+        <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFolder(fields.game, `${label}游戏安装目录`)}>浏览</Button>
       </div>
 
       <label className="text-xs text-text-muted block">
         存档目录（可选） · Diablo II Resurrected{isCn ? " (CN)" : ""}
       </label>
-      <div className="flex gap-2">
+      <div className="path-input-row">
         <input aria-label={`${label}存档目录`} type="text" value={config[fields.savedGames]} readOnly className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
-        <Button size="sm" onClick={() => pickFolder(fields.savedGames, `${label}存档目录`)}>浏览</Button>
-        <Button size="sm" onClick={() => applyDetectedPath(fields.savedGames, detectedSavedGames)}>自动探测</Button>
+        <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFolder(fields.savedGames, `${label}存档目录`)}>浏览</Button>
+        <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => applyDetectedPath(fields.savedGames, detectedSavedGames)}>探测</Button>
       </div>
 
       {settingsAvailable === false && (
@@ -149,27 +149,27 @@ export function PathsPanel({
       </div>
 
       <div className="spatial-panel p-3 space-y-2">
-        <h3 className="text-xs font-bold text-text-primary">国服战网/浏览器辅助路径</h3>
+        <h3 className="text-xs font-bold text-text-primary">辅助路径</h3>
         {([
-          ["program_data_agent_path", "战网进程 Agent.exe 目录", "Agent 目录", "agent"],
-          ["app_data_roaming_bnet_path", "战网 Roaming AppData 目录", "Roaming 战网目录", "roaming"],
+          ["program_data_agent_path", "Agent.exe 目录", "Agent 目录", "agent"],
+          ["app_data_roaming_bnet_path", "Battle.net 数据目录", "Roaming 战网目录", "roaming"],
         ] as const).map(([field, label, dialogTitle, detectedKey]) => (
           <div className="space-y-2" key={field}>
             <label className="text-xs text-text-muted block">{label}</label>
-            <div className="flex gap-2">
+            <div className="path-input-row">
               <input aria-label={label} type="text" value={config[field]} readOnly className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
-              <Button size="sm" onClick={() => pickFolder(field, dialogTitle)}>浏览</Button>
-              <Button size="sm" onClick={() => applyDetectedPath(field, detectedPaths[detectedKey])}>自动探测</Button>
+              <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFolder(field, dialogTitle)}>浏览</Button>
+              <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => applyDetectedPath(field, detectedPaths[detectedKey])}>探测</Button>
             </div>
           </div>
         ))}
 
         <div className="space-y-2">
-          <label className="text-xs text-text-muted block">独立隔离浏览器程序 (Edge/Chrome.exe)</label>
-          <div className="flex gap-2">
+          <label className="text-xs text-text-muted block">隔离浏览器 (Edge/Chrome.exe)</label>
+          <div className="path-input-row">
             <input aria-label="独立隔离浏览器程序 (Edge/Chrome.exe)" type="text" value={config.browser_path} readOnly className="flex-1 h-8 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
-            <Button size="sm" onClick={() => pickFile("browser_path", "chrome.exe/msedge.exe", ["exe"])}>浏览</Button>
-            <Button size="sm" onClick={() => applyDetectedPath("browser_path", detectedPaths.browser)}>自动探测</Button>
+            <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFile("browser_path", "chrome.exe/msedge.exe", ["exe"])}>浏览</Button>
+            <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={() => applyDetectedPath("browser_path", detectedPaths.browser)}>探测</Button>
           </div>
         </div>
 

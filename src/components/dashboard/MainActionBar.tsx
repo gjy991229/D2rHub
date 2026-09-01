@@ -119,12 +119,12 @@ export function MainActionBar({
             config={config}
             disabled={launching || saving}
             onLaunch={launchGroups.launch}
-            onManageFavorites={onToggleLaunchGroupPanel}
+            onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
           />
           <button
             onClick={onRequestKillAll}
             title="一键关闭所有暗黑2进程"
-            className="control-btn danger-control min-w-[72px]"
+            className="control-btn danger-control ml-1 min-w-[72px]"
           >
             一键关闭
           </button>

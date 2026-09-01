@@ -551,6 +551,112 @@ fn validate_audio_feature_fingerprint(fingerprint: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Fast, read-only trust check used by settings discovery.
+///
+/// The signed-by-construction manifest identity, recipe versions and feature
+/// fingerprints are enough to render setup state. Expensive recursive tree and
+/// generated-asset verification remains mandatory immediately before runtime,
+/// generation, replacement, recovery, and account application.
+fn validate_audio_mod_credential(
+    mods_directory: &Path,
+    mod_name: &str,
+) -> Result<ValidatedAudioMod, String> {
+    const MAX_MANIFEST_BYTES: u64 = 256 * 1024;
+    let mod_name = plain_mod_name(mod_name)?;
+    let mod_directory = mods_directory.join(mod_name);
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, &mod_directory, true, "Mod 目录")?;
+    ensure_safe_existing_node(
+        &canonical_mods,
+        &mod_directory.join(format!("{mod_name}.mpq")),
+        true,
+        "Mod MPQ 目录",
+    )?;
+    let manifest_path = processing_manifest_path(&mod_directory)
+        .ok_or_else(|| "这个 Mod 未经过 D2RHub 加工".to_string())?;
+    ensure_safe_existing_node(&canonical_mods, &manifest_path, false, "D2RHub 加工凭证")?;
+    let manifest_metadata = std::fs::metadata(&manifest_path)
+        .map_err(|error| format!("无法检查 D2RHub 加工凭证：{error}"))?;
+    if manifest_metadata.len() > MAX_MANIFEST_BYTES {
+        return Err("D2RHub 加工凭证超过大小限制".to_string());
+    }
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&manifest_path)
+            .map_err(|error| format!("无法读取 D2RHub 加工凭证：{error}"))?,
+    )
+    .map_err(|_| "D2RHub 加工凭证已损坏，请重新加工".to_string())?;
+    let protocol = manifest
+        .get("protocol_version")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| "D2RHub 加工凭证缺少协议版本".to_string())?;
+    if protocol != u64::from(PROTOCOL_VERSION) {
+        return Err(format!(
+            "识别 Mod 协议版本不匹配（需要 v{PROTOCOL_VERSION}）"
+        ));
+    }
+    match manifest.get("manifest_format") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(format)) if format == MANIFEST_FORMAT => {}
+        _ => return Err("D2RHub 加工凭证类型无效".to_string()),
+    }
+    match manifest.get("producer") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(producer)) if producer == PRODUCER_NAME => {}
+        _ => return Err("D2RHub 加工凭证生成器无效".to_string()),
+    }
+    match manifest.get("mod_name") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(serde_json::Value::String(recorded)) if recorded == mod_name => {}
+        _ => return Err("D2RHub 加工凭证名称与 Mod 不匹配".to_string()),
+    }
+    let recipe_version = match manifest.get("recipe_version") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(value) => Some(
+            value
+                .as_u64()
+                .and_then(|version| u32::try_from(version).ok())
+                .ok_or_else(|| "D2RHub 加工凭证配方版本无效".to_string())?,
+        ),
+    };
+    let parsed_feature_groups = parse_feature_groups(&manifest)?;
+    let current_feature_protocol = recipe_version
+        .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        && !parsed_feature_groups.is_empty();
+    let has_current_identity = manifest
+        .get("manifest_format")
+        .and_then(serde_json::Value::as_str)
+        == Some(MANIFEST_FORMAT)
+        && manifest.get("producer").and_then(serde_json::Value::as_str) == Some(PRODUCER_NAME)
+        && manifest.get("mod_name").and_then(serde_json::Value::as_str) == Some(mod_name);
+    if current_feature_protocol && !has_current_identity {
+        return Err("当前功能组凭证缺少完整的生成器身份".to_string());
+    }
+    let feature_groups = if current_feature_protocol {
+        parsed_feature_groups
+    } else {
+        Vec::new()
+    };
+    let has_audio_telemetry = feature_groups.is_empty()
+        || feature_groups
+            .iter()
+            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
+    let build_mode = manifest
+        .get("build_mode")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| matches!(*value, "minimal" | "augment"))
+        .map(str::to_string);
+    let source_mod_name = source_mod_name_from_manifest(&manifest, mods_directory);
+    Ok(ValidatedAudioMod {
+        directory: mod_directory,
+        recipe_version,
+        build_mode,
+        source_mod_name,
+        feature_groups,
+        has_audio_telemetry,
+        current_feature_protocol,
+    })
+}
+
 fn read_room_tool_layout(layout_directory: &Path, name: &str) -> Result<serde_json::Value, String> {
     let path = layout_directory.join(name);
     let bytes = std::fs::read(&path).map_err(|_| format!("局内房间工具缺少布局文件：{name}"))?;
@@ -1188,7 +1294,11 @@ fn official_update_metadata(
     })
 }
 
-fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility {
+fn compatibility_with(
+    mods_directory: &Path,
+    launch_arguments: &str,
+    validate: impl Fn(&Path, &str) -> Result<ValidatedAudioMod, String>,
+) -> Compatibility {
     let has_txt = has_txt_argument(launch_arguments).unwrap_or(false);
     let mod_name = match active_mod_name(launch_arguments) {
         Ok(value) => value,
@@ -1232,7 +1342,7 @@ fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility
             message: "启动参数缺少 -txt，声纹资源不会生效".to_string(),
         };
     }
-    match validate_audio_mod(mods_directory, &name) {
+    match validate(mods_directory, &name) {
         Ok(validated) => {
             if !validated.has_audio_telemetry {
                 return Compatibility {
@@ -1299,6 +1409,18 @@ fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility
     }
 }
 
+fn compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility {
+    compatibility_with(mods_directory, launch_arguments, validate_audio_mod)
+}
+
+fn credential_compatibility(mods_directory: &Path, launch_arguments: &str) -> Compatibility {
+    compatibility_with(
+        mods_directory,
+        launch_arguments,
+        validate_audio_mod_credential,
+    )
+}
+
 fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
     let mut mods = std::fs::read_dir(mods_directory)
         .ok()
@@ -1314,7 +1436,12 @@ fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             if !entry.path().join(format!("{name}.mpq")).is_dir() {
                 return None;
             }
-            let validation = validate_audio_mod(mods_directory, &name);
+            let has_processing_manifest = processing_manifest_path(&entry.path()).is_some();
+            let validation = if has_processing_manifest {
+                validate_audio_mod_credential(mods_directory, &name)
+            } else {
+                Err("普通 Mod 没有 D2RHub 加工凭证".to_string())
+            };
             let audio_ready = validation
                 .as_ref()
                 .is_ok_and(|validated| validated.has_audio_telemetry);
@@ -1342,7 +1469,6 @@ fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                             && group.recipe_version == AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
                     })
             });
-            let has_processing_manifest = processing_manifest_path(&entry.path()).is_some();
             let source_eligible = match validation.as_ref() {
                 Ok(validated) => validated.current_feature_protocol,
                 Err(_) => !has_processing_manifest,
@@ -1482,10 +1608,11 @@ fn ensure_audio_mod_not_in_use(
 fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupState, String> {
     let (_config, account, context) = configured_account(state, account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
-    let configured = compatibility(&mods_directory, &account.mod_args);
+    let configured = credential_compatibility(&mods_directory, &account.mod_args);
     let (session_arguments, running_pid, session_verified) = session_arguments(state, &account);
-    let active_session = running_pid
-        .and_then(|_| session_verified.then(|| compatibility(&mods_directory, &session_arguments)));
+    let active_session = running_pid.and_then(|_| {
+        session_verified.then(|| credential_compatibility(&mods_directory, &session_arguments))
+    });
     let active_session_ready = active_session.as_ref().map(|result| result.ready);
     let active_session_update_required =
         active_session.as_ref().map(|result| result.update_required);
@@ -1495,7 +1622,7 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
     let feature_groups = configured
         .mod_name
         .as_deref()
-        .and_then(|name| validate_audio_mod(&mods_directory, name).ok())
+        .and_then(|name| validate_audio_mod_credential(&mods_directory, name).ok())
         .map(|validated| {
             validated
                 .feature_groups
@@ -1533,17 +1660,17 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
 }
 
 #[tauri::command]
-pub fn get_audio_mod_setup_state(
+pub async fn get_audio_mod_setup_state(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<AudioModSetupState, String> {
-    let _lease = BuildLease::acquire(state.inner())?;
-    let (_config, _account, context) = configured_account(state.inner(), &account_id)?;
-    let mods_directory = context.installation.game_directory.join("mods");
-    if mods_directory.is_dir() {
-        recover_audio_mod_replacements(&mods_directory)?;
-    }
-    setup_state(state.inner(), &account_id)
+    let shared = state.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        let _lease = BuildLease::acquire(&shared)?;
+        setup_state(&shared, &account_id)
+    })
+    .await
+    .map_err(|error| format!("读取 Mod 加工凭证的后台任务异常退出: {error}"))?
 }
 
 fn emit_prepare_progress(
@@ -3366,10 +3493,11 @@ mod tests {
         generated_audio_mod_name, has_txt_argument, installed_mods, recover_audio_mod_replacements,
         replace_audio_mod_directory, replace_journal_paths_are_valid,
         require_verified_running_session, resolve_source_directory, traverse_safe_directory_tree,
-        validate_audio_mod, validate_generator_output, validate_in_game_room_tool_layouts,
-        validate_preserved_feature_groups, validate_recoverable_audio_mod_directory,
-        write_replace_journal, write_replace_journal_with_stage_sync, GeneratorFeatureGroup,
-        GeneratorReport, RequestedFeatureGroups, SafeTreeNodeKind, AREA_CATALOG_FILE_NAME,
+        validate_audio_mod, validate_audio_mod_credential, validate_generator_output,
+        validate_in_game_room_tool_layouts, validate_preserved_feature_groups,
+        validate_recoverable_audio_mod_directory, write_replace_journal,
+        write_replace_journal_with_stage_sync, GeneratorFeatureGroup, GeneratorReport,
+        RequestedFeatureGroups, SafeTreeNodeKind, AREA_CATALOG_FILE_NAME,
         AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ITEM_CATALOG_FILE_NAME,
         NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
         ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X,
@@ -4145,6 +4273,11 @@ mod tests {
         };
 
         write_test_audio_mod(&root, name, room_manifest(19, "room-tools-v19"));
+        let credential = validate_audio_mod_credential(&root, name).unwrap();
+        assert_eq!(
+            credential.feature_groups[0].id,
+            IN_GAME_ROOM_TOOLS_FEATURE_ID
+        );
         let incomplete = validate_audio_mod(&root, name).unwrap_err();
         assert!(incomplete.contains("缺少布局文件"));
 

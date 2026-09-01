@@ -40,7 +40,6 @@ interface ModProcessingPanelProps {
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
-  normalizedAudioSetupName: string;
   isAudioModUpgrade: boolean;
   isAudioModFeatureManagement: boolean;
   audioSetupNameError: string | null;
@@ -72,7 +71,6 @@ export function ModProcessingPanel({
   setIncludeRoomTools,
   audioPreparing,
   audioPrepareProgress,
-  normalizedAudioSetupName,
   isAudioModUpgrade,
   isAudioModFeatureManagement,
   audioSetupNameError,
@@ -95,9 +93,6 @@ export function ModProcessingPanel({
   const roomToolsInherited = inheritedFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
   const audioSelected = audioRequired || audioInherited || includeAudioTelemetry;
   const roomToolsSelected = roomToolsInherited || includeRoomTools;
-  const previewName = isAudioModUpgrade
-    ? audioModState?.current_mod_name ?? normalizedAudioSetupName
-    : normalizedAudioSetupName;
   const sourceMods = audioModState?.installed_mods.filter((mod) => mod.source_eligible) ?? [];
   const scannedLabel = audioModScannedAt
     ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
@@ -275,8 +270,6 @@ export function ModProcessingPanel({
                 {showAudioSetupNameError && <small>{audioSetupNameError}</small>}
               </label>
             )}
-            <code className="mod-processing-args">-mod {audioSetupNameError ? "<名称>" : previewName} -txt -assettestmode 1</code>
-
             {audioPreparing && audioPrepareProgress && (
               <div className="mod-processing-progress" aria-live="polite">
                 <div><span>{audioPrepareProgress.message}</span><strong>{Math.round(audioPrepareProgress.percent)}%</strong></div>

@@ -265,8 +265,10 @@ export function useAudioModuleController({
     }
     setAudioModStateLoading(true);
     try {
-      const next = await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
-      cacheState(accountId, next);
+      const cached = cacheRef.current.get(accountId);
+      const next = cached?.state
+        ?? await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId });
+      if (!cached) cacheState(accountId, next);
       if (next.ready) {
         await persistAudioEnabledState(accountId, true);
         setAudioSetupOpen(false);
@@ -417,7 +419,6 @@ export function useAudioModuleController({
     audioPreparing,
     audioPrepareProgress,
     audioModScannedAt,
-    normalizedAudioSetupName,
     isAudioModUpgrade,
     isAudioModFeatureManagement,
     audioSetupNameError,

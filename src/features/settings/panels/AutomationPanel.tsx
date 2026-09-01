@@ -55,7 +55,6 @@ interface AutomationPanelProps {
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
-  normalizedAudioSetupName: string;
   isAudioModUpgrade: boolean;
   isAudioModFeatureManagement: boolean;
   audioSetupNameError: string | null;
@@ -100,7 +99,6 @@ export function AutomationPanel({
   setIncludeRoomTools,
   audioPreparing,
   audioPrepareProgress,
-  normalizedAudioSetupName,
   isAudioModUpgrade,
   isAudioModFeatureManagement,
   audioSetupNameError,
@@ -121,9 +119,6 @@ export function AutomationPanel({
   const isEnglish = config.app_language === "en-US";
   const installedAudioTelemetry = !!audioModState?.feature_groups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const installedRoomTools = !!audioModState?.feature_groups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
-  const previewModName = isAudioModUpgrade
-    ? audioModState?.current_mod_name ?? normalizedAudioSetupName
-    : normalizedAudioSetupName;
   const featureCopy = isEnglish
     ? {
         title: "Mod features",
@@ -545,10 +540,6 @@ export function AutomationPanel({
                 </p>
               </>
             )}
-            <p className="mt-1 truncate rounded-md bg-surface-card px-2 py-1 font-mono text-2xs text-text-secondary">
-              -mod {audioSetupNameError ? "<名称>" : previewModName} -txt -assettestmode 1
-            </p>
-
             {audioPreparing && audioPrepareProgress && (
               <div className="mt-3" aria-live="polite">
                 <div className="mb-1.5 flex items-center justify-between gap-3 text-2xs">

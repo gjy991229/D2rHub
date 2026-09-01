@@ -597,10 +597,7 @@ export function SliderInput({
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer
-          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5
-          [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full
-          [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:cursor-pointer"
+        className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer"
         style={{
           background: `linear-gradient(to right, var(--accent) ${pct}%, var(--surface-hover) ${pct}%)`,
         }}

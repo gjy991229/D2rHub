@@ -131,9 +131,9 @@ export function AppearancePanel({
     <h3 className="text-xs font-bold text-text-primary">字体大小</h3>
     <div className="grid grid-cols-3 gap-2">
       {([
-        { id: "small",   label: "小",   desc: "放大 15%" },
-        { id: "default", label: "默认", desc: "放大 30%" },
-        { id: "large",   label: "大",   desc: "放大 45%" },
+        { id: "small",   label: "小",   desc: "放大 30%" },
+        { id: "default", label: "默认", desc: "放大 45%" },
+        { id: "large",   label: "大",   desc: "放大 60%" },
       ] as const).map(({ id, label, desc }) => {
         const fontScale = (() => {
           try { return document.documentElement.dataset.fontScale || "default"; }

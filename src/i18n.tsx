@@ -28,6 +28,9 @@ const keyedMessages = {
   "launch.favorite.launchTitle": { zh: "启动常用方案“{name}”", en: "Launch favorite scheme “{name}”" },
   "launch.favorite.emptyReason": { zh: "方案尚未选择账号", en: "No accounts selected" },
   "launch.favorite.manage": { zh: "添加常用方案", en: "Add Favorite Scheme" },
+  "launch.favorite.pickerTitle": { zh: "选择常用方案", en: "Choose a Favorite Scheme" },
+  "launch.favorite.pickerEmpty": { zh: "所有启动方案都已添加", en: "All launch schemes are already favorites" },
+  "launch.favorite.accountCount": { zh: "{count} 个账号", en: "{count} accounts" },
   "launch.scheme.closePanel": { zh: "关闭启动方案列表", en: "Close Launch Schemes" },
 } as const;
 

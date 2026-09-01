@@ -1,12 +1,11 @@
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use thiserror::Error;
 
-pub const CURRENT_STRATEGY_VERSION: u8 = 16;
+pub const CURRENT_STRATEGY_VERSION: u8 = 17;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 80;
-const DEFAULT_DIRECT_LOBBY_STEP_DELAY_MS: u64 = 60;
 const DEFAULT_CHARACTER_DELAY_MS: u64 = 10;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
 const MIN_CHARACTER_DELAY_MS: u64 = 10;
@@ -38,13 +37,6 @@ impl FlowStrategy {
     pub fn standard() -> Self {
         Self {
             step_delay_ms: DEFAULT_STANDARD_STEP_DELAY_MS,
-            character_delay_ms: DEFAULT_CHARACTER_DELAY_MS,
-        }
-    }
-
-    pub fn direct_lobby() -> Self {
-        Self {
-            step_delay_ms: DEFAULT_DIRECT_LOBBY_STEP_DELAY_MS,
             character_delay_ms: DEFAULT_CHARACTER_DELAY_MS,
         }
     }
@@ -108,14 +100,10 @@ fn default_standard_flow() -> FlowStrategy {
     FlowStrategy::standard()
 }
 
-fn default_direct_lobby_flow() -> FlowStrategy {
-    FlowStrategy::direct_lobby()
-}
-
 /// Persisted configuration for room automation.
 ///
-/// Field names intentionally match the `room_rotation` object used through
-/// strategy v16 so the object can be imported without a user migration.
+/// Legacy field aliases import the `room_rotation` object used through
+/// strategy v16; v17 persists one unified keyboard flow.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
     #[serde(default)]
@@ -149,12 +137,11 @@ pub struct RoomAutomationConfig {
     /// Zero means the original unversioned representation.
     #[serde(default)]
     pub strategy_version: u8,
-    #[serde(default = "default_standard_flow")]
-    pub standard_flow: FlowStrategy,
-    #[serde(default = "default_direct_lobby_flow")]
-    pub direct_lobby_flow: FlowStrategy,
-    #[serde(default)]
-    pub account_flow_bindings: BTreeMap<String, String>,
+    /// One keyboard delivery path is used for every participant. The alias
+    /// imports the former standard profile from v0-v16 sidecars; obsolete
+    /// direct-lobby profiles and per-account bindings are intentionally ignored.
+    #[serde(default = "default_standard_flow", alias = "standard_flow")]
+    pub flow: FlowStrategy,
 }
 
 impl Default for RoomAutomationConfig {
@@ -174,9 +161,7 @@ impl Default for RoomAutomationConfig {
             sequence_width: default_sequence_width(),
             background_text_strategy: default_background_text_strategy(),
             strategy_version: CURRENT_STRATEGY_VERSION,
-            standard_flow: default_standard_flow(),
-            direct_lobby_flow: default_direct_lobby_flow(),
-            account_flow_bindings: BTreeMap::new(),
+            flow: default_standard_flow(),
         }
     }
 }
@@ -251,10 +236,6 @@ pub enum RoomAutomationConfigError {
     DuplicateAccount(String),
     #[error("primary account cannot also be a follower")]
     PrimaryIsFollower,
-    #[error("account flow binding references unselected account {0:?}")]
-    UnknownFlowBindingAccount(String),
-    #[error("account flow binding {0:?} uses an unsupported profile")]
-    InvalidFlowBinding(String),
     #[error("{field} shortcut {value:?} is invalid: {reason}")]
     InvalidShortcut {
         field: &'static str,
@@ -305,15 +286,10 @@ impl RoomAutomationConfig {
             _ => default_background_text_strategy(),
         };
 
-        self.standard_flow.normalize();
-        self.direct_lobby_flow.normalize();
+        self.flow.normalize();
 
         let primary_account_id = self.primary_account_id.clone();
         let primary_identity = account_identity(&primary_account_id);
-        let mut selected_accounts = BTreeMap::new();
-        if !primary_account_id.is_empty() {
-            selected_accounts.insert(primary_identity.clone(), primary_account_id.clone());
-        }
         let mut followers_seen = BTreeSet::new();
         self.follower_account_ids = self
             .follower_account_ids
@@ -322,27 +298,7 @@ impl RoomAutomationConfig {
             .filter(|account_id| !account_id.is_empty())
             .filter(|account_id| account_identity(account_id) != primary_identity)
             .filter(|account_id| followers_seen.insert(account_identity(account_id)))
-            .map(|account_id| {
-                selected_accounts.insert(account_identity(account_id), account_id.to_string());
-                account_id.to_string()
-            })
-            .collect();
-
-        self.account_flow_bindings = std::mem::take(&mut self.account_flow_bindings)
-            .into_iter()
-            .filter_map(|(account_id, profile)| {
-                let account_id = account_id.trim();
-                selected_accounts
-                    .get(&account_identity(account_id))
-                    .map(|selected_id| {
-                        let profile = if profile.trim().eq_ignore_ascii_case("direct_lobby") {
-                            "direct_lobby"
-                        } else {
-                            "standard"
-                        };
-                        (selected_id.clone(), profile.to_string())
-                    })
-            })
+            .map(str::to_string)
             .collect();
 
         self.strategy_version = CURRENT_STRATEGY_VERSION;
@@ -397,8 +353,7 @@ impl RoomAutomationConfig {
                 self.background_text_strategy.clone(),
             ));
         }
-        self.standard_flow.validate("standard")?;
-        self.direct_lobby_flow.validate("direct_lobby")?;
+        self.flow.validate("unified")?;
 
         let primary = self.primary_account_id.as_str();
         if primary.is_empty() {
@@ -420,19 +375,6 @@ impl RoomAutomationConfig {
             if !selected_accounts.insert(follower_identity) {
                 return Err(RoomAutomationConfigError::DuplicateAccount(
                     follower.clone(),
-                ));
-            }
-        }
-
-        for (account_id, profile) in &self.account_flow_bindings {
-            if !selected_accounts.contains(&account_identity(account_id)) {
-                return Err(RoomAutomationConfigError::UnknownFlowBindingAccount(
-                    account_id.clone(),
-                ));
-            }
-            if !matches!(profile.as_str(), "standard" | "direct_lobby") {
-                return Err(RoomAutomationConfigError::InvalidFlowBinding(
-                    account_id.clone(),
                 ));
             }
         }
@@ -494,18 +436,8 @@ impl RoomAutomationConfig {
         Ok(room_name)
     }
 
-    pub fn flow_for_account(&self, account_id: &str) -> &FlowStrategy {
-        if self
-            .account_flow_bindings
-            .iter()
-            .find(|(candidate, _)| candidate.eq_ignore_ascii_case(account_id))
-            .map(|(_, profile)| profile)
-            .is_some_and(|profile| profile == "direct_lobby")
-        {
-            &self.direct_lobby_flow
-        } else {
-            &self.standard_flow
-        }
+    pub fn flow(&self) -> &FlowStrategy {
+        &self.flow
     }
 
     fn validate_supported_version(&self) -> Result<(), RoomAutomationConfigError> {
@@ -717,7 +649,7 @@ mod tests {
     }
 
     #[test]
-    fn every_legacy_strategy_from_v0_through_v16_normalizes() {
+    fn every_legacy_strategy_from_v0_through_v17_normalizes() {
         for version in 0..=CURRENT_STRATEGY_VERSION {
             let mut config = RoomAutomationConfig {
                 strategy_version: version,
@@ -751,11 +683,11 @@ mod tests {
 
         config.normalize_legacy().unwrap();
 
-        assert_eq!(config.strategy_version, 16);
+        assert_eq!(config.strategy_version, 17);
         assert!(config.auto_followers_enabled);
         assert_eq!(config.auto_followers_delay_secs, 2);
-        assert_eq!(config.standard_flow.step_delay_ms, 200);
-        assert_eq!(config.standard_flow.character_delay_ms, 50);
+        assert_eq!(config.flow.step_delay_ms, 200);
+        assert_eq!(config.flow.character_delay_ms, 50);
         let saved = serde_json::to_value(config).unwrap();
         for obsolete in [
             "background_click_strategy",
@@ -764,7 +696,10 @@ mod tests {
         ] {
             assert!(saved.get(obsolete).is_none(), "serialized {obsolete}");
         }
-        assert!(saved["standard_flow"].get("ui_profile").is_none());
+        assert!(saved["flow"].get("ui_profile").is_none());
+        assert!(saved.get("standard_flow").is_none());
+        assert!(saved.get("direct_lobby_flow").is_none());
+        assert!(saved.get("account_flow_bindings").is_none());
     }
 
     #[test]
@@ -785,15 +720,15 @@ mod tests {
     #[test]
     fn future_strategy_fails_closed() {
         let mut config = RoomAutomationConfig {
-            strategy_version: 17,
+            strategy_version: 18,
             ..RoomAutomationConfig::default()
         };
 
         assert_eq!(
             config.normalize_legacy(),
             Err(RoomAutomationConfigError::UnsupportedStrategyVersion {
-                found: 17,
-                supported: 16,
+                found: 18,
+                supported: 17,
             })
         );
     }
@@ -811,13 +746,6 @@ mod tests {
             ],
             shortcut: " alt + ctrl + r ".to_string(),
             join_shortcut: "CTRL+alt+j".to_string(),
-            account_flow_bindings: [
-                ("ONE".to_string(), "DIRECT_LOBBY".to_string()),
-                ("orphan".to_string(), "direct_lobby".to_string()),
-                ("two".to_string(), "unknown".to_string()),
-            ]
-            .into_iter()
-            .collect(),
             ..RoomAutomationConfig::default()
         };
 
@@ -827,13 +755,10 @@ mod tests {
         assert_eq!(config.follower_account_ids, ["one", "two"]);
         assert_eq!(config.shortcut, "Ctrl+Alt+R");
         assert_eq!(config.join_shortcut, "Ctrl+Alt+J");
-        assert_eq!(config.account_flow_bindings.len(), 2);
-        assert_eq!(config.account_flow_bindings["one"], "direct_lobby");
-        assert_eq!(config.account_flow_bindings["two"], "standard");
     }
 
     #[test]
-    fn generated_room_names_preserve_v16_zero_padding() {
+    fn generated_room_names_preserve_zero_padding() {
         let config = RoomAutomationConfig {
             name_prefix: "chaos-".to_string(),
             sequence_width: 3,

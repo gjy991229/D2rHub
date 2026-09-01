@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "../../../components/ui/Button";
+import { Modal } from "../../../components/ui/Modal";
+import { showToast } from "../../../components/ui/Toast";
 import { Toggle } from "../../../components/ui/Toggle";
 import { parseShortcutFromKeyEvent } from "../../../hooks/useShortcutRecorder";
 import type { AccountMeta } from "../../../store/types";
@@ -35,7 +37,6 @@ import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationWorkflowStatus,
   RoomChatBindingStatus,
-  RoomFlowProfile,
 } from "../../roomAutomation/types";
 import { normalizeSettingsLanguage } from "../settingsRegistry";
 
@@ -53,19 +54,8 @@ function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
     ...config,
     follower_account_ids: [...config.follower_account_ids],
-    standard_flow: { ...config.standard_flow },
-    direct_lobby_flow: { ...config.direct_lobby_flow },
-    account_flow_bindings: { ...config.account_flow_bindings },
+    flow: { ...config.flow },
   };
-}
-
-function keepSelectedFlowBindings(
-  bindings: RoomAutomationConfig["account_flow_bindings"],
-  primaryId: string,
-  followerIds: string[],
-): RoomAutomationConfig["account_flow_bindings"] {
-  const selected = new Set([primaryId, ...followerIds].filter(Boolean));
-  return Object.fromEntries(Object.entries(bindings).filter(([accountId]) => selected.has(accountId)));
 }
 
 function isWorkflowActive(status: RoomAutomationWorkflowStatus | null): boolean {
@@ -107,6 +97,7 @@ export function RoomAutomationPanel({
   const [operation, setOperation] = useState<Operation | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [bindingReloadKey, setBindingReloadKey] = useState(0);
+  const [enablePromptOpen, setEnablePromptOpen] = useState(false);
   const snapshotRef = useRef<RoomAutomationConfigSnapshot | null>(null);
   const dirtyRef = useRef(false);
   const operationRef = useRef<Operation | null>(null);
@@ -342,7 +333,6 @@ export function RoomAutomationPanel({
     );
   }
 
-  const primary = eligibleAccounts.find((account) => account.id === draft.primary_account_id);
   const bindingNeedsAttention = draft.enabled && (!binding?.ready || !!bindingError || bindingLoading);
   const statusTone = status?.phase === "error"
     ? "danger"
@@ -376,16 +366,19 @@ export function RoomAutomationPanel({
             </span>
           </div>
           <p>{copy.subtitle}</p>
-          <span className="room-automation-save-state" data-dirty={dirty ? "true" : undefined}>
-            {dirty ? copy.unsaved : copy.applied}
-          </span>
+          {!dirty && (
+            <span className="room-automation-save-state">{copy.applied}</span>
+          )}
         </div>
         <Toggle
           checked={draft.enabled}
           disabled={editorDisabled}
           ariaLabel={copy.enabled}
           descriptionId={!draft.enabled ? "room-automation-module-description" : undefined}
-          onChange={(enabled) => updateDraft((current) => ({ ...current, enabled }))}
+          onChange={(enabled) => {
+            if (enabled) setEnablePromptOpen(true);
+            else updateDraft((current) => ({ ...current, enabled: false }));
+          }}
         />
       </header>
       {!draft.enabled && (
@@ -394,7 +387,47 @@ export function RoomAutomationPanel({
         </p>
       )}
 
+      <Modal
+        open={enablePromptOpen}
+        onClose={() => setEnablePromptOpen(false)}
+        title={copy.enablePromptTitle}
+        footer={(
+          <div className="flex w-full flex-wrap justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setEnablePromptOpen(false);
+                updateDraft((current) => ({ ...current, enabled: true }));
+              }}
+            >
+              {copy.continueEnable}
+            </Button>
+            {onOpenAudioModSettings && (
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  setEnablePromptOpen(false);
+                  showToast("info", copy.modRedirectHint);
+                  onOpenAudioModSettings();
+                }}
+              >
+                <Package size={13} aria-hidden="true" />
+                {copy.checkModFirst}
+              </Button>
+            )}
+          </div>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-text-secondary">{copy.enablePromptDescription}</p>
+      </Modal>
+
       {dirty && <div className="room-automation-apply-bar" data-dirty="true">
+        <div className="room-automation-apply-copy">
+          <strong>{copy.unsaved}</strong>
+          <p>{copy.unsavedHelp}</p>
+        </div>
         <div className="room-automation-apply-actions">
           <Button
             size="sm"
@@ -428,20 +461,6 @@ export function RoomAutomationPanel({
         </div>
       )}
 
-      <section className="room-automation-prerequisite" aria-labelledby="room-mod-prerequisite-title">
-        <Package size={17} aria-hidden="true" />
-        <div>
-          <strong id="room-mod-prerequisite-title">{copy.modPrerequisiteTitle}</strong>
-          <p>{copy.modPrerequisiteDescription}</p>
-          <span className="sr-only">{copy.modPrerequisiteFeature}</span>
-        </div>
-        {onOpenAudioModSettings && (
-          <Button size="sm" variant="secondary" onClick={onOpenAudioModSettings}>
-            {copy.manageModFeatures}
-          </Button>
-        )}
-      </section>
-
       <div className="room-automation-config-grid">
       <section className="spatial-panel room-automation-section" aria-labelledby="room-participants-title">
         <div className="room-automation-section-heading">
@@ -469,11 +488,6 @@ export function RoomAutomationPanel({
                     ...current,
                     primary_account_id,
                     follower_account_ids,
-                    account_flow_bindings: keepSelectedFlowBindings(
-                      current.account_flow_bindings,
-                      primary_account_id,
-                      follower_account_ids,
-                    ),
                   };
                 })}
               >
@@ -500,16 +514,10 @@ export function RoomAutomationPanel({
                           return {
                             ...current,
                             follower_account_ids,
-                            account_flow_bindings: keepSelectedFlowBindings(
-                              current.account_flow_bindings,
-                              current.primary_account_id,
-                              follower_account_ids,
-                            ),
                           };
                         })}
                       />
                       <span className="room-automation-account-name">{accountLabel(account)}</span>
-                      <span className="room-automation-account-id">{account.id}</span>
                     </label>
                   );
                 })}
@@ -517,32 +525,6 @@ export function RoomAutomationPanel({
               {validation?.fieldErrors.followers && <small role="alert">{validation.fieldErrors.followers}</small>}
             </fieldset>
 
-            {(primary || draft.follower_account_ids.length > 0) && (
-              <div className="room-automation-flow-bindings">
-                {[...(primary ? [primary] : []), ...eligibleAccounts.filter((account) => draft.follower_account_ids.includes(account.id))]
-                  .map((account) => (
-                    <label key={account.id}>
-                      <span>{accountLabel(account)}</span>
-                      <span className="sr-only">{copy.flowLabel}</span>
-                      <select
-                        className="settings-input"
-                        disabled={editorDisabled}
-                        value={draft.account_flow_bindings[account.id] ?? "standard"}
-                        onChange={(event) => updateDraft((current) => ({
-                          ...current,
-                          account_flow_bindings: {
-                            ...current.account_flow_bindings,
-                            [account.id]: event.target.value as RoomFlowProfile,
-                          },
-                        }))}
-                      >
-                        <option value="standard">{copy.standardFlow}</option>
-                        <option value="direct_lobby">{copy.directFlow}</option>
-                      </select>
-                    </label>
-                  ))}
-              </div>
-            )}
           </>
         )}
       </section>
@@ -770,18 +752,12 @@ export function RoomAutomationPanel({
         </summary>
         <fieldset disabled={editorDisabled}>
           <div className="room-automation-fields">
-            <NumberField label={copy.standardStep} value={draft.standard_flow.step_delay_ms} min={0} max={2000}
+            <NumberField label={copy.stepDelay} value={draft.flow.step_delay_ms} min={0} max={2000}
               invalid={!!validation?.fieldErrors.timing}
-              onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, standard_flow: { ...current.standard_flow, step_delay_ms } }))} />
-            <NumberField label={copy.standardCharacter} value={draft.standard_flow.character_delay_ms} min={10} max={250}
+              onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, step_delay_ms } }))} />
+            <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms} min={10} max={250}
               invalid={!!validation?.fieldErrors.timing}
-              onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, standard_flow: { ...current.standard_flow, character_delay_ms } }))} />
-            <NumberField label={copy.directStep} value={draft.direct_lobby_flow.step_delay_ms} min={0} max={2000}
-              invalid={!!validation?.fieldErrors.timing}
-              onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, direct_lobby_flow: { ...current.direct_lobby_flow, step_delay_ms } }))} />
-            <NumberField label={copy.directCharacter} value={draft.direct_lobby_flow.character_delay_ms} min={10} max={250}
-              invalid={!!validation?.fieldErrors.timing}
-              onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, direct_lobby_flow: { ...current.direct_lobby_flow, character_delay_ms } }))} />
+              onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
             <label className="room-automation-field room-automation-field-wide">
               <span>{copy.backgroundStrategy}</span>
               <select

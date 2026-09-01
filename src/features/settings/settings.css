@@ -1,6 +1,17 @@
+.settings-modal-size {
+  width: clamp(1020px, 76vw, 1480px);
+  max-width: none;
+}
+
+.settings-center-shell {
+  width: 100%;
+  height: clamp(640px, 76vh, 900px);
+  max-height: calc(100vh - 96px);
+}
+
 .settings-center-layout {
   display: grid;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: clamp(248px, 19vw, 290px) minmax(0, 1fr);
   min-height: 0;
   height: 100%;
   gap: 14px;
@@ -132,7 +143,37 @@
   min-height: 24px;
 }
 
+.settings-panel-scroll input[type="range"]::-webkit-slider-thumb {
+  width: 4px;
+  height: 18px;
+  margin-top: -6px;
+  appearance: none;
+  border: 0;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.path-input-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) auto auto;
+  gap: 8px;
+}
+
+.path-input-row:has(> :nth-child(2):last-child) {
+  grid-template-columns: minmax(110px, 1fr) auto;
+}
+
+@media (max-width: 1068px) {
+  .settings-modal-size {
+    width: calc(100vw - 32px);
+  }
+}
+
 @media (max-width: 780px) {
+  .settings-center-shell {
+    height: calc(100vh - 72px);
+  }
   .settings-center-layout {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -526,7 +567,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 12px;
   min-height: 44px;
   padding: 7px 9px 7px 12px;
@@ -535,6 +576,22 @@
   background: var(--surface-modal, var(--surface-card));
   color: var(--text-muted);
   font-size: var(--text-xs);
+}
+
+.room-automation-apply-copy {
+  min-width: 0;
+}
+
+.room-automation-apply-copy strong {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.room-automation-apply-copy p {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
 }
 
 .room-automation-apply-bar[data-dirty="true"] {
@@ -569,10 +626,6 @@
 
 .room-automation-config-grid .room-automation-fields {
   grid-template-columns: repeat(2, minmax(105px, 1fr));
-}
-
-.room-automation-config-grid .room-automation-flow-bindings {
-  grid-template-columns: minmax(0, 1fr);
 }
 
 .room-automation-section-heading {
@@ -640,8 +693,7 @@
   gap: 8px;
 }
 
-.room-automation-field .settings-input,
-.room-automation-flow-bindings .settings-input {
+.room-automation-field .settings-input {
   width: 100%;
 }
 
@@ -686,7 +738,7 @@
 
 .room-automation-account-row {
   display: grid;
-  grid-template-columns: auto minmax(60px, auto) minmax(50px, 1fr);
+  grid-template-columns: auto minmax(60px, 1fr);
   align-items: center;
   gap: 7px;
   min-height: 32px;
@@ -714,8 +766,7 @@
   accent-color: var(--accent);
 }
 
-.room-automation-account-name,
-.room-automation-account-id {
+.room-automation-account-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -724,29 +775,6 @@
 }
 
 .room-automation-account-name { color: var(--text-primary); font-weight: 650; }
-.room-automation-account-id { color: var(--text-muted); }
-
-.room-automation-flow-bindings {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-  gap: 7px;
-  padding-top: 2px;
-}
-
-.room-automation-flow-bindings label {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(90px, 0.8fr);
-  align-items: center;
-  gap: 8px;
-}
-
-.room-automation-flow-bindings label > span:first-child {
-  overflow: hidden;
-  color: var(--text-secondary);
-  font-size: var(--text-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .room-automation-mode-options {
   display: grid;
@@ -901,53 +929,6 @@
 .room-automation-state-block strong { color: var(--text-primary); }
 .room-automation-state-block p { margin-top: 2px; overflow-wrap: anywhere; color: var(--text-muted); line-height: 1.45; }
 .room-automation-empty { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
-
-.room-automation-prerequisite {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-  padding: 11px 12px;
-  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border-default));
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--accent) 5%, var(--surface-card));
-}
-
-.room-automation-prerequisite > svg {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: var(--accent);
-}
-
-.room-automation-prerequisite > div {
-  min-width: 0;
-  flex: 1;
-}
-
-.room-automation-prerequisite strong {
-  display: block;
-  color: var(--text-primary);
-  font-size: var(--text-xs);
-}
-
-.room-automation-prerequisite p {
-  max-width: 72ch;
-  margin-top: 3px;
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  line-height: 1.5;
-}
-
-.room-automation-prerequisite code {
-  display: inline-block;
-  margin-top: 5px;
-  color: var(--text-muted);
-  font-size: var(--text-2xs);
-  overflow-wrap: anywhere;
-}
-
-.room-automation-prerequisite > button {
-  flex: 0 0 auto;
-}
 
 .mod-processing-panel {
   display: flex;
@@ -1113,17 +1094,6 @@
   font-size: var(--text-xs);
 }
 
-.mod-processing-args {
-  overflow: hidden;
-  padding: 6px 9px;
-  border-radius: 8px;
-  background: var(--surface-hover);
-  color: var(--text-secondary);
-  font-size: var(--text-2xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .mod-processing-progress {
   display: flex;
   flex-direction: column;
@@ -1174,8 +1144,7 @@
 @media (max-width: 620px) {
   .room-automation-header { align-items: center; }
   .room-automation-fields,
-  .room-automation-mode-options,
-  .room-automation-flow-bindings { grid-template-columns: minmax(0, 1fr); }
+  .room-automation-mode-options { grid-template-columns: minmax(0, 1fr); }
   .room-automation-field-wide { max-width: none; }
   .room-automation-account-row { flex: 1 1 220px; }
   .room-automation-apply-bar { top: -1px; }
@@ -1195,11 +1164,8 @@
   .room-automation-binding-status { align-items: stretch; flex-direction: column; }
   .room-automation-apply-actions > button { flex: 1 1 auto; }
   .room-automation-actions > button { flex: 1 1 160px; }
-  .room-automation-flow-bindings label { grid-template-columns: minmax(0, 1fr); }
   .room-automation-section-heading-action { flex-wrap: wrap; }
   .room-automation-section-heading-action > button { margin-left: 25px; }
-  .room-automation-prerequisite { flex-wrap: wrap; }
-  .room-automation-prerequisite > button { margin-left: 27px; }
   .mod-processing-header { align-items: stretch; flex-direction: column; }
   .mod-processing-actions > button { flex: 1 1 auto; }
 }

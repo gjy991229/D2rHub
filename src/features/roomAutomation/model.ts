@@ -119,13 +119,7 @@ export function roomAutomationConfigsEqual(
   right: RoomAutomationConfig | null,
 ): boolean {
   if (!left || !right) return left === right;
-  const comparable = (config: RoomAutomationConfig) => ({
-    ...config,
-    account_flow_bindings: Object.fromEntries(
-      Object.entries(config.account_flow_bindings).sort(([a], [b]) => a.localeCompare(b)),
-    ),
-  });
-  return JSON.stringify(comparable(left)) === JSON.stringify(comparable(right));
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 export function generatedRoomName(config: RoomAutomationConfig): string {
@@ -194,7 +188,7 @@ export function validateRoomAutomationConfig(
     || !Number.isInteger(config.sequence_width) || config.sequence_width < 1 || config.sequence_width > 6) {
     fieldErrors.sequence = copy.invalidSequence;
   }
-  const flows = [config.standard_flow, config.direct_lobby_flow];
+  const flows = [config.flow];
   if (!Number.isSafeInteger(config.auto_followers_delay_secs)
     || config.auto_followers_delay_secs < 2 || config.auto_followers_delay_secs > 60
     || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)

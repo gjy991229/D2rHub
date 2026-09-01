@@ -147,19 +147,12 @@ export function AccountsPanel({
 
       {selectedAccountId && selectedAccount && (
         <div className="setting-card min-h-[340px] max-[880px]:order-2">
-          <div className="mb-3 flex flex-wrap items-start justify-between gap-3 border-b border-border-default pb-3">
+          <div className="mb-3 border-b border-border-default pb-3">
             <div className="min-w-0">
               <p className="text-sm font-bold text-text-primary">{selectedAccount.display_name || selectedAccount.id} · 画质与启动</p>
               <p className="micro-meta mt-1">账号字段、启动参数和游戏内配置在这里完成。</p>
             </div>
-            <div className="flex flex-col items-end gap-2">
-              <button
-                type="button"
-                onClick={handleSnapshotSystemSettings}
-                className="control-btn h-8 px-3"
-              >
-                快照系统配置
-              </button>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
               <div className="settings-subnav" role="tablist" aria-label="账号设置分类">
                 {gameSubTabs.map((tab, index) => {
                   const active = gameSettingsTab === tab.id;
@@ -197,6 +190,13 @@ export function AccountsPanel({
                   );
                 })}
               </div>
+              <button
+                type="button"
+                onClick={handleSnapshotSystemSettings}
+                className="control-btn h-8 shrink-0 px-3"
+              >
+                快照系统配置
+              </button>
             </div>
           </div>
 

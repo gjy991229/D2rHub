@@ -55,8 +55,8 @@ export function SettingsShell({
   }, [open]);
 
   return (
-    <Modal open={open} onClose={onClose} title={title} width="max-w-[1020px]" closeOnContextMenu>
-      <div className="settings-center-shell flex h-[640px] max-h-[calc(100vh-96px)] flex-col">
+    <Modal open={open} onClose={onClose} title={title} width="settings-modal-size" closeOnContextMenu>
+      <div className="settings-center-shell flex flex-col">
         <div className="settings-center-layout">
           <SettingsNavigation
             activeTab={activeTab}

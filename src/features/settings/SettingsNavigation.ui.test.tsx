@@ -31,10 +31,10 @@ describe("settings feature registry", () => {
     ]);
     expect(getSettingsFeaturesByKind("optional").map((feature) => feature.id)).toEqual([
       "overlays",
-      "automation",
-      "mod-processing",
-      "room-automation",
       "pet",
+      "automation",
+      "room-automation",
+      "mod-processing",
     ]);
     expect(new Set(SETTINGS_FEATURES.map((feature) => feature.id)).size).toBe(SETTINGS_FEATURES.length);
   });

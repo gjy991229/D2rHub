@@ -1,5 +1,5 @@
-import { fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AccountMeta, LaunchGroup } from "../../store/types";
 import { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
@@ -33,6 +33,8 @@ const group: LaunchGroup = {
     fps: 60,
   }],
 };
+
+afterEach(cleanup);
 
 describe("launch group controls", () => {
   it("adds and removes a scheme from the main action bar through the star control", () => {
@@ -79,7 +81,7 @@ describe("launch group controls", () => {
         accounts={[{ ...readyAccount, initialized: false }]}
         config={null}
         onLaunch={onLaunch}
-        onManageFavorites={vi.fn()}
+        onToggleFavorite={vi.fn()}
       />,
     );
 
@@ -87,5 +89,23 @@ describe("launch group controls", () => {
     expect(favorite).toHaveProperty("disabled", true);
     fireEvent.click(favorite);
     expect(onLaunch).not.toHaveBeenCalled();
+  });
+
+  it("opens a direct favorite picker from the plus without opening the launch-scheme panel", () => {
+    const onToggleFavorite = vi.fn();
+    render(
+      <FavoriteLaunchGroups
+        groups={[group]}
+        favoriteGroupIds={[]}
+        accounts={[readyAccount]}
+        config={null}
+        onLaunch={vi.fn()}
+        onToggleFavorite={onToggleFavorite}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "添加常用方案" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /刷符文/ }));
+    expect(onToggleFavorite).toHaveBeenCalledWith(group);
   });
 });

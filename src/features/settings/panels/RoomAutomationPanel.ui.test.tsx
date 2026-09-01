@@ -25,10 +25,8 @@ const config: RoomAutomationConfig = {
   next_sequence: 7,
   sequence_width: 3,
   background_text_strategy: "post_keys",
-  strategy_version: 16,
-  standard_flow: { step_delay_ms: 80, character_delay_ms: 10 },
-  direct_lobby_flow: { step_delay_ms: 60, character_delay_ms: 10 },
-  account_flow_bindings: {},
+  strategy_version: 17,
+  flow: { step_delay_ms: 80, character_delay_ms: 10 },
 };
 
 const snapshot: RoomAutomationConfigSnapshot = {
@@ -36,8 +34,8 @@ const snapshot: RoomAutomationConfigSnapshot = {
   generation: 4,
   config,
   normalization: {
-    source_strategy_version: 16,
-    target_strategy_version: 16,
+    source_strategy_version: 17,
+    target_strategy_version: 17,
     changed: false,
     requires_chat_binding_consent: false,
   },
@@ -136,11 +134,17 @@ const accounts = [
 afterEach(cleanup);
 
 describe("RoomAutomationPanel", () => {
-  it("states the room-tools prerequisite for every participant and opens Mod feature settings", async () => {
+  it("shows the Mod prerequisite only when enabling and can jump to Mod settings", async () => {
     const { gateway } = makeGateway();
+    const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
+    gateway.startSync = vi.fn(async (handlers) => {
+      handlers.onConfig(disabledSnapshot);
+      handlers.onStatus(idleStatus);
+      return () => undefined;
+    });
     const onOpenAudioModSettings = vi.fn();
     const user = userEvent.setup();
-    const { rerender } = render(
+    render(
       <RoomAutomationPanel
         accounts={accounts}
         gateway={gateway}
@@ -148,23 +152,13 @@ describe("RoomAutomationPanel", () => {
       />,
     );
 
-    expect(await screen.findByText("局内房间工具是必要条件")).toBeTruthy();
-    expect(screen.getByText(/所有参与账号都需包含/)).toBeTruthy();
-    expect(screen.getByText("功能组：in_game_room_tools")).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "管理 Mod 功能" }));
+    expect(await screen.findByText("配置会保留，但快捷键、文件监视和跟房任务均不会运行。")).toBeTruthy();
+    expect(screen.queryByText("局内房间工具是必要条件")).toBeNull();
+    await user.click(screen.getByRole("switch", { name: "启用自动跟房模块" }));
+    expect(screen.getByRole("heading", { name: "启用自动跟房" })).toBeTruthy();
+    expect(screen.getByText(/参与账号需要使用包含/)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "先检查 Mod" }));
     expect(onOpenAudioModSettings).toHaveBeenCalledTimes(1);
-
-    rerender(
-      <RoomAutomationPanel
-        accounts={accounts}
-        language="en-US"
-        gateway={gateway}
-        onOpenAudioModSettings={onOpenAudioModSettings}
-      />,
-    );
-    expect(screen.getByText("In-game room tools are required")).toBeTruthy();
-    expect(screen.getByText("Feature group: in_game_room_tools")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Manage Mod features" })).toBeTruthy();
   });
 
   it("keeps module copy local, shows a room preview, and saves with generation CAS", async () => {

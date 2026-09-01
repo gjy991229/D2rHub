@@ -1,5 +1,3 @@
-export type RoomFlowProfile = "standard" | "direct_lobby";
-
 export interface RoomFlowStrategy {
   step_delay_ms: number;
   character_delay_ms: number;
@@ -20,9 +18,7 @@ export interface RoomAutomationConfig {
   sequence_width: number;
   background_text_strategy: "post_keys" | "send_keys";
   strategy_version: number;
-  standard_flow: RoomFlowStrategy;
-  direct_lobby_flow: RoomFlowStrategy;
-  account_flow_bindings: Record<string, RoomFlowProfile>;
+  flow: RoomFlowStrategy;
 }
 
 export interface RoomAutomationNormalizationReport {

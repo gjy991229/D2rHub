@@ -21,10 +21,8 @@ const validConfig: RoomAutomationConfig = {
   next_sequence: 7,
   sequence_width: 3,
   background_text_strategy: "post_keys",
-  strategy_version: 16,
-  standard_flow: { step_delay_ms: 80, character_delay_ms: 10 },
-  direct_lobby_flow: { step_delay_ms: 60, character_delay_ms: 10 },
-  account_flow_bindings: {},
+  strategy_version: 17,
+  flow: { step_delay_ms: 80, character_delay_ms: 10 },
 };
 
 describe("room automation configuration validation", () => {
@@ -46,7 +44,7 @@ describe("room automation configuration validation", () => {
   it("rejects values that cannot deserialize into the backend integer contract", () => {
     const fractionalTiming = validateRoomAutomationConfig({
       ...validConfig,
-      standard_flow: { ...validConfig.standard_flow, step_delay_ms: 1.5 },
+      flow: { ...validConfig.flow, step_delay_ms: 1.5 },
     }, ROOM_AUTOMATION_COPY["en-US"], ["one", "two"]);
     const oversizedSequence = validateRoomAutomationConfig({
       ...validConfig,
@@ -77,11 +75,8 @@ describe("room automation configuration validation", () => {
     expect(canonicalConflict.fieldErrors.shortcuts).toBe(ROOM_AUTOMATION_COPY["en-US"].shortcutConflict);
   });
 
-  it("treats object key order as the same persisted configuration", () => {
-    expect(roomAutomationConfigsEqual(
-      { ...validConfig, account_flow_bindings: { two: "direct_lobby", one: "standard" } },
-      { ...validConfig, account_flow_bindings: { one: "standard", two: "direct_lobby" } },
-    )).toBe(true);
+  it("compares the unified persisted configuration", () => {
+    expect(roomAutomationConfigsEqual(validConfig, { ...validConfig })).toBe(true);
     expect(roomAutomationConfigsEqual(validConfig, { ...validConfig, name_prefix: "other-" })).toBe(false);
   });
 });

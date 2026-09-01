@@ -183,18 +183,19 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     isConfigured: (config) => config.enable_tz_overlay || config.enable_stats_overlay,
   },
   {
+    id: "pet",
+    icon: Cat,
+    kind: "optional",
+    group: "optional-features",
+    capabilityIds: ["desktop-pet"],
+  },
+  {
     id: "automation",
     icon: ScanEye,
     kind: "optional",
     group: "optional-features",
     capabilityIds: ["audio-telemetry"],
     isConfigured: (config) => config.rune_audio_enabled,
-  },
-  {
-    id: "mod-processing",
-    icon: PackageOpen,
-    kind: "optional",
-    group: "optional-features",
   },
   {
     id: "room-automation",
@@ -204,11 +205,10 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     capabilityIds: ["room-automation"],
   },
   {
-    id: "pet",
-    icon: Cat,
+    id: "mod-processing",
+    icon: PackageOpen,
     kind: "optional",
     group: "optional-features",
-    capabilityIds: ["desktop-pet"],
   },
 ] as const;
 
