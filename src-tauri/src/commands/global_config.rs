@@ -2337,7 +2337,7 @@ impl GlobalConfig {
                 battle_net_path,
             });
         };
-        let is_cn = edition == crate::launch_context::ClientEdition::Cn;
+        let is_cn = edition == crate::domain::account::ClientEdition::Cn;
         let (game_key, saves_key) = if is_cn {
             ("cn_game_path", "cn_saved_games_path")
         } else {
@@ -2399,15 +2399,15 @@ impl GlobalConfig {
 
     fn infer_legacy_saved_games_edition(
         saved_games_path: &str,
-    ) -> Option<crate::launch_context::ClientEdition> {
+    ) -> Option<crate::domain::account::ClientEdition> {
         let directory_name = saved_games_path
             .trim_end_matches(['\\', '/'])
             .rsplit(['\\', '/'])
             .next()?;
         if directory_name.eq_ignore_ascii_case("Diablo II Resurrected (CN)") {
-            Some(crate::launch_context::ClientEdition::Cn)
+            Some(crate::domain::account::ClientEdition::Cn)
         } else if directory_name.eq_ignore_ascii_case("Diablo II Resurrected") {
-            Some(crate::launch_context::ClientEdition::Global)
+            Some(crate::domain::account::ClientEdition::Global)
         } else {
             None
         }

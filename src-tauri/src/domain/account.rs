@@ -23,6 +23,124 @@ pub enum AccountPositionError {
     MissingSelection(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum AccountConfigurationError {
+    #[error("不支持的账号游戏区服: {0}")]
+    UnsupportedRegion(String),
+    #[error("不支持的认证方式: {0}")]
+    UnsupportedAuthMode(String),
+    #[error("只有 Token 直启账号可以切换国际服服务器")]
+    RegionSwitchRequiresToken,
+    #[error("账号缺少区服，无法切换服务器")]
+    MissingRegion,
+    #[error("只有国际服账号可以在亚服、美服和欧服之间切换")]
+    RegionSwitchRequiresGlobalEdition,
+    #[error("不支持的国际服服务器: {0}")]
+    UnsupportedInternationalRegion(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GameRegion {
+    Cn,
+    Asia,
+    Americas,
+    Europe,
+}
+
+impl GameRegion {
+    pub fn parse(raw: &str) -> Result<Self, AccountConfigurationError> {
+        match raw.trim().to_ascii_uppercase().as_str() {
+            "CN" => Ok(Self::Cn),
+            "KR" | "GLOBAL" | "ASIA" => Ok(Self::Asia),
+            "NA" | "US" | "AMERICAS" => Ok(Self::Americas),
+            "EU" | "EUROPE" => Ok(Self::Europe),
+            _ => Err(AccountConfigurationError::UnsupportedRegion(
+                raw.to_string(),
+            )),
+        }
+    }
+
+    pub fn canonical(self) -> &'static str {
+        match self {
+            Self::Cn => "CN",
+            Self::Asia => "KR",
+            Self::Americas => "NA",
+            Self::Europe => "EU",
+        }
+    }
+
+    pub fn edition(self) -> ClientEdition {
+        match self {
+            Self::Cn => ClientEdition::Cn,
+            Self::Asia | Self::Americas | Self::Europe => ClientEdition::Global,
+        }
+    }
+
+    pub fn registry_region(self) -> &'static str {
+        match self {
+            Self::Cn => "CN",
+            Self::Asia => "KR",
+            Self::Americas => "US",
+            Self::Europe => "EU",
+        }
+    }
+
+    pub fn default_locale(self) -> &'static str {
+        match self {
+            Self::Cn => "zhCN",
+            Self::Asia => "zhTW",
+            Self::Americas | Self::Europe => "enUS",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientEdition {
+    Cn,
+    Global,
+}
+
+impl ClientEdition {
+    pub fn canonical(self) -> &'static str {
+        match self {
+            Self::Cn => "CN",
+            Self::Global => "Global",
+        }
+    }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Cn => "国服",
+            Self::Global => "国际服",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthMode {
+    BattleNet,
+    Token,
+}
+
+impl AuthMode {
+    pub fn parse(raw: Option<&str>) -> Result<Self, AccountConfigurationError> {
+        match raw.map(str::trim).filter(|value| !value.is_empty()) {
+            None | Some("bnet") => Ok(Self::BattleNet),
+            Some("token") => Ok(Self::Token),
+            Some(mode) => Err(AccountConfigurationError::UnsupportedAuthMode(
+                mode.to_string(),
+            )),
+        }
+    }
+
+    pub fn canonical(self) -> &'static str {
+        match self {
+            Self::BattleNet => "bnet",
+            Self::Token => "token",
+        }
+    }
+}
+
 /// Stable account metadata persisted in `accounts/{id}/account.json`.
 ///
 /// Runtime fields remain in the serialized shape for backward compatibility. The account query
@@ -254,6 +372,37 @@ impl AccountMeta {
         self.active_position_id = active_position_id;
         Ok(())
     }
+
+    /// Switches between international regions without disturbing the account's
+    /// token, locale, settings, runtime snapshot, or initialized state.
+    pub fn switch_international_region(
+        &mut self,
+        requested_region: &str,
+    ) -> Result<(), AccountConfigurationError> {
+        if AuthMode::parse(self.auth_mode.as_deref())? != AuthMode::Token {
+            return Err(AccountConfigurationError::RegionSwitchRequiresToken);
+        }
+        let current_region = self
+            .region
+            .as_deref()
+            .ok_or(AccountConfigurationError::MissingRegion)?;
+        if GameRegion::parse(current_region)?.edition() != ClientEdition::Global {
+            return Err(AccountConfigurationError::RegionSwitchRequiresGlobalEdition);
+        }
+
+        let requested_region = requested_region.trim().to_ascii_uppercase();
+        if !matches!(requested_region.as_str(), "KR" | "NA" | "EU") {
+            return Err(AccountConfigurationError::UnsupportedInternationalRegion(
+                requested_region,
+            ));
+        }
+        self.region = Some(
+            GameRegion::parse(&requested_region)?
+                .canonical()
+                .to_string(),
+        );
+        Ok(())
+    }
 }
 
 fn next_legacy_position_id(presets: &[WindowPositionPreset]) -> String {
@@ -315,7 +464,10 @@ pub fn is_valid_account_id(id: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_valid_account_id, AccountMeta, AccountPositionError, WindowPositionPreset};
+    use super::{
+        is_valid_account_id, AccountMeta, AccountPositionError, AuthMode, ClientEdition,
+        GameRegion, WindowPositionPreset,
+    };
 
     #[test]
     fn historical_and_uuid_identifiers_remain_supported() {
@@ -416,6 +568,61 @@ mod tests {
         assert_eq!(account.position_presets, original.position_presets);
         assert_eq!(account.active_position_id, original.active_position_id);
         assert_eq!((account.window_x, account.window_y), (Some(0), Some(0)));
+    }
+
+    #[test]
+    fn account_regions_and_authentication_have_stable_canonical_values() {
+        assert_eq!(AuthMode::parse(None).unwrap(), AuthMode::BattleNet);
+        assert_eq!(AuthMode::parse(Some("token")).unwrap(), AuthMode::Token);
+        assert_eq!(GameRegion::parse("Global").unwrap(), GameRegion::Asia);
+        assert_eq!(GameRegion::parse("US").unwrap().canonical(), "NA");
+        assert_eq!(
+            GameRegion::parse("EU").unwrap().edition(),
+            ClientEdition::Global
+        );
+        assert_eq!(GameRegion::Americas.registry_region(), "US");
+        assert_eq!(GameRegion::Asia.default_locale(), "zhTW");
+    }
+
+    #[test]
+    fn international_switch_preserves_non_region_account_configuration() {
+        let mut account = AccountMeta::new("account1");
+        account.auth_mode = Some("token".to_string());
+        account.region = Some("Global".to_string());
+        account.token = Some("encrypted-token".to_string());
+        account.language = Some("zhTW".to_string());
+        account.voicelanguage = Some("enUS".to_string());
+        account.has_customized_settings = true;
+        account.snapshot_edition = Some("Global".to_string());
+        account.initialized = true;
+
+        account.switch_international_region("EU").unwrap();
+
+        assert_eq!(account.region.as_deref(), Some("EU"));
+        assert_eq!(account.token.as_deref(), Some("encrypted-token"));
+        assert_eq!(account.language.as_deref(), Some("zhTW"));
+        assert_eq!(account.voicelanguage.as_deref(), Some("enUS"));
+        assert!(account.has_customized_settings);
+        assert_eq!(account.snapshot_edition.as_deref(), Some("Global"));
+        assert!(account.initialized);
+    }
+
+    #[test]
+    fn international_switch_rejects_cn_battle_net_and_cn_targets() {
+        let mut cn = AccountMeta::new("cn");
+        cn.auth_mode = Some("token".to_string());
+        cn.region = Some("CN".to_string());
+        assert!(cn.switch_international_region("EU").is_err());
+
+        let mut battle_net = AccountMeta::new("bnet");
+        battle_net.auth_mode = Some("bnet".to_string());
+        battle_net.region = Some("EU".to_string());
+        assert!(battle_net.switch_international_region("NA").is_err());
+
+        let mut invalid_target = AccountMeta::new("invalid");
+        invalid_target.auth_mode = Some("token".to_string());
+        invalid_target.region = Some("KR".to_string());
+        assert!(invalid_target.switch_international_region("CN").is_err());
     }
 
     fn position(id: &str, name: &str, x: i32, y: i32) -> WindowPositionPreset {

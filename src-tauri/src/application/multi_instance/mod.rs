@@ -1,5 +1,6 @@
 mod account_ordering;
 mod account_positions;
+mod account_profile;
 mod account_query;
 mod account_settings;
 mod facade;
@@ -10,6 +11,10 @@ mod ports;
 
 pub use account_ordering::AccountOrderingService;
 pub use account_positions::AccountPositionService;
+pub use account_profile::{
+    AccountProfilePatch, AccountProfilePolicy, AccountProfileService, ResolvedAccountProfile,
+    TokenProtector,
+};
 pub use account_query::AccountQueryService;
 pub use account_settings::AccountSettingsPreferenceService;
 pub use facade::{MultiInstanceFacade, WindowMatch};

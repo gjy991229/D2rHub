@@ -6,8 +6,9 @@ use crate::commands::account::{
     normalized_account_display_name, remove_path_if_exists, replace_path_with_backup,
     resolve_account_runtime_snapshot, sibling_with_suffix, AccountManager, AccountMeta,
 };
+use crate::domain::account::{AuthMode, GameRegion};
 use crate::error::AppError;
-use crate::launch_context::{AuthMode, ContextPurpose, GameRegion, LaunchContext};
+use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::state::{AccountLifecycleLease, SharedState};
 
 const EXPORT_FORMAT: &str = "D2RHub.AccountExport";
@@ -537,7 +538,7 @@ fn prepare_imported_credentials(
                 .region
                 .as_deref()
                 .ok_or_else(|| AppError::ConfigReadError("缺少游戏区服".to_string()))
-                .and_then(GameRegion::parse)
+                .and_then(|region| GameRegion::parse(region).map_err(AppError::from))
                 .and_then(|region| {
                     resolve_account_runtime_snapshot(staging, meta, region.edition()).map(|_| ())
                 });

@@ -1,8 +1,9 @@
 use crate::commands::account::AccountManager;
 use crate::commands::utils::{sanitize_folder_name, shared_system, silent_cmd};
+use crate::domain::account::AuthMode;
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
-use crate::launch_context::{paths_have_same_identity, AuthMode};
+use crate::launch_context::paths_have_same_identity;
 use crate::state::{AccountLifecycleLease, SharedState};
 use sysinfo::ProcessesToUpdate;
 

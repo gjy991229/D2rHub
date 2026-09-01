@@ -1,88 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 
-use crate::commands::account::AccountMeta;
+use crate::domain::account::{AccountMeta, AuthMode, ClientEdition, GameRegion};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::state::AppState;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GameRegion {
-    Cn,
-    Asia,
-    Americas,
-    Europe,
-}
-
-impl GameRegion {
-    pub(crate) fn parse(raw: &str) -> Result<Self, AppError> {
-        match raw.trim().to_ascii_uppercase().as_str() {
-            "CN" => Ok(Self::Cn),
-            "KR" | "GLOBAL" | "ASIA" => Ok(Self::Asia),
-            "NA" | "US" | "AMERICAS" => Ok(Self::Americas),
-            "EU" | "EUROPE" => Ok(Self::Europe),
-            _ => Err(AppError::ConfigReadError(format!(
-                "不支持的账号游戏区服: {raw}"
-            ))),
-        }
-    }
-
-    pub(crate) fn canonical(self) -> &'static str {
-        match self {
-            Self::Cn => "CN",
-            Self::Asia => "KR",
-            Self::Americas => "NA",
-            Self::Europe => "EU",
-        }
-    }
-
-    pub(crate) fn edition(self) -> ClientEdition {
-        match self {
-            Self::Cn => ClientEdition::Cn,
-            Self::Asia | Self::Americas | Self::Europe => ClientEdition::Global,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ClientEdition {
-    Cn,
-    Global,
-}
-
-impl ClientEdition {
-    pub(crate) fn canonical(self) -> &'static str {
-        match self {
-            Self::Cn => "CN",
-            Self::Global => "Global",
-        }
-    }
-
-    pub(crate) fn display_name(self) -> &'static str {
-        match self {
-            Self::Cn => "国服",
-            Self::Global => "国际服",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AuthMode {
-    BattleNet,
-    Token,
-}
-
-impl AuthMode {
-    pub(crate) fn parse(raw: Option<&str>) -> Result<Self, AppError> {
-        match raw.map(str::trim).filter(|value| !value.is_empty()) {
-            None | Some("bnet") => Ok(Self::BattleNet),
-            Some("token") => Ok(Self::Token),
-            Some(mode) => Err(AppError::ConfigReadError(format!(
-                "不支持的认证方式: {mode}"
-            ))),
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ContextPurpose {
@@ -132,23 +54,9 @@ pub(crate) struct RegionConventions {
 
 impl RegionConventions {
     fn for_region(region: GameRegion) -> Self {
-        match region {
-            GameRegion::Cn => Self {
-                registry_region: "CN",
-                default_locale: "zhCN",
-            },
-            GameRegion::Asia => Self {
-                registry_region: "KR",
-                default_locale: "zhTW",
-            },
-            GameRegion::Americas => Self {
-                registry_region: "US",
-                default_locale: "enUS",
-            },
-            GameRegion::Europe => Self {
-                registry_region: "EU",
-                default_locale: "enUS",
-            },
+        Self {
+            registry_region: region.registry_region(),
+            default_locale: region.default_locale(),
         }
     }
 }

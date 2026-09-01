@@ -16,10 +16,11 @@ use crate::commands::account::{
 };
 use crate::commands::system::{LaunchProgress, SystemGameWindowPort};
 use crate::commands::utils::silent_cmd;
+use crate::domain::account::{AuthMode, ClientEdition};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{
-    account_game_executable_identity, AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext,
+    account_game_executable_identity, ContextPurpose, HostRuntimeLease, LaunchContext,
 };
 use crate::state::{AccountLifecycleLease, SharedState};
 use crate::token_registry_trace::{WebTokenReadMonitor, WEB_TOKEN_VALUE_NAME};
@@ -641,7 +642,7 @@ fn replace_bnet_roaming_snapshot(source: &Path, target: &Path) -> Result<(), App
 fn validate_bnet_snapshot(
     config: &GlobalConfig,
     meta: &crate::commands::account::AccountMeta,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<(), AppError> {
     let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, &meta.id)?;
     let snapshot = resolve_account_runtime_snapshot(&account_dir, meta, expected_edition)?;
@@ -1030,7 +1031,7 @@ async fn prepare_bnet_environment(
             .map_err(|error| account_path_error(account_id, error))?,
     };
     let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())
-        .map_err(|error| account_path_error(account_id, error))?;
+        .map_err(|error| account_path_error(account_id, error.into()))?;
     if auth_mode != AuthMode::BattleNet {
         return Err(account_path_error(
             account_id,

@@ -5,19 +5,18 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountOrderingService, AccountPositionService, AccountQueryService,
-    AccountRepository, AccountRuntimePort, AccountSettingsPreferenceService,
-    AccountSettingsRepository, CancellationTicket, WindowPosition,
+    AccountCatalog, AccountOrderingService, AccountPositionService, AccountProfilePatch,
+    AccountProfilePolicy, AccountProfileService, AccountQueryService, AccountRepository,
+    AccountRuntimePort, AccountSettingsPreferenceService, AccountSettingsRepository,
+    CancellationTicket, ResolvedAccountProfile, TokenProtector, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
 pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
+use crate::domain::account::{AuthMode, ClientEdition, GameRegion};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
-use crate::launch_context::{
-    AuthMode, ClientEdition, ContextPurpose, EditionConventions, GameRegion, HostRuntimeLease,
-    LaunchContext,
-};
+use crate::launch_context::{ContextPurpose, EditionConventions, HostRuntimeLease, LaunchContext};
 use crate::state::{AccountLifecycleLease, SharedState};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -312,6 +311,32 @@ impl AccountSettingsRepository for AccountManagerCatalog<'_> {
             )));
         }
         Ok(())
+    }
+}
+
+struct LaunchContextAccountProfilePolicy<'a> {
+    config: &'a GlobalConfig,
+}
+
+impl AccountProfilePolicy for LaunchContextAccountProfilePolicy<'_> {
+    fn resolve(&self, account: &AccountMeta) -> Result<ResolvedAccountProfile, AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::LaunchGame)?;
+        Ok(ResolvedAccountProfile {
+            auth_mode: context.auth_mode,
+            game_region: context.game_region,
+            client_edition: context.installation.edition,
+            default_locale: context.region.default_locale,
+        })
+    }
+}
+
+struct CurrentUserTokenProtector;
+
+impl TokenProtector for CurrentUserTokenProtector {
+    fn protect(&self, plaintext: &str) -> Result<String, AppError> {
+        let encrypted = crate::commands::crypto::protect_token(plaintext)
+            .map_err(|error| AppError::Unknown(format!("Token 加密失败: {error}")))?;
+        Ok(crate::commands::crypto::hex_encode(&encrypted))
     }
 }
 
@@ -764,112 +789,28 @@ pub fn update_account_meta(
     language: Option<String>,
     voicelanguage: Option<String>,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let previous_auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
-    let old_edition = meta
-        .region
-        .as_deref()
-        .and_then(|value| GameRegion::parse(value).ok())
-        .map(GameRegion::edition);
-    let region_updated = region.is_some();
-    let auth_mode_updated = auth_mode.is_some();
-
-    if let Some(value) = auth_mode {
-        meta.auth_mode = Some(value);
-    }
-    if let Some(value) = region {
-        meta.region = Some(value);
-    }
-
-    let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::LaunchGame)?;
-    meta.region = Some(context.game_region.canonical().to_string());
-    if context.auth_mode == AuthMode::Token
-        && meta.token.is_none()
-        && token.as_deref().is_none_or(|value| value.trim().is_empty())
-    {
-        return Err(AppError::ConfigReadError(
-            "迁移为 Token 认证时必须提供 Token".to_string(),
-        ));
-    }
-
-    if region_updated {
-        let edition_changed = old_edition
-            .map(|edition| edition != context.installation.edition)
-            .unwrap_or(true);
-        if edition_changed {
-            meta.has_customized_settings = false;
-            meta.snapshot_edition = None;
-            if context.auth_mode == AuthMode::BattleNet {
-                meta.initialized = false;
-            }
-        }
-        if context.auth_mode == AuthMode::Token {
-            if meta.language.is_none() {
-                meta.language = Some(context.region.default_locale.to_string());
-            }
-            if meta.voicelanguage.is_none() {
-                meta.voicelanguage = Some(context.region.default_locale.to_string());
-            }
-        }
-    }
-
-    if context.auth_mode == AuthMode::Token {
-        meta.initialized = true;
-        if auth_mode_updated && previous_auth_mode != AuthMode::Token {
-            meta.snapshot_edition = None;
-        }
-        if let Some(value) = language {
-            meta.language = Some(value);
-        }
-        if let Some(value) = voicelanguage {
-            meta.voicelanguage = Some(value);
-        }
-    }
-    if let Some(ref value) = token {
-        let encrypted = crate::commands::crypto::protect_token(value)
-            .map_err(|e| AppError::Unknown(format!("Token 加密失败: {}", e)))?;
-        meta.token = Some(crate::commands::crypto::hex_encode(&encrypted));
-    }
-
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(())
-}
-
-fn switch_international_account_region(
-    meta: &mut AccountMeta,
-    requested_region: &str,
-) -> Result<(), AppError> {
-    if AuthMode::parse(meta.auth_mode.as_deref())? != AuthMode::Token {
-        return Err(AppError::ConfigReadError(
-            "只有 Token 直启账号可以切换国际服服务器".to_string(),
-        ));
-    }
-
-    let current_region = meta
-        .region
-        .as_deref()
-        .ok_or_else(|| AppError::ConfigReadError("账号缺少区服，无法切换服务器".to_string()))?;
-    if GameRegion::parse(current_region)?.edition() != ClientEdition::Global {
-        return Err(AppError::ConfigReadError(
-            "只有国际服账号可以在亚服、美服和欧服之间切换".to_string(),
-        ));
-    }
-
-    let requested_region = requested_region.trim().to_ascii_uppercase();
-    if !matches!(requested_region.as_str(), "KR" | "NA" | "EU") {
-        return Err(AppError::ConfigReadError(format!(
-            "不支持的国际服服务器: {requested_region}"
-        )));
-    }
-    let next_region = GameRegion::parse(&requested_region)?;
-    meta.region = Some(next_region.canonical().to_string());
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountProfileService::new(
+        &repository,
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+    )
+    .update(
+        &account_id,
+        AccountProfilePatch {
+            auth_mode,
+            token,
+            region,
+            language,
+            voice_language: voicelanguage,
+        },
+    )
 }
 
 /// 在共用同一套客户端与 Token 的国际服服务器之间切换。
@@ -879,16 +820,19 @@ pub fn update_account_region(
     account_id: String,
     region: String,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let accounts_dir = state
+    let cfg = state
         .configuration()
         .snapshot()
-        .map(|config| config.accounts_dir.clone())
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&accounts_dir, &account_id)?;
-    switch_international_account_region(&mut meta, &region)?;
-    AccountManager::save_meta(&accounts_dir, &meta)
+    let repository = AccountManagerCatalog::new(&cfg);
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountProfileService::new(
+        &repository,
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+    )
+    .switch_international_region(&account_id, &region)
 }
 
 /// 删除账号
@@ -1241,13 +1185,12 @@ mod settings_json_tests {
         replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
         resolve_account_runtime_snapshot, restore_staged_account_deletion, sibling_with_suffix,
         stage_account_directory, stage_account_directory_for_deletion,
-        switch_international_account_region, validate_runtime_snapshot_root, AccountDeletionPhase,
-        AccountManager, AccountMeta, BnetInitializationKind, RegistryValueBackup,
-        ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        validate_runtime_snapshot_root, AccountDeletionPhase, AccountManager, AccountMeta,
+        BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
+    use crate::domain::account::ClientEdition;
     use crate::domain::config::GlobalConfig;
     use crate::error::AppError;
-    use crate::launch_context::ClientEdition;
     use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -1387,60 +1330,6 @@ mod settings_json_tests {
 
         assert_eq!(active, "-mod highres -txt");
         assert_eq!(configurations, ["-mod highres -txt", "-direct -txt"]);
-    }
-
-    #[test]
-    fn international_region_switch_preserves_account_configuration() {
-        let mut meta = AccountMeta::new("account1");
-        meta.auth_mode = Some("token".to_string());
-        meta.region = Some("KR".to_string());
-        meta.token = Some("encrypted-token".to_string());
-        meta.language = Some("zhTW".to_string());
-        meta.voicelanguage = Some("enUS".to_string());
-        meta.has_customized_settings = true;
-        meta.snapshot_edition = Some("Global".to_string());
-        meta.initialized = true;
-
-        switch_international_account_region(&mut meta, "EU").unwrap();
-
-        assert_eq!(meta.region.as_deref(), Some("EU"));
-        assert_eq!(meta.token.as_deref(), Some("encrypted-token"));
-        assert_eq!(meta.language.as_deref(), Some("zhTW"));
-        assert_eq!(meta.voicelanguage.as_deref(), Some("enUS"));
-        assert!(meta.has_customized_settings);
-        assert_eq!(meta.snapshot_edition.as_deref(), Some("Global"));
-        assert!(meta.initialized);
-    }
-
-    #[test]
-    fn international_region_switch_accepts_legacy_global_region_aliases() {
-        for legacy_region in ["Global", "Asia", "Americas", "US", "Europe"] {
-            let mut meta = AccountMeta::new("account1");
-            meta.auth_mode = Some("token".to_string());
-            meta.region = Some(legacy_region.to_string());
-
-            switch_international_account_region(&mut meta, "NA").unwrap();
-
-            assert_eq!(meta.region.as_deref(), Some("NA"));
-        }
-    }
-
-    #[test]
-    fn international_region_switch_rejects_cn_and_battle_net_accounts() {
-        let mut cn = AccountMeta::new("cn");
-        cn.auth_mode = Some("token".to_string());
-        cn.region = Some("CN".to_string());
-        assert!(switch_international_account_region(&mut cn, "EU").is_err());
-
-        let mut battle_net = AccountMeta::new("bnet");
-        battle_net.auth_mode = Some("bnet".to_string());
-        battle_net.region = Some("EU".to_string());
-        assert!(switch_international_account_region(&mut battle_net, "NA").is_err());
-
-        let mut invalid_target = AccountMeta::new("invalid");
-        invalid_target.auth_mode = Some("token".to_string());
-        invalid_target.region = Some("KR".to_string());
-        assert!(switch_international_account_region(&mut invalid_target, "CN").is_err());
     }
 
     fn write_valid_runtime_snapshot(root: &std::path::Path, edition: &str) {
@@ -3347,7 +3236,7 @@ pub(crate) struct AccountRuntimeSnapshotPaths {
 
 fn validate_runtime_snapshot_root(
     root: &Path,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let manifest_path = root.join("snapshot.json");
     if !manifest_path.is_file() {
@@ -3476,7 +3365,7 @@ fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta
 pub(crate) fn resolve_account_runtime_snapshot(
     account_dir: &Path,
     meta: &AccountMeta,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let runtime_root = account_dir.join("runtime");
     if runtime_root.exists() {
@@ -3663,7 +3552,7 @@ fn write_account_meta_to_directory(account_dir: &Path, meta: &AccountMeta) -> Re
 fn stage_runtime_snapshot(
     account_dir: &Path,
     cfg: &GlobalConfig,
-    edition: crate::launch_context::ClientEdition,
+    edition: ClientEdition,
 ) -> Result<PendingRuntimeSnapshot, AppError> {
     let source_bnet = Path::new(&cfg.app_data_roaming_bnet_path);
     let source_config = source_bnet.join("Battle.net.config");
