@@ -1,4 +1,5 @@
 mod account_creation;
+mod account_deletion;
 mod account_game_settings;
 mod account_mods;
 mod account_naming;
@@ -15,6 +16,7 @@ mod leases;
 mod ports;
 
 pub use account_creation::{AccountCreationService, CreateAccountRequest, TimestampProvider};
+pub use account_deletion::AccountDeletionService;
 pub use account_game_settings::AccountGameSettingsService;
 pub use account_mods::AccountModService;
 pub use account_naming::AccountNamingService;
@@ -36,7 +38,8 @@ pub use leases::{
     AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,
 };
 pub use ports::{
-    AccountCatalog, AccountCreationRepository, AccountGameSettingsRepository, AccountModRepository,
+    AccountCatalog, AccountCreationRepository, AccountDeletionCleanupPort,
+    AccountDeletionTransaction, AccountGameSettingsRepository, AccountModRepository,
     AccountNameRepository, AccountRepository, AccountRuntimePort,
     AccountSettingsPreferenceRepository, GameSettings, GameWindowIdentity, GameWindowPort,
     InstanceStatusPort, WindowPosition,

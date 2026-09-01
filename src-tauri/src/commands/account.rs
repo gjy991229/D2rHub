@@ -5,13 +5,13 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountCreationRepository, AccountCreationService, AccountModRepository,
-    AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
-    AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
-    AccountQueryService, AccountRepository, AccountRuntimePort,
-    AccountSettingsPreferenceRepository, AccountSettingsPreferenceService, CancellationTicket,
-    CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
-    WindowPosition,
+    AccountCatalog, AccountCreationRepository, AccountCreationService, AccountDeletionCleanupPort,
+    AccountDeletionService, AccountDeletionTransaction, AccountModRepository, AccountModService,
+    AccountNameRepository, AccountNamingService, AccountOrderingService, AccountPositionService,
+    AccountProfilePatch, AccountProfilePolicy, AccountProfileService, AccountQueryService,
+    AccountRepository, AccountRuntimePort, AccountSettingsPreferenceRepository,
+    AccountSettingsPreferenceService, CancellationTicket, CreateAccountRequest,
+    ResolvedAccountProfile, TimestampProvider, TokenProtector, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -682,6 +682,123 @@ pub(crate) fn copy_account_settings_to_system(
     Ok(())
 }
 
+struct AccountDeletionTransactionAdapter<'a> {
+    app: &'a tauri::AppHandle,
+    state: &'a SharedState,
+}
+
+impl AccountDeletionTransaction for AccountDeletionTransactionAdapter<'_> {
+    fn delete(&self, requested_account_id: &str) -> Result<String, AppError> {
+        let staged_deletion = RefCell::new(None);
+        let post_commit_outcome = RefCell::new(None);
+        let deleted_account_id = RefCell::new(None);
+        let mutation_result =
+            crate::commands::global_config::mutate_loaded_global_config_with_post_commit(
+                self.state,
+                self.app,
+                |cfg| {
+                    let stored_account_id = AccountManager::list_ids(&cfg.accounts_dir)
+                        .into_iter()
+                        .find(|stored_id| stored_id.eq_ignore_ascii_case(requested_account_id))
+                        .ok_or_else(|| {
+                            AppError::AccountNotFound(requested_account_id.to_string())
+                        })?;
+                    let dir =
+                        AccountManager::account_dir_checked(&cfg.accounts_dir, &stored_account_id)?;
+                    let had_configuration_references =
+                        config_references_account(cfg, &stored_account_id);
+                    *staged_deletion.borrow_mut() = Some(stage_account_directory_for_deletion(
+                        &dir,
+                        &stored_account_id,
+                        had_configuration_references,
+                    )?);
+                    *deleted_account_id.borrow_mut() = Some(stored_account_id.clone());
+                    let cleared_audio_target = cfg
+                        .rune_audio_target_account
+                        .trim()
+                        .eq_ignore_ascii_case(&stored_account_id);
+                    if cleared_audio_target {
+                        cfg.rune_audio_enabled = false;
+                        cfg.rune_audio_target_account.clear();
+                    }
+                    let removed_from_launch_group =
+                        cfg.remove_account_from_launch_groups(&stored_account_id);
+                    Ok(cleared_audio_target || removed_from_launch_group)
+                },
+                |_| {
+                    let mut staged_deletion = staged_deletion.borrow_mut();
+                    let outcome = match staged_deletion.as_mut() {
+                        None => Err(AppError::FileError(
+                            "账号删除事务未能创建目录暂存记录".to_string(),
+                        )),
+                        Some(staged_deletion) => {
+                            let completion = complete_staged_account_deletion_after_config_commit(
+                                staged_deletion,
+                            );
+                            if completion.should_retire_account_id {
+                                if let Some(account_id) = deleted_account_id.borrow().as_deref() {
+                                    self.state.retire_account_id(account_id);
+                                }
+                            }
+                            completion.result
+                        }
+                    };
+                    *post_commit_outcome.borrow_mut() = Some(outcome);
+                },
+            );
+        let staged_deletion = staged_deletion.into_inner();
+        let mutation = match mutation_result {
+            Ok(mutation) => mutation,
+            Err(error) => {
+                return Err(match staged_deletion.as_ref() {
+                    Some(staged_deletion) => {
+                        rollback_staged_account_deletion(staged_deletion, error)
+                    }
+                    None => error,
+                });
+            }
+        };
+        match mutation {
+            ConfigurationMutation::Missing => {
+                return Err(AppError::ConfigReadError("尚未完成首次配置".to_string()));
+            }
+            ConfigurationMutation::Unchanged | ConfigurationMutation::Updated => {}
+        }
+        let deleted_account_id = deleted_account_id
+            .into_inner()
+            .ok_or_else(|| AppError::FileError("账号删除事务未记录实际账号 ID".to_string()))?;
+
+        post_commit_outcome
+            .into_inner()
+            .ok_or_else(|| AppError::FileError("账号删除事务未执行提交后目录处理".to_string()))??;
+        Ok(deleted_account_id)
+    }
+}
+
+struct AccountDeletionCleanupAdapter<'a> {
+    state: &'a SharedState,
+}
+
+impl AccountDeletionCleanupPort for AccountDeletionCleanupAdapter<'_> {
+    fn remove_browser_profiles(&self, account_id: &str) -> Result<(), String> {
+        crate::commands::browser::remove_browser_profiles_for_account(account_id)
+            .map_err(|error| error.to_string())
+    }
+
+    fn remove_runtime_instance(&self, account_id: &str) {
+        self.state.multi_instance().instances().remove(account_id);
+    }
+
+    fn notify_account_removed(&self, account_id: &str) -> Vec<(String, String)> {
+        self.state
+            .capabilities()
+            .notify_account_removed(account_id)
+            .into_iter()
+            .map(|(capability_id, failure)| (capability_id.to_string(), failure.message))
+            .collect()
+    }
+}
+
 // ── Tauri Commands ──
 
 /// 获取所有账号列表
@@ -877,118 +994,28 @@ pub fn delete_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    // Catalog -> account -> configuration is the shared lifecycle lock order.
-    // Holding the catalog lease prevents create/import from reusing a display
-    // name while a failed deletion is still able to roll its directory back.
-    let catalog_guard = state.multi_instance().catalog_leases().acquire();
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let staged_deletion = RefCell::new(None);
-    let post_commit_outcome = RefCell::new(None);
-    let deleted_account_id = RefCell::new(None);
-    let mutation_result =
-        crate::commands::global_config::mutate_loaded_global_config_with_post_commit(
-            state.inner(),
-            &app,
-            |cfg| {
-                let stored_account_id = AccountManager::list_ids(&cfg.accounts_dir)
-                    .into_iter()
-                    .find(|stored_id| stored_id.eq_ignore_ascii_case(&account_id))
-                    .ok_or_else(|| AppError::AccountNotFound(account_id.clone()))?;
-                let dir =
-                    AccountManager::account_dir_checked(&cfg.accounts_dir, &stored_account_id)?;
-                let had_configuration_references =
-                    config_references_account(cfg, &stored_account_id);
-                *staged_deletion.borrow_mut() = Some(stage_account_directory_for_deletion(
-                    &dir,
-                    &stored_account_id,
-                    had_configuration_references,
-                )?);
-                *deleted_account_id.borrow_mut() = Some(stored_account_id.clone());
-                let cleared_audio_target = cfg
-                    .rune_audio_target_account
-                    .trim()
-                    .eq_ignore_ascii_case(&stored_account_id);
-                if cleared_audio_target {
-                    cfg.rune_audio_enabled = false;
-                    cfg.rune_audio_target_account.clear();
-                }
-                let removed_from_launch_group =
-                    cfg.remove_account_from_launch_groups(&stored_account_id);
-                Ok(cleared_audio_target || removed_from_launch_group)
-            },
-            |_| {
-                let mut staged_deletion = staged_deletion.borrow_mut();
-                let outcome = match staged_deletion.as_mut() {
-                    None => Err(AppError::FileError(
-                        "账号删除事务未能创建目录暂存记录".to_string(),
-                    )),
-                    Some(staged_deletion) => {
-                        let completion =
-                            complete_staged_account_deletion_after_config_commit(staged_deletion);
-                        if completion.should_retire_account_id {
-                            if let Some(account_id) = deleted_account_id.borrow().as_deref() {
-                                state.retire_account_id(account_id);
-                            }
-                        }
-                        completion.result
-                    }
-                };
-                *post_commit_outcome.borrow_mut() = Some(outcome);
-            },
-        );
-    let staged_deletion = staged_deletion.into_inner();
-    let mutation = match mutation_result {
-        Ok(mutation) => mutation,
-        Err(error) => {
-            return Err(match staged_deletion.as_ref() {
-                Some(staged_deletion) => rollback_staged_account_deletion(staged_deletion, error),
-                None => error,
-            });
-        }
+    let transaction = AccountDeletionTransactionAdapter {
+        app: &app,
+        state: state.inner(),
     };
-    match mutation {
-        ConfigurationMutation::Missing => {
-            return Err(AppError::ConfigReadError("尚未完成首次配置".to_string()));
-        }
-        ConfigurationMutation::Unchanged | ConfigurationMutation::Updated => {}
-    }
-    let deleted_account_id = deleted_account_id
-        .into_inner()
-        .ok_or_else(|| AppError::FileError("账号删除事务未记录实际账号 ID".to_string()))?;
-
-    post_commit_outcome
-        .into_inner()
-        .ok_or_else(|| AppError::FileError("账号删除事务未执行提交后目录处理".to_string()))??;
-    drop(catalog_guard);
-    if let Err(error) =
-        crate::commands::browser::remove_browser_profiles_for_account(&deleted_account_id)
-    {
+    let cleanup = AccountDeletionCleanupAdapter {
+        state: state.inner(),
+    };
+    let outcome = AccountDeletionService::new(
+        &transaction,
+        &cleanup,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+    )
+    .delete(&account_id)?;
+    for warning in outcome.warnings {
         log::warn!(
-            "账号 {} 已删除，但浏览器 Profile 清理失败（可能仍被浏览器占用）: {}",
-            deleted_account_id,
-            error
+            "账号 {} 已删除，但 {} 的提交后清理失败: {}",
+            outcome.account_id,
+            warning.component,
+            warning.message
         );
     }
-    state
-        .multi_instance()
-        .instances()
-        .remove(&deleted_account_id);
-    // The core transaction is complete. Release its account lease before
-    // optional modules observe the event so their cleanup cannot invert the
-    // shared lifecycle lock order.
-    drop(_account_lease);
-    for (capability_id, failure) in state
-        .capabilities()
-        .notify_account_removed(&deleted_account_id)
-    {
-        log::warn!(
-            "账号 {} 已删除，但可选模块 {} 清理账号引用失败（将在后续加载时再次归一化）: {}",
-            deleted_account_id,
-            capability_id,
-            failure.message
-        );
-    }
-
     Ok(())
 }
 

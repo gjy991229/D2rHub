@@ -78,6 +78,22 @@ pub trait AccountCreationRepository: AccountNameRepository {
     fn create(&self, account: &AccountMeta) -> Result<(), AppError>;
 }
 
+/// Recoverable account directory plus global-reference deletion transaction.
+/// The implementation commits or rolls back both resources as one operation
+/// and returns the persisted account identity that was actually removed.
+pub trait AccountDeletionTransaction: Send + Sync {
+    fn delete(&self, requested_account_id: &str) -> Result<String, AppError>;
+}
+
+/// Best-effort post-commit cleanup owned by concrete platform/capability
+/// adapters. Failures are diagnostic warnings and cannot resurrect an already
+/// committed account deletion.
+pub trait AccountDeletionCleanupPort: Send + Sync {
+    fn remove_browser_profiles(&self, account_id: &str) -> Result<(), String>;
+    fn remove_runtime_instance(&self, account_id: &str);
+    fn notify_account_removed(&self, account_id: &str) -> Vec<(String, String)>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application
