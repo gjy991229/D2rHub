@@ -1,17 +1,12 @@
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use crate::application::multi_instance::MultiInstanceRuntime;
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
-
-#[derive(Debug, Clone)]
-pub struct ActiveGameLaunch {
-    pub pid: u32,
-    pub mod_args: String,
-}
 
 /// 应用全局运行时状态
 pub struct AppState {
@@ -19,22 +14,15 @@ pub struct AppState {
     pub config: RwLock<Option<GlobalConfig>>,
     /// 应用数据目录路径
     pub app_data_dir: String,
-    /// 启动取消标志（前端点停止时置 true，启动循环检测到后中止）
-    pub cancel_launch: AtomicBool,
-    /// 每次取消递增；长事务通过启动代次识别属于自己的取消请求。
-    pub cancel_generation: AtomicU64,
+    /// 多开核心运行时。账号实例与操作取消只能通过其公开接口访问，避免模块直接操作锁。
+    multi_instance: MultiInstanceRuntime,
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
     /// 账号目录及 account.json 的生命周期写操作；同一账号同一时刻只能有一个事务。
     pub account_operations: Mutex<HashSet<String>>,
     /// 账号目录清单级写操作；用于原子维护跨账号唯一约束（如展示名）。
-    pub account_catalog: Mutex<()>,
-    /// 正在运行的账号游戏 PID 映射：account_id -> d2r_pid
-    pub active_games: RwLock<HashMap<String, u32>>,
-    /// 由 D2RHub 启动的实际会话参数快照。账号配置之后发生变化时，不能拿新配置冒充
-    /// 已运行进程的真实参数。
-    pub active_game_launches: RwLock<HashMap<String, ActiveGameLaunch>>,
+    pub account_catalog_write_lock: Mutex<()>,
     /// 同一时间只允许一个 Mod 加工任务，避免两个生成器写入同一个 mods 目录。
     pub audio_mod_build_busy: AtomicBool,
     /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
@@ -61,13 +49,10 @@ impl AppState {
         Self {
             config: RwLock::new(None),
             app_data_dir: app_data.to_string_lossy().to_string(),
-            cancel_launch: AtomicBool::new(false),
-            cancel_generation: AtomicU64::new(0),
+            multi_instance: MultiInstanceRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
             account_operations: Mutex::new(HashSet::new()),
-            account_catalog: Mutex::new(()),
-            active_games: RwLock::new(HashMap::new()),
-            active_game_launches: RwLock::new(HashMap::new()),
+            account_catalog_write_lock: Mutex::new(()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
             window_placement_io: Mutex::new(()),
@@ -75,22 +60,8 @@ impl AppState {
         }
     }
 
-    pub fn record_active_game(&self, account_id: &str, pid: u32, mod_args: &str) {
-        self.active_games
-            .write()
-            .insert(account_id.to_string(), pid);
-        self.active_game_launches.write().insert(
-            account_id.to_string(),
-            ActiveGameLaunch {
-                pid,
-                mod_args: mod_args.to_string(),
-            },
-        );
-    }
-
-    pub fn remove_active_game(&self, account_id: &str) {
-        self.active_games.write().remove(account_id);
-        self.active_game_launches.write().remove(account_id);
+    pub fn multi_instance(&self) -> &MultiInstanceRuntime {
+        &self.multi_instance
     }
 }
 

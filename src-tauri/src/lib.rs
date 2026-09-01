@@ -1,3 +1,4 @@
+mod application;
 mod audio_mod;
 mod battle_net_config;
 mod capabilities;

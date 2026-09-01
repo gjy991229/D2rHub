@@ -702,7 +702,7 @@ pub fn import_accounts(
         .cloned()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     // 与新建、重命名共用账号清单锁，确保导入生成名称期间唯一性不被并发绕过。
-    let _catalog_guard = state.account_catalog.lock();
+    let _catalog_guard = state.account_catalog_write_lock.lock();
     std::fs::create_dir_all(&cfg.accounts_dir)?;
     let mut used_names = existing_display_names(&cfg.accounts_dir);
     let next_order = AccountManager::list_ids(&cfg.accounts_dir)

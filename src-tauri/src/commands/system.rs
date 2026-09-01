@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::Manager;
 
+use crate::application::multi_instance::{GameWindowIdentity, GameWindowPort, WindowPosition};
 use crate::commands::utils::{shared_system, silent_cmd};
 use crate::error::AppError;
 use crate::launch_context::{paths_have_same_identity, ContextPurpose, LaunchContext};
@@ -23,6 +24,56 @@ impl LaunchProgress {
             status: status.to_string(),
             message: message.to_string(),
         }
+    }
+}
+
+/// Transitional Windows adapter for the multi-instance application port.
+/// Existing command helpers remain compatibility delegates until their callers migrate.
+pub(crate) struct SystemGameWindowPort;
+
+impl GameWindowPort for SystemGameWindowPort {
+    fn find_unique_process(&self, identity: &GameWindowIdentity) -> Option<u32> {
+        find_unique_d2r_pid_by_window_identity(&identity.title, &identity.executable)
+    }
+
+    fn rename(&self, pid: u32, title: &str) {
+        rename_game_window(pid, title);
+    }
+
+    fn move_to(&self, pid: u32, position: WindowPosition) -> bool {
+        find_game_hwnd(pid)
+            .map(|hwnd| move_window_handle(hwnd, position.x, position.y))
+            .unwrap_or(false)
+    }
+
+    fn move_by_title_compat(&self, title: &str, position: WindowPosition) -> bool {
+        set_game_window_position_by_title(title, position.x, position.y)
+    }
+
+    fn position(&self, pid: u32) -> Option<WindowPosition> {
+        find_game_hwnd(pid)
+            .and_then(get_window_rect)
+            .map(|(x, y)| WindowPosition { x, y })
+    }
+
+    fn set_taskbar_identity(&self, pid: u32, app_id: &str) -> Result<(), String> {
+        set_game_window_app_user_model_id(pid, app_id)
+    }
+
+    fn focus_by_pid(&self, pid: u32) -> bool {
+        let Some(hwnd) = find_game_hwnd(pid) else {
+            return false;
+        };
+        bring_window_to_foreground_raw(hwnd);
+        true
+    }
+
+    fn focus_by_title_compat(&self, title: &str) -> bool {
+        let Some(hwnd) = find_game_hwnd_by_title(title) else {
+            return false;
+        };
+        bring_window_to_foreground_raw(hwnd);
+        true
     }
 }
 
@@ -965,7 +1016,7 @@ fn recover_running_assignments(
     assignments
 }
 
-/// 扫描已运行的 D2R 窗口，匹配账号列表中的昵称，更新 active_games 状态
+/// 扫描已运行的 D2R 窗口，匹配账号列表中的昵称，更新多开实例注册表。
 /// 解决"账号已在游戏但工具不识别为活动账号"的问题
 /// 恢复匹配同时要求完整 exe 路径和精确窗口标题，且一个 PID 最多归属一个账号。
 #[tauri::command]
@@ -983,6 +1034,11 @@ pub fn refresh_account_running_state(
             fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
             fn IsWindowVisible(hWnd: isize) -> i32;
         }
+
+        // 扫描可能跨越多个 Windows API 调用。先记住注册表代次，提交时
+        // 若有新启动/清理已更新状态，则旧扫描必须让位。
+        let registry = state.multi_instance().instances();
+        let registry_snapshot = registry.snapshot();
 
         // 1. 只收集能够读取完整可执行文件路径的 D2R 进程。
         let d2r_processes: std::collections::HashMap<u32, std::path::PathBuf> = {
@@ -1007,9 +1063,13 @@ pub fn refresh_account_running_state(
                 .collect()
         };
         if d2r_processes.is_empty() {
-            state.active_games.write().clear();
-            state.active_game_launches.write().clear();
-            return Ok(Vec::new());
+            let final_instances = registry
+                .reconcile_if_unchanged(&registry_snapshot, std::iter::empty::<(String, u32)>())
+                .unwrap_or_else(|| state.multi_instance().facade().running_instances());
+            return Ok(final_instances
+                .into_iter()
+                .map(|instance| instance.account_id)
+                .collect());
         }
         let d2r_pids: std::collections::HashSet<u32> = d2r_processes.keys().copied().collect();
 
@@ -1094,8 +1154,12 @@ pub fn refresh_account_running_state(
             .collect();
 
         // 4. 保留仍匹配精确窗口标题和 Edition 可执行文件的映射，并去除 PID 重复认领。
-        let mut active = state.active_games.write();
-        let previous = std::mem::take(&mut *active);
+        let previous = registry_snapshot
+            .instances()
+            .iter()
+            .map(|instance| (instance.account_id.clone(), instance.pid))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut active = std::collections::HashMap::new();
         let mut claimed = std::collections::HashSet::new();
         for identity in &account_identities {
             if let Some(pid) = previous.get(&identity.account_id) {
@@ -1124,19 +1188,20 @@ pub fn refresh_account_running_state(
             }
         }
 
-        let active_snapshot = active.clone();
+        let final_instances = registry
+            .reconcile_if_unchanged(&registry_snapshot, active)
+            .unwrap_or_else(|| state.multi_instance().facade().running_instances());
+        let final_account_ids = final_instances
+            .into_iter()
+            .map(|instance| instance.account_id.to_ascii_lowercase())
+            .collect::<std::collections::HashSet<_>>();
         let running_accounts = account_identities
             .iter()
-            .filter(|identity| active.contains_key(&identity.account_id))
+            .filter(|identity| {
+                final_account_ids.contains(&identity.account_id.to_ascii_lowercase())
+            })
             .map(|identity| identity.account_id.clone())
-            .collect();
-        drop(active);
-        state
-            .active_game_launches
-            .write()
-            .retain(|account_id, launch| {
-                active_snapshot.get(account_id).copied() == Some(launch.pid)
-            });
+            .collect::<Vec<_>>();
         Ok(running_accounts)
     }
     #[cfg(not(target_os = "windows"))]
@@ -1640,7 +1705,15 @@ pub fn rename_game_window(pid: u32, new_title: &str) {
 
 /// 根据 PID 查找游戏窗口并移动位置（用于多开窗口排列）
 #[cfg(target_os = "windows")]
+#[allow(dead_code)] // compatibility delegate used by unfinished feature branches
 pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
+    if let Some(hwnd) = find_game_hwnd(pid) {
+        move_window_handle(hwnd, x, y);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn move_window_handle(hwnd: isize, x: i32, y: i32) -> bool {
     extern "system" {
         fn SetWindowPos(
             hWnd: isize,
@@ -1655,11 +1728,7 @@ pub fn set_game_window_position(pid: u32, x: i32, y: i32) {
     const SWP_NOSIZE: u32 = 0x0001;
     const SWP_NOZORDER: u32 = 0x0004;
 
-    if let Some(hwnd) = find_game_hwnd(pid) {
-        unsafe {
-            SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-        }
-    }
+    unsafe { SetWindowPos(hwnd, 0, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER) != 0 }
 }
 
 /// 根据窗口标题查找并移动位置（用于多选或 PID 缺失时的降级查找）
@@ -1731,7 +1800,13 @@ pub fn set_game_window_position_by_title(_title: &str, _x: i32, _y: i32) -> bool
 }
 
 #[cfg(not(target_os = "windows"))]
+#[allow(dead_code)] // compatibility delegate used by unfinished feature branches
 pub fn set_game_window_position(_pid: u32, _x: i32, _y: i32) {}
+
+#[cfg(not(target_os = "windows"))]
+fn move_window_handle(_hwnd: isize, _x: i32, _y: i32) -> bool {
+    false
+}
 
 /// 根据 PID 查找 D2R 游戏窗口句柄（公用基础设施）
 #[cfg(target_os = "windows")]

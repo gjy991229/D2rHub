@@ -2,8 +2,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
+use crate::application::multi_instance::{
+    AccountCatalog, AccountQueryService, AccountRuntimePort, CancellationTicket, WindowPosition,
+};
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
+pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{
@@ -204,105 +208,7 @@ fn write_registry_snapshot_values(backups: &[RegistryValueBackup]) -> Result<(),
     Ok(())
 }
 
-/// 账号级窗口位置胶囊。`window_x/window_y` 仍作为兼容旧版本的默认位置镜像保留。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowPositionPreset {
-    pub id: String,
-    pub name: String,
-    pub x: i32,
-    pub y: i32,
-}
-
-/// 账号元信息（存储在 accounts/{id}/account.json）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountMeta {
-    pub id: String,
-    #[serde(default)]
-    pub display_name: String,
-    #[serde(default)]
-    pub mod_args: String,
-    #[serde(default)]
-    pub mod_list: Vec<String>,
-    #[serde(default)]
-    pub created_at: String,
-    #[serde(default)]
-    pub last_launched_at: Option<String>,
-    #[serde(default)]
-    pub initialized: bool,
-    /// 最后一次初始化/重置的时间（用于 token 有效期计算）
-    #[serde(default)]
-    pub last_reset_at: Option<String>,
-    #[serde(default)]
-    pub order: u32,
-    #[serde(default)]
-    pub is_running: bool,
-    /// 当前运行中的 D2R 进程 PID（None = 未运行）
-    #[serde(default)]
-    pub running_pid: Option<u32>,
-    /// 游戏窗口目标 X 坐标（None = 不调整位置）
-    #[serde(default)]
-    pub window_x: Option<i32>,
-    /// 游戏窗口目标 Y 坐标（None = 不调整位置）
-    #[serde(default)]
-    pub window_y: Option<i32>,
-    /// 账号级窗口位置胶囊库。旧配置缺少该字段时，会由 window_x/window_y 补全。
-    #[serde(default)]
-    pub position_presets: Vec<WindowPositionPreset>,
-    /// 主界面默认选择的位置胶囊；None 表示不指定窗口位置。
-    #[serde(default)]
-    pub active_position_id: Option<String>,
-    /// 认证模式 ("bnet" 或 "token")
-    #[serde(default)]
-    pub auth_mode: Option<String>,
-    /// Token 认证的区服 ("CN" 或 "Global")
-    #[serde(default)]
-    pub region: Option<String>,
-    /// DPAPI 加密后的 Token 密文十六进制；任何前端 IPC 响应都会移除此字段。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-    /// 最近一次 Battle.net/UnifiedAuth 快照所属客户端版本（CN / Global）。
-    #[serde(default)]
-    pub snapshot_edition: Option<String>,
-
-    /// 是否已自定义过设置。
-    #[serde(default)]
-    pub has_customized_settings: bool,
-    /// 界面语言 ("zhCN" / "zhTW" / "enUS"，默认取决于区服)
-    #[serde(default)]
-    pub language: Option<String>,
-    /// 配音语言 ("zhCN" / "zhTW" / "enUS"，默认取决于区服)
-    #[serde(default)]
-    pub voicelanguage: Option<String>,
-}
-
 impl AccountMeta {
-    pub fn new(id: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            display_name: String::new(),
-            mod_args: String::new(),
-            mod_list: Vec::new(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            last_launched_at: None,
-            initialized: false,
-            last_reset_at: None,
-            order: 0,
-            is_running: false,
-            running_pid: None,
-            window_x: None,
-            window_y: None,
-            position_presets: Vec::new(),
-            active_position_id: None,
-            auth_mode: None,
-            region: None,
-            token: None,
-            has_customized_settings: false,
-            snapshot_edition: None,
-            language: None,
-            voicelanguage: None,
-        }
-    }
-
     fn redacted_for_frontend(mut self) -> Self {
         self.token = None;
         self
@@ -311,31 +217,125 @@ impl AccountMeta {
 
 pub struct AccountManager;
 
+pub(crate) struct AccountManagerCatalog<'a> {
+    config: &'a GlobalConfig,
+}
+
+impl<'a> AccountManagerCatalog<'a> {
+    pub(crate) fn new(config: &'a GlobalConfig) -> Self {
+        Self { config }
+    }
+
+    fn synchronize_listing_mod_arguments(&self, account: &mut AccountMeta) -> Result<(), AppError> {
+        if !account.initialized {
+            return Ok(());
+        }
+
+        let battle_net_config =
+            AccountManager::account_dir_checked(&self.config.accounts_dir, &account.id)?
+                .join("Battle.net")
+                .join("Battle.net.config");
+        if !battle_net_config.exists() {
+            return Ok(());
+        }
+
+        let Ok(context) =
+            LaunchContext::for_account(self.config, account, ContextPurpose::Settings)
+        else {
+            return Ok(());
+        };
+        let game_key = context.edition.battle_net_config_game_key;
+        if let Some(arguments) = try_read_mod_args(&battle_net_config, game_key) {
+            account.mod_args = arguments;
+        } else if !account.mod_args.is_empty() {
+            account.mod_args.clear();
+        }
+        Ok(())
+    }
+}
+
+impl AccountCatalog for AccountManagerCatalog<'_> {
+    fn list_account_ids(&self) -> Result<Vec<String>, AppError> {
+        Ok(AccountManager::list_ids(&self.config.accounts_dir))
+    }
+
+    fn list(&self) -> Result<Vec<AccountMeta>, AppError> {
+        let mut accounts = Vec::new();
+        for account_id in AccountManager::list_ids(&self.config.accounts_dir) {
+            // Historical behavior intentionally keeps one damaged account from hiding every
+            // healthy account in the dashboard.
+            let Ok(mut account) = AccountManager::load_meta(&self.config.accounts_dir, &account_id)
+            else {
+                continue;
+            };
+            self.synchronize_listing_mod_arguments(&mut account)?;
+            accounts.push(account);
+        }
+        Ok(accounts)
+    }
+
+    fn get(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+}
+
+struct AccountManagerRuntime<'a> {
+    state: &'a SharedState,
+}
+
+impl<'a> AccountManagerRuntime<'a> {
+    fn new(state: &'a SharedState) -> Self {
+        Self { state }
+    }
+}
+
+impl AccountRuntimePort for AccountManagerRuntime<'_> {
+    fn registered_pid(&self, account_id: &str) -> Option<u32> {
+        self.state.multi_instance().instances().pid_for(account_id)
+    }
+
+    fn is_expected_game_process(
+        &self,
+        config: &GlobalConfig,
+        account: &AccountMeta,
+        pid: u32,
+    ) -> bool {
+        let Some(expected_game_path) =
+            LaunchContext::for_account(config, account, ContextPurpose::Settings)
+                .ok()
+                .map(|context| context.installation.game_executable)
+        else {
+            return false;
+        };
+
+        let mut system = shared_system()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let system_pid = sysinfo::Pid::from(pid as usize);
+        system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
+        let Some(process) = system.process(system_pid) else {
+            return false;
+        };
+        process
+            .name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("D2R.exe")
+            && process.exe().is_some_and(|actual| {
+                crate::commands::system::executable_paths_match(actual, &expected_game_path)
+            })
+    }
+
+    fn remove_if_pid(&self, account_id: &str, pid: u32) -> bool {
+        self.state
+            .multi_instance()
+            .instances()
+            .remove_if_pid(account_id, pid)
+    }
+}
+
 impl AccountManager {
     pub fn is_valid_account_id(id: &str) -> bool {
-        if id.is_empty()
-            || id == "."
-            || id == ".."
-            || id.contains('\\')
-            || id.contains('/')
-            || id.contains(':')
-        {
-            return false;
-        }
-
-        if let Some(rest) = id.strip_prefix("acount") {
-            return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
-        }
-
-        let parts: Vec<&str> = id.split('-').collect();
-        if parts.len() == 5 {
-            let expected = [8, 4, 4, 4, 12];
-            return parts.iter().zip(expected).all(|(part, len)| {
-                part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
-            });
-        }
-
-        false
+        crate::domain::account::is_valid_account_id(id)
     }
 
     pub fn validate_account_id(id: &str) -> Result<(), AppError> {
@@ -610,70 +610,9 @@ pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<Account
         .as_ref()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let ids = AccountManager::list_ids(&cfg.accounts_dir);
-    let mut accounts = Vec::new();
-
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-
-    for id in &ids {
-        if let Ok(mut meta) = AccountManager::load_meta(&cfg.accounts_dir, id) {
-            // 从 Battle.net.config 同步 Mod 启动参数（内存中更新，不写回磁盘）
-            if meta.initialized {
-                let bnet_config = AccountManager::account_dir_checked(&cfg.accounts_dir, id)?
-                    .join("Battle.net")
-                    .join("Battle.net.config");
-                if bnet_config.exists() {
-                    if let Ok(context) =
-                        LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
-                    {
-                        let game_key = context.edition.battle_net_config_game_key;
-                        if let Some(args) = try_read_mod_args(&bnet_config, game_key) {
-                            if meta.mod_args != args {
-                                meta.mod_args = args;
-                            }
-                        } else if !meta.mod_args.is_empty() {
-                            meta.mod_args = String::new();
-                        }
-                    }
-                }
-            }
-            let pid = {
-                let active = state.active_games.read();
-                active.get(id).copied()
-            };
-            let mut running = false;
-            if let Some(pid) = pid {
-                let expected_game_path =
-                    LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
-                        .ok()
-                        .map(|context| context.installation.game_executable);
-                let sys_pid = sysinfo::Pid::from(pid as usize);
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]));
-                if let (Some(proc), Some(expected_game_path)) =
-                    (sys.process(sys_pid), expected_game_path.as_ref())
-                {
-                    let name = proc.name().to_string_lossy();
-                    if name.eq_ignore_ascii_case("D2R.exe")
-                        && proc.exe().is_some_and(|actual| {
-                            crate::commands::system::executable_paths_match(
-                                actual,
-                                expected_game_path,
-                            )
-                        })
-                    {
-                        running = true;
-                    }
-                }
-            }
-            if !running && pid.is_some() {
-                state.remove_active_game(id);
-            }
-            meta.is_running = running;
-            meta.running_pid = if running { pid } else { None };
-            accounts.push(meta.redacted_for_frontend());
-        }
-    }
-    Ok(accounts)
+    let account_catalog = AccountManagerCatalog::new(cfg);
+    let account_runtime = AccountManagerRuntime::new(state.inner());
+    AccountQueryService::new(&account_catalog, &account_runtime).list(cfg)
 }
 
 /// 重新排序账号（更新 order 字段）
@@ -805,8 +744,9 @@ pub fn get_account(
     let cfg = config
         .as_ref()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    Ok(meta.redacted_for_frontend())
+    let account_catalog = AccountManagerCatalog::new(cfg);
+    let account_runtime = AccountManagerRuntime::new(state.inner());
+    AccountQueryService::new(&account_catalog, &account_runtime).get(&account_id)
 }
 
 /// 创建新账号目录并返回 ID
@@ -830,7 +770,7 @@ pub fn create_account(
     let nickname = validated_account_display_name(&nickname)?;
     // 锁序固定为 Catalog -> Account。名称检查与目录提交必须处于同一临界区，
     // 防止两个并发创建请求同时通过判重。
-    let _catalog_guard = state.account_catalog.lock();
+    let _catalog_guard = state.account_catalog_write_lock.lock();
     ensure_account_display_name_available(&cfg.accounts_dir, &nickname, None)?;
     let id = AccountManager::next_id(&cfg.accounts_dir);
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &id)?;
@@ -1081,7 +1021,7 @@ pub fn delete_account(
             error
         );
     }
-    state.remove_active_game(&account_id);
+    state.multi_instance().instances().remove(&account_id);
 
     let updated_config = {
         let _config_io = state.config_io.lock();
@@ -1128,7 +1068,7 @@ pub fn rename_account(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let new_name = validated_account_display_name(&new_name)?;
-    let _catalog_guard = state.account_catalog.lock();
+    let _catalog_guard = state.account_catalog_write_lock.lock();
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     ensure_account_display_name_available(&cfg.accounts_dir, &new_name, Some(&account_id))?;
     let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -2475,9 +2415,7 @@ pub async fn initialize_bnet_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let cancel_generation = state
-        .cancel_generation
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let state_arc = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         run_bnet_initialization_transaction(
@@ -2485,7 +2423,7 @@ pub async fn initialize_bnet_account(
             &state_arc,
             &account_id,
             BnetInitializationKind::New,
-            cancel_generation,
+            cancellation_ticket,
         )
     })
     .await
@@ -2499,9 +2437,7 @@ pub async fn reinitialize_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let cancel_generation = state
-        .cancel_generation
-        .load(std::sync::atomic::Ordering::SeqCst);
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let state_arc = state.inner().clone();
     tokio::task::spawn_blocking(move || {
         run_bnet_initialization_transaction(
@@ -2509,7 +2445,7 @@ pub async fn reinitialize_account(
             &state_arc,
             &account_id,
             BnetInitializationKind::Reinitialize,
-            cancel_generation,
+            cancellation_ticket,
         )
     })
     .await
@@ -2521,7 +2457,7 @@ fn run_bnet_initialization_transaction(
     state: &SharedState,
     account_id: &str,
     kind: BnetInitializationKind,
-    cancel_generation: u64,
+    cancellation_ticket: CancellationTicket,
 ) -> Result<(), AppError> {
     // 锁序固定为 Account -> Config snapshot -> Host，禁止反向取得。
     let _account_lease = AccountLifecycleLease::try_acquire(state, account_id)?;
@@ -2540,9 +2476,9 @@ fn run_bnet_initialization_transaction(
     // concurrent initialization can resurrect a launch the user just cancelled.
     let is_cancelled = || {
         state
-            .cancel_generation
-            .load(std::sync::atomic::Ordering::SeqCst)
-            != cancel_generation
+            .multi_instance()
+            .facade()
+            .is_cancelled(cancellation_ticket)
     };
     if is_cancelled() {
         return Err(AppError::Unknown("账号初始化已取消".to_string()));
@@ -3643,20 +3579,13 @@ pub fn move_game_window(
     let x = meta.window_x.unwrap_or(0);
     let y = meta.window_y.unwrap_or(0);
 
-    let pid = {
-        let active = state.active_games.read();
-        active.get(&account_id).copied()
-    };
-
-    if let Some(pid) = pid {
-        crate::commands::system::set_game_window_position(pid, x, y);
+    let display = if meta.display_name.is_empty() {
+        &meta.id
     } else {
-        let display = if meta.display_name.is_empty() {
-            &meta.id
-        } else {
-            &meta.display_name
-        };
-        crate::commands::system::set_game_window_position_by_title(display, x, y);
-    }
+        &meta.display_name
+    };
+    let windows = crate::commands::system::SystemGameWindowPort;
+    let facade = state.multi_instance().facade();
+    facade.move_account_window(&windows, &account_id, display, WindowPosition { x, y });
     Ok(())
 }

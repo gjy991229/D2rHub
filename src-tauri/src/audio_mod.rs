@@ -558,18 +558,13 @@ fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
 }
 
 fn session_arguments(state: &SharedState, account: &AccountMeta) -> (String, Option<u32>, bool) {
-    let running_pid = state
-        .active_games
-        .read()
-        .get(&account.id)
-        .copied()
-        .or(account.running_pid);
-    if let Some(pid) = running_pid {
-        if let Some(snapshot) = state.active_game_launches.read().get(&account.id) {
-            if snapshot.pid == pid {
-                return (snapshot.mod_args.clone(), Some(pid), true);
-            }
+    if let Some(instance) = state.multi_instance().instances().get(&account.id) {
+        if let Some(snapshot) = instance.launch {
+            return (snapshot.mod_args, Some(instance.pid), true);
         }
+        return (account.mod_args.clone(), Some(instance.pid), false);
+    }
+    if let Some(pid) = account.running_pid {
         return (account.mod_args.clone(), Some(pid), false);
     }
     (account.mod_args.clone(), None, false)
@@ -1226,13 +1221,10 @@ pub(crate) fn emit_runtime_compatibility_warning(
     if let Some(warning) = warning {
         let _ = app.emit("audio-mod-compatibility-warning", warning);
     }
-    state.active_game_launches.write().insert(
-        account.id.clone(),
-        crate::state::ActiveGameLaunch {
-            pid,
-            mod_args: launch_arguments.to_string(),
-        },
-    );
+    state
+        .multi_instance()
+        .instances()
+        .record_launch_snapshot(&account.id, pid, launch_arguments);
 }
 
 #[cfg(test)]

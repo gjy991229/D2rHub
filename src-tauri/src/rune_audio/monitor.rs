@@ -301,19 +301,15 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             .ok_or_else(|| "符文声纹识别尚未启用".to_string())?;
         (config.clone(), account)
     };
-    let target_pid = state
-        .active_games
-        .read()
-        .get(&account.id)
-        .copied()
+    let instance = state.multi_instance().instances().get(&account.id);
+    let target_pid = instance
+        .as_ref()
+        .map(|instance| instance.pid)
         .or(account.running_pid)
         .ok_or_else(|| format!("目标账号“{}”的 D2R 尚未运行", account.display_name))?;
-    let launch_arguments = state
-        .active_game_launches
-        .read()
-        .get(&account.id)
-        .filter(|snapshot| snapshot.pid == target_pid)
-        .map(|snapshot| snapshot.mod_args.clone())
+    let launch_arguments = instance
+        .and_then(|instance| instance.launch)
+        .map(|snapshot| snapshot.mod_args)
         .unwrap_or_else(|| account.mod_args.clone());
     let catalog_directory = Some(crate::audio_mod::validate_runtime_audio_mod(
         &config,

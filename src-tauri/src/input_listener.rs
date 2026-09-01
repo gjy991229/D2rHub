@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::multi_instance::{GameWindowPort, WindowMatch};
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::commands::system;
 use crate::state::SharedState;
@@ -241,7 +242,7 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
 }
 
 /// 加载账号列表，找到指定位置的账号，聚焦其游戏窗口
-/// 优先通过 PID 查找（active_games），降级使用窗口标题精确匹配
+/// 优先通过实例注册表中的 PID 查找，降级使用兼容窗口标题匹配。
 fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usize, _combo: &str) {
     let ids = AccountManager::list_ids(accounts_dir);
     let mut accounts: Vec<AccountMeta> = Vec::new();
@@ -261,33 +262,41 @@ fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usiz
             &account.display_name
         };
 
-        // 1) 优先按 PID 查找（active_games 中有记录）
+        let windows = system::SystemGameWindowPort;
+        // 1) 优先按实例注册表中的 PID 查找；保留旧标题降级行为。
         if let Some(state) = app.try_state::<SharedState>() {
-            let active = state.active_games.read();
-            if let Some(&pid) = active.get(&account.id) {
-                if let Some(hwnd) = system::find_game_hwnd(pid) {
-                    crate::logger::log_msg(
-                        "INFO",
-                        "Shortcut",
-                        &format!(
-                            "快捷键触发(pid): 位置{} → 账号「{}」, pid={}",
-                            position, title, pid
-                        ),
-                    );
-                    system::bring_window_to_foreground_raw(hwnd);
-                    return;
+            let facade = state.multi_instance().facade();
+            if let Some(matched_by) = facade.focus_account_window(&windows, &account.id, title) {
+                match matched_by {
+                    WindowMatch::ProcessId => {
+                        let pid = facade.instance(&account.id).map(|instance| instance.pid);
+                        crate::logger::log_msg(
+                            "INFO",
+                            "Shortcut",
+                            &format!(
+                                "快捷键触发(pid): 位置{} → 账号「{}」, pid={}",
+                                position,
+                                title,
+                                pid.map(|value| value.to_string())
+                                    .unwrap_or_else(|| "unknown".to_string())
+                            ),
+                        );
+                    }
+                    WindowMatch::CompatibilityTitle => {
+                        crate::logger::log_msg(
+                            "INFO",
+                            "Shortcut",
+                            &format!("快捷键触发(title): 位置{} → 账号「{}」", position, title),
+                        );
+                    }
                 }
             }
-        }
-
-        // 2) 降级：按窗口标题精确匹配
-        if let Some(hwnd) = system::find_game_hwnd_by_title(title) {
+        } else if windows.focus_by_title_compat(title) {
             crate::logger::log_msg(
                 "INFO",
                 "Shortcut",
                 &format!("快捷键触发(title): 位置{} → 账号「{}」", position, title),
             );
-            system::bring_window_to_foreground_raw(hwnd);
         }
     }
 }
