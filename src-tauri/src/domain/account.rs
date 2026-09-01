@@ -37,6 +37,8 @@ pub enum AccountConfigurationError {
     RegionSwitchRequiresGlobalEdition,
     #[error("不支持的国际服服务器: {0}")]
     UnsupportedInternationalRegion(String),
+    #[error("账号名称不能为空")]
+    EmptyDisplayName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -503,11 +505,24 @@ pub fn is_valid_account_id(id: &str) -> bool {
     false
 }
 
+pub fn normalize_account_display_name(name: &str) -> String {
+    name.trim().to_lowercase()
+}
+
+pub fn validate_account_display_name(name: &str) -> Result<String, AccountConfigurationError> {
+    let name = name.trim();
+    if name.is_empty() {
+        return Err(AccountConfigurationError::EmptyDisplayName);
+    }
+    Ok(name.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        is_valid_account_id, AccountMeta, AccountPositionError, AuthMode, ClientEdition,
-        GameRegion, WindowPositionPreset,
+        is_valid_account_id, normalize_account_display_name, validate_account_display_name,
+        AccountMeta, AccountPositionError, AuthMode, ClientEdition, GameRegion,
+        WindowPositionPreset,
     };
 
     #[test]
@@ -533,6 +548,16 @@ mod tests {
                 "unexpectedly accepted {invalid}"
             );
         }
+    }
+
+    #[test]
+    fn account_display_names_trim_for_storage_and_fold_for_identity() {
+        assert_eq!(
+            validate_account_display_name("  Primary  ").unwrap(),
+            "Primary"
+        );
+        assert_eq!(normalize_account_display_name("  Primary  "), "primary");
+        assert!(validate_account_display_name("   ").is_err());
     }
 
     #[test]

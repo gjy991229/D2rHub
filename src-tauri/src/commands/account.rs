@@ -5,16 +5,19 @@ use tauri::Emitter;
 
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
-    AccountCatalog, AccountModRepository, AccountModService, AccountOrderingService,
-    AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
-    AccountQueryService, AccountRepository, AccountRuntimePort, AccountSettingsPreferenceService,
-    AccountSettingsRepository, CancellationTicket, ResolvedAccountProfile, TokenProtector,
-    WindowPosition,
+    AccountCatalog, AccountModRepository, AccountModService, AccountNameRepository,
+    AccountNamingService, AccountOrderingService, AccountPositionService, AccountProfilePatch,
+    AccountProfilePolicy, AccountProfileService, AccountQueryService, AccountRepository,
+    AccountRuntimePort, AccountSettingsPreferenceService, AccountSettingsRepository,
+    CancellationTicket, ResolvedAccountProfile, TokenProtector, WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
+use crate::domain::account::{
+    normalize_account_display_name, validate_account_display_name, AuthMode, ClientEdition,
+    GameRegion,
+};
 pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
-use crate::domain::account::{AuthMode, ClientEdition, GameRegion};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, EditionConventions, HostRuntimeLease, LaunchContext};
@@ -212,13 +215,6 @@ fn write_registry_snapshot_values(backups: &[RegistryValueBackup]) -> Result<(),
     Ok(())
 }
 
-impl AccountMeta {
-    fn redacted_for_frontend(mut self) -> Self {
-        self.token = None;
-        self
-    }
-}
-
 pub struct AccountManager;
 
 pub(crate) struct AccountManagerCatalog<'a> {
@@ -318,6 +314,20 @@ impl AccountSettingsRepository for AccountManagerCatalog<'_> {
 impl AccountModRepository for AccountManagerCatalog<'_> {
     fn save_mod_configuration(&self, account: AccountMeta) -> Result<AccountMeta, AppError> {
         persist_account_mod_configuration(self.config, account)
+    }
+}
+
+impl AccountNameRepository for AccountManagerCatalog<'_> {
+    fn ensure_display_name_available(
+        &self,
+        requested_name: &str,
+        excluded_account_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        ensure_account_display_name_available(
+            &self.config.accounts_dir,
+            requested_name,
+            excluded_account_id,
+        )
     }
 }
 
@@ -514,15 +524,11 @@ impl AccountManager {
 }
 
 pub(crate) fn normalized_account_display_name(name: &str) -> String {
-    name.trim().to_lowercase()
+    normalize_account_display_name(name)
 }
 
 fn validated_account_display_name(name: &str) -> Result<String, AppError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(AppError::ConfigReadError("账号名称不能为空".to_string()));
-    }
-    Ok(name.to_string())
+    validate_account_display_name(name).map_err(AppError::from)
 }
 
 fn ensure_account_display_name_available(
@@ -976,15 +982,13 @@ pub fn rename_account(
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let new_name = validated_account_display_name(&new_name)?;
-    let _catalog_guard = state.multi_instance().catalog_leases().acquire();
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    ensure_account_display_name_available(&cfg.accounts_dir, &new_name, Some(&account_id))?;
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-
-    meta.display_name = new_name;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountNamingService::new(
+        &repository,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+    )
+    .rename(&account_id, &new_name)
 }
 
 fn persist_account_mod_configuration(

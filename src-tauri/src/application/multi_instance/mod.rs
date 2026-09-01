@@ -1,4 +1,5 @@
 mod account_mods;
+mod account_naming;
 mod account_ordering;
 mod account_positions;
 mod account_profile;
@@ -11,6 +12,7 @@ mod leases;
 mod ports;
 
 pub use account_mods::AccountModService;
+pub use account_naming::AccountNamingService;
 pub use account_ordering::AccountOrderingService;
 pub use account_positions::AccountPositionService;
 pub use account_profile::{
@@ -26,9 +28,9 @@ pub use leases::{
     AccountCatalogLeaseManager, AccountLeaseManager, AccountOperationLease, AccountOperationLeases,
 };
 pub use ports::{
-    AccountCatalog, AccountModRepository, AccountRepository, AccountRuntimePort,
-    AccountSettingsRepository, GameWindowIdentity, GameWindowPort, InstanceStatusPort,
-    WindowPosition,
+    AccountCatalog, AccountModRepository, AccountNameRepository, AccountRepository,
+    AccountRuntimePort, AccountSettingsRepository, GameWindowIdentity, GameWindowPort,
+    InstanceStatusPort, WindowPosition,
 };
 
 #[derive(Default)]

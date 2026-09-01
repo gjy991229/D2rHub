@@ -42,6 +42,14 @@ pub trait AccountModRepository: AccountRepository {
     fn save_mod_configuration(&self, account: AccountMeta) -> Result<AccountMeta, AppError>;
 }
 
+pub trait AccountNameRepository: AccountRepository {
+    fn ensure_display_name_available(
+        &self,
+        requested_name: &str,
+        excluded_account_id: Option<&str>,
+    ) -> Result<(), AppError>;
+}
+
 /// Live runtime facts needed by account queries.
 ///
 /// The port deliberately owns process verification as well as registry access: the application

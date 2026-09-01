@@ -3,10 +3,10 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::commands::account::{
-    normalized_account_display_name, remove_path_if_exists, replace_path_with_backup,
-    resolve_account_runtime_snapshot, sibling_with_suffix, AccountManager, AccountMeta,
+    remove_path_if_exists, replace_path_with_backup, resolve_account_runtime_snapshot,
+    sibling_with_suffix, AccountManager, AccountMeta,
 };
-use crate::domain::account::{AuthMode, GameRegion};
+use crate::domain::account::{normalize_account_display_name, AuthMode, GameRegion};
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::state::{AccountLifecycleLease, SharedState};
@@ -337,7 +337,7 @@ fn existing_display_names(accounts_dir: &str) -> HashSet<String> {
             } else {
                 meta.display_name
             };
-            normalized_account_display_name(&name)
+            normalize_account_display_name(&name)
         })
         .collect()
 }
@@ -348,12 +348,12 @@ fn unique_import_name(requested: &str, used: &mut HashSet<String>) -> String {
     } else {
         requested.trim().to_string()
     };
-    if used.insert(normalized_account_display_name(&base)) {
+    if used.insert(normalize_account_display_name(&base)) {
         return base;
     }
     for index in 2..=10_000 {
         let candidate = format!("{base}（导入 {index}）");
-        if used.insert(normalized_account_display_name(&candidate)) {
+        if used.insert(normalize_account_display_name(&candidate)) {
             return candidate;
         }
     }
