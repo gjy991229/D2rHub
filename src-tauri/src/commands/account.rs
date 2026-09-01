@@ -6,12 +6,14 @@ use tauri::Emitter;
 use crate::application::configuration::ConfigurationMutation;
 use crate::application::multi_instance::{
     AccountCatalog, AccountCreationRepository, AccountCreationService, AccountDeletionCleanupPort,
-    AccountDeletionService, AccountDeletionTransaction, AccountModRepository, AccountModService,
-    AccountNameRepository, AccountNamingService, AccountOrderingService, AccountPositionService,
-    AccountProfilePatch, AccountProfilePolicy, AccountProfileService, AccountQueryService,
-    AccountRepository, AccountRuntimePort, AccountSettingsPreferenceRepository,
-    AccountSettingsPreferenceService, CancellationTicket, CreateAccountRequest,
-    ResolvedAccountProfile, TimestampProvider, TokenProtector, WindowPosition,
+    AccountDeletionService, AccountDeletionTransaction, AccountInitializationKind,
+    AccountInitializationService, AccountInitializationTransaction, AccountModRepository,
+    AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
+    AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
+    AccountQueryService, AccountRepository, AccountRuntimePort,
+    AccountSettingsPreferenceRepository, AccountSettingsPreferenceService, CancellationTicket,
+    CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
+    WindowPosition,
 };
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
@@ -20,7 +22,7 @@ pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::{ContextPurpose, EditionConventions, HostRuntimeLease, LaunchContext};
-use crate::state::{AccountLifecycleLease, SharedState};
+use crate::state::SharedState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegistryValueBackup {
@@ -1209,8 +1211,8 @@ mod settings_json_tests {
         replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
         resolve_account_runtime_snapshot, restore_staged_account_deletion, sibling_with_suffix,
         stage_account_directory, stage_account_directory_for_deletion,
-        validate_runtime_snapshot_root, AccountDeletionPhase, AccountManager, AccountMeta,
-        BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        validate_runtime_snapshot_root, AccountDeletionPhase, AccountInitializationKind,
+        AccountManager, AccountMeta, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
     use crate::domain::account::ClientEdition;
     use crate::domain::config::GlobalConfig;
@@ -2067,7 +2069,7 @@ mod settings_json_tests {
         std::fs::create_dir_all(&system).unwrap();
         std::fs::write(system.join("previous-account.txt"), "old").unwrap();
 
-        prepare_battle_net_runtime_directory(&snapshot, &system, BnetInitializationKind::New)
+        prepare_battle_net_runtime_directory(&snapshot, &system, AccountInitializationKind::New)
             .unwrap();
 
         assert!(
@@ -2088,7 +2090,7 @@ mod settings_json_tests {
         std::fs::write(snapshot.join("wrong-edition.txt"), "old").unwrap();
         std::fs::write(system.join("previous-account.txt"), "old").unwrap();
 
-        prepare_battle_net_runtime_directory(&snapshot, &system, BnetInitializationKind::New)
+        prepare_battle_net_runtime_directory(&snapshot, &system, AccountInitializationKind::New)
             .unwrap();
 
         assert!(!system.exists());
@@ -2110,7 +2112,7 @@ mod settings_json_tests {
         prepare_battle_net_runtime_directory(
             &snapshot,
             &system,
-            BnetInitializationKind::Reinitialize,
+            AccountInitializationKind::Reinitialize,
         )
         .unwrap();
 
@@ -2344,18 +2346,12 @@ fn clear_auth_registry_unlocked() -> Result<(), AppError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BnetInitializationKind {
-    New,
-    Reinitialize,
-}
-
 fn prepare_battle_net_runtime_directory(
     snapshot: &Path,
     system: &Path,
-    kind: BnetInitializationKind,
+    kind: AccountInitializationKind,
 ) -> Result<(), AppError> {
-    if kind == BnetInitializationKind::New {
+    if kind == AccountInitializationKind::New {
         let staged = sibling_with_suffix(system, ".tmp")?;
         let backup = sibling_with_suffix(system, ".bak")?;
         remove_path_if_exists(&staged)?;
@@ -2381,9 +2377,9 @@ fn restore_account_to_system(
     cfg: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
-    kind: BnetInitializationKind,
+    kind: AccountInitializationKind,
 ) -> Result<(), AppError> {
-    let snapshot = if kind == BnetInitializationKind::Reinitialize {
+    let snapshot = if kind == AccountInitializationKind::Reinitialize {
         resolve_account_runtime_snapshot(account_dir, meta, context.installation.edition)?
             .bnet_directory
     } else {
@@ -2392,6 +2388,28 @@ fn restore_account_to_system(
     };
     let system = Path::new(&cfg.app_data_roaming_bnet_path);
     prepare_battle_net_runtime_directory(&snapshot, system, kind)
+}
+
+struct BnetInitializationTransactionAdapter<'a> {
+    app: &'a tauri::AppHandle,
+    state: &'a SharedState,
+}
+
+impl AccountInitializationTransaction for BnetInitializationTransactionAdapter<'_> {
+    fn execute(
+        &self,
+        account_id: &str,
+        kind: AccountInitializationKind,
+        cancellation_ticket: CancellationTicket,
+    ) -> Result<(), AppError> {
+        run_bnet_initialization_transaction(
+            self.app,
+            self.state,
+            account_id,
+            kind,
+            cancellation_ticket,
+        )
+    }
 }
 
 /// 首次初始化 Battle.net 账号。
@@ -2404,13 +2422,16 @@ pub async fn initialize_bnet_account(
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let state_arc = state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        run_bnet_initialization_transaction(
-            &app,
-            &state_arc,
-            &account_id,
-            BnetInitializationKind::New,
-            cancellation_ticket,
-        )
+        let transaction = BnetInitializationTransactionAdapter {
+            app: &app,
+            state: &state_arc,
+        };
+        AccountInitializationService::new(&transaction, state_arc.multi_instance().account_leases())
+            .execute(
+                &account_id,
+                AccountInitializationKind::New,
+                cancellation_ticket,
+            )
     })
     .await
     .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?
@@ -2426,13 +2447,16 @@ pub async fn reinitialize_account(
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let state_arc = state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        run_bnet_initialization_transaction(
-            &app,
-            &state_arc,
-            &account_id,
-            BnetInitializationKind::Reinitialize,
-            cancellation_ticket,
-        )
+        let transaction = BnetInitializationTransactionAdapter {
+            app: &app,
+            state: &state_arc,
+        };
+        AccountInitializationService::new(&transaction, state_arc.multi_instance().account_leases())
+            .execute(
+                &account_id,
+                AccountInitializationKind::Reinitialize,
+                cancellation_ticket,
+            )
     })
     .await
     .map_err(|error| AppError::Unknown(format!("账号重新初始化任务异常退出: {error}")))?
@@ -2442,12 +2466,9 @@ fn run_bnet_initialization_transaction(
     app: &tauri::AppHandle,
     state: &SharedState,
     account_id: &str,
-    kind: BnetInitializationKind,
+    kind: AccountInitializationKind,
     cancellation_ticket: CancellationTicket,
 ) -> Result<(), AppError> {
-    // 锁序固定为 Account -> Config snapshot -> Host，禁止反向取得。
-    let _account_lease = AccountLifecycleLease::try_acquire(state, account_id)?;
-
     // 只取得不可变配置快照，不能让最长 120 秒的登录等待阻塞设置写入。
     let cfg = state
         .configuration()
@@ -2484,7 +2505,7 @@ fn run_bnet_initialization_transaction(
     };
 
     if auth_mode == AuthMode::Token {
-        if kind == BnetInitializationKind::New {
+        if kind == AccountInitializationKind::New {
             return Err(AppError::ConfigReadError(
                 "Token 账号不能调用 Battle.net 初始化事务".to_string(),
             ));
@@ -2500,7 +2521,7 @@ fn run_bnet_initialization_transaction(
     // 在取得主机租约前完成路径与客户端版本预检，避免错误配置长期占用共享环境。
     LaunchContext::for_account(&cfg, &meta, ContextPurpose::BattleNetOnly)?;
 
-    if kind == BnetInitializationKind::New && meta.initialized {
+    if kind == AccountInitializationKind::New && meta.initialized {
         return Err(AppError::ConfigReadError(format!(
             "账号 {account_id} 已初始化，拒绝重复执行首次初始化"
         )));
@@ -2516,8 +2537,8 @@ fn run_bnet_initialization_transaction(
         ));
     }
     let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::BattleNetOnly)?;
-    let effective_kind = if kind == BnetInitializationKind::Reinitialize && !meta.initialized {
-        BnetInitializationKind::New
+    let effective_kind = if kind == AccountInitializationKind::Reinitialize && !meta.initialized {
+        AccountInitializationKind::New
     } else {
         kind
     };

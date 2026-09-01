@@ -8,6 +8,7 @@ use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 
 use super::instances::RunningInstance;
+use super::{AccountInitializationKind, CancellationTicket};
 
 pub trait AccountCatalog: Send + Sync {
     fn list_account_ids(&self) -> Result<Vec<String>, AppError>;
@@ -92,6 +93,18 @@ pub trait AccountDeletionCleanupPort: Send + Sync {
     fn remove_browser_profiles(&self, account_id: &str) -> Result<(), String>;
     fn remove_runtime_instance(&self, account_id: &str);
     fn notify_account_removed(&self, account_id: &str) -> Vec<(String, String)>;
+}
+
+/// Blocking platform transaction used for account initialization/reset. The
+/// caller owns the account lease; the adapter owns host-wide Battle.net and
+/// registry serialization plus cancellation checkpoints.
+pub trait AccountInitializationTransaction: Send + Sync {
+    fn execute(
+        &self,
+        account_id: &str,
+        kind: AccountInitializationKind,
+        cancellation_ticket: CancellationTicket,
+    ) -> Result<(), AppError>;
 }
 
 /// Live runtime facts needed by account queries.
