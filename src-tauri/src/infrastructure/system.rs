@@ -1354,28 +1354,11 @@ fn find_bnet_window() -> Option<isize> {
 
 /// 纯 Rust 发送按键：空格 + 回车（静默后台投递，无 PowerShell，不抢占键盘焦点）
 pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
-    // 确认进程存在
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-    sys.refresh_processes(ProcessesToUpdate::All);
-    let exists = sys
-        .processes()
-        .values()
-        .any(|p| p.pid().as_u32() == pid && p.name().to_string_lossy() == "D2R.exe");
-
-    if !exists {
-        return Ok(());
-    }
-
-    // 寻找 D2R 窗口 HWND
     #[cfg(target_os = "windows")]
     {
-        ENUM_PID.store(pid, Ordering::Relaxed);
-        ENUM_HWND.store(0, Ordering::Relaxed);
-        unsafe {
-            EnumWindows(enum_window_callback, 0);
-        }
-        let hwnd = ENUM_HWND.load(Ordering::Relaxed);
-        if hwnd != 0 {
+        // 该函数在启动阶段每 500ms 调用一次。窗口存在本身就足以证明目标
+        // 进程仍可接收消息，无需每次都刷新完整系统进程表。
+        if let Some(hwnd) = find_game_hwnd(pid) {
             extern "system" {
                 fn PostMessageW(hWnd: isize, Msg: u32, wParam: usize, lParam: isize) -> i32;
             }
@@ -1402,31 +1385,6 @@ pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
 }
 
 // ── 窗口前台焦点 ──
-
-use std::sync::atomic::{AtomicIsize, AtomicU32, Ordering};
-
-#[cfg(target_os = "windows")]
-extern "system" {
-    fn EnumWindows(callback: unsafe extern "system" fn(isize, isize) -> i32, lparam: isize) -> i32;
-    fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
-    fn IsWindowVisible(hWnd: isize) -> i32;
-}
-
-#[cfg(target_os = "windows")]
-static ENUM_PID: AtomicU32 = AtomicU32::new(0);
-#[cfg(target_os = "windows")]
-static ENUM_HWND: AtomicIsize = AtomicIsize::new(0);
-
-#[cfg(target_os = "windows")]
-unsafe extern "system" fn enum_window_callback(hwnd: isize, _lparam: isize) -> i32 {
-    let mut pid: u32 = 0;
-    GetWindowThreadProcessId(hwnd, &mut pid);
-    if pid == ENUM_PID.load(Ordering::Relaxed) && IsWindowVisible(hwnd) != 0 {
-        ENUM_HWND.store(hwnd, Ordering::Relaxed);
-        return 0; // stop enumeration
-    }
-    1 // continue
-}
 
 // ── 权限检查 ──
 

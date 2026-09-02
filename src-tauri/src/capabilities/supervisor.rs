@@ -16,6 +16,7 @@ enum SupervisorMessage {
 pub(crate) struct CapabilitySupervisor {
     sender: mpsc::SyncSender<SupervisorMessage>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    worker_done: Mutex<Option<mpsc::Receiver<()>>>,
     shutdown_requested: Arc<AtomicBool>,
 }
 
@@ -25,49 +26,55 @@ impl CapabilitySupervisor {
         registry: Arc<CapabilityRegistry>,
     ) -> Result<Self, String> {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let (worker_done_sender, worker_done_receiver) = mpsc::sync_channel(1);
         let shutdown_requested = Arc::new(AtomicBool::new(false));
         let worker_shutdown = Arc::clone(&shutdown_requested);
         let worker = std::thread::Builder::new()
             .name("capability-supervisor".to_string())
-            .spawn(move || loop {
-                if worker_shutdown.load(Ordering::Acquire) {
-                    shutdown_and_publish(&app, &registry);
-                    break;
-                }
-                let message = match receiver.recv_timeout(HEALTH_POLL_INTERVAL) {
-                    Ok(message) => message,
-                    Err(mpsc::RecvTimeoutError::Timeout) => {
-                        reconcile_if_changed_and_publish(&app, &registry);
-                        continue;
-                    }
-                    Err(mpsc::RecvTimeoutError::Disconnected) => break,
-                };
-                match message {
-                    SupervisorMessage::Reconcile => {
-                        let mut queued_shutdown = false;
-                        while let Ok(queued) = receiver.try_recv() {
-                            if matches!(queued, SupervisorMessage::Shutdown) {
-                                queued_shutdown = true;
-                                break;
-                            }
-                        }
-                        if queued_shutdown || worker_shutdown.load(Ordering::Acquire) {
-                            shutdown_and_publish(&app, &registry);
-                            break;
-                        }
-                        reconcile_and_publish(&app, &registry);
-                    }
-                    SupervisorMessage::Shutdown => {
+            .spawn(move || {
+                loop {
+                    if worker_shutdown.load(Ordering::Acquire) {
                         shutdown_and_publish(&app, &registry);
                         break;
                     }
+                    let message = match receiver.recv_timeout(HEALTH_POLL_INTERVAL) {
+                        Ok(message) => message,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            reconcile_if_changed_and_publish(&app, &registry);
+                            continue;
+                        }
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
+                    match message {
+                        SupervisorMessage::Reconcile => {
+                            let mut queued_shutdown = false;
+                            while let Ok(queued) = receiver.try_recv() {
+                                if matches!(queued, SupervisorMessage::Shutdown) {
+                                    queued_shutdown = true;
+                                    break;
+                                }
+                            }
+                            if queued_shutdown || worker_shutdown.load(Ordering::Acquire) {
+                                shutdown_and_publish(&app, &registry);
+                                break;
+                            }
+                            reconcile_and_publish(&app, &registry);
+                        }
+                        SupervisorMessage::Shutdown => {
+                            shutdown_and_publish(&app, &registry);
+                            break;
+                        }
+                    }
                 }
+
+                let _ = worker_done_sender.send(());
             })
             .map_err(|error| format!("启动 capability supervisor 失败: {error}"))?;
 
         Ok(Self {
             sender,
             worker: Mutex::new(Some(worker)),
+            worker_done: Mutex::new(Some(worker_done_receiver)),
             shutdown_requested,
         })
     }
@@ -93,17 +100,29 @@ impl CapabilitySupervisor {
             Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
             Err(mpsc::TrySendError::Disconnected(_)) => {}
         }
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        while !worker.is_finished() && std::time::Instant::now() < deadline {
-            std::thread::sleep(std::time::Duration::from_millis(25));
-        }
-        if !worker.is_finished() {
-            crate::logger::log_msg(
-                "ERROR",
-                "Capabilities",
-                "capability supervisor 未能在 3 秒内停止；退出流程将继续",
-            );
-            return;
+        let worker_done = match self.worker_done.lock() {
+            Ok(mut worker_done) => worker_done.take(),
+            Err(_) => {
+                crate::logger::log_msg(
+                    "ERROR",
+                    "Capabilities",
+                    "capability supervisor 完成通知状态损坏；退出流程将继续",
+                );
+                return;
+            }
+        };
+        if let Some(worker_done) = worker_done {
+            if matches!(
+                worker_done.recv_timeout(std::time::Duration::from_secs(3)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ) {
+                crate::logger::log_msg(
+                    "ERROR",
+                    "Capabilities",
+                    "capability supervisor 未能在 3 秒内停止；退出流程将继续",
+                );
+                return;
+            }
         }
         if worker.join().is_err() {
             crate::logger::log_msg(

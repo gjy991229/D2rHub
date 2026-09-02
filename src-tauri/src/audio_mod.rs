@@ -14,7 +14,7 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::OnceLock;
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 use tauri::Emitter;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
@@ -47,6 +47,9 @@ const ROOM_TOOL_CONFIRM_Y: i64 = 92;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
+const ROOM_TOOL_VALIDATION_RECHECK_INTERVAL: std::time::Duration =
+    std::time::Duration::from_secs(30);
+const ROOM_TOOL_FAILURE_RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const ROOM_TOOL_VALIDATION_FILES: &[&str] = &[
     "HudWarningshd.json",
     "D2RHubRoomToolbarhd.json",
@@ -73,16 +76,17 @@ struct RoomToolFileStamp {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct RoomToolValidationSignature {
+struct RoomToolValidationIdentity {
     account_name: String,
     launch_arguments: String,
-    mod_directory: PathBuf,
-    files: Vec<RoomToolFileStamp>,
+    mods_directory: PathBuf,
 }
 
 #[derive(Clone)]
 struct CachedRoomToolValidation {
-    signature: RoomToolValidationSignature,
+    identity: RoomToolValidationIdentity,
+    files: Vec<RoomToolFileStamp>,
+    checked_at: Instant,
     result: Result<(), String>,
 }
 
@@ -93,6 +97,10 @@ static ROOM_TOOL_VALIDATION_CACHE: OnceLock<
 fn room_tool_validation_cache(
 ) -> &'static parking_lot::RwLock<HashMap<String, CachedRoomToolValidation>> {
     ROOM_TOOL_VALIDATION_CACHE.get_or_init(|| parking_lot::RwLock::new(HashMap::new()))
+}
+
+fn clear_room_tool_validation_cache() {
+    room_tool_validation_cache().write().clear();
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1806,12 +1814,7 @@ fn room_tool_file_stamp(path: PathBuf) -> RoomToolFileStamp {
     }
 }
 
-fn room_tool_validation_signature(
-    account_name: &str,
-    launch_arguments: &str,
-    mod_directory: &Path,
-    mod_name: &str,
-) -> RoomToolValidationSignature {
+fn room_tool_validation_files(mod_directory: &Path, mod_name: &str) -> Vec<RoomToolFileStamp> {
     let mpq_directory = mod_directory.join(format!("{mod_name}.mpq"));
     let layout_directory = mpq_directory.join(ROOM_TOOL_LAYOUT_DIRECTORY);
     let mut paths = vec![
@@ -1825,12 +1828,25 @@ fn room_tool_validation_signature(
             .iter()
             .map(|name| layout_directory.join(name)),
     );
-    RoomToolValidationSignature {
-        account_name: account_name.to_string(),
-        launch_arguments: launch_arguments.to_string(),
-        mod_directory: mod_directory.to_path_buf(),
-        files: paths.into_iter().map(room_tool_file_stamp).collect(),
-    }
+    paths.into_iter().map(room_tool_file_stamp).collect()
+}
+
+fn cache_room_tool_validation(
+    cache_key: String,
+    identity: RoomToolValidationIdentity,
+    files: Vec<RoomToolFileStamp>,
+    result: Result<(), String>,
+) -> Result<(), String> {
+    room_tool_validation_cache().write().insert(
+        cache_key,
+        CachedRoomToolValidation {
+            identity,
+            files,
+            checked_at: Instant::now(),
+            result: result.clone(),
+        },
+    );
+    result
 }
 
 fn validate_cached_room_automation_tools(
@@ -1845,22 +1861,57 @@ fn validate_cached_room_automation_tools(
         return Err(format!("账号“{account_name}”的 Mod 启动参数缺少 -txt"));
     }
     let mods_directory = context.installation.game_directory.join("mods");
-    let installed_name = find_existing_mod_name(&mods_directory, &mod_name)?
-        .ok_or_else(|| format!("账号“{account_name}”配置的 Mod 不存在"))?;
-    let mod_directory = mods_directory.join(&installed_name);
-    let signature = room_tool_validation_signature(
-        account_name,
-        launch_arguments,
-        &mod_directory,
-        &installed_name,
-    );
+    let identity = RoomToolValidationIdentity {
+        account_name: account_name.to_string(),
+        launch_arguments: launch_arguments.to_string(),
+        mods_directory: mods_directory.clone(),
+    };
     let cache_key = account_id.to_ascii_lowercase();
-    if let Some(cached) = room_tool_validation_cache()
+    if let Some(result) = room_tool_validation_cache()
         .read()
         .get(&cache_key)
-        .filter(|cached| cached.signature == signature)
+        .filter(|cached| cached.identity == identity)
+        .filter(|cached| {
+            cached.checked_at.elapsed()
+                < if cached.result.is_ok() {
+                    ROOM_TOOL_VALIDATION_RECHECK_INTERVAL
+                } else {
+                    ROOM_TOOL_FAILURE_RECHECK_INTERVAL
+                }
+        })
+        .map(|cached| cached.result.clone())
     {
-        return cached.result.clone();
+        return result;
+    }
+
+    let installed_name = match find_existing_mod_name(&mods_directory, &mod_name) {
+        Ok(Some(installed_name)) => installed_name,
+        Ok(None) => {
+            return cache_room_tool_validation(
+                cache_key,
+                identity,
+                Vec::new(),
+                Err(format!("账号“{account_name}”配置的 Mod 不存在")),
+            );
+        }
+        Err(error) => {
+            return cache_room_tool_validation(cache_key, identity, Vec::new(), Err(error));
+        }
+    };
+    let mod_directory = mods_directory.join(&installed_name);
+    let files = room_tool_validation_files(&mod_directory, &installed_name);
+    let unchanged_result = {
+        let mut cache = room_tool_validation_cache().write();
+        cache
+            .get_mut(&cache_key)
+            .filter(|cached| cached.identity == identity && cached.files == files)
+            .map(|cached| {
+                cached.checked_at = Instant::now();
+                cached.result.clone()
+            })
+    };
+    if let Some(result) = unchanged_result {
+        return result;
     }
 
     let result = validate_audio_mod_credential(&mods_directory, &installed_name)
@@ -1870,14 +1921,7 @@ fn validate_cached_room_automation_tools(
             validate_in_game_room_tool_layouts(&mod_directory, &installed_name)
                 .map_err(|error| format!("账号“{account_name}”：{error}"))
         });
-    room_tool_validation_cache().write().insert(
-        cache_key,
-        CachedRoomToolValidation {
-            signature,
-            result: result.clone(),
-        },
-    );
-    result
+    cache_room_tool_validation(cache_key, identity, files, result)
 }
 
 fn validate_room_tool_capability(
@@ -2060,7 +2104,10 @@ pub(crate) fn set_auto_exit_on_death_enabled(
         validate_auto_exit_on_death_layouts(&after.directory, mod_name, enabled)?;
         Ok(after)
     }) {
-        Ok(after) if after.auto_exit_on_death_enabled == enabled => Ok(enabled),
+        Ok(after) if after.auto_exit_on_death_enabled == enabled => {
+            clear_room_tool_validation_cache();
+            Ok(enabled)
+        }
         validation => {
             let restore = replace_auto_exit_layout_file(&layout_path, &original);
             let detail = match validation {
@@ -3292,6 +3339,7 @@ fn replace_audio_mod_directory(
             remove_transaction_directory(mods_directory, backup_directory, "Mod 更新备份")?;
             cleanup_staged_directory(mods_directory, staged_directory)?;
             remove_replace_journal(mods_directory, &journal_path)?;
+            clear_room_tool_validation_cache();
             Ok(())
         }
         Err(install_error) => {

@@ -76,6 +76,7 @@ impl CancellationSignal {
     }
 
     fn cancel(&self) {
+        let _guard = self.state.lock().unwrap_or_else(|error| error.into_inner());
         self.cancelled.store(true, Ordering::Release);
         self.changed.notify_all();
     }
@@ -93,12 +94,9 @@ impl CancellationSignal {
             return true;
         }
         let guard = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if self.cancelled.load(Ordering::Acquire) {
-            return true;
-        }
-        let _guard = self
+        let (_guard, _) = self
             .changed
-            .wait_timeout(guard, duration)
+            .wait_timeout_while(guard, duration, |_| !self.cancelled.load(Ordering::Acquire))
             .unwrap_or_else(|error| error.into_inner());
         self.cancelled.load(Ordering::Acquire)
     }

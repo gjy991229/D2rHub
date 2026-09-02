@@ -6,7 +6,7 @@
 //! signal so capability shutdown never leaves detached input work behind.
 
 use crate::capabilities::room_automation::FlowStrategy;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
@@ -336,15 +336,10 @@ fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String
     if duration.is_zero() {
         return cancel.check();
     }
-    let deadline = Instant::now() + duration;
-    loop {
-        cancel.check()?;
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Ok(());
-        }
-        if cancel.wait_cancelled(remaining.min(Duration::from_millis(25))) {
-            return Err("自动跟房流程已取消".to_string());
-        }
+    cancel.check()?;
+    if cancel.wait_cancelled(duration) {
+        Err("自动跟房流程已取消".to_string())
+    } else {
+        Ok(())
     }
 }

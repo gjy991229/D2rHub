@@ -92,6 +92,7 @@ impl Drop for TemporarySettingsOverride {
 
 const MUTEX_NAME: &str = "DiabloII Check For Other Instances";
 const NETWORK_READY_REQUIRED_SAMPLES: u8 = 2;
+const LAUNCH_READINESS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
 /// 2026年6月 暴雪更新后常规进程数为7，未来若卡在等待登录需修改此阈值
 const BNET_LOGIN_PROCESS_COUNT_THRESHOLD: usize = 7;
@@ -2361,7 +2362,7 @@ async fn launch_single(
             next_key_send = now + std::time::Duration::from_millis(500);
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(LAUNCH_READINESS_POLL_INTERVAL).await;
     }
 
     let etw_diagnostics = token_read_monitor
@@ -2915,7 +2916,7 @@ async fn launch_single_token(
             break;
         }
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        tokio::time::sleep(LAUNCH_READINESS_POLL_INTERVAL).await;
     }
 
     if !launch_ready {
