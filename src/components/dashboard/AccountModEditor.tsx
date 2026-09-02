@@ -2,6 +2,8 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, PackagePlus } from "lucide-react";
 
+import "../../styles/accountModPicker.css";
+
 import type { AccountMeta, LaunchGroupMember, ModCapsulePool } from "../../store/types";
 import {
   capsuleFeatureLabels,

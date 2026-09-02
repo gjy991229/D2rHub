@@ -35,6 +35,7 @@ import type {
   RoomChatBindingStatus,
 } from "../../roomAutomation/types";
 import { normalizeSettingsLanguage } from "../settingsRegistry";
+import "../roomAutomationParticipants.css";
 
 interface RoomAutomationPanelProps {
   accounts: AccountMeta[];
