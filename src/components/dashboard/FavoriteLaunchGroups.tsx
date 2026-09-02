@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Play, Plus } from "lucide-react";
 
@@ -67,6 +67,33 @@ export function FavoriteLaunchGroups({
 
   useEffect(() => {
     if (!pickerOpen || !position) return;
+    const frame = window.requestAnimationFrame(() => {
+      pickerRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [pickerOpen, position]);
+
+  const handlePickerKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(pickerRef.current?.querySelectorAll<HTMLButtonElement>(
+      'button:not([disabled])',
+    ) ?? []);
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : event.key === "ArrowUp"
+            ? (currentIndex - 1 + items.length) % items.length
+            : null;
+    if (nextIndex === null || items.length === 0) return;
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
+
+  useEffect(() => {
+    if (!pickerOpen || !position) return;
     const outside = (event: PointerEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
@@ -122,6 +149,11 @@ export function FavoriteLaunchGroups({
         aria-expanded={pickerOpen}
         aria-controls={pickerOpen ? pickerId : undefined}
         onClick={() => setPickerOpen((open) => !open)}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          setPickerOpen(true);
+        }}
       >
         <Plus size={12} strokeWidth={2} aria-hidden="true" />
       </button>
@@ -134,6 +166,7 @@ export function FavoriteLaunchGroups({
           className="favorite-launch-picker"
           data-placement={position.opensUpward ? "top" : "bottom"}
           style={{ left: position.left, top: position.top }}
+          onKeyDown={handlePickerKeyDown}
         >
           <div className="favorite-launch-picker-heading">{t("launch.favorite.pickerTitle")}</div>
           {availableChoices.length === 0 ? (

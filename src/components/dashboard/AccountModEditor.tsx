@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, PackagePlus } from "lucide-react";
 
@@ -10,6 +10,7 @@ import {
   capsuleSelectionForAccount,
   compatibleCapsulesForAccount,
 } from "../../features/modCapsules/model";
+import { useI18n } from "../../i18n";
 
 interface AccountModEditorProps {
   account: AccountMeta;
@@ -22,9 +23,9 @@ interface AccountModEditorProps {
   onOpenModManager?: (action?: "add", edition?: string | null) => void;
 }
 
-function legacyLabel(argumentsValue: string): string {
+function legacyLabel(argumentsValue: string, isEnglish: boolean): string {
   const match = /(?:^|\s)-mod(?:=|\s+)(?:"([^"]+)"|'([^']+)'|([^\s]+))/i.exec(argumentsValue);
-  return match?.[1] || match?.[2] || match?.[3] || "自定义参数";
+  return match?.[1] || match?.[2] || match?.[3] || (isEnglish ? "Custom arguments" : "自定义参数");
 }
 
 export function AccountModEditor({
@@ -37,6 +38,8 @@ export function AccountModEditor({
   onAssign,
   onOpenModManager,
 }: AccountModEditorProps) {
+  const { language } = useI18n();
+  const isEnglish = language === "en-US";
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -46,7 +49,9 @@ export function AccountModEditor({
   const selection = capsuleSelectionForAccount(modCapsulePool, account.id);
   const capsules = compatibleCapsulesForAccount(modCapsulePool, account.id);
   const selected = capsules.find((capsule) => capsule.launch_arguments.trim() === activeArguments.trim()) ?? null;
-  const activeLabel = activeArguments.trim() ? selected?.name ?? legacyLabel(activeArguments) : "原版";
+  const activeLabel = activeArguments.trim()
+    ? selected?.name ?? legacyLabel(activeArguments, isEnglish)
+    : isEnglish ? "Original" : "原版";
 
   const updatePosition = useCallback(() => {
     const trigger = triggerRef.current;
@@ -74,6 +79,36 @@ export function AccountModEditor({
   useLayoutEffect(() => {
     if (open) updatePosition();
   }, [open, updatePosition]);
+
+  useEffect(() => {
+    if (!open || !position) return;
+    const frame = window.requestAnimationFrame(() => {
+      const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+        'button:not([disabled])',
+      ) ?? []);
+      (items.find((item) => item.getAttribute("aria-checked") === "true") ?? items[0])?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, position]);
+
+  const handleMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+      'button:not([disabled])',
+    ) ?? []);
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? items.length - 1
+        : event.key === "ArrowDown"
+          ? (currentIndex + 1 + items.length) % items.length
+          : event.key === "ArrowUp"
+            ? (currentIndex - 1 + items.length) % items.length
+            : null;
+    if (nextIndex === null || items.length === 0) return;
+    event.preventDefault();
+    items[nextIndex]?.focus();
+  };
 
   useEffect(() => {
     if (!open || !position) return;
@@ -116,8 +151,13 @@ export function AccountModEditor({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title={`当前 Mod：${activeLabel}；点击选择 Mod`}
+        title={isEnglish ? `Current Mod: ${activeLabel}. Select a Mod` : `当前 Mod：${activeLabel}；点击选择 Mod`}
         onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+          event.preventDefault();
+          setOpen(true);
+        }}
       >
         <span>{activeLabel}</span>
         <ChevronDown size={10} aria-hidden="true" />
@@ -125,7 +165,7 @@ export function AccountModEditor({
       <button
         type="button"
         className="hig-badge mod-chip account-mod-manage-trigger"
-        title="前往 Mod 管理新增共享参数"
+        title={isEnglish ? "Open Mod Management to add shared arguments" : "前往 Mod 管理新增共享参数"}
         onClick={() => onOpenModManager?.("add", selection?.edition)}
       >
         <PackagePlus size={11} aria-hidden="true" />
@@ -135,14 +175,17 @@ export function AccountModEditor({
           ref={menuRef}
           id={menuId}
           role="menu"
-          aria-label={`${account.display_name || account.id} 选择 Mod`}
+          aria-label={isEnglish
+            ? `Select a Mod for ${account.display_name || account.id}`
+            : `${account.display_name || account.id} 选择 Mod`}
           className="account-mod-picker"
           data-placement={position.opensUpward ? "top" : "bottom"}
           style={{ left: position.left, top: position.top }}
+          onKeyDown={handleMenuKeyDown}
         >
           <div className="account-mod-picker-heading">
-            <div><strong>选择 Mod</strong><span>{selection?.edition ?? "版本未确定"}</span></div>
-            <button type="button" onClick={() => { close(); onOpenModManager?.(); }}>管理</button>
+            <div><strong>{isEnglish ? "Select Mod" : "选择 Mod"}</strong><span>{selection?.edition ?? (isEnglish ? "Edition unknown" : "版本未确定")}</span></div>
+            <button type="button" role="menuitem" onClick={() => { close(); onOpenModManager?.(); }}>{isEnglish ? "Manage" : "管理"}</button>
           </div>
           <div className="account-mod-picker-capsules">
             <button
@@ -153,12 +196,12 @@ export function AccountModEditor({
               data-active={!activeArguments.trim() ? "true" : undefined}
               onClick={() => void choose(null, "")}
             >
-              原版游戏
+              {isEnglish ? "Original game" : "原版游戏"}
               {!activeArguments.trim() && <Check size={11} aria-hidden="true" />}
             </button>
             {capsules.map((capsule) => {
               const active = capsule.launch_arguments.trim() === activeArguments.trim();
-              const features = capsuleFeatureLabels(capsule);
+              const features = capsuleFeatureLabels(capsule, isEnglish);
               return (
                 <button
                   type="button"
@@ -177,7 +220,9 @@ export function AccountModEditor({
               );
             })}
           </div>
-          {capsules.length === 0 && <p className="account-mod-picker-empty">当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。</p>}
+          {capsules.length === 0 && <p className="account-mod-picker-empty">
+            {isEnglish ? "No Mods are available for this edition. Scan or add one in Mod Management." : "当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。"}
+          </p>}
         </div>,
         document.body,
       )}

@@ -41,6 +41,14 @@ impl<'a> MultiInstanceFacade<'a> {
         self.launches.cancel_current_operation();
     }
 
+    pub fn cancel(&self, ticket: CancellationTicket) {
+        self.launches.cancel(ticket);
+    }
+
+    pub fn complete(&self, ticket: CancellationTicket) {
+        self.launches.complete(ticket);
+    }
+
     pub fn is_cancelled(&self, ticket: CancellationTicket) -> bool {
         self.launches.is_cancelled(ticket)
     }

@@ -70,7 +70,7 @@ export function SettingsNavigation({
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
-    const media = window.matchMedia("(max-width: 780px)");
+    const media = window.matchMedia("(max-width: 1068px)");
     const update = () => setCompact(media.matches);
     update();
     media.addEventListener("change", update);
@@ -143,7 +143,7 @@ export function SettingsNavigation({
                   role="tab"
                   id="settings-tab-optional-features"
                   aria-selected={selected}
-                  aria-controls={`settings-panel-${target}`}
+                  aria-controls={`settings-panel-${selected ? activeTab : target}`}
                   tabIndex={selected ? 0 : -1}
                   className="settings-navigation-item"
                   data-active={selected ? "true" : "false"}

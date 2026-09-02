@@ -7,7 +7,7 @@ use crate::application::configuration::{
 };
 use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
 use crate::domain::config::{
-    default_enable_overlay, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
+    default_enable_bongo_cat, default_enable_overlay, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
     OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
 };
 use crate::error::AppError;
@@ -127,9 +127,15 @@ struct RuntimeConfigurationObserver<'a> {
 }
 
 impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
-    fn publish(&self, config: &GlobalConfig) {
+    fn apply(&self, config: &GlobalConfig) {
         update_shortcut_map(self.state, config);
+        if !config.optional_module_installed(OPTIONAL_MODULE_AUTOMATION) {
+            crate::stats::stop_stats_api();
+        }
         crate::capabilities::apply_configuration(self.state, self.app, config);
+    }
+
+    fn publish(&self, config: &GlobalConfig) {
         if let Some(app) = self.app {
             if let Err(error) = app.emit("global-config-updated", config) {
                 crate::logger::log_msg(
@@ -2168,7 +2174,7 @@ impl GlobalConfig {
         let legacy_combined_overlay_enabled = value
             .get("enable_overlay")
             .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or_else(default_enable_overlay);
         let legacy_tz_overlay_enabled = value
             .get("enable_tz_overlay")
             .and_then(serde_json::Value::as_bool)
@@ -2176,7 +2182,7 @@ impl GlobalConfig {
         let legacy_stats_overlay_enabled = value
             .get("enable_stats_overlay")
             .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or(legacy_combined_overlay_enabled);
         let legacy_audio_enabled = value
             .get("rune_audio_enabled")
             .and_then(serde_json::Value::as_bool)
@@ -2184,7 +2190,7 @@ impl GlobalConfig {
         let legacy_pet_enabled = value
             .get("enable_bongo_cat")
             .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or_else(default_enable_bongo_cat);
         let legacy_room_automation_enabled = value
             .get("room_rotation")
             .and_then(|room| room.get("enabled"))
@@ -2916,6 +2922,33 @@ pub fn patch_global_config(
             .configuration()
             .patch_current(&repository, &policy, &observer, patch)
     })
+}
+
+#[tauri::command]
+pub fn patch_desktop_pet_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    patch: serde_json::Value,
+) -> Result<GlobalConfig, AppError> {
+    const ALLOWED_FIELDS: [&str; 5] = [
+        "enable_bongo_cat",
+        "bongo_cat_chatterbox",
+        "bongo_cat_scale",
+        "bongo_cat_skin",
+        "bongo_cat_unlocked_skins",
+    ];
+    let object = patch.as_object().ok_or_else(|| {
+        AppError::ConfigWriteError("桌宠设置补丁必须是对象".to_string())
+    })?;
+    if let Some(field) = object
+        .keys()
+        .find(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+    {
+        return Err(AppError::ConfigWriteError(format!(
+            "桌宠窗口无权修改全局配置字段: {field}"
+        )));
+    }
+    patch_global_config(app, state, patch)
 }
 
 #[cfg(test)]

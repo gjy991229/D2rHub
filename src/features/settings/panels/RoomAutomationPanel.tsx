@@ -46,13 +46,15 @@ interface RoomAutomationPanelProps {
   modCapsulePoolError?: string | null;
   assigningAccountId?: string | null;
   onAssignModCapsule?: (accountId: string, capsuleId: string) => Promise<unknown>;
+  /** @deprecated Room automation no longer follows the recognition module state. */
   recognitionEnabled?: boolean;
+  /** @deprecated Room automation no longer derives its primary account from recognition. */
   recognitionAccountId?: string;
   onRequireRoomTools?: (accountId: string, capsuleId?: string, autoStart?: boolean) => void;
   onSaveLaunchScheme?: (accountIds: string[]) => Promise<void> | void;
 }
 
-type Operation = "save" | "install" | "restore";
+type Operation = "save" | "scan" | "restore";
 
 function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
@@ -87,8 +89,6 @@ export function RoomAutomationPanel({
   modCapsulePoolError = null,
   assigningAccountId = null,
   onAssignModCapsule,
-  recognitionEnabled = false,
-  recognitionAccountId = "",
   onRequireRoomTools,
   onSaveLaunchScheme,
 }: RoomAutomationPanelProps) {
@@ -101,6 +101,7 @@ export function RoomAutomationPanel({
   const [binding, setBinding] = useState<RoomChatBindingStatus | null>(null);
   const [bindingLoading, setBindingLoading] = useState(true);
   const [bindingError, setBindingError] = useState<string | null>(null);
+  const [bindingFeedback, setBindingFeedback] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -112,7 +113,6 @@ export function RoomAutomationPanel({
   const draftRef = useRef<RoomAutomationConfig | null>(null);
   const dirtyRef = useRef(false);
   const operationRef = useRef<Operation | null>(null);
-  const autoInstallAttemptRef = useRef<string | null>(null);
   const dirty = useMemo(
     () => !roomAutomationConfigsEqual(snapshot?.config ?? null, draft),
     [draft, snapshot],
@@ -223,6 +223,7 @@ export function RoomAutomationPanel({
       return next;
     });
     setOperationError(null);
+    setBindingFeedback(null);
   }, []);
 
   const reload = () => {
@@ -230,20 +231,9 @@ export function RoomAutomationPanel({
     if (snapshotRef.current) setDraft(cloneConfig(snapshotRef.current.config));
     setStale(false);
     setOperationError(null);
+    setBindingFeedback(null);
     setReloadKey((current) => current + 1);
   };
-
-  useEffect(() => {
-    if (!draft?.enabled || !recognitionEnabled || !recognitionAccountId
-      || draft.primary_account_id === recognitionAccountId
-      || !eligibleAccounts.some((account) => account.id === recognitionAccountId)) return;
-    updateDraft((current) => ({
-      ...current,
-      primary_account_id: recognitionAccountId,
-      follower_account_ids: [current.primary_account_id, ...current.follower_account_ids]
-        .filter((id, index, values) => id && id !== recognitionAccountId && values.indexOf(id) === index),
-    }));
-  }, [draft?.enabled, draft?.primary_account_id, eligibleAccounts, recognitionAccountId, recognitionEnabled, updateDraft]);
 
   const validation = useMemo(() => draft
     ? validateRoomAutomationConfig(draft, copy, eligibleAccounts.map((account) => account.id))
@@ -283,6 +273,10 @@ export function RoomAutomationPanel({
         dirtyRef.current = false;
       }
       setStale(false);
+      if (candidate.enabled && candidate.chat_f13_auto_patch_enabled) {
+        setBindingFeedback(outcome.apply_warning ? null : copy.configScanComplete);
+        setBindingReloadKey((current) => current + 1);
+      }
       if (outcome.apply_warning) {
         setOperationError(`${copy.savedButRuntimeFailed}: ${outcome.apply_warning}`);
       }
@@ -302,17 +296,22 @@ export function RoomAutomationPanel({
   }, [dirty, draft, persistDraft, saving, stale, validation?.valid]);
 
   const updateBinding = async (
-    kind: "install" | "restore",
+    kind: "scan" | "restore",
     action: () => Promise<RoomChatBindingStatus>,
   ) => {
-    if (editorDisabled || dirty || (kind === "install" && !draft?.enabled) || !binding || bindingLoading
-      || bindingError || binding.d2rRunning || operationRef.current) return;
+    if (editorDisabled || dirty || (kind === "scan" && !draft?.enabled) || !binding || bindingLoading
+      || bindingError || operationRef.current) return;
     operationRef.current = kind;
     setOperation(kind);
     setOperationError(null);
     setBindingError(null);
+    setBindingFeedback(null);
     try {
-      setBinding(await action());
+      const next = await action();
+      setBinding(next);
+      if (kind === "scan") {
+        setBindingFeedback(copy.manualScanComplete(next.installedFiles, next.totalFiles));
+      }
       const committed = await gateway.getConfig();
       commitConfig(committed);
     } catch (error) {
@@ -338,17 +337,10 @@ export function RoomAutomationPanel({
 
   const enableRoomAutomation = () => {
     if (!draft) return;
-    const primary_account_id = recognitionEnabled && recognitionAccountId
-      ? recognitionAccountId
-      : draft.primary_account_id;
     const candidate = {
       ...draft,
       enabled: true,
-      primary_account_id,
-      follower_account_ids: (recognitionEnabled && recognitionAccountId
-        ? [draft.primary_account_id, ...draft.follower_account_ids]
-        : draft.follower_account_ids)
-        .filter((id, index, values) => id && id !== primary_account_id && values.indexOf(id) === index),
+      chat_f13_auto_patch_enabled: true,
     };
     const candidateValidation = validateRoomAutomationConfig(
       candidate,
@@ -382,32 +374,6 @@ export function RoomAutomationPanel({
     }
     updateDraft(() => candidate);
   };
-
-  useEffect(() => {
-    if (!draft?.enabled || dirty || bindingLoading || bindingError || !binding || binding.ready) {
-      if (!draft?.enabled || binding?.ready) autoInstallAttemptRef.current = null;
-      return;
-    }
-    if (binding.d2rRunning || operationRef.current) return;
-    const attemptKey = [
-      binding.d2rRunning,
-      binding.totalFiles,
-      binding.installedFiles,
-      binding.conflictedFiles,
-      binding.orphanBackupFiles,
-    ].join(":");
-    if (autoInstallAttemptRef.current === attemptKey) return;
-    autoInstallAttemptRef.current = attemptKey;
-    void updateBinding("install", gateway.installChatBinding);
-  }, [binding, bindingError, bindingLoading, dirty, draft?.enabled, gateway]);
-
-  useEffect(() => {
-    if (!draft?.enabled || binding?.ready || bindingLoading || bindingError) return;
-    const timer = window.setInterval(() => {
-      void gateway.getChatBinding().then(setBinding).catch(() => undefined);
-    }, 1500);
-    return () => window.clearInterval(timer);
-  }, [binding?.ready, bindingError, bindingLoading, draft?.enabled, gateway]);
 
   if (loading) {
     return (
@@ -721,7 +687,7 @@ export function RoomAutomationPanel({
         <summary>
           <span>
             <strong id="room-binding-title">{copy.f13Title}</strong>
-            <small>{binding?.ready ? copy.bindingReady : copy.bindingNotReady}</small>
+            <small>{binding?.ready ? copy.bindingReadySummary : copy.bindingNotReady}</small>
           </span>
           <ChevronDown size={15} aria-hidden="true" />
         </summary>
@@ -734,7 +700,7 @@ export function RoomAutomationPanel({
             loading={bindingLoading}
             disabled={bindingLoading || !!operation}
             onClick={() => {
-              autoInstallAttemptRef.current = null;
+              setBindingFeedback(null);
               setBindingReloadKey((current) => current + 1);
             }}
           >
@@ -768,25 +734,45 @@ export function RoomAutomationPanel({
               {!!binding?.conflictedFiles && <span>{copy.bindingConflicts(binding.conflictedFiles)}</span>}
               {!!binding?.orphanBackupFiles && <span>{copy.bindingOrphans(binding.orphanBackupFiles)}</span>}
             </div>
-            {binding?.watcherRunning && <span className="room-automation-watcher">{copy.watcherActive}</span>}
+            {draft.chat_f13_auto_patch_enabled && (
+              <span className="room-automation-scan-mode">{copy.configScanActive}</span>
+            )}
           </div>
         )}
         <p className="room-automation-consent-copy">{copy.f13Consent}</p>
+        <p className="room-automation-scan-hint" role="note">{copy.newCharacterScanHint}</p>
+        {bindingFeedback && (
+          <p className="room-automation-scan-feedback" role="status" aria-live="polite">
+            {bindingFeedback}
+          </p>
+        )}
         {binding?.d2rRunning && <p className="room-automation-field-error" role="alert">{copy.gameMustClose}</p>}
         {binding?.lastWatcherError && <p className="room-automation-field-error" role="alert">{binding.lastWatcherError}</p>}
-        {!draft.enabled && (
-          <div className="room-automation-actions">
-          <Button
-            size="md"
-            loading={operation === "restore"}
-            disabled={editorDisabled || dirty || !binding || bindingLoading
-              || !!bindingError || binding.d2rRunning
-              || (!binding.backupFiles && !binding.consentGranted && !binding.watcherRunning
-                && !draft.chat_f13_auto_patch_enabled)}
-            onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
-          >{copy.restoreBinding}</Button>
-          </div>
-        )}
+        <div className="room-automation-actions">
+          {draft.enabled ? (
+            <Button
+              size="md"
+              variant="secondary"
+              loading={operation === "scan"}
+              disabled={editorDisabled || dirty || !binding || bindingLoading
+                || !!bindingError}
+              onClick={() => void updateBinding("scan", gateway.installChatBinding)}
+            >
+              <RefreshCw size={14} aria-hidden="true" />
+              {copy.scanAndInstallBinding}
+            </Button>
+          ) : (
+            <Button
+              size="md"
+              loading={operation === "restore"}
+              disabled={editorDisabled || dirty || !binding || bindingLoading
+                || !!bindingError || binding.d2rRunning
+                || (!binding.backupFiles && !binding.consentGranted && !binding.watcherRunning
+                  && !draft.chat_f13_auto_patch_enabled)}
+              onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
+            >{copy.restoreBinding}</Button>
+          )}
+        </div>
         </div>
       </details>
 

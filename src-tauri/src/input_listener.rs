@@ -6,7 +6,7 @@ use crate::commands::account::{AccountManager, AccountMeta};
 use crate::infrastructure::system;
 use crate::state::SharedState;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -29,11 +29,18 @@ static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLoc
 static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
     OnceLock::new();
 static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+static ACTIVE_HANDLED_SHORTCUT_KEYS: OnceLock<parking_lot::Mutex<HashSet<u32>>> = OnceLock::new();
 static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone)]
+enum CapabilityShortcutSender {
+    Bounded(std::sync::mpsc::SyncSender<&'static str>),
+    Unbounded(std::sync::mpsc::Sender<&'static str>),
+}
 
 struct CapabilityShortcutRoute {
     action: &'static str,
-    sender: std::sync::mpsc::SyncSender<&'static str>,
+    sender: CapabilityShortcutSender,
 }
 
 #[derive(Default)]
@@ -52,6 +59,10 @@ pub(crate) struct CapabilityShortcutRegistration {
 
 fn capability_shortcuts() -> &'static parking_lot::RwLock<CapabilityShortcutRegistry> {
     CAPABILITY_SHORTCUTS.get_or_init(|| parking_lot::RwLock::new(Default::default()))
+}
+
+fn active_handled_shortcut_keys() -> &'static parking_lot::Mutex<HashSet<u32>> {
+    ACTIVE_HANDLED_SHORTCUT_KEYS.get_or_init(|| parking_lot::Mutex::new(HashSet::new()))
 }
 
 /// Serializes durable core-shortcut commits with optional route registration.
@@ -109,7 +120,25 @@ pub(crate) fn register_capability_shortcuts(
     routes: impl IntoIterator<Item = (String, &'static str)>,
     sender: std::sync::mpsc::SyncSender<&'static str>,
 ) -> Result<CapabilityShortcutRegistration, String> {
-    install_capability_shortcuts(owner_id, routes, sender, false)
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Bounded(sender),
+        false,
+    )
+}
+
+pub(crate) fn register_unbounded_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::Sender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Unbounded(sender),
+        false,
+    )
 }
 
 /// Atomically replaces one capability's routes while preserving every other
@@ -120,13 +149,31 @@ pub(crate) fn replace_capability_shortcuts(
     routes: impl IntoIterator<Item = (String, &'static str)>,
     sender: std::sync::mpsc::SyncSender<&'static str>,
 ) -> Result<CapabilityShortcutRegistration, String> {
-    install_capability_shortcuts(owner_id, routes, sender, true)
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Bounded(sender),
+        true,
+    )
+}
+
+pub(crate) fn replace_unbounded_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::Sender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Unbounded(sender),
+        true,
+    )
 }
 
 fn install_capability_shortcuts(
     owner_id: &'static str,
     routes: impl IntoIterator<Item = (String, &'static str)>,
-    sender: std::sync::mpsc::SyncSender<&'static str>,
+    sender: CapabilityShortcutSender,
     replace_owner: bool,
 ) -> Result<CapabilityShortcutRegistration, String> {
     with_shortcut_routing_transaction(|| {
@@ -137,7 +184,7 @@ fn install_capability_shortcuts(
 fn install_capability_shortcuts_in_transaction(
     owner_id: &'static str,
     routes: impl IntoIterator<Item = (String, &'static str)>,
-    sender: std::sync::mpsc::SyncSender<&'static str>,
+    sender: CapabilityShortcutSender,
     replace_owner: bool,
 ) -> Result<CapabilityShortcutRegistration, String> {
     let mut normalized = HashMap::new();
@@ -205,9 +252,12 @@ fn dispatch_capability_shortcut(shortcut: &str) -> bool {
     let Some((sender, action)) = delivery else {
         return false;
     };
-    match sender.try_send(action) {
-        Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => true,
-        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
+    match sender {
+        CapabilityShortcutSender::Bounded(sender) => match sender.try_send(action) {
+            Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => true,
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
+        },
+        CapabilityShortcutSender::Unbounded(sender) => sender.send(action).is_ok(),
     }
 }
 
@@ -336,7 +386,9 @@ const WH_KEYBOARD_LL: std::os::raw::c_int = 13;
 const WH_MOUSE_LL: std::os::raw::c_int = 14;
 
 const WM_KEYDOWN: usize = 0x0100;
+const WM_KEYUP: usize = 0x0101;
 const WM_SYSKEYDOWN: usize = 0x0104;
+const WM_SYSKEYUP: usize = 0x0105;
 const WM_MOUSEMOVE: usize = 0x0200;
 const WM_LBUTTONDOWN: usize = 0x0201;
 const WM_RBUTTONDOWN: usize = 0x0204;
@@ -417,14 +469,14 @@ extern "system" {
 
 }
 
-unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) {
+unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) -> bool {
     if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
-        return;
+        return false;
     }
 
     if !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y) {
         STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-        return;
+        return false;
     }
 
     let previous_time = STATS_OVERLAY_LAST_CLICK_TIME.swap(mouse.time, Ordering::Relaxed);
@@ -445,13 +497,14 @@ unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) {
         max_delta_x,
         max_delta_y,
     ) {
-        return;
+        return false;
     }
 
     STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
     if let Some(tx) = INPUT_EVENT_TX.get() {
         let _ = tx.send("StatsOverlayMiniToggle");
     }
+    true
 }
 
 fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
@@ -683,11 +736,28 @@ unsafe extern "system" fn keyboard_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
+    if code >= 0 && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
+        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        if active_handled_shortcut_keys().lock().remove(&kbd.vk_code) {
+            // The matching key-down was a global shortcut and was swallowed.
+            // Swallow its key-up as well so D2R never receives an orphan event.
+            return 1;
+        }
+    } else if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
         // ── 快捷键检测 ──
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        if active_handled_shortcut_keys()
+            .lock()
+            .contains(&kbd.vk_code)
+        {
+            // Windows emits repeated key-down messages while a key is held.
+            // The first event already dispatched this shortcut; consume repeats
+            // without enqueueing duplicate room workflows.
+            return 1;
+        }
         // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
         if (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
+            active_handled_shortcut_keys().lock().insert(kbd.vk_code);
             // 快捷键已处理，吞掉该按键，不传递给其他应用
             return 1;
         }
@@ -712,8 +782,11 @@ unsafe extern "system" fn mouse_hook_proc(
         let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
         if wparam == WM_MOUSEMOVE {
             handle_stats_overlay_mini_pointer_move(mouse);
-        } else {
-            handle_stats_overlay_mini_double_click(mouse);
+        } else if handle_stats_overlay_mini_double_click(mouse) {
+            // The first click remains click-through. Swallow the confirming
+            // second press so the foreground game cannot also interpret the
+            // gesture as a double-click action.
+            return 1;
         }
     }
     if code >= 0

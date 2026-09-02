@@ -159,28 +159,40 @@ export function TaskRuntimePanel({
     return rightActive - leftActive || right.started_at_ms - left.started_at_ms;
   }), [tasks]);
 
-  const toggleTimeline = useCallback(async (task: TaskSnapshot) => {
+  const toggleTimeline = useCallback((task: TaskSnapshot) => {
     if (expandedTaskId === task.task_id) {
       setExpandedTaskId(null);
       return;
     }
     setExpandedTaskId(task.task_id);
-    if (timeline[task.task_id]) return;
-    try {
-      const entries = await gateway.timeline(task.task_id);
-      setTimeline(current => ({ ...current, [task.task_id]: entries }));
+  }, [expandedTaskId]);
+
+  const expandedTaskRevision = expandedTaskId === null
+    ? null
+    : tasks.get(expandedTaskId)?.revision ?? null;
+
+  useEffect(() => {
+    if (expandedTaskId === null || expandedTaskRevision === null) return;
+    let disposed = false;
+    void gateway.timeline(expandedTaskId).then((entries) => {
+      if (disposed) return;
+      setTimeline(current => ({ ...current, [expandedTaskId]: entries }));
       setTimelineError(current => {
         const next = { ...current };
-        delete next[task.task_id];
+        delete next[expandedTaskId];
         return next;
       });
-    } catch (error) {
+    }).catch((error) => {
+      if (disposed) return;
       setTimelineError(current => ({
         ...current,
-        [task.task_id]: error instanceof Error ? error.message : String(error),
+        [expandedTaskId]: error instanceof Error ? error.message : String(error),
       }));
-    }
-  }, [expandedTaskId, gateway, timeline]);
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [expandedTaskId, expandedTaskRevision, gateway]);
 
   const runOperation = async (task: TaskSnapshot, kind: "cancel" | "retry") => {
     setOperation({ taskId: task.task_id, kind });
@@ -256,7 +268,10 @@ export function TaskRuntimePanel({
                   <div className="task-runtime-main">
                     <div className="task-runtime-title-line">
                       <strong>{KIND_LABELS[locale][task.kind] ?? task.kind}</strong>
-                      <span data-state={task.state}>{copy.states[task.state]}</span>
+                      {task.subject && (
+                        <span className="task-runtime-subject" title={task.subject}>{task.subject}</span>
+                      )}
+                      <span className="task-runtime-state" data-state={task.state}>{copy.states[task.state]}</span>
                       <time dateTime={new Date(task.started_at_ms).toISOString()}>
                         {formatTime(task.started_at_ms, locale)}
                       </time>
@@ -301,14 +316,15 @@ export function TaskRuntimePanel({
                       size="sm"
                       variant="ghost"
                       aria-expanded={expanded}
-                      onClick={() => void toggleTimeline(task)}
+                      aria-controls={`task-runtime-timeline-${task.task_id}`}
+                      onClick={() => toggleTimeline(task)}
                     >
                       <ChevronDown size={13} className={expanded ? "task-runtime-chevron-open" : ""} aria-hidden="true" />
                       {copy.timeline}
                     </Button>
                   </div>
                   {expanded && (
-                    <div className="task-runtime-timeline">
+                    <div className="task-runtime-timeline" id={`task-runtime-timeline-${task.task_id}`}>
                       {timelineError[task.task_id] && <p role="alert">{copy.timelineFailed}</p>}
                       {!timelineError[task.task_id] && !timeline[task.task_id] && (
                         <Loader2 size={14} className="task-runtime-spin" aria-label={copy.loading} />

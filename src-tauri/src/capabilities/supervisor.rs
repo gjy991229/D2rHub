@@ -1,4 +1,5 @@
 use crate::application::capability::{CapabilityRegistry, CapabilityStatusSnapshot};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use tauri::Emitter;
 
@@ -15,6 +16,7 @@ enum SupervisorMessage {
 pub(crate) struct CapabilitySupervisor {
     sender: mpsc::SyncSender<SupervisorMessage>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl CapabilitySupervisor {
@@ -23,27 +25,33 @@ impl CapabilitySupervisor {
         registry: Arc<CapabilityRegistry>,
     ) -> Result<Self, String> {
         let (sender, receiver) = mpsc::sync_channel(1);
+        let shutdown_requested = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown_requested);
         let worker = std::thread::Builder::new()
             .name("capability-supervisor".to_string())
             .spawn(move || loop {
+                if worker_shutdown.load(Ordering::Acquire) {
+                    shutdown_and_publish(&app, &registry);
+                    break;
+                }
                 let message = match receiver.recv_timeout(HEALTH_POLL_INTERVAL) {
                     Ok(message) => message,
                     Err(mpsc::RecvTimeoutError::Timeout) => {
-                        refresh_health_and_publish(&app, &registry);
+                        reconcile_if_changed_and_publish(&app, &registry);
                         continue;
                     }
                     Err(mpsc::RecvTimeoutError::Disconnected) => break,
                 };
                 match message {
                     SupervisorMessage::Reconcile => {
-                        let mut shutdown_requested = false;
+                        let mut queued_shutdown = false;
                         while let Ok(queued) = receiver.try_recv() {
                             if matches!(queued, SupervisorMessage::Shutdown) {
-                                shutdown_requested = true;
+                                queued_shutdown = true;
                                 break;
                             }
                         }
-                        if shutdown_requested {
+                        if queued_shutdown || worker_shutdown.load(Ordering::Acquire) {
                             shutdown_and_publish(&app, &registry);
                             break;
                         }
@@ -60,6 +68,7 @@ impl CapabilitySupervisor {
         Ok(Self {
             sender,
             worker: Mutex::new(Some(worker)),
+            shutdown_requested,
         })
     }
 
@@ -79,7 +88,23 @@ impl CapabilitySupervisor {
         let Some(worker) = worker else {
             return;
         };
-        let _ = self.sender.send(SupervisorMessage::Shutdown);
+        self.shutdown_requested.store(true, Ordering::Release);
+        match self.sender.try_send(SupervisorMessage::Shutdown) {
+            Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+            Err(mpsc::TrySendError::Disconnected(_)) => {}
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        while !worker.is_finished() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        if !worker.is_finished() {
+            crate::logger::log_msg(
+                "ERROR",
+                "Capabilities",
+                "capability supervisor 未能在 3 秒内停止；退出流程将继续",
+            );
+            return;
+        }
         if worker.join().is_err() {
             crate::logger::log_msg(
                 "ERROR",
@@ -106,15 +131,18 @@ fn shutdown_and_publish(app: &tauri::AppHandle, registry: &CapabilityRegistry) {
     reconcile_and_publish(app, registry);
 }
 
-fn refresh_health_and_publish(app: &tauri::AppHandle, registry: &CapabilityRegistry) {
+fn reconcile_if_changed_and_publish(app: &tauri::AppHandle, registry: &CapabilityRegistry) {
     let previous_revision = registry.snapshot().revision;
-    match registry.refresh_running_health() {
+    // A periodic full reconciliation both probes healthy drivers and retries
+    // cleanup/start after a transient lifecycle failure. A health-only pass
+    // cannot leave the `cleanup_required` state by design.
+    match registry.reconcile_all() {
         Ok(snapshot) if snapshot.revision > previous_revision => publish_snapshot(app, &snapshot),
         Ok(_) => {}
         Err(error) => crate::logger::log_msg(
             "WARN",
             "Capabilities",
-            &format!("刷新 capability 健康状态失败: {error}"),
+            &format!("周期协调 capability 生命周期失败: {error}"),
         ),
     }
 }

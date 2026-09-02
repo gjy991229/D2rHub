@@ -3,4 +3,5 @@
 pub(crate) mod diagnostics;
 pub(crate) mod durable_fs;
 pub mod module_config;
+pub(crate) mod process;
 pub(crate) mod system;

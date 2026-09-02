@@ -3,9 +3,9 @@ use sysinfo::{ProcessesToUpdate, System};
 use tauri::Manager;
 
 use crate::application::multi_instance::{GameWindowIdentity, GameWindowPort, WindowPosition};
-use crate::commands::utils::{shared_system, silent_cmd};
+use crate::infrastructure::process::{kill_processes_by_name, shared_system, silent_cmd};
 use crate::error::AppError;
-use crate::launch_context::{paths_have_same_identity, ContextPurpose, LaunchContext};
+use crate::launch_context::paths_have_same_identity;
 
 /// 启动进度事件（通过 Tauri event 推送到前端）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +149,7 @@ pub fn graceful_kill_bnet(_timeout_secs: u64) -> bool {
     std::thread::sleep(std::time::Duration::from_millis(1500));
 
     // 只有确认进程退出才报告成功；调用方可据此决定是否安全回写账号状态。
-    crate::commands::utils::kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]).is_ok()
+    kill_processes_by_name(&["Battle.net.exe", "Agent.exe"]).is_ok()
 }
 
 /// 记录进程快照（用于后续对比判断新进程）
@@ -950,10 +950,24 @@ pub fn get_d2r_window_titles() -> Vec<String> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct AccountGameIdentity {
+pub(crate) struct AccountGameIdentity {
     account_id: String,
     window_title: String,
     game_executable: std::path::PathBuf,
+}
+
+impl AccountGameIdentity {
+    pub(crate) fn new(
+        account_id: String,
+        window_title: String,
+        game_executable: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            account_id,
+            window_title,
+            game_executable,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1008,9 +1022,13 @@ fn recover_running_assignments(
 /// 扫描已运行的 D2R 窗口，匹配账号列表中的昵称，更新多开实例注册表。
 /// 解决"账号已在游戏但工具不识别为活动账号"的问题
 /// 恢复匹配同时要求完整 exe 路径和精确窗口标题，且一个 PID 最多归属一个账号。
-pub fn refresh_account_running_state(
+pub fn refresh_account_running_state<F>(
     state: tauri::State<'_, crate::state::SharedState>,
-) -> Result<Vec<String>, String> {
+    load_account_identities: F,
+) -> Result<Vec<String>, String>
+where
+    F: FnOnce(&crate::domain::config::GlobalConfig) -> Vec<AccountGameIdentity>,
+{
     #[cfg(target_os = "windows")]
     {
         extern "system" {
@@ -1103,27 +1121,7 @@ pub fn refresh_account_running_state(
         let cfg = config
             .as_ref()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
-        use crate::commands::account::AccountManager;
-        let mut account_identities = Vec::new();
-        for account_id in AccountManager::list_ids(&cfg.accounts_dir) {
-            let Ok(meta) = AccountManager::load_meta(&cfg.accounts_dir, &account_id) else {
-                continue;
-            };
-            let Ok(context) = LaunchContext::for_account(cfg, &meta, ContextPurpose::LaunchGame)
-            else {
-                continue;
-            };
-            let window_title = if meta.display_name.is_empty() {
-                account_id.clone()
-            } else {
-                meta.display_name
-            };
-            account_identities.push(AccountGameIdentity {
-                account_id,
-                window_title,
-                game_executable: context.installation.game_executable,
-            });
-        }
+        let account_identities = load_account_identities(cfg);
         drop(config);
 
         let running_windows: Vec<RunningGameWindow> = ctx
@@ -1194,6 +1192,7 @@ pub fn refresh_account_running_state(
     }
     #[cfg(not(target_os = "windows"))]
     {
+        let _ = (state, load_account_identities);
         Ok(Vec::new())
     }
 }

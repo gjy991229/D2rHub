@@ -8,7 +8,9 @@ use crate::audio_mod::{
     active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
     set_auto_exit_on_death_enabled, InstalledMod,
 };
-use crate::commands::account::{update_account_mods_inner, AccountManager, AccountMeta};
+use crate::commands::account::{
+    update_account_mods_inner, update_account_mods_with_lease_held, AccountManager, AccountMeta,
+};
 use crate::commands::global_config::mutate_loaded_global_config;
 use crate::commands::launch::parse_windows_command_line;
 use crate::domain::account::GameRegion;
@@ -31,6 +33,31 @@ struct ModCatalogPayload {
     argument_overrides: BTreeMap<String, String>,
     custom_entries: Vec<CustomModEntry>,
     legacy_import_completed: bool,
+    pending_argument_update: Option<PendingCatalogArgumentUpdate>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PendingCatalogArgumentUpdate {
+    capsule_id: String,
+    accounts: Vec<AccountModJournalEntry>,
+    scheme_members: Vec<SchemeModJournalEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AccountModJournalEntry {
+    account_id: String,
+    old_active: String,
+    old_list: Vec<String>,
+    new_active: String,
+    new_list: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SchemeModJournalEntry {
+    group_id: String,
+    account_id: String,
+    old_arguments: Option<String>,
+    new_arguments: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +321,41 @@ fn save_payload(
     Ok((saved.generation, saved.payload))
 }
 
+fn load_payload_with_recovery(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    config: &GlobalConfig,
+    scanned: &[ScannedMod],
+) -> Result<(u64, ModCatalogPayload), String> {
+    let (generation, mut payload) = load_payload(state, config, scanned)?;
+    let Some(pending) = payload.pending_argument_update.clone() else {
+        return Ok((generation, payload));
+    };
+
+    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire();
+    let _account_leases = state
+        .multi_instance()
+        .account_leases()
+        .try_acquire_many(pending.accounts.iter().map(|change| change.account_id.as_str()))
+        .map_err(|error| format!("恢复未完成的 Mod 目录事务失败: {error}"))?;
+    apply_account_mod_journal(config, &pending.accounts, false)
+        .map_err(|error| format!("恢复未完成的 Mod 账号引用失败: {error}"))?;
+    apply_scheme_mod_replacements(state, app, &pending.scheme_members, false)
+        .map_err(|error| format!("恢复未完成的 Mod 启动方案引用失败: {error}"))?;
+
+    payload.pending_argument_update = None;
+    let saved = save_payload(state, generation, payload)?;
+    crate::logger::log_msg(
+        "WARN",
+        "ModCatalog",
+        &format!(
+            "已回滚上次中断的 Mod 目录编辑事务: {}",
+            pending.capsule_id
+        ),
+    );
+    Ok(saved)
+}
+
 fn capsule_feature_metadata(
     scanned: &[ScannedMod],
     edition: &str,
@@ -451,22 +513,26 @@ fn build_pool(
     }
 }
 
-fn scan_pool_locked(state: &SharedState) -> Result<ModCapsulePool, String> {
+fn scan_pool_locked(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+) -> Result<ModCapsulePool, String> {
     let config = state
         .configuration()
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let scanned = scan_installations(&config);
-    let (generation, payload) = load_payload(state, &config, &scanned)?;
+    let (generation, payload) = load_payload_with_recovery(state, app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     Ok(build_pool(&config, generation, &payload, &scanned))
 }
 
-pub(crate) fn refresh_on_startup(state: SharedState) {
+pub(crate) fn refresh_on_startup(state: SharedState, app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let _catalog = CATALOG_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Err(error) = scan_pool_locked(&state) {
+        if let Err(error) = scan_pool_locked(&state, &app) {
             crate::logger::log_msg("WARN", "ModCatalog", &format!("启动扫描失败：{error}"));
         }
     });
@@ -474,6 +540,7 @@ pub(crate) fn refresh_on_startup(state: SharedState) {
 
 #[tauri::command]
 pub async fn get_mod_capsule_pool(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<ModCapsulePool, String> {
     let shared = state.inner().clone();
@@ -481,7 +548,7 @@ pub async fn get_mod_capsule_pool(
         let _catalog = CATALOG_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        scan_pool_locked(&shared)
+        scan_pool_locked(&shared, &app)
     })
     .await
     .map_err(|error| format!("读取 Mod 共享目录的后台任务异常退出：{error}"))?
@@ -489,13 +556,15 @@ pub async fn get_mod_capsule_pool(
 
 #[tauri::command]
 pub async fn scan_mod_capsule_pool(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<ModCapsulePool, String> {
-    get_mod_capsule_pool(state).await
+    get_mod_capsule_pool(app, state).await
 }
 
 #[tauri::command]
 pub fn set_mod_auto_exit_on_death_enabled(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     capsule_id: String,
     enabled: bool,
@@ -508,6 +577,8 @@ pub fn set_mod_auto_exit_on_death_enabled(
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let scanned = scan_installations(&config);
+    let _ = load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     let target = scanned
         .iter()
         .find(|entry| entry.id == capsule_id)
@@ -534,12 +605,14 @@ pub fn set_mod_auto_exit_on_death_enabled(
     set_auto_exit_on_death_enabled(&mods_directory, &target.installed.name, enabled)?;
 
     let rescanned = scan_installations(&config);
-    let (generation, payload) = load_payload(state.inner(), &config, &rescanned)?;
+    let (generation, payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &rescanned)?;
     Ok(build_pool(&config, generation, &payload, &rescanned))
 }
 
 #[tauri::command]
 pub fn add_mod_capsule(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     edition: String,
     launch_arguments: String,
@@ -554,7 +627,9 @@ pub fn add_mod_capsule(
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let scanned = scan_installations(&config);
-    let (generation, mut payload) = load_payload(state.inner(), &config, &scanned)?;
+    let (generation, mut payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     let pool = build_pool(&config, generation, &payload, &scanned);
     if pool
         .capsules
@@ -572,12 +647,31 @@ pub fn add_mod_capsule(
     Ok(build_pool(&config, generation, &payload, &scanned))
 }
 
-fn replace_catalog_arguments_in_accounts(
-    state: &SharedState,
+#[derive(Clone)]
+struct AccountModReplacement {
+    original: AccountMeta,
+    active: String,
+    list: Vec<String>,
+}
+
+impl AccountModReplacement {
+    fn journal_entry(&self) -> AccountModJournalEntry {
+        AccountModJournalEntry {
+            account_id: self.original.id.clone(),
+            old_active: self.original.mod_args.clone(),
+            old_list: self.original.mod_list.clone(),
+            new_active: self.active.clone(),
+            new_list: self.list.clone(),
+        }
+    }
+}
+
+fn plan_catalog_argument_replacements(
     config: &GlobalConfig,
     old_arguments: &str,
     new_arguments: &str,
-) -> Result<(), String> {
+) -> Result<Vec<AccountModReplacement>, String> {
+    let mut changes = Vec::new();
     for account_id in AccountManager::list_ids(&config.accounts_dir) {
         let account = AccountManager::load_meta(&config.accounts_dir, &account_id)
             .map_err(|error| error.to_string())?;
@@ -600,32 +694,170 @@ fn replace_catalog_arguments_in_accounts(
             })
             .collect::<Vec<_>>();
         if changed {
-            update_account_mods_inner(state, account_id, active, list)
-                .map_err(|error| error.to_string())?;
+            let mut normalized = account.clone();
+            normalized.replace_mod_configurations(active, list);
+            changes.push(AccountModReplacement {
+                original: account,
+                active: normalized.mod_args,
+                list: normalized.mod_list,
+            });
+        }
+    }
+    Ok(changes)
+}
+
+fn restore_account_mod_replacements(
+    config: &GlobalConfig,
+    changes: &[AccountModReplacement],
+) -> Vec<String> {
+    let mut errors = Vec::new();
+    for change in changes.iter().rev() {
+        if let Err(error) = update_account_mods_with_lease_held(
+            config,
+            change.original.clone(),
+            change.original.mod_args.clone(),
+            change.original.mod_list.clone(),
+        ) {
+            errors.push(format!("账号 {}: {error}", change.original.id));
+        }
+    }
+    errors
+}
+
+fn apply_account_mod_replacements(
+    config: &GlobalConfig,
+    changes: &[AccountModReplacement],
+) -> Result<(), String> {
+    for (index, change) in changes.iter().enumerate() {
+        if let Err(error) = update_account_mods_with_lease_held(
+            config,
+            change.original.clone(),
+            change.active.clone(),
+            change.list.clone(),
+        ) {
+            let rollback_errors = restore_account_mod_replacements(config, &changes[..index]);
+            return Err(if rollback_errors.is_empty() {
+                error.to_string()
+            } else {
+                format!(
+                    "{error}；回滚已更新账号时发生错误：{}",
+                    rollback_errors.join("；")
+                )
+            });
         }
     }
     Ok(())
 }
 
-fn replace_catalog_arguments_in_schemes(
-    state: &SharedState,
-    app: &tauri::AppHandle,
+fn apply_account_mod_journal(
+    config: &GlobalConfig,
+    changes: &[AccountModJournalEntry],
+    forward: bool,
+) -> Result<(), String> {
+    for change in changes {
+        let account = AccountManager::load_meta(&config.accounts_dir, &change.account_id)
+            .map_err(|error| error.to_string())?;
+        let (expected_active, expected_list, target_active, target_list) = if forward {
+            (
+                &change.old_active,
+                &change.old_list,
+                &change.new_active,
+                &change.new_list,
+            )
+        } else {
+            (
+                &change.new_active,
+                &change.new_list,
+                &change.old_active,
+                &change.old_list,
+            )
+        };
+        if &account.mod_args == target_active && &account.mod_list == target_list {
+            continue;
+        }
+        if &account.mod_args != expected_active || &account.mod_list != expected_list {
+            return Err(format!(
+                "账号 {} 的 Mod 配置已被其他操作修改，停止恢复目录事务",
+                change.account_id
+            ));
+        }
+        update_account_mods_with_lease_held(
+            config,
+            account,
+            target_active.clone(),
+            target_list.clone(),
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+fn plan_catalog_argument_replacements_in_schemes(
+    config: &GlobalConfig,
     old_arguments: &str,
     new_arguments: &str,
-) -> Result<(), String> {
-    mutate_loaded_global_config(state, app, |config| {
-        let mut changed = false;
-        for group in &mut config.launch_groups {
-            for member in &mut group.members {
-                if member
+) -> Vec<SchemeModJournalEntry> {
+    config
+        .launch_groups
+        .iter()
+        .flat_map(|group| {
+            group.members.iter().filter_map(|member| {
+                member
                     .mod_args
                     .as_deref()
                     .is_some_and(|arguments| arguments.trim() == old_arguments)
-                {
-                    member.mod_args = Some(new_arguments.to_string());
-                    changed = true;
-                }
+                    .then(|| SchemeModJournalEntry {
+                        group_id: group.id.clone(),
+                        account_id: member.account_id.clone(),
+                        old_arguments: member.mod_args.clone(),
+                        new_arguments: Some(new_arguments.to_string()),
+                    })
+            })
+        })
+        .collect()
+}
+
+fn apply_scheme_mod_replacements(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    changes: &[SchemeModJournalEntry],
+    forward: bool,
+) -> Result<(), String> {
+    mutate_loaded_global_config(state, app, |config| {
+        let mut changed = false;
+        for change in changes {
+            let member = config
+                .launch_groups
+                .iter_mut()
+                .find(|group| group.id == change.group_id)
+                .and_then(|group| {
+                    group
+                        .members
+                        .iter_mut()
+                        .find(|member| member.account_id == change.account_id)
+                })
+                .ok_or_else(|| {
+                    crate::error::AppError::ConfigWriteError(format!(
+                        "启动方案 {} 中已找不到账号 {}，停止 Mod 引用事务",
+                        change.group_id, change.account_id
+                    ))
+                })?;
+            let (expected, target) = if forward {
+                (&change.old_arguments, &change.new_arguments)
+            } else {
+                (&change.new_arguments, &change.old_arguments)
+            };
+            if &member.mod_args == target {
+                continue;
             }
+            if &member.mod_args != expected {
+                return Err(crate::error::AppError::ConfigWriteError(format!(
+                    "启动方案 {} 的账号 {} 已被其他操作修改，停止 Mod 引用事务",
+                    change.group_id, change.account_id
+                )));
+            }
+            member.mod_args = target.clone();
+            changed = true;
         }
         Ok(changed)
     })
@@ -649,7 +881,9 @@ pub fn update_mod_capsule(
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let scanned = scan_installations(&config);
-    let (generation, mut payload) = load_payload(state.inner(), &config, &scanned)?;
+    let (generation, payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     let pool = build_pool(&config, generation, &payload, &scanned);
     let current = pool
         .capsules
@@ -664,6 +898,10 @@ pub fn update_mod_capsule(
     }) {
         return Err("同一游戏版本中已有完全相同的共享 Mod 参数".to_string());
     }
+    if current.launch_arguments == launch_arguments {
+        return Ok(pool);
+    }
+    let mut next_payload = payload.clone();
     if current.origin == "scanned" {
         let selected_name = active_mod_name(&launch_arguments)?
             .ok_or_else(|| "扫描 Mod 的参数必须保留 -mod 名称".to_string())?;
@@ -674,33 +912,141 @@ pub fn update_mod_capsule(
             ));
         }
         if current.default_launch_arguments.as_deref() == Some(launch_arguments.as_str()) {
-            payload.argument_overrides.remove(&current.id);
+            next_payload.argument_overrides.remove(&current.id);
         } else {
-            payload
+            next_payload
                 .argument_overrides
                 .insert(current.id.clone(), launch_arguments.clone());
         }
     } else {
-        let entry = payload
+        let entry = next_payload
             .custom_entries
             .iter_mut()
             .find(|entry| entry.id == current.id)
             .ok_or_else(|| "自定义 Mod 参数已不存在".to_string())?;
         entry.launch_arguments = launch_arguments.clone();
     }
-    let (generation, payload) = save_payload(state.inner(), generation, payload)?;
-    replace_catalog_arguments_in_accounts(
-        state.inner(),
+    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire();
+    let account_changes = plan_catalog_argument_replacements(
         &config,
         current.launch_arguments.trim(),
         &launch_arguments,
     )?;
-    replace_catalog_arguments_in_schemes(
-        state.inner(),
-        &app,
+    let scheme_changes = plan_catalog_argument_replacements_in_schemes(
+        &config,
         current.launch_arguments.trim(),
         &launch_arguments,
-    )?;
+    );
+    let _account_leases = state
+        .multi_instance()
+        .account_leases()
+        .try_acquire_many(account_changes.iter().map(|change| change.original.id.as_str()))
+        .map_err(|error| error.to_string())?;
+
+    let pending = PendingCatalogArgumentUpdate {
+        capsule_id: current.id.clone(),
+        accounts: account_changes
+            .iter()
+            .map(AccountModReplacement::journal_entry)
+            .collect(),
+        scheme_members: scheme_changes.clone(),
+    };
+    let mut prepared_payload = payload.clone();
+    prepared_payload.pending_argument_update = Some(pending);
+    let (prepared_generation, _) =
+        save_payload(state.inner(), generation, prepared_payload)?;
+
+    if let Err(error) = apply_account_mod_replacements(&config, &account_changes) {
+        let rollback_errors = restore_account_mod_replacements(&config, &account_changes);
+        if rollback_errors.is_empty() {
+            let _ = save_payload(state.inner(), prepared_generation, payload.clone());
+        }
+        return Err(if rollback_errors.is_empty() {
+            error
+        } else {
+            format!("{error}；回滚账号引用时发生错误：{}", rollback_errors.join("；"))
+        });
+    }
+    if let Err(error) = apply_scheme_mod_replacements(
+        state.inner(),
+        &app,
+        &scheme_changes,
+        true,
+    ) {
+        let scheme_rollback = apply_scheme_mod_replacements(
+            state.inner(),
+            &app,
+            &scheme_changes,
+            false,
+        )
+        .err();
+        let mut rollback_errors = restore_account_mod_replacements(&config, &account_changes);
+        if let Some(scheme_error) = scheme_rollback {
+            rollback_errors.push(format!("启动方案: {scheme_error}"));
+        }
+        if rollback_errors.is_empty() {
+            let _ = save_payload(state.inner(), prepared_generation, payload.clone());
+        }
+        return Err(if rollback_errors.is_empty() {
+            error
+        } else {
+            format!("{error}；回滚引用时发生错误：{}", rollback_errors.join("；"))
+        });
+    }
+
+    next_payload.pending_argument_update = None;
+    let (generation, payload) = match save_payload(
+        state.inner(),
+        prepared_generation,
+        next_payload,
+    ) {
+        Ok(saved) => saved,
+        Err(error) => {
+            // A directory sync can report failure after the atomic rename.
+            // Reload first: a journal-free next generation means the catalog
+            // commit is authoritative and the already-updated references are
+            // the correct state.
+            if let Ok((actual_generation, actual_payload)) =
+                load_payload(state.inner(), &config, &scanned)
+            {
+                if actual_generation > prepared_generation
+                    && actual_payload.pending_argument_update.is_none()
+                {
+                    let latest_config = state.configuration().snapshot().unwrap_or(config);
+                    return Ok(build_pool(
+                        &latest_config,
+                        actual_generation,
+                        &actual_payload,
+                        &scanned,
+                    ));
+                }
+            }
+            let scheme_rollback = apply_scheme_mod_replacements(
+                state.inner(),
+                &app,
+                &scheme_changes,
+                false,
+            )
+            .err();
+            let account_rollback = restore_account_mod_replacements(&config, &account_changes);
+            let mut rollback_errors = account_rollback;
+            if let Some(scheme_error) = scheme_rollback {
+                rollback_errors.push(format!("启动方案: {scheme_error}"));
+            }
+            if rollback_errors.is_empty() {
+                if let Err(clear_error) =
+                    save_payload(state.inner(), prepared_generation, payload.clone())
+                {
+                    rollback_errors.push(format!("清理事务日志: {clear_error}"));
+                }
+            }
+            return Err(if rollback_errors.is_empty() {
+                error
+            } else {
+                format!("{error}；回滚引用时发生错误：{}", rollback_errors.join("；"))
+            });
+        }
+    };
     let latest_config = state.configuration().snapshot().unwrap_or(config);
     Ok(build_pool(&latest_config, generation, &payload, &scanned))
 }
@@ -733,6 +1079,7 @@ fn capsule_usage(config: &GlobalConfig, arguments: &str) -> Vec<String> {
 
 #[tauri::command]
 pub fn delete_mod_capsule(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     capsule_id: String,
 ) -> Result<ModCapsulePool, String> {
@@ -744,7 +1091,9 @@ pub fn delete_mod_capsule(
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
     let scanned = scan_installations(&config);
-    let (generation, mut payload) = load_payload(state.inner(), &config, &scanned)?;
+    let (generation, mut payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     let index = payload
         .custom_entries
         .iter()
@@ -766,6 +1115,7 @@ pub fn delete_mod_capsule(
 
 #[tauri::command]
 pub fn assign_mod_capsule_to_account(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
     capsule_id: Option<String>,
@@ -777,11 +1127,13 @@ pub fn assign_mod_capsule_to_account(
         .configuration()
         .snapshot()
         .ok_or_else(|| "尚未完成首次配置".to_string())?;
+    let scanned = scan_installations(&config);
+    let (generation, payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
     let account = AccountManager::load_meta(&config.accounts_dir, &account_id)
         .map_err(|error| error.to_string())?;
     let arguments = if let Some(capsule_id) = capsule_id {
-        let scanned = scan_installations(&config);
-        let (generation, payload) = load_payload(state.inner(), &config, &scanned)?;
         let pool = build_pool(&config, generation, &payload, &scanned);
         let capsule = pool
             .capsules

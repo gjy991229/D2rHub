@@ -1,14 +1,21 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+use parking_lot::Mutex;
+use std::collections::BTreeSet;
 
 use crate::domain::account::is_valid_account_id;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CancellationTicket(u64);
+pub struct CancellationTicket {
+    operation_id: u64,
+    global_generation: u64,
+}
 
 #[derive(Default)]
 pub struct LaunchOrchestrator {
     cancellation_generation: AtomicU64,
+    next_operation_id: AtomicU64,
+    cancelled_operations: Mutex<BTreeSet<u64>>,
 }
 
 impl LaunchOrchestrator {
@@ -33,7 +40,18 @@ impl LaunchOrchestrator {
     }
 
     pub fn ticket(&self) -> CancellationTicket {
-        CancellationTicket(self.cancellation_generation.load(Ordering::SeqCst))
+        CancellationTicket {
+            operation_id: self.next_operation_id.fetch_add(1, Ordering::SeqCst),
+            global_generation: self.cancellation_generation.load(Ordering::SeqCst),
+        }
+    }
+
+    pub fn cancel(&self, ticket: CancellationTicket) {
+        self.cancelled_operations.lock().insert(ticket.operation_id);
+    }
+
+    pub fn complete(&self, ticket: CancellationTicket) {
+        self.cancelled_operations.lock().remove(&ticket.operation_id);
     }
 
     pub fn cancel_current_operation(&self) {
@@ -41,7 +59,11 @@ impl LaunchOrchestrator {
     }
 
     pub fn is_cancelled(&self, ticket: CancellationTicket) -> bool {
-        self.cancellation_generation.load(Ordering::SeqCst) != ticket.0
+        self.cancellation_generation.load(Ordering::SeqCst) != ticket.global_generation
+            || self
+                .cancelled_operations
+                .lock()
+                .contains(&ticket.operation_id)
     }
 }
 

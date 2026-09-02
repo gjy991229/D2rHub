@@ -8,24 +8,29 @@ export const AUDIO_TELEMETRY_CAPSULE_FEATURE = "audio_telemetry";
 export const ROOM_TOOLS_CAPSULE_FEATURE = "in_game_room_tools";
 export const AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE = "auto_exit_on_death";
 
-const FEATURE_LABELS: Record<string, string> = {
-  [AUDIO_TELEMETRY_CAPSULE_FEATURE]: "声纹识别",
-  [ROOM_TOOLS_CAPSULE_FEATURE]: "局内房间工具",
-  [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: "死亡自动退房",
+const FEATURE_LABELS: Record<string, readonly [string, string]> = {
+  [AUDIO_TELEMETRY_CAPSULE_FEATURE]: ["声纹识别", "Audio recognition"],
+  [ROOM_TOOLS_CAPSULE_FEATURE]: ["局内房间工具", "In-game room tools"],
+  [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: ["死亡自动退房", "Auto-exit on death"],
 };
 
-export function capsuleFeatureLabels(capsule: ModCapsule): string[] {
+export function capsuleFeatureLabels(capsule: ModCapsule, isEnglish = false): string[] {
   return capsule.feature_groups.map((feature) => {
     if (feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE
       && capsule.auto_exit_on_death_enabled === false) {
-      return "死亡自动退房（已停用）";
+      return isEnglish ? "Auto-exit on death (off)" : "死亡自动退房（已停用）";
     }
-    return FEATURE_LABELS[feature] ?? feature;
+    return FEATURE_LABELS[feature]?.[isEnglish ? 1 : 0] ?? feature;
   });
 }
 
-export function capsuleBaseModLabel(capsule: ModCapsule): string {
-  return capsule.source_mod_name?.trim() || "原版";
+export function capsuleBaseModLabel(capsule: ModCapsule, isEnglish = false): string {
+  const sourceName = capsule.source_mod_name?.trim();
+  if (!sourceName) return isEnglish ? "Original game" : "原版";
+  if (sourceName.toLocaleLowerCase() === capsule.name.trim().toLocaleLowerCase()) {
+    return isEnglish ? "Source unverified" : "来源待确认";
+  }
+  return sourceName;
 }
 
 export function capsuleSelectionForAccount(

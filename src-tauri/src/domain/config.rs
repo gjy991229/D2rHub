@@ -261,7 +261,10 @@ fn default_theme() -> String {
 }
 
 pub(crate) fn default_enable_overlay() -> bool {
-    false
+    // This function is a serde fallback for configurations written before
+    // the overlay switches were persisted. Fresh installations use the
+    // explicit values in `GlobalConfig::default()` below.
+    true
 }
 
 fn default_auto_close_browser() -> bool {
@@ -276,8 +279,10 @@ fn default_first_launch() -> bool {
     true
 }
 
-fn default_enable_bongo_cat() -> bool {
-    false
+pub(crate) fn default_enable_bongo_cat() -> bool {
+    // Preserve the historical value when an old configuration omitted the
+    // field. Fresh installations still start with the optional module off.
+    true
 }
 
 fn default_bongo_cat_chatterbox() -> bool {

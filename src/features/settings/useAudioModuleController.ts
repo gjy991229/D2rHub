@@ -14,6 +14,7 @@ import {
   hasSelectedAudioModFeature,
   IN_GAME_ROOM_TOOLS_FEATURE_ID,
   selectedAudioModFeatureAddsCapability,
+  type AudioModProcessingMode,
   type AudioModPrepareProgress,
   type AudioModPrepareResult,
   type RuneAudioStatus,
@@ -55,6 +56,8 @@ export function useAudioModuleController({
   const [audioSetupMode, setAudioSetupMode] = useState<AudioSetupMode>("original");
   const [audioSetupSource, setAudioSetupSource] = useState("");
   const [audioSetupName, setAudioSetupName] = useState("");
+  const [audioProcessingMode, setAudioProcessingMode] = useState<AudioModProcessingMode>("create");
+  const [audioProcessingTarget, setAudioProcessingTarget] = useState("");
   const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(false);
   const [includeRoomTools, setIncludeRoomTools] = useState(false);
   const [includeAutoExitOnDeath, setIncludeAutoExitOnDeath] = useState(false);
@@ -68,26 +71,28 @@ export function useAudioModuleController({
     : trackingTargetId;
 
   const normalizedAudioSetupName = audioSetupName.trim();
-  const hasCurrentProcessedMod = !!audioModState?.current_mod_name && (
-    audioModState.update_required || audioModState.ready || audioModState.feature_groups.length > 0
+  const selectedProcessingTarget = audioModState?.installed_mods.find((mod) => (
+    mod.name.toLocaleLowerCase() === audioProcessingTarget.toLocaleLowerCase()
+  ));
+  const hasSelectedProcessedMod = !!selectedProcessingTarget && (
+    selectedProcessingTarget.update_required || selectedProcessingTarget.feature_groups.length > 0
   );
-  const editingCurrentProcessedMod = audioSetupMode === "existing"
-    && !!audioModState?.current_mod_name
-    && audioSetupSource.toLocaleLowerCase() === audioModState.current_mod_name.toLocaleLowerCase();
-  const isAudioModUpgrade = hasCurrentProcessedMod
-    && (!!audioModState?.update_required || editingCurrentProcessedMod);
-  const isAudioModFeatureManagement = isAudioModUpgrade && !audioModState?.update_required;
+  const isAudioModUpgrade = audioProcessingMode === "augment" && hasSelectedProcessedMod;
+  const isAudioModFeatureManagement = isAudioModUpgrade
+    && selectedProcessingTarget?.update_required === false;
   const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
-  const audioSetupNameError = isAudioModUpgrade
+  const audioSetupNameError = audioProcessingMode === "augment"
     ? ""
     : validateAudioModName(audioSetupName, installedAudioModNames);
-  const showAudioSetupNameError = !isAudioModUpgrade && audioSetupName.length > 0 && !!audioSetupNameError;
+  const showAudioSetupNameError = audioProcessingMode === "create"
+    && audioSetupName.length > 0
+    && !!audioSetupNameError;
   const hasInitializedAudioAccount = initializedAccounts.length > 0;
   const hasAudioTarget = !!trackingTargetId;
   const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
   const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
-  const installedAudioFeatureGroups = audioModState?.feature_groups ?? [];
+  const installedAudioFeatureGroups = selectedProcessingTarget?.feature_groups ?? [];
   const selectedAudioSource = audioSetupMode === "existing"
     ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)
     : undefined;
@@ -115,9 +120,13 @@ export function useAudioModuleController({
       ? config?.app_language === "en-US"
         ? "The current Mod already contains every selected feature"
         : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能"
-      : !isAudioModUpgrade && audioSetupNameError
+      : audioProcessingMode === "augment" && !hasSelectedProcessedMod
+        ? config?.app_language === "en-US"
+          ? "The selected processed Mod is no longer available; rescan and choose again"
+          : "所选已加工 Mod 已不可用，请重新扫描后再选择"
+      : audioProcessingMode === "create" && audioSetupNameError
         ? audioSetupNameError
-        : !isAudioModFeatureManagement && audioSetupMode === "existing" && !audioSetupSource
+        : audioProcessingMode === "create" && audioSetupMode === "existing" && !audioSetupSource
           ? config?.app_language === "en-US"
             ? "Select the original Mod whose features should be preserved"
             : "请选择一个要保留功能的原始 Mod"
@@ -125,9 +134,17 @@ export function useAudioModuleController({
 
   const applySetupDefaults = (next: AudioModSetupState) => {
     const defaults = audioSetupDefaults(next);
+    const currentInstalled = next.installed_mods.find((mod) => (
+      !!next.current_mod_name && mod.name.toLocaleLowerCase() === next.current_mod_name.toLocaleLowerCase()
+    ));
+    const currentIsProcessed = !!currentInstalled && (
+      currentInstalled.update_required || currentInstalled.feature_groups.length > 0
+    );
     setAudioSetupSource(defaults.source);
     setAudioSetupMode(defaults.mode);
     setAudioSetupName(defaults.name);
+    setAudioProcessingMode(currentIsProcessed ? "augment" : "create");
+    setAudioProcessingTarget(currentIsProcessed ? currentInstalled.name : "");
   };
 
   const applyFeatureDefaults = (purpose: ModProcessingPurpose) => {
@@ -358,11 +375,14 @@ export function useAudioModuleController({
     purpose: Exclude<ModProcessingPurpose, "manage">,
     autoStart = false,
     sourceModName?: string,
+    processingMode: AudioModProcessingMode = "create",
   ) => {
     cacheRef.current.delete(accountId);
     setModProcessingTargetId(accountId);
     setAudioSetupPurpose(purpose);
     applyFeatureDefaults(purpose);
+    setAudioProcessingMode(processingMode);
+    setAudioProcessingTarget(processingMode === "augment" ? sourceModName ?? "" : "");
     if (sourceModName) {
       setAudioSetupMode("existing");
       setAudioSetupSource(sourceModName);
@@ -386,14 +406,22 @@ export function useAudioModuleController({
       if (isAudioModUpgrade) {
         const currentAudioConfig = useGlobalConfig.getState().config;
         const wasEnabled = !!currentAudioConfig?.rune_audio_enabled;
-        const next = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
+        const upgraded = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
           accountId,
-          sourceModName: isAudioModFeatureManagement
-            ? null
-            : audioSetupMode === "existing" ? audioSetupSource : null,
+          modName: audioProcessingTarget,
+          sourceModName: selectedProcessingTarget?.source_mod_name ?? null,
           ...featureOptions,
         });
+        const targetWasAlreadyApplied = audioModState?.current_mod_name?.toLocaleLowerCase()
+          === audioProcessingTarget.toLocaleLowerCase();
+        const next = targetWasAlreadyApplied
+          ? upgraded
+          : await invokeCommand<AudioModSetupState>("apply_audio_mod_to_account", {
+              accountId,
+              modName: audioProcessingTarget,
+            });
         cacheState(accountId, next);
+        if (!targetWasAlreadyApplied) await loadAccounts();
         if (audioSetupPurpose === "recognition" || currentAudioConfig?.rune_audio_target_account === accountId) {
           await persistAudioEnabledState(accountId, wasEnabled && hasAudioTelemetry(next.feature_groups));
         }
@@ -402,8 +430,8 @@ export function useAudioModuleController({
         showToast(
           "success",
           config?.app_language === "en-US"
-            ? `Mod “${next.current_mod_name ?? audioSetupName}” was updated in place; its name and launch arguments are unchanged`
-            : `Mod“${next.current_mod_name ?? audioSetupName}”已原位更新，名称和启动参数均未改变`,
+            ? `Mod “${audioProcessingTarget}” was augmented and applied to the account`
+            : `Mod“${audioProcessingTarget}”已完成增补并应用到账号`,
         );
         return;
       }
@@ -485,6 +513,10 @@ export function useAudioModuleController({
     setAudioSetupSource,
     audioSetupName,
     setAudioSetupName,
+    audioProcessingMode,
+    setAudioProcessingMode,
+    audioProcessingTarget,
+    setAudioProcessingTarget,
     includeAudioTelemetry,
     setIncludeAudioTelemetry,
     includeRoomTools,

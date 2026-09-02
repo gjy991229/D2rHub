@@ -1,4 +1,4 @@
-//! Lifecycle-owned installer and watcher for the room-automation F13 binding.
+//! Lifecycle-owned one-shot scanner for the room-automation F13 binding.
 //!
 //! This adapter deliberately owns no global configuration or Tauri state. A
 //! capability driver supplies the save directories and the process probe, and
@@ -10,9 +10,9 @@ use std::fs::{Metadata, OpenOptions};
 use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::sync::{Arc, Mutex, MutexGuard};
+#[cfg(test)]
+use std::time::Duration;
 
 use crate::infrastructure::durable_fs;
 
@@ -32,8 +32,8 @@ const STAGING_SUFFIX: &str = ".d2rhub-chat-f13.stage";
 const ROLLBACK_SUFFIX: &str = ".d2rhub-chat-f13.rollback";
 const JOURNAL_SUFFIX: &str = ".d2rhub-chat-f13.journal";
 const REPLACE_JOURNAL_VERSION: u8 = 1;
+#[cfg(test)]
 const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(75);
-
 #[cfg(test)]
 const UNBOUND_KEY: u16 = 0xFFFF;
 
@@ -47,13 +47,12 @@ impl ExplicitChatBindingConsent {
         if granted {
             Ok(Self(()))
         } else {
-            Err("未获得用户对 F13 自动补齐的显式同意".to_string())
+            Err("未获得用户对 F13 配置变更扫描的显式同意".to_string())
         }
     }
 }
 
-/// Filesystem truth and lifecycle truth are intentionally reported
-/// separately. In particular, `ready` never implies that a watcher is alive.
+/// Filesystem readiness and durable scan consent are reported separately.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatF13BindingStatus {
@@ -71,7 +70,7 @@ pub(crate) struct ChatF13BindingStatus {
     pub consent_granted: bool,
     pub watcher_running: bool,
     /// Compatibility projection for callers that previously exposed one
-    /// boolean. It is true only when consent and a live watcher both exist.
+    /// boolean. It now reflects one-shot scan consent.
     pub auto_patch_enabled: bool,
     pub directories: Vec<String>,
     pub last_watcher_error: Option<String>,
@@ -173,12 +172,6 @@ fn build_restore_plan(snapshot: &FilesystemSnapshot) -> Result<Vec<RestoreEntry>
         .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct FileStamp {
-    len: u64,
-    modified: Option<SystemTime>,
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReplaceJournal {
@@ -188,61 +181,19 @@ struct ReplaceJournal {
     replacement_checksum: u64,
 }
 
-struct CancelSignal {
-    cancelled: Mutex<bool>,
-    changed: Condvar,
-}
-
-impl CancelSignal {
-    fn new() -> Self {
-        Self {
-            cancelled: Mutex::new(false),
-            changed: Condvar::new(),
-        }
-    }
-
-    fn cancel(&self) {
-        *lock(&self.cancelled) = true;
-        self.changed.notify_all();
-    }
-
-    fn is_cancelled(&self) -> bool {
-        *lock(&self.cancelled)
-    }
-
-    fn wait(&self, duration: Duration) -> bool {
-        let cancelled = lock(&self.cancelled);
-        if *cancelled {
-            return true;
-        }
-        match self.changed.wait_timeout(cancelled, duration) {
-            Ok((guard, _)) => *guard,
-            Err(poisoned) => *poisoned.into_inner().0,
-        }
-    }
-}
-
-#[derive(Default)]
-struct WatcherState {
-    handle: Option<JoinHandle<()>>,
-    cancel: Option<Arc<CancelSignal>>,
-}
-
 struct ServiceInner {
     directories: Vec<PathBuf>,
     d2r_running: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
     operation: Mutex<()>,
-    lifecycle: Mutex<WatcherState>,
     consent_granted: AtomicBool,
-    last_watcher_error: Mutex<Option<String>>,
 }
 
 /// Capability-owned F13 binding service.
 ///
 /// A newly constructed service has no consent and starts no threads. A
-/// successful [`Self::install`] is the only in-process action that grants
-/// consent. On a later application run, the capability may resume a previously
-/// explicit choice through [`Self::start_watcher_with_consent`].
+/// successful [`Self::install`] grants consent and performs one bounded scan.
+/// Later scans are triggered by room-automation configuration commits or by an
+/// explicit user action; no persistent filesystem watcher is required.
 pub(crate) struct ChatF13BindingService {
     inner: Arc<ServiceInner>,
 }
@@ -258,30 +209,32 @@ impl ChatF13BindingService {
                 directories,
                 d2r_running: Arc::new(d2r_running),
                 operation: Mutex::new(()),
-                lifecycle: Mutex::new(WatcherState::default()),
                 consent_granted: AtomicBool::new(false),
-                last_watcher_error: Mutex::new(None),
             }),
         })
     }
 
     /// Preflights every key file, creates durable non-overwriting backups,
-    /// atomically patches eligible files, grants consent, and starts watching.
+    /// atomically patches eligible files, and grants consent.
     pub(crate) fn install(&self) -> Result<ChatF13BindingStatus, String> {
-        let watcher_was_running = self.watcher_running();
+        self.scan_once()
+    }
+
+    fn scan_once(&self) -> Result<ChatF13BindingStatus, String> {
         {
-            // A rejected repeat-install must not silently stop an already
-            // healthy watcher. Only pause it after the read-only checks pass.
             let _operation = lock(&self.inner.operation);
-            ensure_d2r_closed(&self.inner)?;
             let snapshot = inspect_filesystem(&self.inner.directories)?;
+            if snapshot.ready() {
+                self.inner.consent_granted.store(true, Ordering::Release);
+                return Ok(build_status(&self.inner, &snapshot));
+            }
             if snapshot.transaction_artifacts.is_empty() {
                 preflight_install(&snapshot)?;
             }
+            ensure_d2r_closed(&self.inner)?;
         }
-        self.stop_watcher_thread()?;
 
-        let install_result = (|| {
+        let verified = (|| {
             let _operation = lock(&self.inner.operation);
             ensure_d2r_closed(&self.inner)?;
             recover_interrupted_transactions(&self.inner.directories)?;
@@ -314,64 +267,36 @@ impl ChatF13BindingService {
             }
 
             let verified = inspect_filesystem(&self.inner.directories)?;
-            require_ready_for_watcher(&verified)?;
-            self.inner.consent_granted.store(true, Ordering::Release);
-            *lock(&self.inner.last_watcher_error) = None;
-            Ok::<(), String>(())
-        })();
-        if let Err(error) = install_result {
-            return Err(self.compensate_paused_watcher(watcher_was_running, error));
-        }
+            require_scan_ready(&verified)?;
+            Ok::<FilesystemSnapshot, String>(verified)
+        })()?;
 
-        if let Err(error) = self.start_watcher_thread() {
-            self.inner.consent_granted.store(false, Ordering::Release);
-            return Err(format!("F13 已安全安装，但后台 watcher 启动失败：{error}"));
-        }
-        self.status()
+        self.inner.consent_granted.store(true, Ordering::Release);
+        Ok(build_status(&self.inner, &verified))
     }
 
-    /// Resumes a watcher from an affirmative sidecar value. This never trusts
-    /// the boolean alone: every live binding and its backup are verified first.
+    /// Compatibility entry point for persisted consent. It now performs one
+    /// bounded scan instead of starting a persistent watcher.
     pub(crate) fn start_watcher_with_consent(
         &self,
         _consent: ExplicitChatBindingConsent,
     ) -> Result<ChatF13BindingStatus, String> {
-        self.stop_watcher_thread()?;
-        {
-            let _operation = lock(&self.inner.operation);
-            validate_configured_directories(&self.inner.directories)?;
-            let before = inspect_filesystem(&self.inner.directories)?;
-            if !before.transaction_artifacts.is_empty() {
-                ensure_d2r_closed(&self.inner)?;
-                recover_interrupted_transactions(&self.inner.directories)?;
-            }
-            let verified = inspect_filesystem(&self.inner.directories)?;
-            require_ready_for_watcher(&verified)?;
-            self.inner.consent_granted.store(true, Ordering::Release);
-            *lock(&self.inner.last_watcher_error) = None;
-        }
-        if let Err(error) = self.start_watcher_thread() {
-            self.inner.consent_granted.store(false, Ordering::Release);
-            return Err(format!("无法恢复 F13 watcher：{error}"));
-        }
-        self.status()
+        self.scan_once()
     }
 
-    /// Stops and joins the owned watcher. User key files and consent are kept.
+    /// Releases runtime ownership without changing files or scan consent.
     pub(crate) fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-        self.shutdown()?;
         self.status()
     }
 
-    /// Stops and joins the watcher without reading the configured directories
-    /// again. This is used when configuration has deliberately moved away from
-    /// a directory that may no longer exist.
+    /// There is no background worker to join. This hook keeps lifecycle callers
+    /// independent from the one-shot implementation.
     pub(crate) fn shutdown(&self) -> Result<(), String> {
-        self.stop_watcher_thread()
+        Ok(())
     }
 
     /// Verifies that a restore has a safe, complete plan without changing
-    /// consent, watcher ownership, backups or live key files.
+    /// consent, backups or live key files.
     pub(crate) fn preflight_restore(&self) -> Result<(), String> {
         let _operation = lock(&self.inner.operation);
         let snapshot = inspect_filesystem(&self.inner.directories)?;
@@ -385,13 +310,11 @@ impl ChatF13BindingService {
         Ok(())
     }
 
-    /// Stops the watcher before restoring only the Chat secondary slot from
-    /// each D2RHub backup. Unrelated edits made since installation survive.
+    /// Restores only the Chat secondary slot from each D2RHub backup. Unrelated
+    /// edits made since installation survive.
     pub(crate) fn restore(&self) -> Result<ChatF13BindingStatus, String> {
-        let watcher_was_running = self.watcher_running();
-        // Invalid or absent backups must not revoke a valid session.
+        // Invalid or absent backups must not revoke valid scan consent.
         self.preflight_restore()?;
-        self.stop_watcher_thread()?;
 
         let restore_result =
             (|| {
@@ -439,20 +362,17 @@ impl ChatF13BindingService {
                         cleanup_warnings.push(format!("{}：{error}", backup.display()));
                     }
                 }
-                *lock(&self.inner.last_watcher_error) = None;
                 Ok::<(Vec<String>, bool), String>((cleanup_warnings, restored_any))
             })();
         let (cleanup_warnings, restored_any) = match restore_result {
             Ok(outcome) => outcome,
-            Err(error) => {
-                return Err(self.compensate_paused_watcher(watcher_was_running, error));
-            }
+            Err(error) => return Err(error),
         };
         let mut status = self.status()?;
         if !restored_any {
             status
                 .message
-                .push_str("；没有 D2RHub 管理的备份，已仅关闭自动补齐，未改动手动 F13 键位");
+                .push_str("；没有 D2RHub 管理的备份，已仅关闭配置变更扫描，未改动手动 F13 键位");
         }
         if !cleanup_warnings.is_empty() {
             status.message.push_str(&format!(
@@ -470,137 +390,6 @@ impl ChatF13BindingService {
         Ok(build_status(&self.inner, &snapshot))
     }
 
-    fn start_watcher_thread(&self) -> Result<(), String> {
-        if !self.inner.consent_granted.load(Ordering::Acquire) {
-            return Err("未获得用户对 F13 自动补齐的显式同意".to_string());
-        }
-        let mut lifecycle = lock(&self.inner.lifecycle);
-        if lifecycle
-            .handle
-            .as_ref()
-            .is_some_and(|handle| !handle.is_finished())
-        {
-            return Ok(());
-        }
-        if let Some(finished) = lifecycle.handle.take() {
-            let _ = finished.join();
-        }
-        lifecycle.cancel = None;
-
-        let cancel = Arc::new(CancelSignal::new());
-        let thread_cancel = Arc::clone(&cancel);
-        let inner = Arc::clone(&self.inner);
-        let handle = std::thread::Builder::new()
-            .name("room-chat-f13-watcher".to_string())
-            .spawn(move || watcher_loop(inner, thread_cancel))
-            .map_err(|error| error.to_string())?;
-        lifecycle.cancel = Some(cancel);
-        lifecycle.handle = Some(handle);
-        Ok(())
-    }
-
-    fn watcher_running(&self) -> bool {
-        lock(&self.inner.lifecycle)
-            .handle
-            .as_ref()
-            .is_some_and(|handle| !handle.is_finished())
-    }
-
-    fn compensate_paused_watcher(&self, watcher_was_running: bool, error: String) -> String {
-        if !watcher_was_running {
-            return error;
-        }
-        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)
-            .expect("affirmative in-memory consent must create a resume token");
-        match self.start_watcher_with_consent(consent) {
-            Ok(_) => format!("{error}；原 F13 watcher 已恢复"),
-            Err(resume_error) => format!("{error}；原 F13 watcher 恢复失败：{resume_error}"),
-        }
-    }
-
-    fn stop_watcher_thread(&self) -> Result<(), String> {
-        let (cancel, handle) = {
-            let mut lifecycle = lock(&self.inner.lifecycle);
-            (lifecycle.cancel.take(), lifecycle.handle.take())
-        };
-        if let Some(cancel) = cancel {
-            cancel.cancel();
-        }
-        if let Some(handle) = handle {
-            handle
-                .join()
-                .map_err(|_| "F13 watcher 线程异常退出".to_string())?;
-        }
-        Ok(())
-    }
-}
-
-impl Drop for ChatF13BindingService {
-    fn drop(&mut self) {
-        let _ = self.stop_watcher_thread();
-    }
-}
-
-fn watcher_loop(inner: Arc<ServiceInner>, cancel: Arc<CancelSignal>) {
-    let mut observed: HashMap<PathBuf, FileStamp> = HashMap::new();
-    while !cancel.is_cancelled() {
-        let result = {
-            let _operation = lock(&inner.operation);
-            watcher_pass(&inner, &mut observed, &cancel)
-        };
-        match result {
-            Ok(()) => *lock(&inner.last_watcher_error) = None,
-            Err(error) => *lock(&inner.last_watcher_error) = Some(error),
-        }
-        if cancel.wait(WATCH_POLL_INTERVAL) {
-            break;
-        }
-    }
-}
-
-fn watcher_pass(
-    inner: &ServiceInner,
-    observed: &mut HashMap<PathBuf, FileStamp>,
-    cancel: &CancelSignal,
-) -> Result<(), String> {
-    if !inner.consent_granted.load(Ordering::Acquire) || cancel.is_cancelled() {
-        return Ok(());
-    }
-    validate_configured_directories(&inner.directories)?;
-    let files = collect_key_files(&inner.directories)?;
-    let live_paths: HashSet<PathBuf> = files.iter().cloned().collect();
-    observed.retain(|path, _| live_paths.contains(path));
-
-    let mut errors = Vec::new();
-    for path in files {
-        if cancel.is_cancelled() {
-            break;
-        }
-        let Some(stamp) = file_stamp(&path)? else {
-            continue;
-        };
-        if observed.get(&path) == Some(&stamp) {
-            continue;
-        }
-        observed.insert(path.clone(), stamp);
-        match patch_new_eligible_file(&path) {
-            Ok(()) => {
-                if let Some(patched_stamp) = file_stamp(&path)? {
-                    observed.insert(path, patched_stamp);
-                }
-            }
-            Err(error) => errors.push(format!("{}：{error}", path.display())),
-        }
-    }
-    if errors.is_empty() {
-        let snapshot = inspect_filesystem(&inner.directories)?;
-        require_ready_for_watcher(&snapshot)
-    } else {
-        Err(format!(
-            "F13 watcher 暂未处理部分文件：{}",
-            errors.join("；")
-        ))
-    }
 }
 
 fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
@@ -631,7 +420,7 @@ fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
     }
 }
 
-fn require_ready_for_watcher(snapshot: &FilesystemSnapshot) -> Result<(), String> {
+fn require_scan_ready(snapshot: &FilesystemSnapshot) -> Result<(), String> {
     if snapshot.ready() {
         return Ok(());
     }
@@ -646,15 +435,15 @@ fn require_ready_for_watcher(snapshot: &FilesystemSnapshot) -> Result<(), String
         })
         .collect();
     if snapshot.files.is_empty() {
-        Err("没有可验证的 .key/.keyo 键位文件，拒绝启动 F13 watcher".to_string())
+        Err("没有可验证的 .key/.keyo 键位文件，F13 扫描未完成".to_string())
     } else if !snapshot.transaction_artifacts.is_empty() {
         Err(format!(
-            "仍有未完成的键位写入事务，拒绝启动 F13 watcher：{}",
+            "仍有未完成的键位写入事务，F13 扫描未完成：{}",
             display_paths(&snapshot.transaction_artifacts)
         ))
     } else {
         Err(format!(
-            "F13 键位或备份未通过启动校验，拒绝启动 watcher：{}",
+            "F13 键位或备份未通过扫描校验：{}",
             if problems.is_empty() {
                 "并非所有键位文件都已安装且可恢复".to_string()
             } else {
@@ -686,12 +475,8 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     let transaction_artifacts = snapshot.transaction_artifacts.len();
     let ready = snapshot.ready();
     let consent_granted = inner.consent_granted.load(Ordering::Acquire);
-    let watcher_running = lock(&inner.lifecycle)
-        .handle
-        .as_ref()
-        .is_some_and(|handle| !handle.is_finished());
+    let watcher_running = false;
     let d2r_running = probe_d2r_running(inner);
-    let last_watcher_error = lock(&inner.last_watcher_error).clone();
     let mut message = if ready {
         format!("F13 原生 Chat 备用键已验证：{installed_files}/{total_files} 个键位文件")
     } else if total_files == 0 {
@@ -704,15 +489,10 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         format!("尚有 {eligible_files}/{total_files} 个键位文件可以安全安装 F13")
     };
     if d2r_running {
-        message.push_str("；D2R 正在运行，安装或恢复前必须全部关闭");
+        message.push_str("；D2R 正在运行，扫描补装或恢复前必须全部关闭");
     }
-    if watcher_running {
-        message.push_str("；新生成的键位文件会自动补齐");
-    } else if consent_granted {
-        message.push_str("；已保留用户同意，但 capability watcher 当前已停止");
-    }
-    if let Some(error) = &last_watcher_error {
-        message.push_str(&format!("；watcher 最近错误：{error}"));
+    if consent_granted {
+        message.push_str("；自动跟房配置变更时会扫描一次，新建角色后请手动扫描");
     }
     let managed_installed_files = snapshot
         .files
@@ -743,13 +523,13 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         d2r_running,
         consent_granted,
         watcher_running,
-        auto_patch_enabled: consent_granted && watcher_running,
+        auto_patch_enabled: consent_granted,
         directories: inner
             .directories
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect(),
-        last_watcher_error,
+        last_watcher_error: None,
         message,
     }
 }
@@ -840,55 +620,6 @@ fn relevant_path_kind(path: &Path) -> Option<RelevantPathKind> {
         Some(RelevantPathKind::Transaction)
     } else {
         None
-    }
-}
-
-fn collect_key_files(directories: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
-    validate_configured_directories(directories)?;
-    let mut files = Vec::new();
-    for directory in directories {
-        let entries = std::fs::read_dir(directory)
-            .map_err(|error| format!("无法读取存档目录 {}：{error}", directory.display()))?;
-        for entry in entries {
-            let entry = entry
-                .map_err(|error| format!("读取存档目录项失败 {}：{error}", directory.display()))?;
-            let path = entry.path();
-            if is_key_file(&path) {
-                validate_regular_file(&path)?;
-                files.push(path);
-            }
-        }
-    }
-    files.sort();
-    files.dedup();
-    Ok(files)
-}
-
-fn patch_new_eligible_file(path: &Path) -> Result<(), String> {
-    recover_interrupted_transaction(path)?;
-    let bytes = read_regular_file(path)?;
-    match inspect_key_bytes(&bytes)? {
-        BindingState::Installed => {
-            let backup = backup_path(path)?;
-            if !path_exists_no_follow(&backup)? {
-                return Err("F13 已存在但缺少 D2RHub 备份，拒绝认领该键位".to_string());
-            }
-            let backup_bytes = read_regular_file(&backup)?;
-            if inspect_key_bytes(&backup_bytes)? != BindingState::Eligible {
-                return Err("F13 备份不是可恢复的原生 Chat 未绑定状态".to_string());
-            }
-            Ok(())
-        }
-        BindingState::Eligible => {
-            create_backup(path, &bytes)?;
-            let patched = patch_f13(&bytes)?;
-            atomic_replace_bytes(path, &bytes, &patched)?;
-            let verified = read_regular_file(path)?;
-            if verified != patched || inspect_key_bytes(&verified)? != BindingState::Installed {
-                return Err("新键位文件写入后复核失败".to_string());
-            }
-            Ok(())
-        }
     }
 }
 
@@ -1339,23 +1070,6 @@ fn is_key_file(path: &Path) -> bool {
         .is_some_and(|value| {
             value.eq_ignore_ascii_case("key") || value.eq_ignore_ascii_case("keyo")
         })
-}
-
-fn file_stamp(path: &Path) -> Result<Option<FileStamp>, String> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            reject_link_or_reparse(path, &metadata)?;
-            if !metadata.file_type().is_file() {
-                return Err(format!("键位路径不是普通文件：{}", path.display()));
-            }
-            Ok(Some(FileStamp {
-                len: metadata.len(),
-                modified: metadata.modified().ok(),
-            }))
-        }
-        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(format!("无法读取键位元数据 {}：{error}", path.display())),
-    }
 }
 
 fn read_regular_file(path: &Path) -> Result<Vec<u8>, String> {

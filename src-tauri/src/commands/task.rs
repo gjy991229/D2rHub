@@ -72,15 +72,6 @@ pub fn cancel_task(
         .tasks()
         .request_cancel(task_id)
         .map_err(map_task_error)?;
-    // Existing launch and initialization adapters share the core cancellation
-    // generation. The task flag is the user-visible source of truth while this
-    // compatibility bridge wakes their current checkpoints.
-    if matches!(
-        snapshot.kind.as_str(),
-        "account-initialize" | "account-reinitialize" | "account-launch" | "battle-net-launch"
-    ) {
-        state.multi_instance().facade().cancel_current_operation();
-    }
     if snapshot.kind == "room-automation" {
         if let Some(command_state) = app.try_state::<
             crate::capabilities::room_automation_runtime::RoomAutomationCommandState,
@@ -162,19 +153,6 @@ pub async fn retry_task(
                     .map_err(|error| AppError::Unknown(format!("Mod 任务重试数据损坏: {error}")))?;
             crate::audio_mod::retry_audio_mod_task(app, state, task_id, payload)
                 .await
-                .map_err(AppError::Unknown)
-        }
-        "room-automation" => {
-            let command_state = app
-                .try_state::<
-                    crate::capabilities::room_automation_runtime::RoomAutomationCommandState,
-                >()
-                .ok_or_else(|| AppError::Unknown("自动跟房运行时未初始化".to_string()))?;
-            command_state
-                .manager()
-                .map_err(AppError::Unknown)?
-                .retry()
-                .map(|_| ())
                 .map_err(AppError::Unknown)
         }
         kind => Err(AppError::Unknown(format!("任务类型 {kind} 没有重试执行器"))),

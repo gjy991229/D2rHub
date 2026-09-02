@@ -59,7 +59,6 @@ pub struct TaskTimelineEntry {
     pub cancel_requested: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskRequest {
     pub kind: String,
     pub subject: Option<String>,
@@ -69,6 +68,7 @@ pub struct TaskRequest {
     /// Adapter-owned, opaque replay data. It is never exposed in snapshots,
     /// events, logs, or diagnostic bundles.
     pub retry_payload: Option<String>,
+    cancel_hook: Option<Arc<dyn Fn() + Send + Sync>>,
     pub initial_step: String,
     pub initial_message: String,
 }
@@ -82,6 +82,7 @@ impl TaskRequest {
             retryable: true,
             retry_of: None,
             retry_payload: None,
+            cancel_hook: None,
             initial_step: "queued".to_string(),
             initial_message: String::new(),
         }
@@ -99,6 +100,19 @@ impl TaskRequest {
 
     pub fn with_retry_payload(mut self, payload: impl Into<String>) -> Self {
         self.retry_payload = Some(payload.into());
+        self
+    }
+
+    pub fn with_cancel_hook(
+        mut self,
+        hook: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        self.cancel_hook = Some(Arc::new(hook));
+        self
+    }
+
+    pub fn non_retryable(mut self) -> Self {
+        self.retryable = false;
         self
     }
 
@@ -165,6 +179,7 @@ struct TaskRecord {
     timeline: Vec<TaskTimelineEntry>,
     cancellation: Arc<AtomicBool>,
     retry_payload: Option<String>,
+    cancel_hook: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 struct TaskRuntimeInner {
@@ -263,6 +278,7 @@ impl TaskRuntime {
                     timeline,
                     cancellation: Arc::clone(&cancellation),
                     retry_payload: request.retry_payload,
+                    cancel_hook: request.cancel_hook,
                 },
             );
             (snapshot, cancellation)
@@ -307,7 +323,7 @@ impl TaskRuntime {
 
     pub fn request_cancel(&self, task_id: u64) -> Result<TaskSnapshot, TaskRuntimeError> {
         let timestamp_ms = self.shared.clock.now_ms();
-        let snapshot = {
+        let (snapshot, cancel_hook) = {
             let mut inner = self.shared.inner.lock();
             let current = inner
                 .records
@@ -329,8 +345,11 @@ impl TaskRuntime {
             record
                 .timeline
                 .push(timeline_from(&record.snapshot, timestamp_ms));
-            record.snapshot.clone()
+            (record.snapshot.clone(), record.cancel_hook.clone())
         };
+        if let Some(cancel_hook) = cancel_hook {
+            cancel_hook();
+        }
         self.publish(&snapshot);
         Ok(snapshot)
     }
@@ -354,6 +373,7 @@ impl TaskRuntime {
             retryable: true,
             retry_of: Some(task_id),
             retry_payload: record.retry_payload.clone(),
+            cancel_hook: None,
             initial_step: "retrying".to_string(),
             initial_message: "正在重试".to_string(),
         })
@@ -436,6 +456,7 @@ impl TaskRuntime {
             record.snapshot.message = message.trim().to_string();
             record.snapshot.error_code = error_code.map(str::to_string);
             record.snapshot.finished_at_ms = Some(timestamp_ms);
+            record.cancel_hook = None;
             record
                 .timeline
                 .push(timeline_from(&record.snapshot, timestamp_ms));

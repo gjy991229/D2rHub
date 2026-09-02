@@ -333,6 +333,11 @@ function App() {
             launchGroupPanelOpen={launchGroupPanelOpen}
             onToggleLaunchGroupPanel={() => setLaunchGroupPanelOpen((open) => !open)}
             onOpenModManager={openModManager}
+            onOpenRoomAutomation={() => {
+              setSettingsTab("room-automation");
+              setSettingsAccountId(null);
+              setShowSettings(true);
+            }}
           />
 
           {audioModUpdate && (
@@ -494,7 +499,7 @@ function App() {
         }
       >
         <div className="py-2 text-sm leading-relaxed text-text-secondary">
-          确定删除启动方案“{launchGroupPendingDelete?.name}”吗？账号及账号胶囊库不会被删除。
+          确定删除启动方案“{launchGroupPendingDelete?.name}”吗？账号及其配置不会被删除。
         </div>
       </Modal>
       <SettingsCenter

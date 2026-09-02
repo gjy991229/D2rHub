@@ -106,6 +106,8 @@ export interface CapabilityStatus {
   state: CapabilityRuntimeState;
   /** Stable machine-readable reason; localized copy remains frontend-owned. */
   reason_code: string | null;
+  /** Sanitized backend failure detail for diagnostics and recovery guidance. */
+  last_error?: string | null;
 }
 
 export interface CapabilityStatusSnapshot {

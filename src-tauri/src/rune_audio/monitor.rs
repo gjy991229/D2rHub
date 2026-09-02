@@ -22,6 +22,7 @@ use tauri::{Emitter, Manager};
 const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 const CAPTURE_CHANNELS: usize = 2;
 const SCAN_INTERVAL_FRAMES: usize = 4_800;
+const MAX_DIAGNOSTIC_RECORDING_FRAMES: u32 = CAPTURE_SAMPLE_RATE * 5 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuneAudioEvent {
@@ -190,21 +191,41 @@ fn set_status(next: RuneAudioStatus) {
     *status().lock().unwrap_or_else(|error| error.into_inner()) = next;
 }
 
+fn monitor_generation_active(generation: u64) -> bool {
+    RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation
+}
+
 fn write_diagnostic_samples(samples: &[f32]) {
+    let active_target = {
+        let current = status().lock().unwrap_or_else(|error| error.into_inner());
+        (current.account_id.clone(), current.target_pid)
+    };
     let mut guard = diagnostic_recording()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let Some(recording) = guard.as_mut() else {
         return;
     };
-    if recording.write_error.is_some() {
-        return;
+    let target_changed = active_target.0.as_deref() != Some(recording.account_id.as_str())
+        || active_target.1 != Some(recording.target_pid);
+    let mut should_finish = target_changed || recording.write_error.is_some();
+    if !should_finish {
+        let remaining = MAX_DIAGNOSTIC_RECORDING_FRAMES
+            .saturating_sub(recording.writer.duration()) as usize;
+        for sample in samples.iter().take(remaining) {
+            let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+            if let Err(error) = recording.writer.write_sample(pcm) {
+                recording.write_error = Some(format!("写入诊断 WAV 失败: {error}"));
+                should_finish = true;
+                break;
+            }
+        }
+        should_finish |= recording.writer.duration() >= MAX_DIAGNOSTIC_RECORDING_FRAMES;
     }
-    for sample in samples {
-        let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
-        if let Err(error) = recording.writer.write_sample(pcm) {
-            recording.write_error = Some(format!("写入诊断 WAV 失败: {error}"));
-            break;
+    drop(guard);
+    if should_finish {
+        if let Err(error) = finish_diagnostic_recording() {
+            crate::logger::log_msg("ERROR", "RuneAudio", &error);
         }
     }
 }
@@ -786,6 +807,27 @@ fn capture_loop(
         .start_stream()
         .map_err(|error| format!("启动 D2R 音频流失败: {error}"))?;
 
+    struct CaptureSession {
+        client: AudioClient,
+    }
+    impl Drop for CaptureSession {
+        fn drop(&mut self) {
+            if let Err(error) = self.client.stop_stream() {
+                crate::logger::log_msg(
+                    "WARN",
+                    "RuneAudio",
+                    &format!("停止 D2R 音频流失败: {error}"),
+                );
+            }
+            if let Err(error) = finish_diagnostic_recording() {
+                crate::logger::log_msg("ERROR", "RuneAudio", &error);
+            }
+        }
+    }
+    let _capture_session = CaptureSession {
+        client: audio_client,
+    };
+
     let _ = ready.send(Ok(()));
     let mut bytes = VecDeque::new();
     let mut pending_mono = Vec::<f32>::with_capacity(SCAN_INTERVAL_FRAMES * 2);
@@ -823,18 +865,30 @@ fn capture_loop(
     let tz_refresh_generation = generation;
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(error) = crate::commands::terror_zone::get_terror_zone_snapshot().await {
+            let refresh = tauri::async_runtime::spawn(async {
+                crate::commands::terror_zone::get_terror_zone_snapshot().await
+            });
+            while !refresh.inner().is_finished()
+                && monitor_generation_active(tz_refresh_generation)
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            }
+            if !monitor_generation_active(tz_refresh_generation) {
+                refresh.abort();
+                break;
+            }
+            if let Ok(Err(error)) = refresh.await {
                 crate::logger::log_msg(
                     "WARN",
                     "RuneAudio",
                     &format!("刷新当前 TZ 名称失败，将在声纹触发时使用通用名称: {error}"),
                 );
             }
-            tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
-            if !RUNNING.load(Ordering::SeqCst)
-                || GENERATION.load(Ordering::SeqCst) != tz_refresh_generation
-            {
-                break;
+            for _ in 0..1_200 {
+                if !monitor_generation_active(tz_refresh_generation) {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
             }
         }
     });
@@ -1008,10 +1062,6 @@ fn capture_loop(
         }
     }
 
-    let _ = audio_client.stop_stream();
-    if let Err(error) = finish_diagnostic_recording() {
-        crate::logger::log_msg("ERROR", "RuneAudio", &error);
-    }
     Ok(())
 }
 
@@ -1038,6 +1088,13 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
     {
         RUNNING.store(false, Ordering::SeqCst);
         return Err("上一个符文声纹工作线程仍在退出".to_string());
+    }
+    if let Err(error) = finish_diagnostic_recording() {
+        crate::logger::log_msg(
+            "WARN",
+            "RuneAudio",
+            &format!("清理上一会话遗留的诊断录音失败: {error}"),
+        );
     }
 
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;

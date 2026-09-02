@@ -3301,6 +3301,7 @@ pub async fn upgrade_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
@@ -3311,6 +3312,7 @@ pub async fn upgrade_audio_mod(
         state,
         AudioModTaskRetryPayload::Upgrade {
             account_id,
+            mod_name,
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
@@ -3329,6 +3331,7 @@ async fn upgrade_audio_mod_task(
 ) -> Result<AudioModSetupState, String> {
     let AudioModTaskRetryPayload::Upgrade {
         account_id,
+        mod_name,
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
@@ -3339,6 +3342,7 @@ async fn upgrade_audio_mod_task(
     };
     let retry_payload = serde_json::to_string(&AudioModTaskRetryPayload::Upgrade {
         account_id: account_id.clone(),
+        mod_name: mod_name.clone(),
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
@@ -3361,6 +3365,7 @@ async fn upgrade_audio_mod_task(
         app,
         state,
         account_id,
+        mod_name,
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
@@ -3395,6 +3400,7 @@ pub(crate) enum AudioModTaskRetryPayload {
     },
     Upgrade {
         account_id: String,
+        mod_name: Option<String>,
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
@@ -3426,6 +3432,7 @@ async fn upgrade_audio_mod_impl(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     account_id: String,
+    requested_mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
@@ -3437,7 +3444,12 @@ async fn upgrade_audio_mod_impl(
     let (config, account, context) = configured_account(&shared_state, &account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
     recover_audio_mod_replacements(&mods_directory)?;
-    let current = compatibility(&mods_directory, &account.mod_args);
+    let current = if let Some(requested_mod_name) = requested_mod_name.as_deref() {
+        let requested_arguments = arguments_with_audio_mod("", requested_mod_name)?;
+        compatibility(&mods_directory, &requested_arguments)
+    } else {
+        compatibility(&mods_directory, &account.mod_args)
+    };
     let mod_name = current
         .mod_name
         .as_deref()

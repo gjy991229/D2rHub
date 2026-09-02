@@ -39,6 +39,11 @@ pub trait ConfigurationPolicy: Send + Sync {
 /// Implementations must not call back into `ConfigurationRuntime`; publication
 /// runs inside the configuration transaction to preserve commit order.
 pub trait ConfigurationObserver: Send + Sync {
+    /// Applies bounded runtime projections before the new snapshot becomes
+    /// visible to concurrent readers.
+    fn apply(&self, _config: &GlobalConfig) {}
+
+    /// Publishes the already-visible committed snapshot to external readers.
     fn publish(&self, config: &GlobalConfig);
 }
 
@@ -68,26 +73,25 @@ impl ConfigurationRuntime {
     }
 
     pub fn snapshot(&self) -> Option<GlobalConfig> {
+        let _transaction = self.transaction.lock();
         self.cache.read().clone()
     }
 
-    /// Loads once even when several callers arrive concurrently. The second
-    /// cache read must remain under the transaction lock.
+    /// Loads once even when several callers arrive concurrently. Reads share
+    /// the transaction barrier so no caller can observe a half-published
+    /// configuration epoch.
     pub fn get_or_load(
         &self,
         repository: &dyn ConfigurationRepository,
         observer: &dyn ConfigurationObserver,
     ) -> Result<ConfigurationLoad, AppError> {
-        if let Some(config) = self.cache.read().clone() {
-            return Ok(ConfigurationLoad { config });
-        }
-
         let _transaction = self.transaction.lock();
         if let Some(config) = self.cache.read().clone() {
             return Ok(ConfigurationLoad { config });
         }
 
         let config = repository.load()?;
+        observer.apply(&config);
         *self.cache.write() = Some(config.clone());
         observer.publish(&config);
         Ok(ConfigurationLoad { config })
@@ -189,6 +193,7 @@ impl ConfigurationRuntime {
     ) -> Result<GlobalConfig, AppError> {
         repository.ensure_directories(&prepared)?;
         repository.save(&prepared)?;
+        observer.apply(&prepared);
         *self.cache.write() = Some(prepared.clone());
         observer.publish(&prepared);
         Ok(prepared)

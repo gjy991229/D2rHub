@@ -43,6 +43,7 @@ import {
   type SettingsTabId,
 } from "../../features/settings/settingsRegistry";
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
+import type { RoomAutomationConfig } from "../../features/roomAutomation/types";
 import "../../features/settings/settings.css";
 
 interface Props {
@@ -337,6 +338,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const handleUninstallModule = async (module: OptionalModuleTabId) => {
     const removesRecognitionGroup = module === "automation"
       || (module === "overlays" && installedModules.includes("automation"));
+    let roomRollback: { generation: number; config: RoomAutomationConfig } | null = null;
     try {
       const current = useGlobalConfig.getState().config;
       if (!current) throw new Error("全局配置尚未加载");
@@ -344,10 +346,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       if (module === "room-automation") {
         const snapshot = await roomAutomationGateway.getConfig();
         if (snapshot.config.enabled) {
-          await roomAutomationGateway.saveConfig(snapshot.generation, {
+          const disabled = await roomAutomationGateway.saveConfig(snapshot.generation, {
             ...snapshot.config,
             enabled: false,
           });
+          roomRollback = {
+            generation: disabled.snapshot.generation,
+            config: snapshot.config,
+          };
         }
       }
       const candidate: GlobalConfig = {
@@ -362,7 +368,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       };
       candidate.enable_overlay = candidate.enable_tz_overlay || candidate.enable_stats_overlay;
       const saved = await persistGlobalDraft(candidate, true);
-      if (!saved) return;
+      if (!saved) {
+        if (roomRollback) {
+          try {
+            await roomAutomationGateway.saveConfig(roomRollback.generation, roomRollback.config);
+          } catch (rollbackError) {
+            showToast("error", settingsLanguage === "en-US"
+              ? "The module change failed and Room Automation could not be restored. Reopen its settings before continuing."
+              : `模块卸载未提交，且自动跟房状态恢复失败：${rollbackError}`);
+          }
+        }
+        return;
+      }
       if (removesRecognitionGroup) {
         await invokeCommand("stop_rune_audio_monitor").catch(() => undefined);
       }
@@ -376,6 +393,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         ),
       );
     } catch (error) {
+      if (roomRollback) {
+        try {
+          await roomAutomationGateway.saveConfig(roomRollback.generation, roomRollback.config);
+        } catch (rollbackError) {
+          showToast("error", settingsLanguage === "en-US"
+            ? "Room Automation could not be restored after the failed module change. Reopen its settings before continuing."
+            : `卸载失败后无法恢复自动跟房状态：${rollbackError}`);
+        }
+      }
       showToast("error", moduleActionFailureMessage(settingsLanguage, "uninstall", error));
     }
   };
@@ -450,6 +476,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setAudioSetupSource,
     audioSetupName,
     setAudioSetupName,
+    audioProcessingMode,
+    setAudioProcessingMode,
+    audioProcessingTarget,
+    setAudioProcessingTarget,
     includeAudioTelemetry,
     setIncludeAudioTelemetry,
     includeRoomTools,
@@ -811,6 +841,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setAudioSetupSource={setAudioSetupSource}
                 audioSetupName={audioSetupName}
                 setAudioSetupName={setAudioSetupName}
+                audioProcessingMode={audioProcessingMode}
+                setAudioProcessingMode={setAudioProcessingMode}
+                audioProcessingTarget={audioProcessingTarget}
+                setAudioProcessingTarget={setAudioProcessingTarget}
                 includeAudioTelemetry={includeAudioTelemetry}
                 setIncludeAudioTelemetry={setIncludeAudioTelemetry}
                 includeRoomTools={includeRoomTools}
@@ -852,8 +886,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 modCapsulePoolError={modCapsules.error}
                 assigningAccountId={modCapsules.assigningAccountId}
                 onAssignModCapsule={modCapsules.assign}
-                recognitionEnabled={!!config?.rune_audio_enabled}
-                recognitionAccountId={trackingTargetId}
                 onRequireRoomTools={(accountId, capsuleId, autoStart) => capsuleId
                   ? void modFeatures.prepareFeature(accountId, capsuleId, "room-tools", autoStart)
                   : handleOpenModProcessing("room-tools", accountId)}

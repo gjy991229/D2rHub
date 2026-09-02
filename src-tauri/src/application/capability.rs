@@ -149,6 +149,7 @@ pub struct CapabilityStatus {
     pub requested_enabled: bool,
     pub state: CapabilityState,
     pub reason_code: Option<String>,
+    pub last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -803,6 +804,7 @@ fn snapshot_from_inner(inner: &RegistryInner) -> CapabilityStatusSnapshot {
                 requested_enabled: entry.requested_enabled,
                 state: entry.state,
                 reason_code: entry.reason_code.clone(),
+                last_error: entry.last_error.clone(),
             })
             .collect(),
     }

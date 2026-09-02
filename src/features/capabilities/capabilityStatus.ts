@@ -21,6 +21,7 @@ export interface CapabilityStatusAggregate {
   requested_enabled: boolean;
   state: CapabilityRuntimeState;
   reason_code: string | null;
+  last_error: string | null;
 }
 
 export interface CapabilityStatusSource {
@@ -72,6 +73,7 @@ export function aggregateCapabilityStatuses(
   let highestPriority = -1;
   let aggregateState: CapabilityRuntimeState = "disabled";
   let reasonCode: string | null = null;
+  let lastError: string | null = null;
 
   for (const status of statuses) {
     const priority = CAPABILITY_STATE_PRIORITY[status.state];
@@ -79,8 +81,10 @@ export function aggregateCapabilityStatuses(
       highestPriority = priority;
       aggregateState = status.state;
       reasonCode = status.reason_code;
+      lastError = status.last_error ?? null;
     } else if (priority === highestPriority && reasonCode === null) {
       reasonCode = status.reason_code;
+      lastError = status.last_error ?? null;
     }
   }
 
@@ -88,6 +92,7 @@ export function aggregateCapabilityStatuses(
     requested_enabled: statuses.some((status) => status.requested_enabled),
     state: aggregateState,
     reason_code: reasonCode,
+    last_error: lastError,
   };
 }
 

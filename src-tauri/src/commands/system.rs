@@ -54,7 +54,34 @@ pub fn get_d2r_window_titles() -> Vec<String> {
 pub fn refresh_account_running_state(
     state: tauri::State<'_, crate::state::SharedState>,
 ) -> Result<Vec<String>, String> {
-    adapter::refresh_account_running_state(state)
+    adapter::refresh_account_running_state(state, |config| {
+        crate::commands::account::AccountManager::list_ids(&config.accounts_dir)
+            .into_iter()
+            .filter_map(|account_id| {
+                let meta = crate::commands::account::AccountManager::load_meta(
+                    &config.accounts_dir,
+                    &account_id,
+                )
+                .ok()?;
+                let context = crate::launch_context::LaunchContext::for_account(
+                    config,
+                    &meta,
+                    crate::launch_context::ContextPurpose::LaunchGame,
+                )
+                .ok()?;
+                let window_title = if meta.display_name.is_empty() {
+                    account_id.clone()
+                } else {
+                    meta.display_name
+                };
+                Some(adapter::AccountGameIdentity::new(
+                    account_id,
+                    window_title,
+                    context.installation.game_executable,
+                ))
+            })
+            .collect()
+    })
 }
 
 #[tauri::command]

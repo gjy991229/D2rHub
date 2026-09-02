@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   Layers3,
   PackageOpen,
+  PackagePlus,
   RefreshCw,
 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
@@ -20,6 +21,7 @@ import {
   AUDIO_TELEMETRY_FEATURE_ID,
   IN_GAME_ROOM_TOOLS_FEATURE_ID,
   type AudioModPrepareProgress,
+  type AudioModProcessingMode,
 } from "../audioModuleModel";
 import { ModCatalogManager } from "./ModCatalogManager";
 
@@ -47,6 +49,10 @@ interface ModProcessingPanelProps {
   setAudioSetupSource: Dispatch<SetStateAction<string>>;
   audioSetupName: string;
   setAudioSetupName: Dispatch<SetStateAction<string>>;
+  audioProcessingMode?: AudioModProcessingMode;
+  setAudioProcessingMode?: Dispatch<SetStateAction<AudioModProcessingMode>>;
+  audioProcessingTarget?: string;
+  setAudioProcessingTarget?: Dispatch<SetStateAction<string>>;
   includeAudioTelemetry: boolean;
   setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
   includeRoomTools: boolean;
@@ -88,6 +94,10 @@ export function ModProcessingPanel({
   setAudioSetupSource,
   audioSetupName,
   setAudioSetupName,
+  audioProcessingMode,
+  setAudioProcessingMode,
+  audioProcessingTarget,
+  setAudioProcessingTarget,
   includeAudioTelemetry,
   setIncludeAudioTelemetry,
   includeRoomTools,
@@ -113,9 +123,16 @@ export function ModProcessingPanel({
     setWorkspace(purpose === "manage" ? "catalog" : "processing");
   }, [purpose]);
   const isEnglish = config.app_language === "en-US";
+  const effectiveProcessingMode = audioProcessingMode
+    ?? (isAudioModUpgrade ? "augment" : "create");
+  const effectiveProcessingTarget = audioProcessingTarget
+    || (isAudioModUpgrade ? audioModState?.current_mod_name ?? "" : "");
   const selectedSource = audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource);
+  const selectedProcessingMod = audioModState?.installed_mods.find((mod) => (
+    mod.name.toLocaleLowerCase() === effectiveProcessingTarget.toLocaleLowerCase()
+  ));
   const inheritedFeatureGroups = isAudioModUpgrade
-    ? audioModState?.feature_groups ?? []
+    ? selectedProcessingMod?.feature_groups ?? []
     : audioSetupMode === "existing"
       ? selectedSource?.feature_groups ?? []
       : [];
@@ -137,17 +154,23 @@ export function ModProcessingPanel({
   const readyCapsules = modCapsulePool?.capsules.filter((capsule) => (
     capsule.ready
     && capsule.processed
-    && capsule.source_eligible
     && (!targetEdition || capsule.edition === targetEdition)
   )) ?? [];
   const selectSourceMod = (name: string) => {
     setAudioSetupMode("existing");
     setAudioSetupSource(name);
-    if (name === audioModState?.current_mod_name) {
-      setAudioSetupName(name);
-    } else if (isAudioModFeatureManagement) {
-      setAudioSetupName("");
-    }
+  };
+  const selectProcessedMod = (name: string) => {
+    setAudioProcessingMode?.("augment");
+    setAudioProcessingTarget?.(name);
+    setAudioSetupName("");
+  };
+  const selectNewMod = () => {
+    setAudioProcessingMode?.("create");
+    setAudioProcessingTarget?.("");
+    setAudioSetupMode("original");
+    setAudioSetupSource("");
+    setAudioSetupName("");
   };
   useEffect(() => {
     if (!autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
@@ -162,19 +185,27 @@ export function ModProcessingPanel({
       <ModCatalogManager
         catalog={modCatalog}
         accounts={initializedAccounts}
+        language={config.app_language}
         autoOpenAdd={openAddRequest}
         initialEdition={initialEdition}
         onProcess={async (capsule) => {
           const target = modCatalog.pool?.accounts.find((entry) => entry.edition === capsule.edition
             && initializedAccounts.some((account) => account.id === entry.account_id));
           if (!target) {
-            showToast("warning", `没有可用于加工${capsule.edition === "CN" ? "国服" : "国际服"} Mod 的已初始化账号`);
+            showToast("warning", isEnglish
+              ? `No initialized account is available for processing ${capsule.edition} Mods`
+              : `没有可用于加工${capsule.edition === "CN" ? "国服" : "国际服"} Mod 的已初始化账号`);
             return;
           }
-          await modCatalog.assign(target.account_id, capsule.id);
           await onTargetChange(target.account_id);
-          setAudioSetupMode("existing");
-          setAudioSetupSource(capsule.name);
+          if (capsule.processed) {
+            selectProcessedMod(capsule.name);
+          } else {
+            setAudioProcessingMode?.("create");
+            setAudioProcessingTarget?.("");
+            selectSourceMod(capsule.name);
+            setAudioSetupName("");
+          }
           setWorkspace("processing");
         }}
       />
@@ -182,14 +213,14 @@ export function ModProcessingPanel({
   }
 
   return (
-    <div className="mod-processing-panel">
+    <div className="mod-processing-panel" data-processing-mode={effectiveProcessingMode}>
       <header className="mod-processing-header">
         <div>
           <h2>{isEnglish ? "Mod Processing" : "Mod 加工"}</h2>
           <p>
             {isEnglish
-              ? "Choose a source Mod, preserve everything it already provides, then add the capabilities you need."
-              : "选择源 Mod，完整保留它已有的功能，再增补这次需要的 D2RHub 模块。"}
+              ? "Augment a processed Mod in place, or create a new result from the original game or another Mod."
+              : "选择已加工 Mod 原位增补，或从原版游戏、已有 Mod 加工一个新结果。"}
           </p>
         </div>
         <div className="mod-processing-header-actions">
@@ -232,33 +263,46 @@ export function ModProcessingPanel({
           <div>
             <Layers3 size={14} aria-hidden="true" />
             <span>
-              <strong>{isEnglish ? "Shared processed-Mod pool" : "公共加工 Mod 胶囊池"}</strong>
+              <strong>{isEnglish ? "Processing options" : "选择加工方式"}</strong>
               <small>{modCapsulePoolLoading
-                ? (isEnglish ? "Scanning installed credentials…" : "正在扫描已安装凭证…")
+                ? (isEnglish ? "Scanning installed Mods…" : "正在扫描已安装 Mod…")
                 : modCapsulePoolError
-                  ? (isEnglish ? "Pool unavailable" : "胶囊池暂不可用")
+                  ? (isEnglish ? "Processed Mods are temporarily unavailable" : "暂时无法读取已加工 Mod")
                   : isEnglish
-                    ? `${readyCapsules.length} verified capsules; old account arguments are matched automatically`
-                    : `${readyCapsules.length} 个已验证胶囊；旧账号启动参数会自动匹配`}</small>
+                    ? `${readyCapsules.length} processed Mods can be augmented, or you can process a new Mod`
+                    : `${readyCapsules.length} 个已加工 Mod 可继续增补，也可以加工新 Mod`}</small>
             </span>
           </div>
-          {!modCapsulePoolLoading && readyCapsules.length > 0 && (
+          {!modCapsulePoolLoading && (
             <div className="mod-capsule-pool-list">
+              <button
+                type="button"
+                className="mod-processing-new-capsule"
+                aria-pressed={effectiveProcessingMode === "create"}
+                title={isEnglish ? "Create a separate processed Mod" : "加工并生成一个新的独立 Mod"}
+                disabled={audioPreparing}
+                onClick={selectNewMod}
+              >
+                <PackagePlus size={14} aria-hidden="true" />
+                <b>{isEnglish ? "Process a new Mod" : "加工新 Mod"}</b>
+                <span>{isEnglish ? "Choose its source below" : "在下方选择来源"}</span>
+              </button>
               {readyCapsules.map((capsule) => (
                 <button
                   type="button"
                   key={capsule.id}
-                  aria-pressed={audioSetupMode === "existing" && audioSetupSource === capsule.name}
-                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule).join("、")}`}
+                  aria-pressed={effectiveProcessingMode === "augment"
+                    && effectiveProcessingTarget.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
+                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish).join(isEnglish ? ", " : "、")}`}
                   disabled={audioPreparing}
-                  onClick={() => selectSourceMod(capsule.name)}
+                  onClick={() => selectProcessedMod(capsule.name)}
                 >
                   <b>{capsule.name}</b>
                   <span className="mod-capsule-pool-features">
-                    <em data-kind="base">{capsuleBaseModLabel(capsule)}</em>
-                    {capsuleFeatureLabels(capsule).length
-                      ? capsuleFeatureLabels(capsule).map((label) => <em data-kind="feature" key={label}>{label}</em>)
-                      : <em data-kind="pending">待更新</em>}
+                    <em data-kind="base">{capsuleBaseModLabel(capsule, isEnglish)}</em>
+                    {capsuleFeatureLabels(capsule, isEnglish).length
+                      ? capsuleFeatureLabels(capsule, isEnglish).map((label) => <em data-kind="feature" key={label}>{label}</em>)
+                      : <em data-kind="pending">{isEnglish ? "Update required" : "待更新"}</em>}
                   </span>
                 </button>
               ))}
@@ -282,10 +326,11 @@ export function ModProcessingPanel({
         </div>
       ) : (
         <>
-          <section className="spatial-panel mod-processing-section mod-processing-source">
+          {effectiveProcessingMode === "create" && (
+            <section className="spatial-panel mod-processing-section mod-processing-source">
               <div className="mod-processing-section-heading">
                 <div>
-                  <h3>{isEnglish ? "Choose the source" : "选择源内容"}</h3>
+                  <h3>{isEnglish ? "Choose the source Mod" : "选择源 Mod"}</h3>
                   <p>{isEnglish ? "An existing Mod stays unchanged; D2RHub builds a separate verified result." : "原 Mod 不会被修改；D2RHub 会生成并校验一个独立结果。"}</p>
                 </div>
               </div>
@@ -298,7 +343,7 @@ export function ModProcessingPanel({
                   disabled={audioPreparing}
                   onClick={() => {
                     setAudioSetupMode("original");
-                    if (isAudioModFeatureManagement) setAudioSetupName("");
+                    setAudioSetupSource("");
                   }}
                 >
                   <strong>{isEnglish ? "Original game" : "原版游戏"}</strong>
@@ -330,15 +375,20 @@ export function ModProcessingPanel({
                   </select>
                 </label>
               )}
-          </section>
+            </section>
+          )}
 
           <section className="spatial-panel mod-processing-section mod-processing-capabilities">
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
-                <p>{isEnglish
-                  ? "Inherited modules remain installed. Runtime switches are managed on each concrete Mod row."
-                  : "源 Mod 已有模块会继续保留；运行开关在对应的具体 Mod 条目中管理。"}</p>
+                <p>{effectiveProcessingMode === "augment"
+                  ? (isEnglish
+                    ? "Installed modules remain intact. Choose only the additional capabilities you need."
+                    : "目标 Mod 已有模块会完整保留，只需选择这次要增补的功能。")
+                  : (isEnglish
+                    ? "Modules inherited from the source remain installed in the new result."
+                    : "源 Mod 已有模块会完整保留到新结果中。")}</p>
               </div>
             </div>
             <div className="mod-processing-features">
@@ -347,7 +397,11 @@ export function ModProcessingPanel({
                 detail={isEnglish ? "Scenes, drops, Terror Zones, and run statistics" : "场景、掉落、恐怖区域与刷图统计"}
                 checked={audioSelected}
                 locked={audioRequired || audioInherited}
-                lockLabel={audioInherited ? (isEnglish ? "Included in source" : "源 Mod 已有") : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
+                lockLabel={audioInherited
+                  ? effectiveProcessingMode === "augment"
+                    ? (isEnglish ? "Already installed" : "目标 Mod 已有")
+                    : (isEnglish ? "Included in source" : "源 Mod 已有")
+                  : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
                 disabled={audioPreparing}
                 onChange={setIncludeAudioTelemetry}
               />
@@ -357,7 +411,9 @@ export function ModProcessingPanel({
                 checked={roomToolsSelected}
                 locked={roomToolsRequired || roomToolsInherited}
                 lockLabel={roomToolsInherited
-                  ? (isEnglish ? "Included in source" : "源 Mod 已有")
+                  ? effectiveProcessingMode === "augment"
+                    ? (isEnglish ? "Already installed" : "目标 Mod 已有")
+                    : (isEnglish ? "Included in source" : "源 Mod 已有")
                   : (isEnglish ? "Required for room automation" : "自动跟房必选")}
                 disabled={audioPreparing}
                 onChange={setIncludeRoomTools}
@@ -377,18 +433,18 @@ export function ModProcessingPanel({
           </section>
 
           <section className="spatial-panel mod-processing-section mod-processing-output">
-            <div className="mod-processing-section-heading">
+              <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
-                <p>{isAudioModUpgrade
-                  ? (isEnglish ? "The current Mod is safely replaced in place after verification." : "校验成功后原位更新，名称和账号启动参数保持不变。")
+                <p>{effectiveProcessingMode === "augment"
+                  ? (isEnglish ? "The selected Mod is augmented in place after verification, then applied to the target account." : "校验成功后原位增补所选 Mod，再应用到目标账号。")
                   : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
               </div>
             </div>
-            {isAudioModUpgrade ? (
+            {effectiveProcessingMode === "augment" ? (
               <div className="mod-processing-existing-output">
                 <CheckCircle2 size={15} />
-                <span>{audioModState?.current_mod_name}</span>
+                <span>{effectiveProcessingTarget}</span>
               </div>
             ) : (
               <label className="mod-processing-name" htmlFor="processed-mod-name">

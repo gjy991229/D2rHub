@@ -41,6 +41,7 @@ export interface AudioModFeatureSelection {
 }
 
 export type AudioModProcessingPurpose = "recognition" | "room-tools" | "manage";
+export type AudioModProcessingMode = "create" | "augment";
 
 export const AUDIO_TELEMETRY_FEATURE_ID = "audio_telemetry";
 export const IN_GAME_ROOM_TOOLS_FEATURE_ID = "in_game_room_tools";

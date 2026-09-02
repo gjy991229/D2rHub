@@ -1,8 +1,8 @@
 //! Tauri/Windows adapter for the optional room-automation capability.
 //!
 //! The sidecar controller is the only configuration authority. This adapter
-//! owns every shortcut, watcher, account lease, cancellation signal and worker
-//! thread for exactly the capability's running lifetime.
+//! owns every shortcut, bounded F13 scan, account lease, cancellation signal
+//! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
     RoomAutomationConfig, WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError,
@@ -28,7 +28,8 @@ use crate::commands::account::AccountManager;
 use crate::commands::utils::shared_system;
 use crate::domain::config::GlobalConfig;
 use crate::input_listener::{
-    register_capability_shortcuts, replace_capability_shortcuts, CapabilityShortcutRegistration,
+    register_unbounded_capability_shortcuts, replace_unbounded_capability_shortcuts,
+    CapabilityShortcutRegistration,
 };
 use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::state::SharedState;
@@ -377,10 +378,7 @@ trait ChatBindingPort: Send + Sync {
 
 struct LazyChatBinding {
     state: SharedState,
-    /// Serializes creation, mutation and watcher shutdown across the complete
-    /// operation. In particular, `stop` keeps this lock until the old watcher
-    /// has joined, so another caller cannot create a replacement service while
-    /// the previous service is still touching character key files.
+    /// Serializes service creation and every bounded key-file operation.
     operation: Mutex<()>,
     service: Mutex<Option<CachedChatBinding>>,
 }
@@ -407,9 +405,8 @@ impl LazyChatBinding {
         validate_and_canonicalize_directories(directories)
     }
 
-    /// Must be called while `operation` is held. A directory change first
-    /// joins the old watcher, then creates the replacement; a failed resume
-    /// never installs or modifies key files in the new location.
+    /// Must be called while `operation` is held. A directory change replaces
+    /// the cached service before the next bounded scan.
     fn service(&self) -> Result<Arc<ChatF13BindingService>, String> {
         let directories = match self.configured_directories() {
             Ok(directories) => directories,
@@ -434,11 +431,11 @@ impl LazyChatBinding {
             }
             current.take()
         };
-        let resume_watcher = previous.as_ref().is_some_and(|cached| {
+        let rescan_with_consent = previous.as_ref().is_some_and(|cached| {
             cached
                 .service
                 .status()
-                .is_ok_and(|status| status.consent_granted && status.watcher_running)
+                .is_ok_and(|status| status.consent_granted)
         });
         if let Some(cached) = previous {
             cached.service.shutdown()?;
@@ -446,13 +443,13 @@ impl LazyChatBinding {
         let service = Arc::new(ChatF13BindingService::new(directories.clone(), || {
             !crate::infrastructure::system::get_d2r_pids().is_empty()
         })?);
-        if resume_watcher {
+        if rescan_with_consent {
             let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
             if let Err(error) = service.start_watcher_with_consent(consent) {
                 crate::logger::log_msg(
                     "WARN",
                     "RoomAutomation",
-                    &format!("存档目录变化后未恢复 F13 watcher：{error}"),
+                    &format!("存档目录变化后 F13 一次性扫描失败：{error}"),
                 );
             }
         }
@@ -508,7 +505,7 @@ impl ChatBindingPort for LazyChatBinding {
                 auto_patch_enabled: false,
                 directories: Vec::new(),
                 last_watcher_error: None,
-                message: "F13 watcher 未启动".to_string(),
+                message: "F13 扫描服务尚未初始化".to_string(),
             }),
         }
     }
@@ -559,6 +556,7 @@ impl TauriRuntimeBridge {
         if active.is_none() && !status.phase.is_terminal() {
             let request = TaskRequest::new("room-automation")
                 .with_conflict_key("room-automation-workflow")
+                .non_retryable()
                 .with_initial_status("primary", "自动跟房工作流已启动");
             match self.state.tasks().begin(match status.room_name.as_deref() {
                 Some(room_name) => request.for_subject(room_name),
@@ -871,7 +869,13 @@ impl RoomAutomationManager {
         let operation = self.operation.lock();
 
         let previous = self.get_config();
-        if candidate.chat_f13_auto_patch_enabled != previous.config.chat_f13_auto_patch_enabled {
+        let consent_granted_while_enabling = !previous.config.enabled
+            && candidate.enabled
+            && !previous.config.chat_f13_auto_patch_enabled
+            && candidate.chat_f13_auto_patch_enabled;
+        if candidate.chat_f13_auto_patch_enabled != previous.config.chat_f13_auto_patch_enabled
+            && !consent_granted_while_enabling
+        {
             return Err("F13 授权只能通过安装或恢复操作修改".to_string());
         }
         candidate
@@ -909,15 +913,29 @@ impl RoomAutomationManager {
             } else {
                 None
             };
+        let binding_warning = if saved.config.enabled
+            && saved.config.chat_f13_auto_patch_enabled
+        {
+            match self.chat_binding.resume() {
+                Ok(_) => None,
+                Err(error) => Some(format!("F13 一次性扫描未完成：{error}")),
+            }
+        } else {
+            None
+        };
         drop(operation);
         join_shortcut(old_shortcut);
-        let apply_warning = self
+        let lifecycle_warning = self
             .bridge
             .apply_requested(saved.config.enabled)
             .err()
             .map(|error| {
                 self.pause_after_committed_apply_failure(format!("配置生命周期应用失败：{error}"))
             });
+        let apply_warning = [binding_warning, lifecycle_warning]
+            .into_iter()
+            .flatten()
+            .reduce(|left, right| format!("{left}；{right}"));
         Ok(RoomAutomationSaveOutcome {
             snapshot: saved,
             apply_warning,
@@ -926,7 +944,7 @@ impl RoomAutomationManager {
 
     /// The sidecar has already committed when this is called, so every error
     /// becomes a warning. Stop locally as a fail-safe as well as clearing the
-    /// requested intent; this prevents stale shortcuts/watchers surviving if
+    /// requested intent; this prevents stale shortcuts or workers surviving if
     /// supervisor scheduling itself is the failing component.
     fn pause_after_committed_apply_failure(&self, initial: String) -> String {
         let mut details = vec![initial];
@@ -1176,7 +1194,7 @@ impl RoomAutomationManager {
             }
             Err(error) => {
                 let _ = self.chat_binding.stop();
-                Err(format!("F13 已安装但授权保存失败，watcher 已停止：{error}"))
+                Err(format!("F13 已安装但扫描授权保存失败：{error}"))
             }
         }
     }
@@ -1189,7 +1207,7 @@ impl RoomAutomationManager {
         }
         // Only revoke durable consent after a read-only filesystem preflight.
         // If the following transaction rolls back, restore the exact previous
-        // intent as compensation; the service likewise resumes its old watcher.
+        // scan consent as compensation.
         self.chat_binding.preflight_restore()?;
         let previous_consent = self.snapshot.read().config.chat_f13_auto_patch_enabled;
         let revoked = self
@@ -1207,7 +1225,7 @@ impl RoomAutomationManager {
                     Err(format!("{error}；授权状态已恢复"))
                 }
                 Err(compensation_error) => Err(format!(
-                    "{error}；授权状态回滚失败，已保持 watcher 停止：{compensation_error}"
+                    "{error}；扫描授权状态回滚失败：{compensation_error}"
                 )),
             },
         }
@@ -1560,7 +1578,10 @@ impl RoomAutomationManager {
         config: &RoomAutomationConfig,
         replace: bool,
     ) -> Result<ShortcutWorker, String> {
-        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        // Shortcut delivery must not share one bounded slot between the primary
+        // and follower actions. Key-repeat suppression happens in the keyboard
+        // hook; this unbounded channel preserves every distinct physical press.
+        let (sender, receiver) = std::sync::mpsc::channel();
         let manager = self.self_reference.clone();
         let handle = std::thread::Builder::new()
             .name("room-automation-shortcuts".to_string())
@@ -1571,9 +1592,9 @@ impl RoomAutomationManager {
             (config.join_shortcut.clone(), FOLLOWERS_ACTION),
         ];
         let registration = if replace {
-            replace_capability_shortcuts(ROOM_AUTOMATION_MODULE_ID, routes, sender)
+            replace_unbounded_capability_shortcuts(ROOM_AUTOMATION_MODULE_ID, routes, sender)
         } else {
-            register_capability_shortcuts(ROOM_AUTOMATION_MODULE_ID, routes, sender)
+            register_unbounded_capability_shortcuts(ROOM_AUTOMATION_MODULE_ID, routes, sender)
         };
         match registration {
             Ok(registration) => Ok(ShortcutWorker {
@@ -1600,7 +1621,7 @@ impl RoomAutomationManager {
 
 impl CapabilityDriver for RoomAutomationManager {
     fn start(&self) -> Result<(), CapabilityFailure> {
-        let operation = self.operation.lock();
+        let _operation = self.operation.lock();
         self.join_finished_workflow();
         if self.lifecycle.lock().started {
             return Ok(());
@@ -1627,14 +1648,6 @@ impl CapabilityDriver for RoomAutomationManager {
         let shortcut = self
             .build_shortcuts(&config, false)
             .map_err(|error| CapabilityFailure::new("shortcut-registration-failed", error))?;
-        if config.chat_f13_auto_patch_enabled {
-            if let Err(error) = self.chat_binding.resume() {
-                drop(operation);
-                join_shortcut(Some(shortcut));
-                return Err(CapabilityFailure::new("chat-binding-resume-failed", error));
-            }
-        }
-
         let mut lifecycle = self.lifecycle.lock();
         lifecycle.started = true;
         lifecycle.shortcut = Some(shortcut);
@@ -1700,25 +1713,6 @@ impl CapabilityDriver for RoomAutomationManager {
             ));
         }
         drop(lifecycle);
-
-        let config = self.get_config();
-        if config.config.chat_f13_auto_patch_enabled {
-            match self.chat_binding.status() {
-                Ok(status) if status.watcher_running => {}
-                Ok(status) => {
-                    return CapabilityHealth::Degraded(CapabilityFailure::new(
-                        "chat-binding-watcher-stopped",
-                        status.message,
-                    ));
-                }
-                Err(error) => {
-                    return CapabilityHealth::Degraded(CapabilityFailure::new(
-                        "chat-binding-health-unavailable",
-                        error,
-                    ));
-                }
-            }
-        }
         CapabilityHealth::Healthy
     }
 
@@ -1782,13 +1776,26 @@ fn shortcut_dispatch_loop(
         let Some(manager) = manager.upgrade() else {
             break;
         };
+        crate::logger::log_msg(
+            "INFO",
+            "RoomAutomation",
+            &format!("快捷键 dispatcher 已接收动作：{action}"),
+        );
         let result = match action {
             PRIMARY_ACTION => manager.start_primary(),
             FOLLOWERS_ACTION => manager.start_followers(),
             _ => continue,
         };
-        if let Err(error) = result {
-            crate::logger::log_msg("WARN", "RoomAutomation", &error);
+        match result {
+            Ok(status) => crate::logger::log_msg(
+                "INFO",
+                "RoomAutomation",
+                &format!(
+                    "快捷键动作已启动：{action}，task={:?}，phase={:?}",
+                    status.task_id, status.phase
+                ),
+            ),
+            Err(error) => crate::logger::log_msg("WARN", "RoomAutomation", &error),
         }
     }
 }

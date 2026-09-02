@@ -142,7 +142,7 @@ pub fn run() {
             window_placement::ensure_main_window_visible(app.handle());
 
             if let Some(config) = app.state::<state::SharedState>().configuration().snapshot() {
-                auxiliary_windows::create_configured_windows(app.handle(), &config)?;
+                auxiliary_windows::create_configured_windows(app.handle(), &config);
             }
 
             capabilities::install(app);
@@ -154,7 +154,7 @@ pub fn run() {
             // 启动全局输入监听
             input_listener::start_input_listener(app.handle().clone());
 
-            mod_catalog::refresh_on_startup(app_state.clone());
+            mod_catalog::refresh_on_startup(app_state.clone(), app.handle().clone());
 
             capabilities::start(app);
 
@@ -184,6 +184,7 @@ pub fn run() {
             commands::room_automation::room_automation_restore_chat_binding,
             commands::global_config::save_global_config,
             commands::global_config::patch_global_config,
+            commands::global_config::patch_desktop_pet_settings,
             commands::global_config::save_window_geometry,
             commands::global_config::load_window_geometry,
             commands::global_config::save_overlay_geometry,

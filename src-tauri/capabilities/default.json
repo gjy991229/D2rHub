@@ -2,12 +2,10 @@
   "identifier": "default",
   "description": "Default capabilities for D2RHub",
   "windows": [
-    "main",
-    "overlay",
-    "stats-overlay",
-    "bongo-cat"
+    "main"
   ],
   "permissions": [
+    "main-window-commands",
     "core:default",
     "core:event:default",
     "core:window:default",

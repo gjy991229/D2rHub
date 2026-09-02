@@ -52,14 +52,13 @@ if ($existing) {
     throw "The release executable is already running; close it before measuring."
 }
 
-function Get-ProtectedFileSnapshot {
-    $appData = Join-Path ([Environment]::GetFolderPath("ApplicationData")) "D2RHub"
+function Get-ProtectedFileSnapshot([string]$RoamingRoot) {
+    $appData = Join-Path $RoamingRoot "D2RHub"
     if (-not (Test-Path -LiteralPath $appData)) { return @{} }
     $snapshot = @{}
     Get-ChildItem -LiteralPath $appData -File -Recurse |
         Where-Object {
-            $_.FullName -notmatch "[\\/](logs|diagnostics)[\\/]" -and
-            $_.Name -match "^(config|global-config|meta|Settings|window-placement).*\.(json|bak)$"
+            $_.FullName -notmatch "[\\/](logs|diagnostics)[\\/]"
         } |
         ForEach-Object {
             $sha256 = [System.Security.Cryptography.SHA256]::Create()
@@ -75,10 +74,21 @@ function Get-ProtectedFileSnapshot {
     return $snapshot
 }
 
-$beforeFiles = Get-ProtectedFileSnapshot
+$realRoamingRoot = [Environment]::GetFolderPath("ApplicationData")
+$baselineRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("d2rhub-release-baseline-{0}" -f [Guid]::NewGuid().ToString("N"))
+$isolatedRoamingRoot = Join-Path $baselineRoot "Roaming"
+New-Item -ItemType Directory -Path $isolatedRoamingRoot -Force | Out-Null
+
+$beforeFiles = Get-ProtectedFileSnapshot $realRoamingRoot
 $beforeD2r = @(Get-Process -Name "D2R" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-$process = Start-Process -FilePath $resolvedExe -PassThru -WindowStyle Hidden
+$previousAppData = $env:APPDATA
+try {
+    $env:APPDATA = $isolatedRoamingRoot
+    $process = Start-Process -FilePath $resolvedExe -PassThru -WindowStyle Hidden
+} finally {
+    $env:APPDATA = $previousAppData
+}
 try {
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     do {
@@ -109,6 +119,7 @@ try {
         direct_child_process_count = $directChildren.Count
         main_window_ready = $process.MainWindowHandle -ne 0
         d2r_process_set_unchanged = (@(Compare-Object $beforeD2r $afterD2r).Count -eq 0)
+        app_data_isolated = $true
     }
 } finally {
     if (-not $process.HasExited) {
@@ -127,7 +138,7 @@ try {
     }
 }
 
-$afterFiles = Get-ProtectedFileSnapshot
+$afterFiles = Get-ProtectedFileSnapshot $realRoamingRoot
 $fileChanges = @(Compare-Object ($beforeFiles.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }) `
     ($afterFiles.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" }))
 $result.protected_files_unchanged = $fileChanges.Count -eq 0
@@ -149,6 +160,12 @@ if ($OutputPath) {
     Set-Content -LiteralPath $OutputPath -Value $json -Encoding UTF8
 }
 $json
+
+$resolvedBaselineRoot = [System.IO.Path]::GetFullPath($baselineRoot)
+$resolvedTempRoot = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
+if ($resolvedBaselineRoot.StartsWith($resolvedTempRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+    Remove-Item -LiteralPath $resolvedBaselineRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 if (-not $result.main_window_ready -or
     -not $result.d2r_process_set_unchanged -or

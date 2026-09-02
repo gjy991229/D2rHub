@@ -11,6 +11,7 @@ import {
 import type { ModCapsuleController } from "../modCapsules/useModCapsulePool";
 import { roomAutomationGateway } from "../roomAutomation/gateway";
 import type { ModProcessingPurpose } from "./panels/ModProcessingPanel";
+import type { AudioModProcessingMode } from "./audioModuleModel";
 
 interface CoordinationOptions {
   accounts: AccountMeta[];
@@ -22,6 +23,7 @@ interface CoordinationOptions {
     purpose: Exclude<ModProcessingPurpose, "manage">,
     autoStart?: boolean,
     sourceModName?: string,
+    processingMode?: AudioModProcessingMode,
   ) => void;
   onGlobalCommitted: (config: GlobalConfig) => void;
 }
@@ -42,7 +44,7 @@ export function useModFeatureCoordination({
   ) => {
     const capsule = modCatalog.pool?.capsules.find((entry) => entry.id === capsuleId);
     if (!capsule) {
-      showToast("error", "选择的 Mod 已不在共享池中，请重新扫描");
+      showToast("error", "选择的 Mod 已不在可用列表中，请重新扫描");
       return;
     }
     const requiredFeature = purpose === "recognition"
@@ -54,7 +56,13 @@ export function useModFeatureCoordination({
       if (purpose === "recognition") await toggleAudio(true, accountId);
       return;
     }
-    openProcessing(accountId, purpose, autoStart && capsule.processed, capsule.name);
+    openProcessing(
+      accountId,
+      purpose,
+      autoStart && capsule.processed,
+      capsule.name,
+      capsule.processed ? "augment" : "create",
+    );
   }, [modCatalog, openProcessing, toggleAudio]);
 
   const toggleRecognition = useCallback(async (enabled: boolean): Promise<boolean> => {

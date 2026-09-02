@@ -14,3 +14,4 @@ reasonix.toml
 /.codex-vite*.log
 /temp.txt
 /artifacts/
+src-tauri/permissions/*

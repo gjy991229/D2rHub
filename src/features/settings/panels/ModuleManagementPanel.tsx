@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import {
+  AlertTriangle,
   ArrowUpRight,
   Cat,
   Link2,
@@ -58,6 +59,9 @@ interface ModuleManagementCopy {
   removeAutomationTitle: string;
   installAutomationTitle: string;
   installOverlaysTitle: string;
+  confirmRemove: string;
+  cancelRemove: string;
+  removePrompt: string;
 }
 
 const MODULES: readonly ModuleDefinition[] = [
@@ -146,6 +150,9 @@ const PANEL_COPY: Record<SettingsLanguage, ModuleManagementCopy> = {
     removeAutomationTitle: "会关闭识别与场景统计；悬浮窗模块和独立 TZ 状态保持不变",
     installAutomationTitle: "会补齐悬浮窗模块，并开启场景统计与 TZ 播报",
     installOverlaysTitle: "只添加悬浮窗模块，并默认开启 TZ 播报",
+    confirmRemove: "确认卸载",
+    cancelRemove: "取消",
+    removePrompt: "卸载会立即停止相关运行能力，但保留配置供下次添加时恢复。",
   },
   "en-US": {
     description: "Add only the tools you use. Added modules appear in the top navigation and can be removed here at any time.",
@@ -164,6 +171,9 @@ const PANEL_COPY: Record<SettingsLanguage, ModuleManagementCopy> = {
     removeAutomationTitle: "Turns off recognition and statistics; Desktop Overlays and the independent Terror Zone setting remain unchanged",
     installAutomationTitle: "Also adds Desktop Overlays and turns on statistics and Terror Zone",
     installOverlaysTitle: "Adds only Desktop Overlays and turns on Terror Zone",
+    confirmRemove: "Confirm removal",
+    cancelRemove: "Cancel",
+    removePrompt: "Removing stops the related runtime features now, while keeping settings for a future reinstall.",
   },
 };
 
@@ -175,6 +185,7 @@ export function ModuleManagementPanel({
   onOpen,
 }: ModuleManagementPanelProps) {
   const [busyModule, setBusyModule] = useState<OptionalModuleTabId | null>(null);
+  const [confirmModule, setConfirmModule] = useState<OptionalModuleTabId | null>(null);
   const [roomAutomationConfigured, setRoomAutomationConfigured] = useState(false);
   const language = normalizeSettingsLanguage(config.app_language);
   const copy = PANEL_COPY[language];
@@ -193,6 +204,7 @@ export function ModuleManagementPanel({
     try {
       if (install) await onInstall(module);
       else await onUninstall(module);
+      setConfirmModule(null);
       if (module === "room-automation") {
         const snapshot = await roomAutomationGateway.getConfig().catch(() => null);
         if (snapshot) setRoomAutomationConfigured(snapshot.config.enabled);
@@ -263,7 +275,30 @@ export function ModuleManagementPanel({
               </div>
               <div className="module-management-actions">
                 {installed ? (
-                  <>
+                  confirmModule === module.id ? (
+                    <div className="module-management-remove-confirm" role="alert">
+                      <AlertTriangle size={14} aria-hidden="true" />
+                      <p>{cascadesRecognition
+                        ? copy.removeOverlayDependencyTitle
+                        : module.id === "automation"
+                          ? copy.removeAutomationTitle
+                          : copy.removePrompt}</p>
+                      <Button
+                        size="sm"
+                        variant="danger"
+                        loading={busyModule === module.id}
+                        disabled={busyModule !== null}
+                        onClick={() => void changeInstallation(module.id, false)}
+                      >{copy.confirmRemove}</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busyModule !== null}
+                        onClick={() => setConfirmModule(null)}
+                      >{copy.cancelRemove}</Button>
+                    </div>
+                  ) : (
+                    <>
                     <Button size="sm" variant="secondary" onClick={() => onOpen(module.id)}>
                       <ArrowUpRight size={12} />{copy.open}
                     </Button>
@@ -277,11 +312,12 @@ export function ModuleManagementPanel({
                         : module.id === "automation"
                           ? copy.removeAutomationTitle
                           : undefined}
-                      onClick={() => void changeInstallation(module.id, false)}
+                      onClick={() => setConfirmModule(module.id)}
                     >
                       <Trash2 size={12} />{copy.remove}
                     </Button>
-                  </>
+                    </>
+                  )
                 ) : (
                   <Button
                     size="sm"

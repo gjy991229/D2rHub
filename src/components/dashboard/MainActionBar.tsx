@@ -7,6 +7,7 @@ import { ActionBar } from "./ActionBar";
 import { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
 import { LaunchButton } from "./LaunchButton";
 import { LaunchGroupMenu } from "./LaunchGroupMenu";
+import { RoomAutomationQuickEdit } from "./RoomAutomationQuickEdit";
 
 interface MainActionBarProps {
   launching: boolean;
@@ -19,6 +20,7 @@ interface MainActionBarProps {
   launchGroupPanelOpen: boolean;
   onToggleLaunchGroupPanel: () => void;
   onOpenModManager: () => void;
+  onOpenRoomAutomation: () => void;
 }
 
 export function MainActionBar({
@@ -32,6 +34,7 @@ export function MainActionBar({
   launchGroupPanelOpen,
   onToggleLaunchGroupPanel,
   onOpenModManager,
+  onOpenRoomAutomation,
 }: MainActionBarProps) {
   const { config, saving } = useGlobalConfig();
   const { accounts } = useAccounts();
@@ -122,6 +125,11 @@ export function MainActionBar({
             disabled={launching || saving}
             onLaunch={launchGroups.launch}
             onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
+          />
+          <RoomAutomationQuickEdit
+            active={config?.installed_optional_modules?.includes("room-automation") === true}
+            language={config?.app_language}
+            onOpenSettings={onOpenRoomAutomation}
           />
           <button
             onClick={onRequestKillAll}

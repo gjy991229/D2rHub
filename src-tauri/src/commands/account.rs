@@ -1094,6 +1094,21 @@ pub(crate) fn update_account_mods_inner(
     )
 }
 
+/// Persists a Mod selection while the caller owns the account operation lease.
+/// Cross-account transactions use this entry point so they can reserve the
+/// complete account set before changing the first profile.
+pub(crate) fn update_account_mods_with_lease_held(
+    config: &GlobalConfig,
+    mut account: AccountMeta,
+    active_mod: String,
+    mod_list: Vec<String>,
+) -> Result<AccountMeta, AppError> {
+    account.replace_mod_configurations(active_mod, mod_list);
+    let mut account = persist_account_mod_configuration(config, account)?;
+    account.token = None;
+    Ok(account)
+}
+
 /// 标记账号已自定义过设置（用于前端引导提示）
 #[tauri::command]
 pub fn mark_settings_customized(
@@ -2406,6 +2421,15 @@ async fn execute_initialization_task(
     let mut request = TaskRequest::new(task_kind)
         .for_subject(&account_id)
         .with_conflict_key(format!("account:{account_id}"))
+        .with_cancel_hook({
+            let cancel_state = state.clone();
+            move || {
+                cancel_state
+                    .multi_instance()
+                    .facade()
+                    .cancel(cancellation_ticket);
+            }
+        })
         .with_initial_status("queued", "账号初始化任务已排队");
     if let Some(retry_of) = retry_of {
         request = request.with_retry_of(retry_of);
@@ -2421,7 +2445,8 @@ async fn execute_initialization_task(
     );
     let _ = task.update(5, "preflight", "正在检查账号与客户端环境");
 
-    tokio::task::spawn_blocking(move || {
+    let completion_state = state.clone();
+    let result = tokio::task::spawn_blocking(move || {
         let transaction = BnetInitializationTransactionAdapter {
             app: &app,
             state: &state,
@@ -2446,7 +2471,12 @@ async fn execute_initialization_task(
         result
     })
     .await
-    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?
+    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?;
+    completion_state
+        .multi_instance()
+        .facade()
+        .complete(cancellation_ticket);
+    result
 }
 
 /// 首次初始化 Battle.net 账号。

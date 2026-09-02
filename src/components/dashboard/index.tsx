@@ -6,6 +6,7 @@ export { LaunchGroupMenu } from "./LaunchGroupMenu";
 export { LaunchGroupPanel } from "./LaunchGroupPanel";
 export { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
 export { MainActionBar } from "./MainActionBar";
+export { RoomAutomationQuickEdit } from "./RoomAutomationQuickEdit";
 export { AccountGrid, AccountGridLoading, AccountGridEmpty } from "./AccountGrid";
 export { AccountGridItem } from "./AccountCard";
 export { SortableAccountCard } from "./SortableAccountCard";

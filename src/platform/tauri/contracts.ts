@@ -62,6 +62,7 @@ export const TAURI_COMMANDS = [
   "open_stats_page",
   "open_url_in_browser",
   "open_user_guide",
+  "patch_desktop_pet_settings",
   "patch_global_config",
   "prepare_audio_mod",
   "recover_auxiliary_windows",

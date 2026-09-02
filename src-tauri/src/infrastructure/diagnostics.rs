@@ -1,6 +1,6 @@
 use std::cmp::Reverse;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
@@ -152,7 +152,12 @@ fn collect_recent_logs(
     for (path, _) in logs.into_iter().take(MAX_LOG_FILES) {
         let mut bytes = Vec::new();
         File::open(&path)
-            .and_then(|file| file.take(MAX_LOG_BYTES_PER_FILE).read_to_end(&mut bytes))
+            .and_then(|mut file| {
+                let length = file.metadata()?.len();
+                let tail_length = length.min(MAX_LOG_BYTES_PER_FILE);
+                file.seek(SeekFrom::Start(length.saturating_sub(tail_length)))?;
+                file.take(tail_length).read_to_end(&mut bytes)
+            })
             .map_err(|error| format!("读取日志 {} 失败: {error}", path.display()))?;
         let content = String::from_utf8_lossy(&bytes);
         output.push_str(&format!(

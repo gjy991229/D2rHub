@@ -55,11 +55,16 @@ fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
 pub(crate) fn create_configured_windows(
     app: &AppHandle,
     config: &GlobalConfig,
-) -> Result<(), AppError> {
+) {
     for label in startup_window_labels(config) {
-        ensure_window(app, label)?;
+        if let Err(error) = ensure_window(app, label) {
+            crate::logger::log_msg(
+                "WARN",
+                "AuxiliaryWindow",
+                &format!("可选窗口 {label} 创建失败，主窗口将继续启动: {error}"),
+            );
+        }
     }
-    Ok(())
 }
 
 /// Returns an existing auxiliary WebView or creates it from the corresponding
