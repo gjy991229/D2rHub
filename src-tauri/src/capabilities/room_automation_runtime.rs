@@ -25,13 +25,11 @@ use crate::application::multi_instance::{
 };
 use crate::application::task_runtime::{TaskHandle, TaskRequest};
 use crate::commands::account::AccountManager;
-use crate::commands::utils::shared_system;
 use crate::domain::config::GlobalConfig;
 use crate::input_listener::{
     register_unbounded_capability_shortcuts, replace_unbounded_capability_shortcuts,
     CapabilityShortcutRegistration,
 };
-use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::state::SharedState;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
@@ -221,15 +219,10 @@ impl RuntimeHost for WindowsRuntimeHost {
     }
 
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
-        let global = self.global_config()?;
         let account = self
             .account_map()?
             .remove(&account_id.to_ascii_lowercase())
             .ok_or_else(|| format!("账号“{account_id}”不存在"))?;
-        let expected = LaunchContext::for_account(&global, &account, ContextPurpose::Settings)
-            .map_err(|error| error.to_string())?
-            .installation
-            .game_executable;
         if let Some(instance) = self
             .state
             .multi_instance()
@@ -237,21 +230,7 @@ impl RuntimeHost for WindowsRuntimeHost {
             .instance(account_id)
             .filter(|instance| instance.launch.is_some())
         {
-            let mut system = shared_system()
-                .lock()
-                .unwrap_or_else(|error| error.into_inner());
-            let system_pid = sysinfo::Pid::from(instance.pid as usize);
-            system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
-            let alive_and_expected = system.process(system_pid).is_some_and(|process| {
-                process
-                    .name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("D2R.exe")
-                    && process.exe().is_some_and(|actual| {
-                        crate::infrastructure::system::executable_paths_match(actual, &expected)
-                    })
-            });
-            if alive_and_expected {
+            if crate::infrastructure::system::find_game_hwnd(instance.pid).is_some() {
                 return Ok(instance);
             }
         }
@@ -1003,7 +982,7 @@ impl RoomAutomationManager {
         // 建房阶段只操作主号。跟随号会在真正跟进前重新解析并单独取得租约，
         // 不应在主号操作或人工等待期间被提前锁住。
         let primary_lease = self.acquire_primary_lease(&raw_config)?;
-        let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
+        let (config, primary) = self.prepare_primary_workflow(raw_config, true, true)?;
         let task = self
             .workflow
             .lock()
@@ -1068,10 +1047,10 @@ impl RoomAutomationManager {
         if self.lifecycle.lock().leases.is_some() {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝继续".to_string());
         }
-        // 跟进阶段重新校验所有仍可用的参与账号。等待阶段不保留租约，
-        // 因此账号设置和其他无关操作不会被人工等待长期阻断。
+        // 手动快捷键只做轻量窗口解析与租约获取，不能被自动模式的
+        // 延时或完整 Mod 扫描阻塞。
         let ((config, _primary, mut followers), acquired_leases) =
-            self.prepare_and_reserve_workflow(raw_config, true)?;
+            self.prepare_and_reserve_workflow(raw_config, true, false)?;
         let (task_id, room) = match snapshot.phase {
             WorkflowPhase::Waiting => {
                 let task_id = snapshot
@@ -1263,6 +1242,7 @@ impl RoomAutomationManager {
         &self,
         mut config: RoomAutomationConfig,
         require_primary_foreground: bool,
+        validate_room_tools: bool,
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let binding = self.chat_binding.status()?;
@@ -1270,7 +1250,9 @@ impl RoomAutomationManager {
             return Err(format!("F13 聊天键位尚未就绪：{}", binding.message));
         }
 
-        self.host.validate_room_tools(&config.primary_account_id)?;
+        if validate_room_tools {
+            self.host.validate_room_tools(&config.primary_account_id)?;
+        }
         let primary = self.host.running_instance(&config.primary_account_id)?;
         if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
@@ -1282,9 +1264,13 @@ impl RoomAutomationManager {
         &self,
         config: RoomAutomationConfig,
         require_primary_foreground: bool,
+        validate_room_tools: bool,
     ) -> Result<PreparedWorkflow, String> {
-        let (config, primary) =
-            self.prepare_primary_workflow(config, require_primary_foreground)?;
+        let (config, primary) = self.prepare_primary_workflow(
+            config,
+            require_primary_foreground,
+            validate_room_tools,
+        )?;
         let mut config = config;
         let mut followers = Vec::with_capacity(config.follower_account_ids.len());
         let mut skipped = Vec::new();
@@ -1293,9 +1279,13 @@ impl RoomAutomationManager {
                 .host
                 .running_instance(account_id)
                 .and_then(|instance| {
-                    self.host
-                        .validate_room_tools(account_id)
-                        .map(|()| instance)
+                    if validate_room_tools {
+                        self.host
+                            .validate_room_tools(account_id)
+                            .map(|()| instance)
+                    } else {
+                        Ok(instance)
+                    }
                 });
             match prepared {
                 Ok(instance) => followers.push((account_id.clone(), instance)),
@@ -1347,12 +1337,21 @@ impl RoomAutomationManager {
         &self,
         config: RoomAutomationConfig,
         require_primary_foreground: bool,
+        validate_room_tools: bool,
     ) -> Result<(PreparedWorkflow, AccountOperationLeases), String> {
         // 第一次解析筛掉当前没有可用窗口的跟随号，避免它们无意义地参与锁竞争；
         // 取得实际参与者租约后再解析一次，关闭窗口/账号状态变化的竞态。
-        let (candidate_config, _, _) = self.prepare_workflow(config, require_primary_foreground)?;
+        let (candidate_config, _, _) = self.prepare_workflow(
+            config,
+            require_primary_foreground,
+            validate_room_tools,
+        )?;
         let leases = self.acquire_participant_leases(&candidate_config)?;
-        let prepared = self.prepare_workflow(candidate_config, require_primary_foreground)?;
+        let prepared = self.prepare_workflow(
+            candidate_config,
+            require_primary_foreground,
+            validate_room_tools,
+        )?;
         Ok((prepared, leases))
     }
 
@@ -1421,7 +1420,7 @@ impl RoomAutomationManager {
             }
         };
         let ((fresh_config, _primary, followers), leases) =
-            match self.prepare_and_reserve_workflow(raw_config, false) {
+            match self.prepare_and_reserve_workflow(raw_config, false, true) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     self.fail_and_release(task_id, &error);

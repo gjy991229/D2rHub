@@ -1982,7 +1982,7 @@ pub fn find_unique_d2r_pid_by_window_identity(
 }
 
 /// Compatibility fallback for a D2RHub restart: returns a PID only when one
-/// visible D2R window has the exact account title. The normal runtime path
+/// visible window has the exact account title. The normal runtime path
 /// continues to use its trusted launch snapshot and PID.
 #[cfg(target_os = "windows")]
 pub fn find_unique_d2r_pid_by_exact_title(title: &str) -> Option<u32> {
@@ -2035,23 +2035,9 @@ pub fn find_unique_d2r_pid_by_exact_title(title: &str) -> Option<u32> {
         EnumWindows(callback, &mut ctx as *mut Ctx as isize);
     }
 
-    let mut system = shared_system()
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    system.refresh_processes(ProcessesToUpdate::All);
     let mut candidates = ctx
         .candidate_pids
         .into_iter()
-        .filter(|pid| {
-            system
-                .process(sysinfo::Pid::from(*pid as usize))
-                .is_some_and(|process| {
-                    process
-                        .name()
-                        .to_string_lossy()
-                        .eq_ignore_ascii_case("D2R.exe")
-                })
-        })
         .collect::<Vec<_>>();
     candidates.sort_unstable();
     candidates.dedup();
