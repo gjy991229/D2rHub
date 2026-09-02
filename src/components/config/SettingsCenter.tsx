@@ -1,18 +1,16 @@
 import { useState, useEffect, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { emitEvent, invokeCommand, listenEvent } from "../../platform/tauri";
+import { invokeCommand } from "../../platform/tauri";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
 import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
 import { parseShortcutFromKeyEvent, useShortcutRecorder } from "../../hooks/useShortcutRecorder";
-import type { SettingsMap } from "../../pages/SettingsEditor";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
 import { diffGlobalConfig } from "../../utils/globalConfigPatch";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
-import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../../utils/gameSettings";
 import { PathsPanel } from "../../features/settings/panels/PathsPanel";
 import { SettingsShell } from "../../features/settings/SettingsShell";
 import { LaunchStrategyPanel } from "../../features/settings/panels/LaunchStrategyPanel";
@@ -31,6 +29,7 @@ import { useAuxiliaryWindowActions } from "../../features/settings/useAuxiliaryW
 import { useMaintenanceController } from "../../features/settings/useMaintenanceController";
 import { useModCapsulePool } from "../../features/modCapsules/useModCapsulePool";
 import { useModFeatureCoordination } from "../../features/settings/useModFeatureCoordination";
+import { useAccountSettingsController } from "../../features/settings/useAccountSettingsController";
 import {
   isSettingsTabId,
   type SettingsTabId,
@@ -102,18 +101,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     };
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
-  const [selectedAccountId, setSelectedAccountId] = useState<string>("");
-  const [gameSettings, setGameSettings] = useState<SettingsMap>({});
-  const [gameSettingsLoading, setGameSettingsLoading] = useState(false);
-  const [gameSettingsLoadError, setGameSettingsLoadError] = useState<string | null>(null);
-  const [gameSettingsChanged, setGameSettingsChanged] = useState(false);
-  const [gameSettingsSaving, setGameSettingsSaving] = useState(false);
-  const [gameSettingsTab, setGameSettingsTab] = useState<"launch" | "game_display" | "game_graphics" | "game_audio" | "game_gameplay" | "game_automap">("launch");
-
-  const [accountNicknameDraft, setAccountNicknameDraft] = useState("");
-  const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
-  const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
-
   const { recordingPos, setRecordingPos } = useShortcutRecorder();
 
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
@@ -132,6 +119,29 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     openLogs: handleOpenLogs,
     exportDiagnostics: handleExportDiagnostics,
   } = useMaintenanceController(accounts, loadAccounts);
+  const {
+    selectedAccountId,
+    setSelectedAccountId,
+    selectedAccount,
+    accountHasChanges,
+    accountNicknameDraft,
+    setAccountNicknameDraft,
+    accountWinXDraft,
+    setAccountWinXDraft,
+    accountWinYDraft,
+    setAccountWinYDraft,
+    gameSettings,
+    gameSettingsLoading,
+    gameSettingsLoadError,
+    gameSettingsSaving,
+    gameSettingsTab,
+    setGameSettingsTab,
+    loadGameSettings,
+    updateGameSetting,
+    saveAccount: handleSaveAccount,
+    snapshotSystemSettings: handleSnapshotSystemSettings,
+    toggleCustomizedSettings: handleToggleAccountSettingsMode,
+  } = useAccountSettingsController({ accounts, loadAccounts, renameAccount });
 
   // Backup config for rollback when modal opens
   useEffect(() => {
@@ -183,56 +193,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   }, [open, initialTab, initialAccountId]);
 
-  useEffect(() => {
-    if (selectedAccountId) {
-      const acc = accounts.find(a => a.id === selectedAccountId);
-      if (acc) {
-        setAccountNicknameDraft(acc.display_name || acc.id);
-        setAccountWinXDraft(acc.window_x !== undefined ? acc.window_x : null);
-        setAccountWinYDraft(acc.window_y !== undefined ? acc.window_y : null);
-        loadGameSettings(selectedAccountId);
-      }
-    }
-  }, [selectedAccountId, accounts]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    const setupListener = async () => {
-      const stopListening = await listenEvent<{ accountId: string }>("account-settings-updated", (event) => {
-        if (event.payload.accountId === selectedAccountId && !gameSettingsSaving) {
-          loadGameSettings(selectedAccountId);
-        }
-      });
-      if (cancelled) stopListening();
-      else unlisten = stopListening;
-    };
-    if (selectedAccountId) {
-      setupListener();
-    }
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [selectedAccountId, gameSettingsSaving]);
-
-  const loadGameSettings = async (accId: string) => {
-    setGameSettingsLoading(true);
-    setGameSettingsLoadError(null);
-    try {
-      const data = await invokeCommand<SettingsMap>("get_account_settings", { accountId: accId });
-      setGameSettings(data);
-      setGameSettingsChanged(false);
-    } catch (e) {
-      setGameSettings({});
-      setGameSettingsChanged(false);
-      setGameSettingsLoadError(String(e));
-      showToast("error", `加载账号游戏配置失败: ${e}`);
-    } finally {
-      setGameSettingsLoading(false);
-    }
-  };
-
   // Close / Rollback
   const handleClose = () => {
     if (config && installationPathEditsAreInvalid(originalConfig, config)) {
@@ -265,51 +225,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     } catch (e) {
       showToast("error", `保存全局设置失败: ${e}`);
       return null;
-    }
-  };
-
-  // Selected Account Config Save (includes basic metadata and game settings file)
-  const handleSaveAccount = async (quiet = false) => {
-    if (!selectedAccountId) return true;
-    setGameSettingsSaving(true);
-    try {
-      const acc = accounts.find(a => a.id === selectedAccountId);
-      if (!acc) return false;
-
-      // 1. Rename if modified
-      if (accountNicknameDraft.trim() && accountNicknameDraft.trim() !== (acc.display_name || acc.id)) {
-        const renamed = await renameAccount(selectedAccountId, accountNicknameDraft.trim());
-        if (!renamed) return false;
-      }
-
-      // 2. Set Window position if modified
-      if (accountWinXDraft !== acc.window_x || accountWinYDraft !== acc.window_y) {
-        await invokeCommand("set_account_window_position", {
-          accountId: selectedAccountId,
-          windowX: accountWinXDraft,
-          windowY: accountWinYDraft,
-        });
-      }
-
-      // 3. Save game settings if modified
-      if (gameSettingsChanged) {
-        await invokeCommand("save_account_settings", {
-          accountId: selectedAccountId,
-          settings: gameSettings,
-        });
-        setGameSettingsChanged(false);
-        await emitEvent("account-settings-updated", { accountId: selectedAccountId });
-      }
-
-      await loadAccounts();
-      const savedName = accountNicknameDraft.trim() || acc.display_name || acc.id;
-      if (!quiet) showToast("success", `账号 "${savedName}" 的设置已保存`);
-      return true;
-    } catch (e) {
-      showToast("error", `保存账号设置失败: ${e}`);
-      return false;
-    } finally {
-      setGameSettingsSaving(false);
     }
   };
 
@@ -358,40 +273,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
     if (accountHasChanges && !(await handleSaveAccount(true))) return false;
     return true;
-  };
-
-  const handleSnapshotSystemSettings = async () => {
-    if (!selectedAccountId) return;
-    try {
-      const settings = await invokeCommand<SettingsMap>("snapshot_system_settings_to_account", {
-        accountId: selectedAccountId,
-      });
-      setGameSettings(settings);
-      setGameSettingsLoadError(null);
-      setGameSettingsChanged(false);
-      await loadAccounts();
-      await emitEvent("account-settings-updated", { accountId: selectedAccountId });
-      showToast("success", "已快照系统配置到当前账号");
-    } catch (e) {
-      showToast("error", `快照系统配置失败: ${e}`);
-    }
-  };
-
-  const handleToggleAccountSettingsMode = async (accountId: string, customized: boolean) => {
-    try {
-      if (customized) {
-        await invokeCommand("snapshot_system_settings_to_account", { accountId });
-      } else {
-        await invokeCommand("set_settings_customized", { accountId, customized: false });
-      }
-      await loadAccounts();
-      if (accountId === selectedAccountId) {
-        await loadGameSettings(accountId);
-      }
-      await emitEvent("account-settings-updated", { accountId });
-    } catch (e) {
-      showToast("error", `切换配置模式失败: ${e}`);
-    }
   };
 
   // Local Config Mutation helper
@@ -466,14 +347,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     openProcessing: handlePrepareSelectedMod,
     onGlobalCommitted: (saved) => setOriginalConfig(JSON.parse(JSON.stringify(saved))),
   });
-
-  const updateGameSetting = (key: string, value: unknown) => {
-    if (gameSettingsLoadError) return;
-    setGameSettings(prev => key === FRAMERATE_CAP_KEY
-      ? writeFramerateCap(prev, Number(value))
-      : ({ ...prev, [key]: value }));
-    setGameSettingsChanged(true);
-  };
 
   // Path pickers
   const pickFile = async (field: keyof GlobalConfig, title: string, extensions?: string[]) => {
@@ -578,24 +451,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   // Check if global config has changes compared to original
   const globalHasChanges = config && originalConfig && JSON.stringify(config) !== JSON.stringify(originalConfig);
 
-  // Check if account-level settings have unsaved changes
-  const accountHasChanges = (() => {
-    if (!selectedAccountId) return false;
-    const acc = accounts.find(a => a.id === selectedAccountId);
-    if (!acc) return false;
-    return (
-      (accountNicknameDraft.trim() && accountNicknameDraft.trim() !== (acc.display_name || acc.id)) ||
-      accountWinXDraft !== (acc.window_x ?? null) ||
-      accountWinYDraft !== (acc.window_y ?? null) ||
-      gameSettingsChanged
-    );
-  })();
-
   const appearanceHasChanges = !!config && !!appearanceDraft
     && !appearanceSettingsEqual(config, appearanceDraft);
   const hasAnyUnsavedChanges = !!globalHasChanges || !!accountHasChanges || appearanceHasChanges;
 
-  const selectedAccount = accounts.find(a => a.id === selectedAccountId);
   const accountRegionLabel = (region?: string | null) =>
     region === "KR" ? "亚服" : region === "NA" ? "美服" : region === "EU" ? "欧服" : region === "Global" ? "国际服" : "国服";
   const saveStatusText = gameSettingsSaving || appearanceApplying || navigationSaving
