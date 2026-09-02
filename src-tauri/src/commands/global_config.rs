@@ -1854,6 +1854,7 @@ impl GlobalConfig {
             .filter(|group_id| launch_group_ids.contains(group_id))
             .filter(|group_id| seen.insert((*group_id).to_string()))
             .map(str::to_string)
+            .take(3)
             .collect();
         original != self.favorite_launch_group_ids
     }

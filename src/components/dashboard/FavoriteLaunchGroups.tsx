@@ -7,6 +7,7 @@ import {
   favoriteLaunchGroups,
   inspectLaunchGroup,
   launchGroupIssueDetails,
+  MAX_FAVORITE_LAUNCH_GROUPS,
 } from "../../utils/launchGroups";
 import { useI18n } from "../../i18n";
 
@@ -31,6 +32,7 @@ export function FavoriteLaunchGroups({
 }: FavoriteLaunchGroupsProps) {
   const { t } = useI18n();
   const favorites = favoriteLaunchGroups(groups, favoriteGroupIds);
+  const canAddFavorite = favorites.length < MAX_FAVORITE_LAUNCH_GROUPS;
   const availableChoices = groups.filter((group) => !favorites.some((favorite) => favorite.id === group.id));
   const [pickerOpen, setPickerOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
@@ -60,6 +62,10 @@ export function FavoriteLaunchGroups({
     setPosition(null);
     if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    if (!canAddFavorite) closePicker();
+  }, [canAddFavorite, closePicker]);
 
   useLayoutEffect(() => {
     if (pickerOpen) updatePosition();
@@ -138,26 +144,28 @@ export function FavoriteLaunchGroups({
           </button>
         );
       })}
-      <button
-        ref={triggerRef}
-        type="button"
-        className="control-btn favorite-launch-add"
-        disabled={disabled}
-        aria-label={t("launch.favorite.manage")}
-        title={t("launch.favorite.manage")}
-        aria-haspopup="menu"
-        aria-expanded={pickerOpen}
-        aria-controls={pickerOpen ? pickerId : undefined}
-        onClick={() => setPickerOpen((open) => !open)}
-        onKeyDown={(event) => {
-          if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-          event.preventDefault();
-          setPickerOpen(true);
-        }}
-      >
-        <Plus size={12} strokeWidth={2} aria-hidden="true" />
-      </button>
-      {pickerOpen && position && createPortal(
+      {canAddFavorite && (
+        <button
+          ref={triggerRef}
+          type="button"
+          className="control-btn favorite-launch-add"
+          disabled={disabled}
+          aria-label={t("launch.favorite.manage")}
+          title={t("launch.favorite.manage")}
+          aria-haspopup="menu"
+          aria-expanded={pickerOpen}
+          aria-controls={pickerOpen ? pickerId : undefined}
+          onClick={() => setPickerOpen((open) => !open)}
+          onKeyDown={(event) => {
+            if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+            event.preventDefault();
+            setPickerOpen(true);
+          }}
+        >
+          <Plus size={12} strokeWidth={2} aria-hidden="true" />
+        </button>
+      )}
+      {canAddFavorite && pickerOpen && position && createPortal(
         <div
           ref={pickerRef}
           id={pickerId}

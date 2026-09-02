@@ -102,6 +102,7 @@ export function RoomAutomationPanel({
   const [bindingLoading, setBindingLoading] = useState(true);
   const [bindingError, setBindingError] = useState<string | null>(null);
   const [bindingFeedback, setBindingFeedback] = useState<string | null>(null);
+  const [bindingExpanded, setBindingExpanded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
@@ -298,9 +299,9 @@ export function RoomAutomationPanel({
   const updateBinding = async (
     kind: "scan" | "restore",
     action: () => Promise<RoomChatBindingStatus>,
-  ) => {
+  ): Promise<RoomChatBindingStatus | null> => {
     if (editorDisabled || dirty || (kind === "scan" && !draft?.enabled) || !binding || bindingLoading
-      || bindingError || operationRef.current) return;
+      || bindingError || operationRef.current) return null;
     operationRef.current = kind;
     setOperation(kind);
     setOperationError(null);
@@ -314,6 +315,7 @@ export function RoomAutomationPanel({
       }
       const committed = await gateway.getConfig();
       commitConfig(committed);
+      return next;
     } catch (error) {
       setOperationError(`${copy.bindingFailed}: ${errorMessage(error)}`);
       const [latestBinding, latestConfig] = await Promise.allSettled([
@@ -329,10 +331,26 @@ export function RoomAutomationPanel({
       if (latestConfig.status === "fulfilled") {
         commitConfig(latestConfig.value);
       }
+      return null;
     } finally {
       operationRef.current = null;
       setOperation(null);
     }
+  };
+
+  const scanAndInstallBinding = async () => {
+    const previous = binding;
+    const next = await updateBinding("scan", gateway.installChatBinding);
+    const discoveredFiles = !!previous && !!next && (
+      next.totalFiles > previous.totalFiles
+      || next.installedFiles > previous.installedFiles
+    );
+    setBindingExpanded(
+      !next
+      || !next.ready
+      || !previous?.ready
+      || discoveredFiles,
+    );
   };
 
   const enableRoomAutomation = () => {
@@ -398,6 +416,8 @@ export function RoomAutomationPanel({
   }
 
   const bindingNeedsAttention = draft.enabled && (!binding?.ready || !!bindingError || bindingLoading);
+  const bindingCardOpen = bindingExpanded
+    || (draft.enabled && !bindingLoading && (!binding?.ready || !!bindingError));
   const statusTone = status?.phase === "error"
     ? "danger"
     : !draft.enabled
@@ -457,6 +477,112 @@ export function RoomAutomationPanel({
           </p>
         )}
       </header>
+
+      <section className="spatial-panel room-automation-advanced room-automation-binding-details">
+        <div className="room-automation-binding-heading">
+          <button
+            type="button"
+            className="room-automation-binding-toggle"
+            aria-expanded={bindingCardOpen}
+            aria-controls={bindingCardOpen ? "room-automation-binding-body" : undefined}
+            data-open={bindingCardOpen ? "true" : undefined}
+            onClick={() => setBindingExpanded(!bindingCardOpen)}
+          >
+            <span>
+              <strong id="room-binding-title">{copy.f13Title}</strong>
+              <small>{binding?.ready ? copy.bindingReadySummary : copy.bindingNotReady}</small>
+            </span>
+            <ChevronDown size={15} aria-hidden="true" />
+          </button>
+          {draft.enabled && (
+            <Button
+              size="sm"
+              variant="secondary"
+              className="room-automation-binding-scan"
+              loading={operation === "scan"}
+              disabled={editorDisabled || dirty || !binding || bindingLoading || !!bindingError}
+              onClick={() => void scanAndInstallBinding()}
+            >
+              <RefreshCw size={13} aria-hidden="true" />
+              {copy.scanAndInstallBinding}
+            </Button>
+          )}
+        </div>
+
+        {bindingCardOpen && (
+          <div id="room-automation-binding-body" className="room-automation-binding-body">
+            <p className="room-automation-consent-copy">{copy.f13Description}</p>
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                variant="ghost"
+                loading={bindingLoading}
+                disabled={bindingLoading || !!operation}
+                onClick={() => {
+                  setBindingFeedback(null);
+                  setBindingReloadKey((current) => current + 1);
+                }}
+              >
+                <RefreshCw size={13} aria-hidden="true" />
+                {copy.refreshBinding}
+              </Button>
+            </div>
+            {snapshot.consent_notice?.requires_user_reauthorization && (
+              <p className="room-automation-consent-notice" role="note">{copy.f13LegacyNotice}</p>
+            )}
+            {bindingLoading ? (
+              <div className="room-automation-state" role="status" aria-live="polite">
+                <span className="room-automation-state-dot" data-tone="neutral" aria-hidden="true" />
+                <span>{copy.bindingLoading}</span>
+              </div>
+            ) : bindingError ? (
+              <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
+                <AlertCircle size={17} aria-hidden="true" />
+                <div>
+                  <strong>{copy.bindingUnavailable}</strong>
+                  <p>{bindingError}</p>
+                </div>
+                <Button size="sm" onClick={() => setBindingReloadKey((current) => current + 1)}>
+                  {copy.retryBinding}
+                </Button>
+              </div>
+            ) : (
+              <div className="room-automation-binding-status" data-ready={binding?.ready ? "true" : "false"}>
+                <div>
+                  {binding && <span>{copy.bindingFiles(binding.installedFiles, binding.totalFiles)}</span>}
+                  {!!binding?.conflictedFiles && <span>{copy.bindingConflicts(binding.conflictedFiles)}</span>}
+                  {!!binding?.orphanBackupFiles && <span>{copy.bindingOrphans(binding.orphanBackupFiles)}</span>}
+                </div>
+                {draft.chat_f13_auto_patch_enabled && (
+                  <span className="room-automation-scan-mode">{copy.configScanActive}</span>
+                )}
+              </div>
+            )}
+            <p className="room-automation-consent-copy">{copy.f13Consent}</p>
+            <p className="room-automation-scan-hint" role="note">{copy.newCharacterScanHint}</p>
+            {bindingFeedback && (
+              <p className="room-automation-scan-feedback" role="status" aria-live="polite">
+                {bindingFeedback}
+              </p>
+            )}
+            {binding?.d2rRunning && <p className="room-automation-field-error" role="alert">{copy.gameMustClose}</p>}
+            {binding?.lastWatcherError && <p className="room-automation-field-error" role="alert">{binding.lastWatcherError}</p>}
+            {!draft.enabled && (
+              <div className="room-automation-actions">
+                <Button
+                  size="md"
+                  loading={operation === "restore"}
+                  disabled={editorDisabled || dirty || !binding || bindingLoading
+                    || !!bindingError || binding.d2rRunning
+                    || (!binding.backupFiles && !binding.consentGranted && !binding.watcherRunning
+                      && !draft.chat_f13_auto_patch_enabled)}
+                  onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
+                >{copy.restoreBinding}</Button>
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
@@ -679,102 +805,6 @@ export function RoomAutomationPanel({
 
       </section>
       </div>
-
-      <details
-        className="spatial-panel room-automation-advanced room-automation-binding-details"
-        open={bindingNeedsAttention || undefined}
-      >
-        <summary>
-          <span>
-            <strong id="room-binding-title">{copy.f13Title}</strong>
-            <small>{binding?.ready ? copy.bindingReadySummary : copy.bindingNotReady}</small>
-          </span>
-          <ChevronDown size={15} aria-hidden="true" />
-        </summary>
-        <div className="room-automation-binding-body">
-          <p className="room-automation-consent-copy">{copy.f13Description}</p>
-          <div className="flex justify-end">
-          <Button
-            size="sm"
-            variant="ghost"
-            loading={bindingLoading}
-            disabled={bindingLoading || !!operation}
-            onClick={() => {
-              setBindingFeedback(null);
-              setBindingReloadKey((current) => current + 1);
-            }}
-          >
-            <RefreshCw size={13} aria-hidden="true" />
-            {copy.refreshBinding}
-          </Button>
-          </div>
-        {snapshot.consent_notice?.requires_user_reauthorization && (
-          <p className="room-automation-consent-notice" role="note">{copy.f13LegacyNotice}</p>
-        )}
-        {bindingLoading ? (
-          <div className="room-automation-state" role="status" aria-live="polite">
-            <span className="room-automation-state-dot" data-tone="neutral" aria-hidden="true" />
-            <span>{copy.bindingLoading}</span>
-          </div>
-        ) : bindingError ? (
-          <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">
-            <AlertCircle size={17} aria-hidden="true" />
-            <div>
-              <strong>{copy.bindingUnavailable}</strong>
-              <p>{bindingError}</p>
-            </div>
-            <Button size="sm" onClick={() => setBindingReloadKey((current) => current + 1)}>
-              {copy.retryBinding}
-            </Button>
-          </div>
-        ) : (
-          <div className="room-automation-binding-status" data-ready={binding?.ready ? "true" : "false"}>
-            <div>
-              {binding && <span>{copy.bindingFiles(binding.installedFiles, binding.totalFiles)}</span>}
-              {!!binding?.conflictedFiles && <span>{copy.bindingConflicts(binding.conflictedFiles)}</span>}
-              {!!binding?.orphanBackupFiles && <span>{copy.bindingOrphans(binding.orphanBackupFiles)}</span>}
-            </div>
-            {draft.chat_f13_auto_patch_enabled && (
-              <span className="room-automation-scan-mode">{copy.configScanActive}</span>
-            )}
-          </div>
-        )}
-        <p className="room-automation-consent-copy">{copy.f13Consent}</p>
-        <p className="room-automation-scan-hint" role="note">{copy.newCharacterScanHint}</p>
-        {bindingFeedback && (
-          <p className="room-automation-scan-feedback" role="status" aria-live="polite">
-            {bindingFeedback}
-          </p>
-        )}
-        {binding?.d2rRunning && <p className="room-automation-field-error" role="alert">{copy.gameMustClose}</p>}
-        {binding?.lastWatcherError && <p className="room-automation-field-error" role="alert">{binding.lastWatcherError}</p>}
-        <div className="room-automation-actions">
-          {draft.enabled ? (
-            <Button
-              size="md"
-              variant="secondary"
-              loading={operation === "scan"}
-              disabled={editorDisabled || dirty || !binding || bindingLoading
-                || !!bindingError}
-              onClick={() => void updateBinding("scan", gateway.installChatBinding)}
-            >
-              <RefreshCw size={14} aria-hidden="true" />
-              {copy.scanAndInstallBinding}
-            </Button>
-          ) : (
-            <Button
-              size="md"
-              loading={operation === "restore"}
-              disabled={editorDisabled || dirty || !binding || bindingLoading
-                || !!bindingError || binding.d2rRunning
-                || (!binding.backupFiles && !binding.consentGranted && !binding.watcherRunning
-                  && !draft.chat_f13_auto_patch_enabled)}
-              onClick={() => void updateBinding("restore", gateway.restoreChatBinding)}
-            >{copy.restoreBinding}</Button>
-          )}
-        </div>
-        </div>
-      </details>
 
       <details className="spatial-panel room-automation-advanced">
         <summary>

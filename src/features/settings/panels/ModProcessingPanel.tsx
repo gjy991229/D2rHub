@@ -421,8 +421,8 @@ export function ModProcessingPanel({
               <FeatureChoice
                 title={isEnglish ? "Auto-exit after death" : "死亡后自动退房"}
                 detail={isEnglish
-                  ? "Leave the current game about 0.11 seconds after the death screen appears; this cannot prevent death"
-                  : "死亡界面出现约 0.11 秒后离开当前游戏；不能避免死亡或挽救专家角色"}
+                  ? "Protect the blacksmith / Iron Golem from dying, but the corpse cannot be recovered (experience and gold are lost)"
+                  : "避免铁匠/铁魔死亡，但无法捡尸体（掉经验和金币）"}
                 checked={autoExitOnDeathSelected}
                 locked={autoExitOnDeathInherited}
                 lockLabel={isEnglish ? "Installed" : "已安装"}

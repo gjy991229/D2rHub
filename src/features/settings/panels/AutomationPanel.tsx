@@ -171,7 +171,7 @@ export function AutomationPanel({
         roomTitle: "In-game room tools",
         roomDetail: "Quickly recreate, create, and join rooms",
         deathExitTitle: "Auto-exit after death",
-        deathExitDetail: "Leave the current game after death; this cannot prevent death",
+        deathExitDetail: "Protect the blacksmith / Iron Golem from dying, but the corpse cannot be recovered (experience and gold are lost)",
         installed: "Installed · kept",
         manage: "Manage features",
         cancel: "Cancel",
@@ -187,7 +187,7 @@ export function AutomationPanel({
         roomTitle: "局内房间工具",
         roomDetail: "快速重开、创建与加入房间",
         deathExitTitle: "死亡后自动退房",
-        deathExitDetail: "死亡界面出现约 0.11 秒后退房；不能避免死亡或挽救专家角色",
+        deathExitDetail: "避免铁匠/铁魔死亡，但无法捡尸体（掉经验和金币）",
         installed: "已安装 · 保留",
         manage: "管理功能",
         cancel: "取消",
@@ -337,13 +337,6 @@ export function AutomationPanel({
       </p>
       {trackingTarget.valid && (
         <div className="recognition-capsule-selector">
-          <span className="recognition-capsule-copy">
-            {audioModStateLoading
-              ? "正在检查当前 Mod…"
-              : audioModState?.ready
-                ? `${audioModState.current_mod_name} · ${audioModState.feature_groups.length} 个功能模块`
-                : "当前账号还没有可用的 D2RHub 加工 Mod"}
-          </span>
           <select
             className="settings-input recognition-capsule-select"
             aria-label="选择 Mod"

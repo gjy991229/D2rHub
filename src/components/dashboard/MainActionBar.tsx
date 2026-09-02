@@ -126,11 +126,6 @@ export function MainActionBar({
             onLaunch={launchGroups.launch}
             onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
           />
-          <RoomAutomationQuickEdit
-            active={config?.installed_optional_modules?.includes("room-automation") === true}
-            language={config?.app_language}
-            onOpenSettings={onOpenRoomAutomation}
-          />
           <button
             onClick={onRequestKillAll}
             title="一键关闭所有暗黑2进程"
@@ -138,6 +133,11 @@ export function MainActionBar({
           >
             一键关闭
           </button>
+          <RoomAutomationQuickEdit
+            active={config?.installed_optional_modules?.includes("room-automation") === true}
+            language={config?.app_language}
+            onOpenSettings={onOpenRoomAutomation}
+          />
         </div>
         <div className="flex-1" />
         <button type="button" className="control-btn" onClick={onOpenModManager}>

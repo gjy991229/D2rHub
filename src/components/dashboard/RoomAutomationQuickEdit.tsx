@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 
-import { generatedRoomName } from "../../features/roomAutomation/model";
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import type {
   RoomAutomationConfig,
@@ -58,8 +57,8 @@ interface QuickEditCopy {
 
 const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
   "zh-CN": {
-    trigger: "下局",
-    triggerTitle: "快速修改下一个房间",
+    trigger: "跟房配置",
+    triggerTitle: "修改下一局跟房配置",
     title: "下一局房间",
     description: "只改房名与密码；参与账号、快捷键等仍在完整设置中管理。",
     preview: "预览",
@@ -80,8 +79,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     invalidSequence: "序号应为 0–4294967295 的整数，位数应为 1–6。",
   },
   "en-US": {
-    trigger: "Next",
-    triggerTitle: "Quickly edit the next room",
+    trigger: "Follow Config",
+    triggerTitle: "Edit the next room automation settings",
     title: "Next room",
     description: "Edit naming here; manage accounts and shortcuts in full settings.",
     preview: "Preview",
@@ -213,7 +212,6 @@ export function RoomAutomationQuickEdit({
 
   if (!active || !snapshot?.config.enabled) return null;
 
-  const currentRoomName = generatedRoomName(snapshot.config);
   const updateDraft = (patch: Partial<RoomNamingDraft>) => {
     setDraft((current) => current ? { ...current, ...patch } : current);
     setError(null);
@@ -273,10 +271,7 @@ export function RoomAutomationQuickEdit({
       >
         <span className="room-automation-quick-dot" aria-hidden="true" />
         <DoorOpen size={13} strokeWidth={1.9} aria-hidden="true" />
-        <span className="room-automation-quick-trigger-copy">
-          <small>{copy.trigger}</small>
-          <strong data-i18n-skip>{currentRoomName}</strong>
-        </span>
+        <span>{copy.trigger}</span>
         <ChevronDown size={12} strokeWidth={1.9} aria-hidden="true" />
       </button>
 

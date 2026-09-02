@@ -28,6 +28,8 @@ export interface LaunchGroupAvailability {
   issues: LaunchGroupMemberIssue[];
 }
 
+export const MAX_FAVORITE_LAUNCH_GROUPS = 3;
+
 export function launchGroupIssueReason(issue: LaunchGroupMemberIssue): string {
   if (issue.reason === "missing") return "账号已删除";
   if (issue.reason === "not_initialized") return "尚未初始化";
@@ -52,7 +54,8 @@ export function normalizeFavoriteLaunchGroupIds(
       if (id.length === 0 || !existingIds.has(id) || seen.has(id)) return false;
       seen.add(id);
       return true;
-    });
+    })
+    .slice(0, MAX_FAVORITE_LAUNCH_GROUPS);
 }
 
 export function favoriteLaunchGroups(
@@ -73,7 +76,9 @@ export function toggleFavoriteLaunchGroupId(
   const normalized = normalizeFavoriteLaunchGroupIds(groups, favoriteIds);
   return normalized.includes(groupId)
     ? normalized.filter(id => id !== groupId)
-    : normalizeFavoriteLaunchGroupIds(groups, [...normalized, groupId]);
+    : normalized.length >= MAX_FAVORITE_LAUNCH_GROUPS
+      ? normalized
+      : normalizeFavoriteLaunchGroupIds(groups, [...normalized, groupId]);
 }
 
 export function launchGroupAccountIds(group: LaunchGroup): string[] {

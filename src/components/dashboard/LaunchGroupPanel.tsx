@@ -7,6 +7,8 @@ import {
   inspectLaunchGroup,
   launchGroupAccountIds,
   launchGroupIssueDetails,
+  MAX_FAVORITE_LAUNCH_GROUPS,
+  normalizeFavoriteLaunchGroupIds,
 } from "../../utils/launchGroups";
 
 interface LaunchGroupPanelProps {
@@ -36,7 +38,8 @@ export function LaunchGroupPanel({
 }: LaunchGroupPanelProps) {
   const { t } = useI18n();
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
-  const favorites = new Set(favoriteGroupIds);
+  const favorites = new Set(normalizeFavoriteLaunchGroupIds(groups, favoriteGroupIds));
+  const favoriteLimitReached = favorites.size >= MAX_FAVORITE_LAUNCH_GROUPS;
   const orderedGroups = groups
     .map((group, index) => ({ group, index }))
     .sort((a, b) => Number(favorites.has(b.group.id)) - Number(favorites.has(a.group.id)) || a.index - b.index)
@@ -107,8 +110,12 @@ export function LaunchGroupPanel({
                 className="launch-group-panel-favorite"
                 data-active={isFavorite ? "true" : undefined}
                 aria-label={t(isFavorite ? "launch.favorite.removeLabel" : "launch.favorite.addLabel", { name: group.name })}
-                title={t(isFavorite ? "launch.favorite.removeTitle" : "launch.favorite.addTitle")}
-                disabled={disabled}
+                title={t(isFavorite
+                  ? "launch.favorite.removeTitle"
+                  : favoriteLimitReached
+                    ? "launch.favorite.limitTitle"
+                    : "launch.favorite.addTitle")}
+                disabled={disabled || (!isFavorite && favoriteLimitReached)}
                 onClick={() => onToggleFavorite(group)}
               >
                 <Star size={13} fill={isFavorite ? "currentColor" : "none"} />

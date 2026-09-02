@@ -9,8 +9,10 @@ import {
   inspectLaunchGroup,
   launchEntriesForGroup,
   launchGroupNameExists,
+  MAX_FAVORITE_LAUNCH_GROUPS,
   materializeLaunchGroupMembers,
   nextLaunchGroupName,
+  normalizeFavoriteLaunchGroupIds,
   toggleFavoriteLaunchGroupId,
 } from "../utils/launchGroups";
 import { requiresTokenMigration } from "../utils/regionPaths";
@@ -181,6 +183,16 @@ export function useLaunchGroupController() {
 
   const toggleFavorite = async (group: LaunchGroup) => {
     if (!config || saving) return;
+    const favorites = normalizeFavoriteLaunchGroupIds(
+      config.launch_groups,
+      config.favorite_launch_group_ids,
+    );
+    if (!favorites.includes(group.id) && favorites.length >= MAX_FAVORITE_LAUNCH_GROUPS) {
+      showToast("warning", config.app_language === "en-US"
+        ? "You can keep up to 3 favorite launch schemes"
+        : "常用启动方案最多保留 3 套");
+      return;
+    }
     try {
       await patch({
         favorite_launch_group_ids: toggleFavoriteLaunchGroupId(

@@ -37,9 +37,7 @@ interface ModuleDefinition {
 }
 
 interface ModuleCopy {
-  description: string;
   capabilities: readonly string[];
-  effect: string;
 }
 
 interface ModuleManagementCopy {
@@ -88,46 +86,30 @@ const MODULES: readonly ModuleDefinition[] = [
 const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, ModuleCopy>> = {
   "zh-CN": {
     overlays: {
-      description: "把邪恶区域与刷图统计放到游戏之外。两个窗口独立开关，邪恶区域可单独使用。",
       capabilities: ["邪恶区域", "统计悬浮窗", "窗口定位"],
-      effect: "添加后默认开启 TZ 播报",
     },
     pet: {
-      description: "在桌面显示轻量伴随角色，并根据鼠标、键盘与运行状态做出反馈。",
       capabilities: ["输入反馈", "桌面状态", "皮肤与缩放"],
-      effect: "添加后由你选择是否开启",
     },
     automation: {
-      description: "监听指定 D2R 进程的声纹，识别场景与掉落并沉淀刷图统计。",
       capabilities: ["声纹识别", "掉落记录", "刷图统计"],
-      effect: "联动添加悬浮窗，并开启统计与 TZ",
     },
     "room-automation": {
-      description: "编排主号建房、跟随账号入房与房间序号，保留手动接管能力。",
       capabilities: ["主号建房", "跟随入房", "房名序列"],
-      effect: "添加后完成账号与房间配置再开启",
     },
   },
   "en-US": {
     overlays: {
-      description: "Keep Terror Zone alerts and run statistics visible outside the game. Each window is controlled independently, and Terror Zone works on its own.",
       capabilities: ["Terror Zone", "Stats overlay", "Window placement"],
-      effect: "Adds with Terror Zone alerts enabled",
     },
     pet: {
-      description: "Show a lightweight desktop companion that responds to keyboard, mouse, and application activity.",
       capabilities: ["Input feedback", "Desktop status", "Skins and scale"],
-      effect: "Choose whether to turn it on after adding",
     },
     automation: {
-      description: "Listen to the selected D2R process, recognize scenes and drops, and build a history of your runs.",
       capabilities: ["Audio recognition", "Drop history", "Run statistics"],
-      effect: "Also adds overlays and turns on statistics and Terror Zone",
     },
     "room-automation": {
-      description: "Coordinate room creation, follower joins, and room-name sequences while keeping manual control available.",
       capabilities: ["Primary room", "Follower joins", "Room sequence"],
-      effect: "Configure accounts and room rules before turning it on",
     },
   },
 };
@@ -263,7 +245,6 @@ export function ModuleManagementPanel({
                         : copy.available}
                   </span>
                 </div>
-                <p>{moduleCopy.description}</p>
                 <div
                   className="module-management-capabilities"
                   aria-label={copy.includedCapabilitiesLabel}
@@ -271,9 +252,11 @@ export function ModuleManagementPanel({
                   {moduleCopy.capabilities.map((capability) => <span key={capability}>{capability}</span>)}
                   {module.linked && <span data-linked="true"><Link2 size={10} />{copy.linkedLabel}</span>}
                 </div>
-                <p className="module-management-effect">{moduleCopy.effect}</p>
               </div>
-              <div className="module-management-actions">
+              <div
+                className="module-management-actions"
+                data-confirming={confirmModule === module.id ? "true" : undefined}
+              >
                 {installed ? (
                   confirmModule === module.id ? (
                     <div className="module-management-remove-confirm" role="alert">

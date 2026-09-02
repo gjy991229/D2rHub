@@ -26,6 +26,7 @@ const keyedMessages = {
   "launch.favorite.addLabel": { zh: "设为常用启动方案“{name}”", en: "Add launch scheme “{name}” to favorites" },
   "launch.favorite.removeLabel": { zh: "取消常用启动方案“{name}”", en: "Remove launch scheme “{name}” from favorites" },
   "launch.favorite.addTitle": { zh: "添加到主界面，点击即可启动", en: "Add to the main action bar for direct launch" },
+  "launch.favorite.limitTitle": { zh: "常用方案最多 3 套", en: "Up to 3 favorite schemes" },
   "launch.favorite.removeTitle": { zh: "从主界面移除", en: "Remove from the main action bar" },
   "launch.favorite.launchTitle": { zh: "启动常用方案“{name}”", en: "Launch favorite scheme “{name}”" },
   "launch.favorite.emptyReason": { zh: "方案尚未选择账号", en: "No accounts selected" },

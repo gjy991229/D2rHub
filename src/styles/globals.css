@@ -360,29 +360,6 @@ html, body, #root {
   background: var(--success);
 }
 
-.room-automation-quick-trigger-copy {
-  display: inline-flex;
-  min-width: 0;
-  align-items: baseline;
-  gap: 4px;
-}
-
-.room-automation-quick-trigger-copy small {
-  color: var(--text-muted);
-  font-size: 9px;
-  font-weight: 700;
-}
-
-.room-automation-quick-trigger-copy strong {
-  max-width: 104px;
-  overflow: hidden;
-  color: var(--text-primary);
-  font-size: 11px;
-  font-weight: 780;
-  font-variant-numeric: tabular-nums;
-  text-overflow: ellipsis;
-}
-
 .room-automation-quick-trigger > svg:last-child {
   color: var(--text-muted);
   transition: transform var(--duration-normal) var(--ease-out-expo);
@@ -524,12 +501,6 @@ html, body, #root {
 @keyframes room-automation-quick-in {
   from { opacity: 0; transform: translateY(-5px) scale(0.99); }
   to { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-@media (max-width: 780px) {
-  .room-automation-quick-trigger-copy small {
-    display: none;
-  }
 }
 
 @media (max-width: 560px) {
