@@ -4,7 +4,10 @@
 //! keep their historical argument strings as compatibility mirrors, while all
 //! editing is centralized in this versioned sidecar-backed catalog.
 
-use crate::audio_mod::{active_mod_name, arguments_with_audio_mod, installed_mods, InstalledMod};
+use crate::audio_mod::{
+    active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
+    set_auto_exit_on_death_enabled, InstalledMod,
+};
 use crate::commands::account::{update_account_mods_inner, AccountManager, AccountMeta};
 use crate::commands::global_config::mutate_loaded_global_config;
 use crate::commands::launch::parse_windows_command_line;
@@ -46,6 +49,7 @@ pub struct ModCapsule {
     pub launch_arguments: String,
     pub default_launch_arguments: Option<String>,
     pub feature_groups: Vec<String>,
+    pub auto_exit_on_death_enabled: bool,
     pub processed: bool,
     pub source_eligible: bool,
     pub update_required: bool,
@@ -293,7 +297,7 @@ fn capsule_feature_metadata(
     scanned: &[ScannedMod],
     edition: &str,
     arguments: &str,
-) -> (Vec<String>, bool, bool, bool) {
+) -> (Vec<String>, bool, bool, bool, bool) {
     let active_name = active_mod_name(arguments).ok().flatten();
     let related = active_name.as_deref().and_then(|name| {
         scanned.iter().find(|entry| {
@@ -301,7 +305,7 @@ fn capsule_feature_metadata(
         })
     });
     related.map_or_else(
-        || (Vec::new(), false, false, false),
+        || (Vec::new(), false, false, false, false),
         |entry| {
             let processed =
                 !entry.installed.feature_groups.is_empty() || entry.installed.update_required;
@@ -310,6 +314,7 @@ fn capsule_feature_metadata(
                 processed,
                 entry.installed.update_required,
                 entry.installed.source_eligible,
+                entry.installed.auto_exit_on_death_enabled,
             )
         },
     )
@@ -334,6 +339,7 @@ fn build_pool(
                 launch_arguments: effective_scanned_arguments(payload, entry),
                 default_launch_arguments: Some(entry.default_arguments.clone()),
                 feature_groups: entry.installed.feature_groups.clone(),
+                auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
                 processed,
                 source_eligible: entry.installed.source_eligible,
                 update_required: entry.installed.update_required,
@@ -344,8 +350,13 @@ fn build_pool(
         })
         .collect::<Vec<_>>();
     capsules.extend(payload.custom_entries.iter().map(|entry| {
-        let (feature_groups, processed, update_required, source_eligible) =
-            capsule_feature_metadata(scanned, &entry.edition, &entry.launch_arguments);
+        let (
+            feature_groups,
+            processed,
+            update_required,
+            source_eligible,
+            auto_exit_on_death_enabled,
+        ) = capsule_feature_metadata(scanned, &entry.edition, &entry.launch_arguments);
         ModCapsule {
             id: entry.id.clone(),
             edition: entry.edition.clone(),
@@ -354,6 +365,7 @@ fn build_pool(
             launch_arguments: entry.launch_arguments.clone(),
             default_launch_arguments: None,
             feature_groups,
+            auto_exit_on_death_enabled,
             processed,
             source_eligible,
             update_required,
@@ -475,6 +487,50 @@ pub async fn scan_mod_capsule_pool(
     state: tauri::State<'_, SharedState>,
 ) -> Result<ModCapsulePool, String> {
     get_mod_capsule_pool(state).await
+}
+
+#[tauri::command]
+pub fn set_mod_auto_exit_on_death_enabled(
+    state: tauri::State<'_, SharedState>,
+    capsule_id: String,
+    enabled: bool,
+) -> Result<ModCapsulePool, String> {
+    let _catalog = CATALOG_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "尚未完成首次配置".to_string())?;
+    let scanned = scan_installations(&config);
+    let target = scanned
+        .iter()
+        .find(|entry| entry.id == capsule_id)
+        .cloned()
+        .ok_or_else(|| "只能切换游戏目录中实际存在的 Mod".to_string())?;
+    if !target
+        .installed
+        .feature_groups
+        .iter()
+        .any(|group| group == "auto_exit_on_death")
+    {
+        return Err(format!(
+            "Mod“{}”不支持死亡后自动退房",
+            target.installed.name
+        ));
+    }
+    ensure_audio_mod_not_in_use(state.inner(), &config, &target.installed.name)?;
+    let game_directory = if target.edition == "CN" {
+        config.cn_game_path.trim()
+    } else {
+        config.global_game_path.trim()
+    };
+    let mods_directory = Path::new(game_directory).join("mods");
+    set_auto_exit_on_death_enabled(&mods_directory, &target.installed.name, enabled)?;
+
+    let rescanned = scan_installations(&config);
+    let (generation, payload) = load_payload(state.inner(), &config, &rescanned)?;
+    Ok(build_pool(&config, generation, &payload, &rescanned))
 }
 
 #[tauri::command]
@@ -776,6 +832,7 @@ mod tests {
                 source_eligible: true,
                 feature_groups: Vec::new(),
                 audio_reusable: false,
+                auto_exit_on_death_enabled: false,
             },
             default_arguments: "-mod Sample -txt -assettestmode 1".to_string(),
         };

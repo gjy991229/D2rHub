@@ -59,6 +59,31 @@ export const SETTINGS_CAPABILITY_LABELS: Record<SettingsCapabilityKind, string> 
 
 export type SettingsLanguage = "zh-CN" | "en-US";
 
+export const OPTIONAL_SETTINGS_TABS = [
+  "automation",
+  "mod-processing",
+  "room-automation",
+  "overlays",
+  "pet",
+] as const satisfies readonly SettingsTabId[];
+
+export const SETTINGS_OPTIONAL_HUB_COPY: Record<SettingsLanguage, {
+  label: string;
+  description: string;
+  badge: string;
+}> = {
+  "zh-CN": {
+    label: "可选功能",
+    description: "识别、Mod、跟房、悬浮窗与桌宠",
+    badge: `${OPTIONAL_SETTINGS_TABS.length} 项`,
+  },
+  "en-US": {
+    label: "Optional Features",
+    description: "Recognition, Mods, rooms, overlays, and companion",
+    badge: `${OPTIONAL_SETTINGS_TABS.length}`,
+  },
+};
+
 export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
   label: string;
   description: string;
@@ -100,12 +125,12 @@ export const SETTINGS_GROUP_COPY: Record<SettingsLanguage, Record<SettingsFeatur
   "zh-CN": {
     "multi-instance": { label: "多开", note: "始终启用" },
     application: { label: "应用", note: "多开所需" },
-    "optional-features": { label: "可选功能", note: "按需启用" },
+    "optional-features": { label: "扩展", note: "按需启用" },
   },
   "en-US": {
     "multi-instance": { label: "Multi-instance", note: "Always on" },
     application: { label: "Application", note: "Required" },
-    "optional-features": { label: "Optional features", note: "On demand" },
+    "optional-features": { label: "Extensions", note: "On demand" },
   },
 };
 
@@ -214,6 +239,10 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
 
 export function isSettingsTabId(value: string | null | undefined): value is SettingsTabId {
   return SETTINGS_FEATURES.some((feature) => feature.id === value);
+}
+
+export function isOptionalSettingsTab(tab: SettingsTabId): boolean {
+  return (OPTIONAL_SETTINGS_TABS as readonly SettingsTabId[]).includes(tab);
 }
 
 export function getSettingsFeaturesByKind(kind: SettingsCapabilityKind): readonly SettingsFeatureDefinition[] {

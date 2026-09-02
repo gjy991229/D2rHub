@@ -6,14 +6,22 @@ import type {
 
 export const AUDIO_TELEMETRY_CAPSULE_FEATURE = "audio_telemetry";
 export const ROOM_TOOLS_CAPSULE_FEATURE = "in_game_room_tools";
+export const AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE = "auto_exit_on_death";
 
 const FEATURE_LABELS: Record<string, string> = {
   [AUDIO_TELEMETRY_CAPSULE_FEATURE]: "声纹识别",
   [ROOM_TOOLS_CAPSULE_FEATURE]: "局内房间工具",
+  [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: "死亡自动退房",
 };
 
 export function capsuleFeatureLabels(capsule: ModCapsule): string[] {
-  return capsule.feature_groups.map((feature) => FEATURE_LABELS[feature] ?? feature);
+  return capsule.feature_groups.map((feature) => {
+    if (feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE
+      && capsule.auto_exit_on_death_enabled === false) {
+      return "死亡自动退房（已停用）";
+    }
+    return FEATURE_LABELS[feature] ?? feature;
+  });
 }
 
 export function capsuleSelectionForAccount(

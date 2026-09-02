@@ -26,7 +26,15 @@ const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 1;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 19;
+const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
+const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
+const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
+const AUTO_EXIT_ON_DEATH_LEGACY_ENABLED_FINGERPRINT: &str =
+    "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100;enabled=1";
+const AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT: &str =
+    "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100;enabled=0";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+const AUTO_EXIT_ON_DEATH_PANEL: &str = "D2RHubAutoExitOnDeath";
 const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 267;
 const ROOM_TOOL_BUTTON_SCALE: f64 = 0.30;
 const ROOM_TOOL_BUTTON_Y: i64 = 12;
@@ -46,6 +54,7 @@ pub struct InstalledMod {
     pub source_eligible: bool,
     pub feature_groups: Vec<String>,
     pub audio_reusable: bool,
+    pub auto_exit_on_death_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -62,6 +71,7 @@ pub struct AudioModSetupState {
     pub build_mode: Option<String>,
     pub source_mod_name: Option<String>,
     pub feature_groups: Vec<String>,
+    pub auto_exit_on_death_enabled: bool,
     pub reason_code: String,
     pub message: String,
     pub installed_mods: Vec<InstalledMod>,
@@ -139,6 +149,7 @@ struct ValidatedAudioMod {
     source_mod_name: Option<String>,
     feature_groups: Vec<GeneratorFeatureGroup>,
     has_audio_telemetry: bool,
+    auto_exit_on_death_enabled: bool,
     current_feature_protocol: bool,
 }
 
@@ -152,6 +163,7 @@ struct ValidatedGeneratorOutput {
 struct RequestedFeatureGroups {
     audio_telemetry: bool,
     room_tools: bool,
+    auto_exit_on_death: bool,
 }
 
 struct GeneratorInvocation<'a> {
@@ -168,25 +180,32 @@ impl RequestedFeatureGroups {
     fn from_options(
         audio_telemetry: Option<bool>,
         room_tools: Option<bool>,
+        auto_exit_on_death: Option<bool>,
     ) -> Result<Self, String> {
         // Missing fields preserve the pre-r22 command contract used by older D2RHub frontends.
         let requested = Self {
             audio_telemetry: audio_telemetry.unwrap_or(true),
             room_tools: room_tools.unwrap_or(false),
+            auto_exit_on_death: auto_exit_on_death.unwrap_or(false),
         };
-        if !requested.audio_telemetry && !requested.room_tools {
+        if !requested.audio_telemetry && !requested.room_tools && !requested.auto_exit_on_death {
             return Err("请至少选择一个要加工的功能".to_string());
         }
         Ok(requested)
     }
 
-    fn generator_value(self) -> &'static str {
-        match (self.audio_telemetry, self.room_tools) {
-            (true, true) => "audio,rooms",
-            (true, false) => "audio",
-            (false, true) => "rooms",
-            (false, false) => unreachable!("feature selection is validated at the command edge"),
+    fn generator_value(self) -> String {
+        let mut features = Vec::new();
+        if self.audio_telemetry {
+            features.push("audio");
         }
+        if self.room_tools {
+            features.push("rooms");
+        }
+        if self.auto_exit_on_death {
+            features.push("death-exit");
+        }
+        features.join(",")
     }
 
     fn validate_present(self, groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
@@ -196,6 +215,11 @@ impl RequestedFeatureGroups {
                 self.room_tools,
                 IN_GAME_ROOM_TOOLS_FEATURE_ID,
                 "局内房间工具",
+            ),
+            (
+                self.auto_exit_on_death,
+                AUTO_EXIT_ON_DEATH_FEATURE_ID,
+                "死亡后自动退出",
             ),
         ] {
             if requested {
@@ -217,6 +241,9 @@ impl RequestedFeatureGroups {
         self.room_tools |= groups
             .iter()
             .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
+        self.auto_exit_on_death |= groups
+            .iter()
+            .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID);
         self
     }
 
@@ -229,6 +256,10 @@ impl RequestedFeatureGroups {
                 || groups
                     .iter()
                     .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID))
+            && (!self.auto_exit_on_death
+                || groups
+                    .iter()
+                    .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID))
     }
 }
 
@@ -473,7 +504,16 @@ fn validate_preserved_feature_groups(
         let preserved = candidate.iter().any(|actual| {
             actual.id == required.id
                 && actual.recipe_version == required.recipe_version
-                && actual.fingerprint == required.fingerprint
+                && (actual.fingerprint == required.fingerprint
+                    // Normalize the short-lived stateful r1 fingerprints once. This is a metadata
+                    // migration during additive processing, not an activation toggle.
+                    || (required.id == AUTO_EXIT_ON_DEATH_FEATURE_ID
+                        && actual.fingerprint == AUTO_EXIT_ON_DEATH_FINGERPRINT
+                        && matches!(
+                            required.fingerprint.as_str(),
+                            AUTO_EXIT_ON_DEATH_LEGACY_ENABLED_FINGERPRINT
+                                | AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT
+                        )))
         });
         if !preserved {
             return Err(format!(
@@ -509,9 +549,25 @@ fn validate_supported_feature_group(group: &GeneratorFeatureGroup) -> Result<(),
             }
             Ok(())
         }
+        AUTO_EXIT_ON_DEATH_FEATURE_ID => validate_auto_exit_on_death_feature_group(group),
         // Unknown groups are intentionally preserved and accepted. Their owner is responsible for
         // interpreting the recipe and fingerprint once D2RHub learns that feature.
         _ => Ok(()),
+    }
+}
+
+fn validate_auto_exit_on_death_feature_group(group: &GeneratorFeatureGroup) -> Result<(), String> {
+    if group.recipe_version != AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION {
+        return Err(format!(
+            "D2RHub Mod 的死亡后自动退出配方 r{} 不受支持（需要 r{AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION}）",
+            group.recipe_version
+        ));
+    }
+    match group.fingerprint.as_str() {
+        AUTO_EXIT_ON_DEATH_FINGERPRINT
+        | AUTO_EXIT_ON_DEATH_LEGACY_ENABLED_FINGERPRINT
+        | AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT => Ok(()),
+        _ => Err("D2RHub Mod 的死亡后自动退出指纹无效，请重新加工".to_string()),
     }
 }
 
@@ -640,6 +696,14 @@ fn validate_audio_mod_credential(
         || feature_groups
             .iter()
             .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
+    let auto_exit_on_death_active = if feature_groups
+        .iter()
+        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+    {
+        auto_exit_on_death_layout_enabled(&mod_directory, mod_name)?
+    } else {
+        false
+    };
     let build_mode = manifest
         .get("build_mode")
         .and_then(serde_json::Value::as_str)
@@ -653,6 +717,7 @@ fn validate_audio_mod_credential(
         source_mod_name,
         feature_groups,
         has_audio_telemetry,
+        auto_exit_on_death_enabled: auto_exit_on_death_active,
         current_feature_protocol,
     })
 }
@@ -713,6 +778,85 @@ fn find_layout_node<'a>(
         .and_then(serde_json::Value::as_array)?
         .iter()
         .find_map(|child| find_layout_node(child, name))
+}
+
+fn read_auto_exit_on_death_layout(
+    layout_directory: &Path,
+    name: &str,
+) -> Result<serde_json::Value, String> {
+    let path = layout_directory.join(name);
+    let bytes = std::fs::read(&path).map_err(|_| format!("死亡后自动退出缺少布局文件：{name}"))?;
+    serde_json::from_slice(&bytes).map_err(|_| format!("死亡后自动退出布局已损坏：{name}"))
+}
+
+fn auto_exit_on_death_layout_enabled(mod_directory: &Path, mod_name: &str) -> Result<bool, String> {
+    let layout_directory = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let death_modal = read_auto_exit_on_death_layout(&layout_directory, "youdiedmodalhd.json")?;
+    let launcher = find_layout_node(&death_modal, "D2RHubAutoExitOnDeathLauncher");
+    let launcher_is_valid = launcher.is_some_and(|launcher| {
+        launcher.get("type").and_then(serde_json::Value::as_str) == Some("TimerWidget")
+            && launcher
+                .pointer("/fields/message")
+                .and_then(serde_json::Value::as_str)
+                == Some("PanelManager:OpenPanel:D2RHubAutoExitOnDeath")
+            && launcher
+                .pointer("/fields/time")
+                .and_then(serde_json::Value::as_f64)
+                .is_some_and(|time| (time - 0.01).abs() < f64::EPSILON)
+    });
+    if launcher.is_some() && !launcher_is_valid {
+        return Err("死亡界面的自动退出入口无效".to_string());
+    }
+    let has_legacy_exit_timer = death_modal
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|children| {
+            children.iter().any(|child| {
+                child.get("type").and_then(serde_json::Value::as_str) == Some("TimerWidget")
+                    && child
+                        .pointer("/fields/message")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("PanelManager:OpenPanel:exitgame")
+            })
+        });
+    if has_legacy_exit_timer {
+        return Err("死亡界面仍包含未规范化的原生 exitgame 定时入口".to_string());
+    }
+    Ok(launcher_is_valid)
+}
+
+fn validate_auto_exit_on_death_layouts(
+    mod_directory: &Path,
+    mod_name: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let layout_directory = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    if auto_exit_on_death_layout_enabled(mod_directory, mod_name)? != enabled {
+        return Err("死亡界面的自动退出启用状态与配置不一致".to_string());
+    }
+
+    let panel_name = format!("{AUTO_EXIT_ON_DEATH_PANEL}hd.json");
+    let exit_panel = read_auto_exit_on_death_layout(&layout_directory, &panel_name)?;
+    if exit_panel.get("type").and_then(serde_json::Value::as_str) != Some("PausePanel")
+        || exit_panel.get("name").and_then(serde_json::Value::as_str)
+            != Some(AUTO_EXIT_ON_DEATH_PANEL)
+        || !layout_has_timed_child_message(&exit_panel, "PausePanelMessage:ExitGame", 0.1)
+    {
+        return Err("死亡后自动退出面板的退出消息链无效".to_string());
+    }
+
+    let stub_name = format!("{AUTO_EXIT_ON_DEATH_PANEL}.json");
+    let stub = read_auto_exit_on_death_layout(&layout_directory, &stub_name)?;
+    if stub.get("type").and_then(serde_json::Value::as_str) != Some("Panel")
+        || stub.get("name").and_then(serde_json::Value::as_str) != Some(AUTO_EXIT_ON_DEATH_PANEL)
+    {
+        return Err("死亡后自动退出面板入口无效".to_string());
+    }
+    Ok(())
 }
 
 fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
@@ -1082,6 +1226,14 @@ fn validate_compatible_audio_mod_directory(
         || feature_groups
             .iter()
             .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
+    let auto_exit_on_death_active = if feature_groups
+        .iter()
+        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+    {
+        auto_exit_on_death_layout_enabled(&mod_directory, mod_name)?
+    } else {
+        false
+    };
     let build_mode = manifest
         .get("build_mode")
         .and_then(serde_json::Value::as_str)
@@ -1103,6 +1255,12 @@ fn validate_compatible_audio_mod_directory(
     {
         validate_in_game_room_tool_layouts(&mod_directory, mod_name)?;
     }
+    if feature_groups
+        .iter()
+        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+    {
+        validate_auto_exit_on_death_layouts(&mod_directory, mod_name, auto_exit_on_death_active)?;
+    }
     Ok(ValidatedAudioMod {
         directory: mod_directory,
         recipe_version,
@@ -1110,6 +1268,7 @@ fn validate_compatible_audio_mod_directory(
         source_mod_name,
         feature_groups,
         has_audio_telemetry,
+        auto_exit_on_death_enabled: auto_exit_on_death_active,
         current_feature_protocol,
     })
 }
@@ -1473,6 +1632,9 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 Ok(validated) => validated.current_feature_protocol,
                 Err(_) => !has_processing_manifest,
             };
+            let auto_exit_on_death_enabled = validation
+                .as_ref()
+                .is_ok_and(|validated| validated.auto_exit_on_death_enabled);
             Some(InstalledMod {
                 name,
                 audio_ready,
@@ -1480,6 +1642,7 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 source_eligible,
                 feature_groups,
                 audio_reusable,
+                auto_exit_on_death_enabled,
             })
         })
         .collect::<Vec<_>>();
@@ -1586,7 +1749,7 @@ fn running_accounts_using_mod(
         .collect()
 }
 
-fn ensure_audio_mod_not_in_use(
+pub(crate) fn ensure_audio_mod_not_in_use(
     state: &SharedState,
     config: &GlobalConfig,
     mod_name: &str,
@@ -1605,6 +1768,116 @@ fn ensure_audio_mod_not_in_use(
     ))
 }
 
+fn replace_auto_exit_layout_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| "死亡界面布局文件名无效".to_string())?;
+    let temporary = path.with_file_name(format!(
+        ".{file_name}.d2rhub-toggle-{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let result = (|| -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&temporary)
+            .map_err(|error| format!("无法创建死亡退房配置临时文件：{error}"))?;
+        file.write_all(contents)
+            .map_err(|error| format!("无法写入死亡退房配置：{error}"))?;
+        file.sync_all()
+            .map_err(|error| format!("无法持久化死亡退房配置：{error}"))?;
+        drop(file);
+        durable_fs::durable_sibling_replace(&temporary, path)
+            .map_err(|error| format!("无法原子切换死亡退房配置：{error}"))?;
+        if let Some(parent) = path.parent() {
+            durable_fs::sync_directory(parent)
+                .map_err(|error| format!("无法持久化死亡退房配置目录：{error}"))?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temporary);
+    }
+    result
+}
+
+pub(crate) fn set_auto_exit_on_death_enabled(
+    mods_directory: &Path,
+    mod_name: &str,
+    enabled: bool,
+) -> Result<bool, String> {
+    let validated = validate_audio_mod_credential(mods_directory, mod_name)?;
+    if !validated
+        .feature_groups
+        .iter()
+        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+    {
+        return Err(format!("Mod“{mod_name}”不支持死亡后自动退房"));
+    }
+    if validated.auto_exit_on_death_enabled == enabled {
+        return Ok(enabled);
+    }
+    validate_auto_exit_on_death_layouts(
+        &validated.directory,
+        mod_name,
+        validated.auto_exit_on_death_enabled,
+    )?;
+
+    let layout_path = validated
+        .directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+        .join("youdiedmodalhd.json");
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, &layout_path, false, "死亡界面布局")?;
+    let original =
+        std::fs::read(&layout_path).map_err(|error| format!("无法读取死亡界面布局：{error}"))?;
+    let mut document: serde_json::Value = serde_json::from_slice(&original)
+        .map_err(|_| "死亡界面布局已损坏，无法切换死亡退房".to_string())?;
+    let children = document
+        .get_mut("children")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "死亡界面布局缺少 children，无法切换死亡退房".to_string())?;
+    children.retain(|child| {
+        child.get("name").and_then(serde_json::Value::as_str)
+            != Some("D2RHubAutoExitOnDeathLauncher")
+    });
+    if enabled {
+        children.push(serde_json::json!({
+            "type": "TimerWidget",
+            "name": "D2RHubAutoExitOnDeathLauncher",
+            "fields": {
+                "time": 0.01,
+                "message": "PanelManager:OpenPanel:D2RHubAutoExitOnDeath"
+            }
+        }));
+    }
+    let updated = serde_json::to_vec_pretty(&document)
+        .map_err(|error| format!("无法序列化死亡退房配置：{error}"))?;
+    replace_auto_exit_layout_file(&layout_path, &updated)?;
+
+    match validate_audio_mod_credential(mods_directory, mod_name).and_then(|after| {
+        validate_auto_exit_on_death_layouts(&after.directory, mod_name, enabled)?;
+        Ok(after)
+    }) {
+        Ok(after) if after.auto_exit_on_death_enabled == enabled => Ok(enabled),
+        validation => {
+            let restore = replace_auto_exit_layout_file(&layout_path, &original);
+            let detail = match validation {
+                Ok(_) => "写入后的启用状态与请求不一致".to_string(),
+                Err(error) => error,
+            };
+            match restore {
+                Ok(()) => Err(format!("死亡退房配置校验失败，已恢复原配置：{detail}")),
+                Err(error) => Err(format!(
+                    "死亡退房配置校验失败且自动恢复失败：{detail}；恢复错误：{error}"
+                )),
+            }
+        }
+    }
+}
+
 fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupState, String> {
     let (_config, account, context) = configured_account(state, account_id)?;
     let mods_directory = context.installation.game_directory.join("mods");
@@ -1619,10 +1892,14 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
     let restart_required = running_pid.is_some()
         && !configured.update_required
         && (active_session_ready != Some(true) || active_session_update_required != Some(false));
-    let feature_groups = configured
+    let configured_mod = configured
         .mod_name
         .as_deref()
-        .and_then(|name| validate_audio_mod_credential(&mods_directory, name).ok())
+        .and_then(|name| validate_audio_mod_credential(&mods_directory, name).ok());
+    let auto_exit_on_death_enabled = configured_mod
+        .as_ref()
+        .is_some_and(|validated| validated.auto_exit_on_death_enabled);
+    let feature_groups = configured_mod
         .map(|validated| {
             validated
                 .feature_groups
@@ -1648,6 +1925,7 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
         build_mode: configured.build_mode,
         source_mod_name: configured.source_mod_name,
         feature_groups,
+        auto_exit_on_death_enabled,
         reason_code: configured.reason_code,
         message: configured.message,
         installed_mods: installed_mods(&mods_directory),
@@ -1785,12 +2063,12 @@ async fn run_audio_mod_generator(
         "all".to_string(),
         "--features".to_string(),
         requested_features.generator_value().to_string(),
-        "--events".to_string(),
     ];
     if let Some(source) = source_directory {
         arguments.push("--source".to_string());
         arguments.push(source.to_string_lossy().into_owned());
     }
+    arguments.push("--events".to_string());
 
     let (mut receiver, child) = app
         .shell()
@@ -2841,6 +3119,7 @@ pub async fn prepare_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_auto_exit_on_death: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
     prepare_audio_mod_task(
         app,
@@ -2851,6 +3130,7 @@ pub async fn prepare_audio_mod(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_auto_exit_on_death,
         },
         None,
     )
@@ -2869,6 +3149,7 @@ async fn prepare_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
     } = payload
     else {
         return Err("任务重试数据与 Mod 准备操作不匹配".to_string());
@@ -2879,6 +3160,7 @@ async fn prepare_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-prepare")
@@ -2902,6 +3184,7 @@ async fn prepare_audio_mod_task(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_auto_exit_on_death,
         },
         &task,
     )
@@ -2926,6 +3209,7 @@ struct PrepareAudioModRequest {
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_auto_exit_on_death: Option<bool>,
 }
 
 async fn prepare_audio_mod_impl(
@@ -2940,6 +3224,7 @@ async fn prepare_audio_mod_impl(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
     } = request;
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
@@ -2957,8 +3242,11 @@ async fn prepare_audio_mod_impl(
 
     let (source_mod_name, source_directory) =
         resolve_source_directory(&mods_directory, &mod_name, source_mod_name)?;
-    let requested_features =
-        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
+    let requested_features = RequestedFeatureGroups::from_options(
+        include_audio_telemetry,
+        include_room_tools,
+        include_auto_exit_on_death,
+    )?;
 
     emit_prepare_progress(
         &app,
@@ -3010,6 +3298,7 @@ pub async fn upgrade_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_auto_exit_on_death: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
     upgrade_audio_mod_task(
         app,
@@ -3019,6 +3308,7 @@ pub async fn upgrade_audio_mod(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_auto_exit_on_death,
         },
         None,
     )
@@ -3036,6 +3326,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
     } = payload
     else {
         return Err("任务重试数据与 Mod 更新操作不匹配".to_string());
@@ -3045,6 +3336,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-upgrade")
@@ -3066,6 +3358,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_auto_exit_on_death,
         &task,
     )
     .await;
@@ -3092,12 +3385,14 @@ pub(crate) enum AudioModTaskRetryPayload {
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        include_auto_exit_on_death: Option<bool>,
     },
     Upgrade {
         account_id: String,
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        include_auto_exit_on_death: Option<bool>,
     },
 }
 
@@ -3128,6 +3423,7 @@ async fn upgrade_audio_mod_impl(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_auto_exit_on_death: Option<bool>,
     task: &TaskHandle,
 ) -> Result<AudioModSetupState, String> {
     let shared_state = state.inner().clone();
@@ -3140,8 +3436,11 @@ async fn upgrade_audio_mod_impl(
         .mod_name
         .as_deref()
         .ok_or_else(|| "当前账号没有配置识别 Mod".to_string())?;
-    let mut explicitly_requested =
-        RequestedFeatureGroups::from_options(include_audio_telemetry, include_room_tools)?;
+    let mut explicitly_requested = RequestedFeatureGroups::from_options(
+        include_audio_telemetry,
+        include_room_tools,
+        include_auto_exit_on_death,
+    )?;
     // Every pre-feature-group official release was an audio Mod. Preserve that known behavior even
     // if a newer caller only asks to append room tools while performing the mandatory upgrade.
     if current.update_required {
@@ -3492,16 +3791,19 @@ mod tests {
         active_mod_name, arguments_with_audio_mod, compatibility, find_existing_mod_name,
         generated_audio_mod_name, has_txt_argument, installed_mods, recover_audio_mod_replacements,
         replace_audio_mod_directory, replace_journal_paths_are_valid,
-        require_verified_running_session, resolve_source_directory, traverse_safe_directory_tree,
-        validate_audio_mod, validate_audio_mod_credential, validate_generator_output,
+        require_verified_running_session, resolve_source_directory, set_auto_exit_on_death_enabled,
+        traverse_safe_directory_tree, validate_audio_mod, validate_audio_mod_credential,
+        validate_auto_exit_on_death_layouts, validate_generator_output,
         validate_in_game_room_tool_layouts, validate_preserved_feature_groups,
         validate_recoverable_audio_mod_directory, write_replace_journal,
         write_replace_journal_with_stage_sync, GeneratorFeatureGroup, GeneratorReport,
         RequestedFeatureGroups, SafeTreeNodeKind, AREA_CATALOG_FILE_NAME,
-        AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ITEM_CATALOG_FILE_NAME,
-        NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION,
-        ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X,
-        ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
+        AUDIO_TELEMETRY_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID, AUTO_EXIT_ON_DEATH_FINGERPRINT,
+        AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT, IN_GAME_ROOM_TOOLS_FEATURE_ID,
+        ITEM_CATALOG_FILE_NAME, LEGACY_MANIFEST_FILE_NAME, NEXT_GAME_TOOLTIP_OFFSET_Y,
+        PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_BUTTON_SCALE,
+        ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X, ROOM_TOOL_JOIN_X,
+        ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
     };
 
     const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
@@ -3683,6 +3985,64 @@ mod tests {
         }
     }
 
+    fn write_test_auto_exit_on_death_layouts(
+        mods_directory: &std::path::Path,
+        mod_name: &str,
+        enabled: bool,
+    ) {
+        let layouts = mods_directory
+            .join(mod_name)
+            .join(format!("{mod_name}.mpq"))
+            .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+        std::fs::create_dir_all(&layouts).unwrap();
+        let death_children = if enabled {
+            serde_json::json!([{
+                "type": "TimerWidget",
+                "name": "D2RHubAutoExitOnDeathLauncher",
+                "fields": {
+                    "time": 0.01,
+                    "message": "PanelManager:OpenPanel:D2RHubAutoExitOnDeath"
+                }
+            }])
+        } else {
+            serde_json::json!([])
+        };
+        for (name, document) in [
+            (
+                "youdiedmodalhd.json",
+                serde_json::json!({
+                    "type": "YouDiedModal",
+                    "name": "YouDiedModal",
+                    "children": death_children
+                }),
+            ),
+            (
+                "D2RHubAutoExitOnDeathhd.json",
+                serde_json::json!({
+                    "type": "PausePanel",
+                    "name": "D2RHubAutoExitOnDeath",
+                    "children": [{
+                        "type": "TimerWidget",
+                        "name": "D2RHubAutoExitOnDeathCommit",
+                        "fields": {
+                            "time": 0.1,
+                            "message": "PausePanelMessage:ExitGame"
+                        }
+                    }]
+                }),
+            ),
+            (
+                "D2RHubAutoExitOnDeath.json",
+                serde_json::json!({
+                    "type": "Panel",
+                    "name": "D2RHubAutoExitOnDeath"
+                }),
+            ),
+        ] {
+            std::fs::write(layouts.join(name), serde_json::to_vec(&document).unwrap()).unwrap();
+        }
+    }
+
     #[test]
     fn rewrites_only_mod_and_txt_arguments() {
         let result = arguments_with_audio_mod(
@@ -3709,9 +4069,10 @@ mod tests {
 
     #[test]
     fn omitted_feature_flags_keep_the_legacy_audio_command_contract() {
-        let requested = RequestedFeatureGroups::from_options(None, None).unwrap();
+        let requested = RequestedFeatureGroups::from_options(None, None, None).unwrap();
         assert!(requested.audio_telemetry);
         assert!(!requested.room_tools);
+        assert!(!requested.auto_exit_on_death);
         assert_eq!(requested.generator_value(), "audio");
     }
 
@@ -3745,7 +4106,7 @@ mod tests {
             fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
-        let requested = RequestedFeatureGroups::from_options(Some(true), Some(true))
+        let requested = RequestedFeatureGroups::from_options(Some(true), Some(true), Some(false))
             .unwrap()
             .include_existing_known(std::slice::from_ref(&audio));
         assert!(!requested.all_present(std::slice::from_ref(&audio)));
@@ -3758,6 +4119,82 @@ mod tests {
             reused_from_source: false,
         };
         assert!(requested.all_present(&[audio, room]));
+    }
+
+    #[test]
+    fn death_auto_exit_is_an_independent_verified_feature_group() {
+        let requested =
+            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(true)).unwrap();
+        assert_eq!(requested.generator_value(), "death-exit");
+
+        let root = test_mods_directory("death_auto_exit");
+        let mod_name = "DeathExit";
+        write_test_audio_mod(
+            &root,
+            mod_name,
+            serde_json::json!({
+                "manifest_format": "d2r-audio-telemetry-mod",
+                "producer": "d2r-audio-mod",
+                "protocol_version": PROTOCOL_VERSION,
+                "recipe_version": REQUIRED_AUDIO_MOD_RECIPE_VERSION,
+                "build_mode": "minimal",
+                "mod_name": mod_name,
+                "feature_groups": [{
+                    "id": AUTO_EXIT_ON_DEATH_FEATURE_ID,
+                    "recipe_version": 1,
+                    "fingerprint": AUTO_EXIT_ON_DEATH_FINGERPRINT
+                }]
+            }),
+        );
+        write_test_auto_exit_on_death_layouts(&root, mod_name, true);
+        let validated = validate_audio_mod(&root, mod_name).unwrap();
+        assert!(!validated.has_audio_telemetry);
+        assert!(validated.auto_exit_on_death_enabled);
+        assert!(requested.all_present(&validated.feature_groups));
+        validate_auto_exit_on_death_layouts(&root.join(mod_name), mod_name, true).unwrap();
+
+        let enabled_group = validated.feature_groups[0].clone();
+        let manifest_path = root.join(mod_name).join(LEGACY_MANIFEST_FILE_NAME);
+        let manifest_before_toggle = std::fs::read(&manifest_path).unwrap();
+        assert!(!set_auto_exit_on_death_enabled(&root, mod_name, false).unwrap());
+        assert_eq!(
+            std::fs::read(&manifest_path).unwrap(),
+            manifest_before_toggle
+        );
+        let disabled = validate_audio_mod(&root, mod_name).unwrap();
+        assert!(!disabled.auto_exit_on_death_enabled);
+        let disabled_request =
+            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(true)).unwrap();
+        assert!(disabled_request.all_present(&disabled.feature_groups));
+        validate_preserved_feature_groups(&[enabled_group], &disabled.feature_groups).unwrap();
+        let mut legacy_group = disabled.feature_groups[0].clone();
+        legacy_group.fingerprint = AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT.to_string();
+        validate_preserved_feature_groups(&[legacy_group], &disabled.feature_groups).unwrap();
+        validate_auto_exit_on_death_layouts(&root.join(mod_name), mod_name, false).unwrap();
+        assert!(set_auto_exit_on_death_enabled(&root, mod_name, true).unwrap());
+        validate_auto_exit_on_death_layouts(&root.join(mod_name), mod_name, true).unwrap();
+
+        let death_layout = root
+            .join(mod_name)
+            .join(format!("{mod_name}.mpq"))
+            .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+            .join("youdiedmodalhd.json");
+        std::fs::write(
+            death_layout,
+            serde_json::to_vec(&serde_json::json!({
+                "children": [{
+                    "type": "TimerWidget",
+                    "name": "legacy",
+                    "fields": {"time": 0.01, "message": "PanelManager:OpenPanel:exitgame"}
+                }]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(validate_audio_mod(&root, mod_name)
+            .unwrap_err()
+            .contains("exitgame"));
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -4166,6 +4603,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: false,
+                auto_exit_on_death: false,
             },
             &[],
         )
@@ -4185,6 +4623,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: false,
+                auto_exit_on_death: false,
             },
             &[required_future],
         )
@@ -4198,6 +4637,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: true,
+                auto_exit_on_death: false,
             },
             &[],
         )
@@ -4217,6 +4657,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: true,
+                auto_exit_on_death: false,
             },
             &[],
         )

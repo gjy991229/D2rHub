@@ -16,6 +16,7 @@ import { capsuleFeatureLabels } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
+  AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   IN_GAME_ROOM_TOOLS_FEATURE_ID,
   type AudioModPrepareProgress,
@@ -50,6 +51,8 @@ interface ModProcessingPanelProps {
   setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
   includeRoomTools: boolean;
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
+  includeAutoExitOnDeath: boolean;
+  setIncludeAutoExitOnDeath: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
   isAudioModUpgrade: boolean;
@@ -89,6 +92,8 @@ export function ModProcessingPanel({
   setIncludeAudioTelemetry,
   includeRoomTools,
   setIncludeRoomTools,
+  includeAutoExitOnDeath,
+  setIncludeAutoExitOnDeath,
   audioPreparing,
   audioPrepareProgress,
   isAudioModUpgrade,
@@ -118,8 +123,10 @@ export function ModProcessingPanel({
   const roomToolsRequired = purpose === "room-tools";
   const audioInherited = inheritedFeatureGroups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const roomToolsInherited = inheritedFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
+  const autoExitOnDeathInherited = inheritedFeatureGroups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID);
   const audioSelected = audioRequired || audioInherited || includeAudioTelemetry;
   const roomToolsSelected = roomToolsRequired || roomToolsInherited || includeRoomTools;
+  const autoExitOnDeathSelected = autoExitOnDeathInherited || includeAutoExitOnDeath;
   const sourceMods = audioModState?.installed_mods.filter((mod) => mod.source_eligible) ?? [];
   const scannedLabel = audioModScannedAt
     ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
@@ -299,7 +306,9 @@ export function ModProcessingPanel({
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Feature modules" : "功能模块"}</h3>
-                <p>{isEnglish ? "Inherited modules are locked. Recognition is also locked when this flow was opened to enable it." : "源 Mod 已有模块会锁定保留；为开启识别进入此页时，声纹识别同样为必选。"}</p>
+                <p>{isEnglish
+                  ? "Inherited modules remain installed. Runtime switches are managed on each concrete Mod row."
+                  : "源 Mod 已有模块会继续保留；运行开关在对应的具体 Mod 条目中管理。"}</p>
               </div>
             </div>
             <div className="mod-processing-features">
@@ -323,6 +332,17 @@ export function ModProcessingPanel({
                 disabled={audioPreparing}
                 onChange={setIncludeRoomTools}
               />
+              <FeatureChoice
+                title={isEnglish ? "Auto-exit after death" : "死亡后自动退房"}
+                detail={isEnglish
+                  ? "Leave the current game about 0.11 seconds after the death screen appears; this cannot prevent death"
+                  : "死亡界面出现约 0.11 秒后离开当前游戏；不能避免死亡或挽救专家角色"}
+                checked={autoExitOnDeathSelected}
+                locked={autoExitOnDeathInherited}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={audioPreparing}
+                onChange={setIncludeAutoExitOnDeath}
+              />
             </div>
           </section>
 
@@ -330,7 +350,9 @@ export function ModProcessingPanel({
             <div className="mod-processing-section-heading">
               <div>
                 <h3>{isEnglish ? "Output" : "输出与应用"}</h3>
-                <p>{isAudioModUpgrade ? (isEnglish ? "The current Mod is safely replaced in place after verification." : "校验成功后原位更新，名称和账号启动参数保持不变。") : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
+                <p>{isAudioModUpgrade
+                  ? (isEnglish ? "The current Mod is safely replaced in place after verification." : "校验成功后原位更新，名称和账号启动参数保持不变。")
+                  : (isEnglish ? "Name the generated Mod, then build and apply it in one step." : "为加工结果命名，然后一次完成生成、校验与应用。")}</p>
               </div>
             </div>
             {isAudioModUpgrade ? (

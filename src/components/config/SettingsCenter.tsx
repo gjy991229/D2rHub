@@ -302,6 +302,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setIncludeAudioTelemetry,
     includeRoomTools,
     setIncludeRoomTools,
+    includeAutoExitOnDeath,
+    setIncludeAutoExitOnDeath,
     audioPreparing,
     audioPrepareProgress,
     audioModScannedAt,
@@ -605,6 +607,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeAudioTelemetry={setIncludeAudioTelemetry}
                 includeRoomTools={includeRoomTools}
                 setIncludeRoomTools={setIncludeRoomTools}
+                includeAutoExitOnDeath={includeAutoExitOnDeath}
+                setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
                 audioPreparing={audioPreparing}
                 audioPrepareProgress={audioPrepareProgress}
                 isAudioModUpgrade={isAudioModUpgrade}
@@ -648,6 +652,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeAudioTelemetry={setIncludeAudioTelemetry}
                 includeRoomTools={includeRoomTools}
                 setIncludeRoomTools={setIncludeRoomTools}
+                includeAutoExitOnDeath={includeAutoExitOnDeath}
+                setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
                 audioPreparing={audioPreparing}
                 audioPrepareProgress={audioPrepareProgress}
                 isAudioModUpgrade={isAudioModUpgrade}

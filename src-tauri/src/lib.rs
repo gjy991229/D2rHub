@@ -259,6 +259,7 @@ pub fn run() {
             audio_mod::get_audio_mod_setup_state,
             mod_catalog::get_mod_capsule_pool,
             mod_catalog::scan_mod_capsule_pool,
+            mod_catalog::set_mod_auto_exit_on_death_enabled,
             mod_catalog::add_mod_capsule,
             mod_catalog::update_mod_capsule,
             mod_catalog::delete_mod_capsule,

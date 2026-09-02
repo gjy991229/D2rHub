@@ -22,6 +22,7 @@ import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
   AGGREGATE_ITEM_FILTERS,
+  AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   CHARM_FILTERS,
   DEFAULT_TRACKING_CATEGORIES,
@@ -63,6 +64,8 @@ interface AutomationPanelProps {
   setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
   includeRoomTools: boolean;
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
+  includeAutoExitOnDeath: boolean;
+  setIncludeAutoExitOnDeath: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
   isAudioModUpgrade: boolean;
@@ -111,6 +114,8 @@ export function AutomationPanel({
   setIncludeAudioTelemetry,
   includeRoomTools,
   setIncludeRoomTools,
+  includeAutoExitOnDeath,
+  setIncludeAutoExitOnDeath,
   audioPreparing,
   audioPrepareProgress,
   isAudioModUpgrade,
@@ -133,6 +138,7 @@ export function AutomationPanel({
   const isEnglish = config.app_language === "en-US";
   const installedAudioTelemetry = !!audioModState?.feature_groups.includes(AUDIO_TELEMETRY_FEATURE_ID);
   const installedRoomTools = !!audioModState?.feature_groups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
+  const installedAutoExitOnDeath = !!audioModState?.feature_groups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID);
   const trackingAccountId = trackingTarget.valid ? trackingTarget.account.id : "";
   const audioCapsules = compatibleCapsulesForAccount(modCapsulePool, trackingAccountId)
     .filter((capsule) => capsule.feature_groups.includes(AUDIO_TELEMETRY_CAPSULE_FEATURE));
@@ -158,11 +164,13 @@ export function AutomationPanel({
         title: "Mod features",
         description: isAudioModFeatureManagement
           ? "Add capabilities to the current Mod. Installed features are preserved and cannot be removed here."
-          : "Choose the capabilities to package into this Mod. You can enable either feature or both.",
+          : "Choose any combination of capabilities to package into this Mod.",
         audioTitle: "Audio recognition",
         audioDetail: "Recognize scenes, drops, and Terror Zones",
         roomTitle: "In-game room tools",
         roomDetail: "Quickly recreate, create, and join rooms",
+        deathExitTitle: "Auto-exit after death",
+        deathExitDetail: "Leave the current game after death; this cannot prevent death",
         installed: "Installed · kept",
         manage: "Manage features",
         cancel: "Cancel",
@@ -172,11 +180,13 @@ export function AutomationPanel({
         title: "Mod 功能",
         description: isAudioModFeatureManagement
           ? "为当前 Mod 增补能力；已经安装的功能会保留，无法在这里移除。"
-          : "选择要打包进这个 Mod 的能力；可以只选一项，也可以同时启用。",
+          : "选择要打包进这个 Mod 的能力；三个模块可以独立或组合启用。",
         audioTitle: "声纹识别",
         audioDetail: "场景、掉落与恐怖区域识别",
         roomTitle: "局内房间工具",
         roomDetail: "快速重开、创建与加入房间",
+        deathExitTitle: "死亡后自动退房",
+        deathExitDetail: "死亡界面出现约 0.11 秒后退房；不能避免死亡或挽救专家角色",
         installed: "已安装 · 保留",
         manage: "管理功能",
         cancel: "取消",
@@ -532,6 +542,32 @@ export function AutomationPanel({
                     </span>
                     <span className="mt-0.5 block text-2xs leading-relaxed text-text-muted">
                       {featureCopy.roomDetail}
+                    </span>
+                  </span>
+                </label>
+                <label
+                  className={`audio-mod-choice min-h-[72px] ${
+                    includeAutoExitOnDeath || installedAutoExitOnDeath ? "is-selected" : ""
+                  } ${installedAutoExitOnDeath ? "cursor-default" : "cursor-pointer"}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={includeAutoExitOnDeath || installedAutoExitOnDeath}
+                    disabled={audioPreparing || installedAutoExitOnDeath}
+                    onChange={event => setIncludeAutoExitOnDeath(event.target.checked)}
+                    className="mt-0.5 shrink-0 accent-[var(--accent)]"
+                  />
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-1.5 text-xs font-semibold text-text-primary">
+                      {featureCopy.deathExitTitle}
+                      {installedAutoExitOnDeath && (
+                        <span className="rounded-md bg-success/10 px-1.5 py-0.5 text-[9px] font-semibold text-success">
+                          {featureCopy.installed}
+                        </span>
+                      )}
+                    </span>
+                    <span className="mt-0.5 block text-2xs leading-relaxed text-text-muted">
+                      {featureCopy.deathExitDetail}
                     </span>
                   </span>
                 </label>

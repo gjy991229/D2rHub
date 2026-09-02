@@ -38,6 +38,35 @@ pub(crate) fn durable_sibling_rename(source: &Path, destination: &Path) -> std::
     )
 }
 
+/// Atomically replace an existing sibling entry with a fully written source entry.
+///
+/// This is intended for small configuration files whose temporary replacement has already been
+/// flushed. The destination must exist and both paths must stay inside the same canonical parent.
+pub(crate) fn durable_sibling_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    let source_parent = canonical_parent(source, "source")?;
+    let destination_parent = canonical_parent(destination, "destination")?;
+    if source_parent != destination_parent {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!(
+                "durable sibling replace crosses directories: {} -> {}",
+                source.display(),
+                destination.display()
+            ),
+        ));
+    }
+    if !destination.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "replacement destination is not a file: {}",
+                destination.display()
+            ),
+        ));
+    }
+    durable_replace(source, destination)
+}
+
 fn canonical_parent(path: &Path, role: &str) -> std::io::Result<std::path::PathBuf> {
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -101,6 +130,58 @@ pub(crate) fn durable_rename(source: &Path, destination: &Path) -> std::io::Resu
 
 #[cfg(not(windows))]
 pub(crate) fn durable_rename(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::rename(source, destination)
+}
+
+#[cfg(windows)]
+fn durable_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    fn null_terminated(path: &Path) -> std::io::Result<Vec<u16>> {
+        let mut encoded = path.as_os_str().encode_wide().collect::<Vec<_>>();
+        if encoded.contains(&0) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("path contains an embedded NUL: {}", path.display()),
+            ));
+        }
+        encoded.push(0);
+        Ok(encoded)
+    }
+
+    let source = std::fs::canonicalize(source)?;
+    let destination_parent = destination.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "replacement destination has no parent directory",
+        )
+    })?;
+    let destination_parent = std::fs::canonicalize(destination_parent)?;
+    let destination_name = destination.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "replacement destination has no file name",
+        )
+    })?;
+    let destination = destination_parent.join(destination_name);
+    let source = null_terminated(&source)?;
+    let destination = null_terminated(&destination)?;
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+        .map_err(|error| std::io::Error::other(error.to_string()))
+    }
+}
+
+#[cfg(not(windows))]
+fn durable_replace(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::fs::rename(source, destination)
 }
 
@@ -233,5 +314,19 @@ mod tests {
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
         assert!(source.exists());
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn sibling_replace_atomically_swaps_an_existing_file() {
+        let root = TestDirectory::new();
+        let source = root.0.join("replacement.json");
+        let destination = root.0.join("config.json");
+        std::fs::write(&source, b"new").expect("write replacement");
+        std::fs::write(&destination, b"old").expect("write destination");
+
+        durable_sibling_replace(&source, &destination).expect("replace siblings");
+
+        assert!(!source.exists());
+        assert_eq!(std::fs::read(&destination).unwrap(), b"new");
     }
 }

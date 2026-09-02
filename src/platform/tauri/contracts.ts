@@ -90,6 +90,7 @@ export const TAURI_COMMANDS = [
   "save_window_geometry",
   "save_window_placement",
   "scan_mod_capsule_pool",
+  "set_mod_auto_exit_on_death_enabled",
   "set_account_window_position",
   "set_auxiliary_window_visible",
   "set_stats_overlay_mini_input_region",

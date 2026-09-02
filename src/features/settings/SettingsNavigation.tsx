@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Blocks } from "lucide-react";
 import type {
   CapabilityRuntimeState,
   CapabilityStatusSnapshot,
@@ -10,6 +11,8 @@ import {
   SETTINGS_COPY,
   SETTINGS_GROUP_COPY,
   SETTINGS_GROUPS,
+  SETTINGS_OPTIONAL_HUB_COPY,
+  isOptionalSettingsTab,
   normalizeSettingsLanguage,
   type SettingsTabId,
 } from "./settingsRegistry";
@@ -50,9 +53,18 @@ export function SettingsNavigation({
   language,
   onSelect,
 }: SettingsNavigationProps) {
-  const buttonRefs = useRef(new Map<SettingsTabId, HTMLButtonElement>());
+  const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const lastOptionalTab = useRef<SettingsTabId>("automation");
   const [compact, setCompact] = useState(false);
   const locale = normalizeSettingsLanguage(language);
+  const activeNavigationKey = isOptionalSettingsTab(activeTab) ? "optional-features" : activeTab;
+  const primaryEntries = SETTINGS_GROUPS.flatMap((group) => (
+    group.id === "optional-features"
+      ? [{ key: "optional-features", target: lastOptionalTab.current }]
+      : SETTINGS_FEATURES
+          .filter((feature) => feature.group === group.id)
+          .map((feature) => ({ key: feature.id, target: feature.id }))
+  ));
 
   useEffect(() => {
     if (typeof window.matchMedia !== "function") return;
@@ -64,37 +76,41 @@ export function SettingsNavigation({
   }, []);
 
   useEffect(() => {
+    if (isOptionalSettingsTab(activeTab)) lastOptionalTab.current = activeTab;
     const frame = window.requestAnimationFrame(() => {
-      buttonRefs.current.get(activeTab)?.scrollIntoView?.({
+      buttonRefs.current.get(activeNavigationKey)?.scrollIntoView?.({
         block: "nearest",
         inline: "nearest",
       });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [activeTab]);
+  }, [activeNavigationKey, activeTab]);
 
-  const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, current: SettingsTabId) => {
+  const moveFocus = (event: KeyboardEvent<HTMLButtonElement>, current: string) => {
     if (!["ArrowDown", "ArrowRight", "ArrowUp", "ArrowLeft", "Home", "End"].includes(event.key)) {
       return;
     }
 
     event.preventDefault();
-    const currentIndex = SETTINGS_FEATURES.findIndex((feature) => feature.id === current);
+    const currentIndex = primaryEntries.findIndex((entry) => entry.key === current);
     const nextIndex = event.key === "Home"
       ? 0
       : event.key === "End"
-        ? SETTINGS_FEATURES.length - 1
+        ? primaryEntries.length - 1
         : event.key === "ArrowDown" || event.key === "ArrowRight"
-          ? (currentIndex + 1) % SETTINGS_FEATURES.length
-          : (currentIndex - 1 + SETTINGS_FEATURES.length) % SETTINGS_FEATURES.length;
-    const next = SETTINGS_FEATURES[nextIndex];
-    const accepted = onSelect(next.id) !== false;
-    buttonRefs.current.get(accepted ? next.id : activeTab)?.focus();
+          ? (currentIndex + 1) % primaryEntries.length
+          : (currentIndex - 1 + primaryEntries.length) % primaryEntries.length;
+    const next = primaryEntries[nextIndex];
+    const target = next.key === "optional-features" ? lastOptionalTab.current : next.target;
+    const accepted = onSelect(target) !== false;
+    buttonRefs.current.get(accepted ? next.key : activeNavigationKey)?.focus();
   };
 
-  const selectFromClick = (next: SettingsTabId) => {
+  const selectFromClick = (next: SettingsTabId, key: string = next) => {
     if (onSelect(next) === false) {
-      buttonRefs.current.get(activeTab)?.focus();
+      buttonRefs.current.get(activeNavigationKey)?.focus();
+    } else {
+      buttonRefs.current.get(key)?.focus();
     }
   };
 
@@ -107,6 +123,46 @@ export function SettingsNavigation({
       {SETTINGS_GROUPS.map((group) => {
         const features = SETTINGS_FEATURES.filter((feature) => feature.group === group.id);
         const groupCopy = SETTINGS_GROUP_COPY[locale][group.id];
+        if (group.id === "optional-features") {
+          const hubCopy = SETTINGS_OPTIONAL_HUB_COPY[locale];
+          const selected = isOptionalSettingsTab(activeTab);
+          const target = selected ? activeTab : lastOptionalTab.current;
+          return (
+            <section className="settings-navigation-group" key={group.id} role="presentation">
+              <div className="settings-navigation-heading">
+                <span>{groupCopy.label}</span>
+                <span>{groupCopy.note}</span>
+              </div>
+              <div role="presentation">
+                <button
+                  ref={(element) => {
+                    if (element) buttonRefs.current.set("optional-features", element);
+                    else buttonRefs.current.delete("optional-features");
+                  }}
+                  type="button"
+                  role="tab"
+                  id="settings-tab-optional-features"
+                  aria-selected={selected}
+                  aria-controls={`settings-panel-${target}`}
+                  tabIndex={selected ? 0 : -1}
+                  className="settings-navigation-item"
+                  data-active={selected ? "true" : "false"}
+                  onClick={() => selectFromClick(target, "optional-features")}
+                  onKeyDown={(event) => moveFocus(event, "optional-features")}
+                >
+                  <Blocks size={15} aria-hidden="true" />
+                  <span className="min-w-0">
+                    <span className="settings-navigation-label">{hubCopy.label}</span>
+                    <span className="settings-navigation-description">{hubCopy.description}</span>
+                  </span>
+                  <span className="settings-navigation-badge">
+                    {hubCopy.badge}
+                  </span>
+                </button>
+              </div>
+            </section>
+          );
+        }
         return (
           <section className="settings-navigation-group" key={group.id} role="presentation">
             <div className="settings-navigation-heading">

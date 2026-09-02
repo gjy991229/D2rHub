@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { ModCapsulePool } from "../../store/types";
 import {
   accountsMissingCapsuleFeature,
+  AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE,
+  capsuleFeatureLabels,
   compatibleCapsulesForAccount,
   ROOM_TOOLS_CAPSULE_FEATURE,
   selectedCapsuleForAccount,
@@ -18,7 +20,8 @@ const pool: ModCapsulePool = {
       origin: "scanned",
       launch_arguments: "-mod Shared -txt -assettestmode 1",
       default_launch_arguments: "-mod Shared -txt -assettestmode 1",
-      feature_groups: [ROOM_TOOLS_CAPSULE_FEATURE],
+      feature_groups: [ROOM_TOOLS_CAPSULE_FEATURE, AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE],
+      auto_exit_on_death_enabled: false,
       processed: true,
       source_eligible: true,
       update_required: false,
@@ -74,5 +77,12 @@ describe("shared Mod capsule pool", () => {
 
   it("requires every room participant to select a room-tools capsule", () => {
     expect(accountsMissingCapsuleFeature(pool, ["primary", "follower"], ROOM_TOOLS_CAPSULE_FEATURE)).toEqual(["follower"]);
+  });
+
+  it("distinguishes an installed but disabled death-exit capability", () => {
+    expect(capsuleFeatureLabels(pool.capsules[0])).toEqual([
+      "局内房间工具",
+      "死亡自动退房（已停用）",
+    ]);
   });
 });

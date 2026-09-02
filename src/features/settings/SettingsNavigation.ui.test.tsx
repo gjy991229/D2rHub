@@ -3,6 +3,7 @@ import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { GlobalConfig } from "../../store/types";
 import { SettingsNavigation } from "./SettingsNavigation";
+import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
 import {
   getSettingsFeaturesByKind,
   SETTINGS_FEATURES,
@@ -60,12 +61,12 @@ describe("SettingsNavigation", () => {
     render(<Harness />);
 
     const coreTab = screen.getByRole("tab", { name: /账号与实例/ });
-    const automationTab = screen.getByRole("tab", { name: /识别与统计/ });
+    const optionalTab = screen.getByRole("tab", { name: /可选功能/ });
     expect(coreTab.getAttribute("aria-selected")).toBe("true");
 
-    fireEvent.click(automationTab);
+    fireEvent.click(optionalTab);
 
-    expect(automationTab.getAttribute("aria-selected")).toBe("true");
+    expect(optionalTab.getAttribute("aria-selected")).toBe("true");
     expect(coreTab.getAttribute("aria-selected")).toBe("false");
   });
 
@@ -75,13 +76,13 @@ describe("SettingsNavigation", () => {
 
     fireEvent.keyDown(coreTab, { key: "ArrowRight" });
 
-    expect(screen.getByRole("tab", { name: /运行环境/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: /窗口快捷键/ }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("keeps focus on the active tab when a guarded selection is rejected", () => {
     render(<SettingsNavigation activeTab="room-automation" onSelect={() => false} />);
-    const active = screen.getByRole("tab", { name: /自动跟房/ }) as HTMLButtonElement;
-    const next = screen.getByRole("tab", { name: /桌面伴随/ }) as HTMLButtonElement;
+    const active = screen.getByRole("tab", { name: /可选功能/ }) as HTMLButtonElement;
+    const next = screen.getByRole("tab", { name: /账号与实例/ }) as HTMLButtonElement;
 
     next.focus();
     fireEvent.click(next);
@@ -97,14 +98,28 @@ describe("SettingsNavigation", () => {
 
     expect(screen.getByRole("tab", { name: /Accounts & Instances/ })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /Appearance/ }).querySelector(".settings-navigation-badge")).toBeNull();
-    expect(screen.getByRole("tab", { name: /Desktop Overlays/ })).toBeTruthy();
-    expect(screen.getByText("Optional features")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /Optional Features/ })).toBeTruthy();
+    expect(screen.getByText("Extensions")).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: /Desktop Overlays/ })).toBeNull();
     expect(screen.queryByText("账号与实例")).toBeNull();
+  });
+
+});
+
+describe("OptionalFeaturesNavigation", () => {
+  it("moves optional modules into a horizontal top-level tab list", () => {
+    render(<OptionalFeaturesNavigation activeTab="automation" onSelect={() => {}} />);
+
+    expect(screen.getByRole("tab", { name: /识别与统计/ }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("tab", { name: /Mod 管理/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /自动跟房/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /桌面悬浮窗/ })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /桌面伴随/ })).toBeTruthy();
   });
 
   it("renders observed lifecycle state instead of inferring desktop pet health from config", () => {
     render(
-      <SettingsNavigation
+      <OptionalFeaturesNavigation
         activeTab="pet"
         config={{ enable_bongo_cat: true } as GlobalConfig}
         capabilityStatus={{
@@ -120,15 +135,13 @@ describe("SettingsNavigation", () => {
       />,
     );
 
-    const badge = screen.getByRole("tab", { name: /桌面伴随/ })
-      .querySelector(".settings-navigation-badge");
-    expect(badge?.textContent).toBe("异常");
-    expect(badge?.getAttribute("data-state")).toBe("failed");
+    const tab = screen.getByRole("tab", { name: /桌面伴随 · 异常/ });
+    expect(tab.querySelector(".optional-features-status-dot")?.getAttribute("data-state")).toBe("failed");
   });
 
   it("does not present a stale runtime snapshot when status synchronization is unavailable", () => {
     render(
-      <SettingsNavigation
+      <OptionalFeaturesNavigation
         activeTab="pet"
         capabilityStatus={{
           revision: 9,
@@ -144,9 +157,7 @@ describe("SettingsNavigation", () => {
       />,
     );
 
-    const badge = screen.getByRole("tab", { name: /桌面伴随/ })
-      .querySelector(".settings-navigation-badge");
-    expect(badge?.textContent).toBe("不可用");
-    expect(badge?.getAttribute("data-state")).toBe("unknown");
+    const tab = screen.getByRole("tab", { name: /桌面伴随 · 状态不可用/ });
+    expect(tab.querySelector(".optional-features-status-dot")?.getAttribute("data-state")).toBe("unknown");
   });
 });

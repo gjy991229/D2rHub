@@ -19,6 +19,7 @@ const readyAudioOnlyMod: AudioModSetupState = {
   build_mode: "minimal",
   source_mod_name: null,
   feature_groups: ["audio_telemetry"],
+  auto_exit_on_death_enabled: false,
   reason_code: "ready",
   message: "Ready",
   installed_mods: [],
@@ -42,6 +43,7 @@ const sourceState: AudioModSetupState = {
     source_eligible: true,
     feature_groups: ["audio_telemetry", "in_game_room_tools"],
     audio_reusable: true,
+    auto_exit_on_death_enabled: false,
   }],
 };
 
@@ -70,6 +72,8 @@ function baseProps(
     setIncludeAudioTelemetry: vi.fn(),
     includeRoomTools: false,
     setIncludeRoomTools: vi.fn(),
+    includeAutoExitOnDeath: false,
+    setIncludeAutoExitOnDeath: vi.fn(),
     audioPreparing: false,
     audioPrepareProgress: null,
     isAudioModUpgrade: false,
@@ -107,7 +111,8 @@ describe("ModProcessingPanel feature inheritance", () => {
       pool: catalogPool, loading: false, assigningAccountId: null, error: null,
       refresh: vi.fn(async () => catalogPool), scan: vi.fn(async () => catalogPool),
       add: vi.fn(async () => catalogPool), update: vi.fn(async () => catalogPool),
-      remove: vi.fn(async () => catalogPool), assign,
+      remove: vi.fn(async () => catalogPool),
+      setAutoExitOnDeathEnabled: vi.fn(async () => catalogPool), assign,
     } as ModCapsuleController;
     const onTargetChange = vi.fn(async () => undefined);
     const setAudioSetupSource = vi.fn();
@@ -133,6 +138,9 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(audio.disabled).toBe(true);
     expect(screen.getByText("本次目标 · 必选")).toBeTruthy();
     expect(rooms.disabled).toBe(false);
+    const deathExit = screen.getByRole("checkbox", { name: /死亡后自动退房/ }) as HTMLInputElement;
+    expect(deathExit.checked).toBe(false);
+    expect(deathExit.disabled).toBe(false);
   });
 
   it("locks every module already present in the selected source Mod", () => {
@@ -180,6 +188,26 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(screen.getByRole("button", { name: /增补所选模块/ })).toBeTruthy();
   });
 
+  it("keeps activation controls out of the processing flow", () => {
+    render(<ModProcessingPanel {...baseProps({
+      purpose: "manage",
+      audioModState: {
+        ...readyAudioOnlyMod,
+        feature_groups: ["audio_telemetry", "auto_exit_on_death"],
+        auto_exit_on_death_enabled: true,
+      },
+      audioSetupMode: "original",
+      audioSetupSource: "",
+      isAudioModUpgrade: true,
+      isAudioModFeatureManagement: true,
+    })} />);
+
+    const installed = screen.getByRole("checkbox", { name: /死亡后自动退房/ }) as HTMLInputElement;
+    expect(installed.checked).toBe(true);
+    expect(installed.disabled).toBe(true);
+    expect(screen.queryByRole("switch", { name: /死亡后自动退房/ })).toBeNull();
+  });
+
   it("uses English copy without changing feature semantics", () => {
     render(<ModProcessingPanel {...baseProps({
       config: { ...baseConfig, app_language: "en-US" },
@@ -191,5 +219,6 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(screen.getByText("Feature modules")).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /Audio recognition/ })).toBeTruthy();
     expect(screen.getByRole("checkbox", { name: /In-game room tools/ })).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: /Auto-exit after death/ })).toBeTruthy();
   });
 });

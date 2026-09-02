@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, Edit3, PackageOpen, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/Button";
+import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, ModCapsule } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
@@ -128,6 +129,9 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             .map((id) => accounts.find((account) => account.id === id)?.display_name || id)
             .join("、");
           const featureLabels = capsuleFeatureLabels(capsule);
+          const supportsAutoExitOnDeath = capsule.origin === "scanned"
+            && capsule.feature_groups.includes("auto_exit_on_death");
+          const autoExitDescriptionId = `mod-auto-exit-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
           return (
             <article key={capsule.id} className="mod-catalog-row" data-processed={capsule.processed ? "true" : undefined} data-assigned={assignedNames ? "true" : undefined}>
               <div className="mod-catalog-identity">
@@ -160,7 +164,31 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
                   <Button size="sm" variant="ghost" onClick={() => setEditingId(null)}><X size={12} />取消</Button>
                 </div>
               ) : (
-                <code title={capsule.launch_arguments}>{capsule.launch_arguments}</code>
+                <div className="mod-catalog-configuration">
+                  <code title={capsule.launch_arguments}>{capsule.launch_arguments}</code>
+                  {supportsAutoExitOnDeath && (
+                    <div className="mod-catalog-feature-control">
+                      <span>
+                        <b>死亡自动退房</b>
+                        <small id={autoExitDescriptionId}>
+                          {capsule.auto_exit_on_death_enabled
+                            ? "已启用；关闭游戏后可在此停用"
+                            : "已停用；关闭游戏后可在此启用"}
+                        </small>
+                      </span>
+                      <Toggle
+                        checked={capsule.auto_exit_on_death_enabled === true}
+                        disabled={catalog.loading}
+                        ariaLabel={`${capsule.name} 死亡自动退房`}
+                        descriptionId={autoExitDescriptionId}
+                        onChange={(enabled) => void run(
+                          () => catalog.setAutoExitOnDeathEnabled(capsule.id, enabled),
+                          enabled ? "死亡自动退房已启用，重新启动游戏后生效" : "死亡自动退房已停用，重新启动游戏后生效",
+                        )}
+                      />
+                    </div>
+                  )}
+                </div>
               )}
               {!editing && (
                 <div className="mod-catalog-actions">

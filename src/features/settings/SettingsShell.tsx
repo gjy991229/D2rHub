@@ -3,7 +3,8 @@ import { Modal } from "../../components/ui/Modal";
 import type { CapabilityStatusSnapshot, GlobalConfig } from "../../store/types";
 import { initCapabilityStatusSync } from "../capabilities";
 import { SettingsNavigation } from "./SettingsNavigation";
-import type { SettingsTabId } from "./settingsRegistry";
+import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
+import { isOptionalSettingsTab, type SettingsTabId } from "./settingsRegistry";
 
 interface SettingsShellProps {
   open: boolean;
@@ -26,6 +27,7 @@ export function SettingsShell({
 }: SettingsShellProps) {
   const [capabilityStatus, setCapabilityStatus] = useState<CapabilityStatusSnapshot | null>(null);
   const [capabilityStatusUnavailable, setCapabilityStatusUnavailable] = useState(false);
+  const optionalFeatureActive = isOptionalSettingsTab(activeTab);
 
   useEffect(() => {
     if (!open) return;
@@ -66,13 +68,25 @@ export function SettingsShell({
             language={config?.app_language}
             onSelect={onTabChange}
           />
-          <div
-            id={`settings-panel-${activeTab}`}
-            role="tabpanel"
-            aria-labelledby={`settings-tab-${activeTab}`}
-            className="settings-panel-scroll space-y-3"
-          >
-            {children}
+          <div className="settings-panel-column">
+            {optionalFeatureActive && (
+              <OptionalFeaturesNavigation
+                activeTab={activeTab}
+                config={config}
+                capabilityStatus={capabilityStatus}
+                capabilityStatusUnavailable={capabilityStatusUnavailable}
+                language={config?.app_language}
+                onSelect={onTabChange}
+              />
+            )}
+            <div
+              id={`settings-panel-${activeTab}`}
+              role="tabpanel"
+              aria-labelledby={`settings-tab-${activeTab}`}
+              className="settings-panel-scroll space-y-3"
+            >
+              {children}
+            </div>
           </div>
         </div>
       </div>

@@ -24,7 +24,8 @@ function catalog(assign = vi.fn(async () => pool)): ModCapsuleController {
   return {
     pool, loading: false, assigningAccountId: null, error: null,
     refresh: vi.fn(async () => pool), scan: vi.fn(async () => pool),
-    add: vi.fn(async () => pool), update: vi.fn(async () => pool), remove: vi.fn(async () => pool), assign,
+    add: vi.fn(async () => pool), update: vi.fn(async () => pool), remove: vi.fn(async () => pool),
+    setAutoExitOnDeathEnabled: vi.fn(async () => pool), assign,
   };
 }
 

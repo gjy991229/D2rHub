@@ -5,6 +5,7 @@ import { useGlobalConfig } from "../../store/globalConfig";
 import type { AccountMeta, AudioModSetupState, GlobalConfig } from "../../store/types";
 import { validateAudioModName } from "../../utils/audioModName";
 import {
+  AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   audioModFeatureDefaultsForPurpose,
   audioModFeatureInvokeOptions,
@@ -56,6 +57,7 @@ export function useAudioModuleController({
   const [audioSetupName, setAudioSetupName] = useState("");
   const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(false);
   const [includeRoomTools, setIncludeRoomTools] = useState(false);
+  const [includeAutoExitOnDeath, setIncludeAutoExitOnDeath] = useState(false);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
   const [audioModScannedAt, setAudioModScannedAt] = useState<number | null>(null);
@@ -81,9 +83,10 @@ export function useAudioModuleController({
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
   const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
   const installedAudioFeatureGroups = audioModState?.feature_groups ?? [];
-  const selectedAudioSourceFeatureGroups = audioSetupMode === "existing"
-    ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)?.feature_groups ?? []
-    : [];
+  const selectedAudioSource = audioSetupMode === "existing"
+    ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)
+    : undefined;
+  const selectedAudioSourceFeatureGroups = selectedAudioSource?.feature_groups ?? [];
   const inheritedAudioFeatureGroups = isAudioModUpgrade
     ? installedAudioFeatureGroups
     : selectedAudioSourceFeatureGroups;
@@ -94,11 +97,16 @@ export function useAudioModuleController({
     includeRoomTools: includeRoomTools
       || audioSetupPurpose === "room-tools"
       || inheritedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
+    includeAutoExitOnDeath: includeAutoExitOnDeath
+      || inheritedAudioFeatureGroups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID),
   };
   const audioPrepareBlockedReason = !hasSelectedAudioModFeature(audioFeatureSelection)
     ? config?.app_language === "en-US" ? "Select at least one Mod feature" : "请至少选择一个 Mod 功能"
     : isAudioModFeatureManagement
-        && !selectedAudioModFeatureAddsCapability(audioFeatureSelection, installedAudioFeatureGroups)
+        && !selectedAudioModFeatureAddsCapability(
+          audioFeatureSelection,
+          installedAudioFeatureGroups,
+        )
       ? config?.app_language === "en-US"
         ? "The current Mod already contains every selected feature"
         : "当前 Mod 已包含所选功能，请选择一个尚未安装的功能"
@@ -121,6 +129,7 @@ export function useAudioModuleController({
     const defaults = audioModFeatureDefaultsForPurpose(purpose);
     setIncludeAudioTelemetry(defaults.includeAudioTelemetry);
     setIncludeRoomTools(defaults.includeRoomTools);
+    setIncludeAutoExitOnDeath(defaults.includeAutoExitOnDeath);
   };
 
   const cacheState = (accountId: string, next: AudioModSetupState) => {
@@ -470,6 +479,8 @@ export function useAudioModuleController({
     setIncludeAudioTelemetry,
     includeRoomTools,
     setIncludeRoomTools,
+    includeAutoExitOnDeath,
+    setIncludeAutoExitOnDeath,
     audioPreparing,
     audioPrepareProgress,
     audioModScannedAt,

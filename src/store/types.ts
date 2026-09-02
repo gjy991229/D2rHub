@@ -287,6 +287,7 @@ export interface InstalledAudioMod {
   source_eligible: boolean;
   feature_groups: string[];
   audio_reusable: boolean;
+  auto_exit_on_death_enabled: boolean;
 }
 
 export interface AudioModFeatureGroup {
@@ -309,6 +310,7 @@ export interface AudioModSetupState {
   build_mode: "minimal" | "augment" | null;
   source_mod_name: string | null;
   feature_groups: string[];
+  auto_exit_on_death_enabled: boolean;
   reason_code: string;
   message: string;
   installed_mods: InstalledAudioMod[];
@@ -327,6 +329,7 @@ export interface ModCapsule {
   launch_arguments: string;
   default_launch_arguments: string | null;
   feature_groups: string[];
+  auto_exit_on_death_enabled?: boolean;
   processed: boolean;
   source_eligible: boolean;
   update_required: boolean;

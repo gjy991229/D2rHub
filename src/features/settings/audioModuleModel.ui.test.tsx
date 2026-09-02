@@ -12,14 +12,17 @@ describe("audio feature group truth", () => {
     expect(audioModFeatureDefaultsForPurpose("recognition")).toEqual({
       includeAudioTelemetry: true,
       includeRoomTools: true,
+      includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("room-tools")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: true,
+      includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("manage")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: false,
+      includeAutoExitOnDeath: false,
     });
   });
 
@@ -27,25 +30,40 @@ describe("audio feature group truth", () => {
     expect(audioModFeatureInvokeOptions({
       includeAudioTelemetry: false,
       includeRoomTools: true,
+      includeAutoExitOnDeath: true,
     })).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: true,
+      includeAutoExitOnDeath: true,
     });
   });
 
-  it("requires one feature for a new Mod and detects additive management", () => {
+  it("requires one feature and detects only additive modules", () => {
     expect(hasSelectedAudioModFeature({
       includeAudioTelemetry: false,
       includeRoomTools: false,
+      includeAutoExitOnDeath: false,
     })).toBe(false);
     expect(selectedAudioModFeatureAddsCapability({
       includeAudioTelemetry: true,
       includeRoomTools: true,
+      includeAutoExitOnDeath: false,
     }, ["audio_telemetry"])).toBe(true);
     expect(selectedAudioModFeatureAddsCapability({
       includeAudioTelemetry: true,
       includeRoomTools: true,
+      includeAutoExitOnDeath: false,
     }, ["audio_telemetry", "in_game_room_tools"])).toBe(false);
+    expect(selectedAudioModFeatureAddsCapability({
+      includeAudioTelemetry: true,
+      includeRoomTools: true,
+      includeAutoExitOnDeath: true,
+    }, ["audio_telemetry", "in_game_room_tools"])).toBe(true);
+    expect(selectedAudioModFeatureAddsCapability({
+      includeAudioTelemetry: true,
+      includeRoomTools: true,
+      includeAutoExitOnDeath: true,
+    }, ["audio_telemetry", "in_game_room_tools", "auto_exit_on_death"])).toBe(false);
   });
 
   it("uses the final persisted group IDs returned by setup state", () => {

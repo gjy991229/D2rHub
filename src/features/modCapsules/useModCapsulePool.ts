@@ -49,7 +49,11 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   }, []);
 
   const mutate = useCallback(async (
-    command: "add_mod_capsule" | "update_mod_capsule" | "delete_mod_capsule",
+    command:
+      | "add_mod_capsule"
+      | "update_mod_capsule"
+      | "delete_mod_capsule"
+      | "set_mod_auto_exit_on_death_enabled",
     payload: Record<string, unknown>,
   ) => {
     setLoading(true);
@@ -92,6 +96,10 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     add: (edition: string, launchArguments: string) => mutate("add_mod_capsule", { edition, launchArguments }),
     update: (capsuleId: string, launchArguments: string) => mutate("update_mod_capsule", { capsuleId, launchArguments }),
     remove: (capsuleId: string) => mutate("delete_mod_capsule", { capsuleId }),
+    setAutoExitOnDeathEnabled: (capsuleId: string, enabled: boolean) => mutate(
+      "set_mod_auto_exit_on_death_enabled",
+      { capsuleId, enabled },
+    ),
     assign,
   };
 }
