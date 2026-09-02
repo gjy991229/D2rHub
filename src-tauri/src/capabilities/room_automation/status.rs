@@ -271,13 +271,38 @@ impl WorkflowTaskState {
         Ok(self.snapshot())
     }
 
+    #[allow(dead_code)] // retained as the all-configured-followers state-machine entry point
     pub fn begin_followers(
         &mut self,
         task_id: WorkflowTaskId,
     ) -> Result<WorkflowStatus, WorkflowStateError> {
+        let follower_account_ids = self.status.follower_account_ids.clone();
+        self.begin_selected_followers(task_id, follower_account_ids)
+    }
+
+    /// Starts the follower stage for the configured accounts that currently
+    /// have usable game windows. Offline accounts remain configured for later
+    /// rooms but do not keep this task from reaching `complete`.
+    pub fn begin_selected_followers(
+        &mut self,
+        task_id: WorkflowTaskId,
+        follower_account_ids: Vec<String>,
+    ) -> Result<WorkflowStatus, WorkflowStateError> {
         self.require_task_phase(task_id, WorkflowPhase::Waiting, "begin followers")?;
         if self.pending_room.is_none() {
             return Err(WorkflowStateError::MissingPendingRoom);
+        }
+        if follower_account_ids.is_empty() {
+            return Err(RoomAutomationConfigError::MissingFollowerAccount.into());
+        }
+        if let Some(unknown) = follower_account_ids.iter().find(|account_id| {
+            !self
+                .status
+                .follower_account_ids
+                .iter()
+                .any(|configured| configured.eq_ignore_ascii_case(account_id))
+        }) {
+            return Err(WorkflowStateError::UnknownFollower(unknown.clone()));
         }
         let revision = self.next_revision()?;
 
@@ -285,6 +310,7 @@ impl WorkflowTaskState {
         self.status.phase = WorkflowPhase::Followers;
         self.status.running = true;
         self.status.waiting_mode = None;
+        self.status.follower_account_ids = follower_account_ids;
         self.status.completed_follower_account_ids.clear();
         self.status.last_error = None;
         self.status.recovery_action = None;

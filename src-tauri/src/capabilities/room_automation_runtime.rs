@@ -1095,7 +1095,7 @@ impl RoomAutomationManager {
         } else {
             Some(self.acquire_participant_leases(&raw_config)?)
         };
-        // Includes primary foreground, trusted launch/PID and Mod validation;
+        // Includes primary foreground, runtime-window and Mod validation;
         // all participant leases are already held at this point.
         let (config, _primary, mut followers) = self.prepare_workflow(raw_config, true)?;
         let (task_id, room, acquired_leases) = match snapshot.phase {
@@ -1105,7 +1105,10 @@ impl RoomAutomationManager {
                     .ok_or_else(|| "等待任务缺少 ID".to_string())?;
                 self.workflow
                     .lock()
-                    .begin_followers(task_id)
+                    .begin_selected_followers(
+                        task_id,
+                        config.follower_account_ids.clone(),
+                    )
                     .map_err(|error| error.to_string())?;
                 let room = self
                     .workflow
@@ -1307,11 +1310,40 @@ impl RoomAutomationManager {
     ) -> Result<PreparedWorkflow, String> {
         let (config, primary) =
             self.prepare_primary_workflow(config, require_primary_foreground)?;
+        let mut config = config;
         let mut followers = Vec::with_capacity(config.follower_account_ids.len());
+        let mut skipped = Vec::new();
         for account_id in &config.follower_account_ids {
-            self.host.validate_room_tools(account_id)?;
-            followers.push((account_id.clone(), self.host.running_instance(account_id)?));
+            let prepared = self
+                .host
+                .running_instance(account_id)
+                .and_then(|instance| {
+                    self.host
+                        .validate_room_tools(account_id)
+                        .map(|()| instance)
+                });
+            match prepared {
+                Ok(instance) => followers.push((account_id.clone(), instance)),
+                Err(error) => {
+                    skipped.push(format!("{account_id}: {error}"));
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("跳过不可用的跟随账号“{account_id}”：{error}"),
+                    );
+                }
+            }
         }
+        if followers.is_empty() {
+            return Err(format!(
+                "没有可加入房间的运行中跟随账号：{}",
+                skipped.join("；")
+            ));
+        }
+        config.follower_account_ids = followers
+            .iter()
+            .map(|(account_id, _)| account_id.clone())
+            .collect();
         Ok((config, primary, followers))
     }
 
@@ -1395,7 +1427,10 @@ impl RoomAutomationManager {
                 return;
             }
         };
-        match self.workflow.lock().begin_followers(task_id) {
+        match self.workflow.lock().begin_selected_followers(
+            task_id,
+            fresh_config.follower_account_ids.clone(),
+        ) {
             Ok(status) => self.bridge.publish_status(&status),
             Err(_) => {
                 self.lifecycle.lock().leases = None;
