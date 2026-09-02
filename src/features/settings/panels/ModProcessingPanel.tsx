@@ -12,7 +12,7 @@ import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
-import { capsuleFeatureLabels } from "../../modCapsules/model";
+import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
@@ -131,7 +131,24 @@ export function ModProcessingPanel({
   const scannedLabel = audioModScannedAt
     ? new Date(audioModScannedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
     : null;
-  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => capsule.ready && capsule.processed) ?? [];
+  const targetEdition = trackingTarget.valid
+    ? modCapsulePool?.accounts.find((entry) => entry.account_id === trackingTarget.account.id)?.edition
+    : null;
+  const readyCapsules = modCapsulePool?.capsules.filter((capsule) => (
+    capsule.ready
+    && capsule.processed
+    && capsule.source_eligible
+    && (!targetEdition || capsule.edition === targetEdition)
+  )) ?? [];
+  const selectSourceMod = (name: string) => {
+    setAudioSetupMode("existing");
+    setAudioSetupSource(name);
+    if (name === audioModState?.current_mod_name) {
+      setAudioSetupName(name);
+    } else if (isAudioModFeatureManagement) {
+      setAudioSetupName("");
+    }
+  };
   useEffect(() => {
     if (!autoPrepareRequest || audioModStateLoading || audioPreparing || audioPrepareBlockedReason
       || !trackingTarget.valid || audioModState?.account_id !== trackingTarget.account.id) return;
@@ -228,10 +245,22 @@ export function ModProcessingPanel({
           {!modCapsulePoolLoading && readyCapsules.length > 0 && (
             <div className="mod-capsule-pool-list">
               {readyCapsules.map((capsule) => (
-                <span key={capsule.id} title={`${capsule.edition} · ${capsuleFeatureLabels(capsule).join("、")}`}>
+                <button
+                  type="button"
+                  key={capsule.id}
+                  aria-pressed={audioSetupMode === "existing" && audioSetupSource === capsule.name}
+                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule).join("、")}`}
+                  disabled={audioPreparing}
+                  onClick={() => selectSourceMod(capsule.name)}
+                >
                   <b>{capsule.name}</b>
-                  <em>{capsuleFeatureLabels(capsule).join("+") || "待更新"}</em>
-                </span>
+                  <span className="mod-capsule-pool-features">
+                    <em data-kind="base">{capsuleBaseModLabel(capsule)}</em>
+                    {capsuleFeatureLabels(capsule).length
+                      ? capsuleFeatureLabels(capsule).map((label) => <em data-kind="feature" key={label}>{label}</em>)
+                      : <em data-kind="pending">待更新</em>}
+                  </span>
+                </button>
               ))}
             </div>
           )}
@@ -253,8 +282,7 @@ export function ModProcessingPanel({
         </div>
       ) : (
         <>
-          {!isAudioModFeatureManagement && (
-            <section className="spatial-panel mod-processing-section mod-processing-source">
+          <section className="spatial-panel mod-processing-section mod-processing-source">
               <div className="mod-processing-section-heading">
                 <div>
                   <h3>{isEnglish ? "Choose the source" : "选择源内容"}</h3>
@@ -268,7 +296,10 @@ export function ModProcessingPanel({
                   aria-checked={audioSetupMode === "original"}
                   className={`audio-mod-choice ${audioSetupMode === "original" ? "is-selected" : ""}`}
                   disabled={audioPreparing}
-                  onClick={() => setAudioSetupMode("original")}
+                  onClick={() => {
+                    setAudioSetupMode("original");
+                    if (isAudioModFeatureManagement) setAudioSetupName("");
+                  }}
                 >
                   <strong>{isEnglish ? "Original game" : "原版游戏"}</strong>
                   <span>{isEnglish ? "Start with D2RHub modules only" : "只生成本次所选模块"}</span>
@@ -292,15 +323,14 @@ export function ModProcessingPanel({
                     className="settings-input"
                     value={audioSetupSource}
                     disabled={audioPreparing}
-                    onChange={(event) => setAudioSetupSource(event.target.value)}
+                    onChange={(event) => selectSourceMod(event.target.value)}
                   >
                     <option value="" disabled>{isEnglish ? "Select a Mod" : "请选择 Mod"}</option>
                     {sourceMods.map((mod) => <option key={mod.name} value={mod.name}>{mod.name}</option>)}
                   </select>
                 </label>
               )}
-            </section>
-          )}
+          </section>
 
           <section className="spatial-panel mod-processing-section mod-processing-capabilities">
             <div className="mod-processing-section-heading">

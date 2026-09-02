@@ -32,6 +32,7 @@ export function OverlayPanel({
   locateWindow,
   recoverAllWindows,
 }: OverlayPanelProps) {
+  const statisticsModuleInstalled = config.installed_optional_modules?.includes("automation") === true;
   return (
     <div className="settings-content-grid">
       <div className="spatial-panel p-3 space-y-2">
@@ -158,7 +159,9 @@ export function OverlayPanel({
           <div>
             <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
             <p className="text-2xs text-text-muted">
-              正常模式显示账号、计时与掉落；迷你模式仅保留场景、计时和场次，并开启鼠标穿透
+              {statisticsModuleInstalled
+                ? "正常模式显示账号、计时与掉落；迷你模式仅保留场景、计时和场次，并开启鼠标穿透"
+                : "添加“识别与统计”模块后可用；统计窗口与识别数据保持同一生命周期"}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
@@ -166,7 +169,7 @@ export function OverlayPanel({
               variant="ghost"
               size="sm"
               loading={windowPlacementBusy === "stats-overlay"}
-              disabled={!config.enable_stats_overlay || windowPlacementBusy !== null}
+              disabled={!statisticsModuleInstalled || !config.enable_stats_overlay || windowPlacementBusy !== null}
               onClick={() => locateWindow("stats-overlay")}
               title="将窗口移到主界面所在屏幕"
             >
@@ -175,6 +178,7 @@ export function OverlayPanel({
             </Button>
             <Toggle
               checked={!!config.enable_stats_overlay}
+              disabled={!statisticsModuleInstalled}
               ariaLabel="显示场景统计悬浮窗"
               onChange={async (visible) => {
                 updateConfig((current) => {

@@ -24,6 +24,10 @@ export function capsuleFeatureLabels(capsule: ModCapsule): string[] {
   });
 }
 
+export function capsuleBaseModLabel(capsule: ModCapsule): string {
+  return capsule.source_mod_name?.trim() || "原版";
+}
+
 export function capsuleSelectionForAccount(
   pool: ModCapsulePool | null,
   accountId: string,

@@ -44,6 +44,7 @@ export interface GlobalConfig {
   app_data_roaming_bnet_path: string;
   accounts_dir: string;
   first_run_complete: boolean;
+  installed_optional_modules?: string[];
   browser_path: string;
   browser_type: string;
   enable_bongo_cat: boolean;
@@ -282,6 +283,7 @@ export interface AudioModRuntimeWarning {
 
 export interface InstalledAudioMod {
   name: string;
+  source_mod_name?: string | null;
   audio_ready: boolean;
   update_required: boolean;
   source_eligible: boolean;
@@ -328,6 +330,7 @@ export interface ModCapsule {
   origin: "scanned" | "custom" | string;
   launch_arguments: string;
   default_launch_arguments: string | null;
+  source_mod_name?: string | null;
   feature_groups: string[];
   auto_exit_on_death_enabled?: boolean;
   processed: boolean;

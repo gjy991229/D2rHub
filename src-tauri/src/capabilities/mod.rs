@@ -19,7 +19,10 @@ use crate::application::capability::{
     CapabilityCategory, CapabilityDescriptor, CapabilityDriver, CapabilityFailure,
     CapabilityHealth, CapabilityId, CapabilityRegistration, CapabilityRegistryError,
 };
-use crate::domain::config::{GlobalConfig, CURRENT_CONFIG_VERSION};
+use crate::domain::config::{
+    GlobalConfig, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
+    OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
+};
 use crate::state::SharedState;
 use std::sync::Arc;
 use supervisor::CapabilitySupervisor;
@@ -78,6 +81,11 @@ pub(crate) fn install(app: &tauri::App) {
             crate::auxiliary_windows::STATS_OVERLAY_LABEL,
         );
 
+    let room_module_installed = app
+        .state::<SharedState>()
+        .configuration()
+        .snapshot()
+        .is_some_and(|config| config.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION));
     let (room_driver, room_requested, room_command_state): (
         Arc<dyn CapabilityDriver>,
         bool,
@@ -85,7 +93,7 @@ pub(crate) fn install(app: &tauri::App) {
     ) = match room_automation_runtime::RoomAutomationManager::install(app) {
         Ok(manager) => (
             manager.clone(),
-            manager.requested_enabled(),
+            room_module_installed && manager.requested_enabled(),
             room_automation_runtime::RoomAutomationCommandState::available(manager),
         ),
         Err(failure) => {
@@ -98,7 +106,7 @@ pub(crate) fn install(app: &tauri::App) {
                 Arc::new(UnavailableCapability {
                     failure: failure.clone(),
                 }),
-                true,
+                room_module_installed,
                 room_automation_runtime::RoomAutomationCommandState::unavailable(failure.message),
             )
         }
@@ -247,21 +255,59 @@ pub(crate) fn apply_configuration(
             ),
         }
     }
+    if let Some(app) = app {
+        let room_requested = if config.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION) {
+            app.try_state::<room_automation_runtime::RoomAutomationCommandState>()
+                .map(|command_state| {
+                    command_state
+                        .manager()
+                        .map(|manager| manager.requested_enabled())
+                        .unwrap_or(true)
+                })
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if let Err(error) = state
+            .capabilities()
+            .set_requested(room_automation_runtime::ROOM_AUTOMATION_ID, room_requested)
+        {
+            crate::logger::log_msg(
+                "ERROR",
+                "Capabilities",
+                &format!("应用自动跟房模块开关失败: {error}"),
+            );
+        }
+    }
     if let Some(supervisor) = app.and_then(|app| app.try_state::<CapabilitySupervisor>()) {
         supervisor.schedule_reconcile();
     }
 }
 
 fn configured_capabilities(config: &GlobalConfig) -> [(CapabilityId, bool, &'static str); 4] {
+    let overlays_installed = config.optional_module_installed(OPTIONAL_MODULE_OVERLAYS);
+    let automation_installed = config.optional_module_installed(OPTIONAL_MODULE_AUTOMATION);
     [
-        (DESKTOP_PET_ID, config.enable_bongo_cat, "桌宠"),
-        (RUNE_AUDIO_ID, config.rune_audio_enabled, "声纹识别"),
+        (
+            DESKTOP_PET_ID,
+            config.optional_module_installed(OPTIONAL_MODULE_PET) && config.enable_bongo_cat,
+            "桌宠",
+        ),
+        (
+            RUNE_AUDIO_ID,
+            automation_installed && config.rune_audio_enabled,
+            "声纹识别",
+        ),
         (
             TERROR_ZONE_OVERLAY_ID,
-            config.enable_tz_overlay,
+            overlays_installed && config.enable_tz_overlay,
             "恐怖区域悬浮窗",
         ),
-        (STATS_OVERLAY_ID, config.enable_stats_overlay, "统计悬浮窗"),
+        (
+            STATS_OVERLAY_ID,
+            overlays_installed && automation_installed && config.enable_stats_overlay,
+            "统计悬浮窗",
+        ),
     ]
 }
 

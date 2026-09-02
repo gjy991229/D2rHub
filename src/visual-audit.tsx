@@ -215,7 +215,7 @@ if (seedManyAccounts) {
 }
 
 const baseConfig: GlobalConfig = {
-  version: 9,
+  version: 10,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -225,6 +225,7 @@ const baseConfig: GlobalConfig = {
   app_data_roaming_bnet_path: "C:\\Users\\Player\\AppData\\Roaming\\Battle.net",
   accounts_dir: "D:\\D2RHub\\accounts",
   first_run_complete: surface !== "setup",
+  installed_optional_modules: ["overlays", "pet", "automation", "room-automation"],
   browser_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   browser_type: "chrome",
   enable_bongo_cat: true,

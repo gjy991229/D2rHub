@@ -728,7 +728,7 @@ pub fn set_auxiliary_window_visible_for_app(
                 .map_err(|error| AppError::Unknown(format!("隐藏悬浮窗失败: {error}")))?;
         }
         if label == "bongo-cat" {
-            crate::input_listener::set_bongo_cat_input_visible(false);
+            crate::input_listener::set_bongo_cat_input_visible_state(false);
         }
         return Ok(PlacementOutcome {
             label: label.to_string(),
@@ -749,7 +749,7 @@ pub fn set_auxiliary_window_visible_for_app(
         .show()
         .map_err(|error| AppError::Unknown(format!("显示悬浮窗失败: {error}")))?;
     if label == "bongo-cat" {
-        crate::input_listener::set_bongo_cat_input_visible(true);
+        crate::input_listener::set_bongo_cat_input_visible_state(true);
     }
     Ok(outcome)
 }
@@ -763,15 +763,28 @@ pub fn recover_auxiliary_windows_for_app(
     let enabled = |label: &str| match label {
         "overlay" => config
             .as_ref()
-            .map(|config| config.enable_tz_overlay)
-            .unwrap_or(true),
+            .map(|config| {
+                config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.enable_tz_overlay
+            })
+            .unwrap_or(false),
         "stats-overlay" => config
             .as_ref()
-            .map(|config| config.enable_stats_overlay)
-            .unwrap_or(true),
+            .map(|config| {
+                config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                ) && config.enable_stats_overlay
+            })
+            .unwrap_or(false),
         "bongo-cat" => config
             .as_ref()
-            .map(|config| config.enable_bongo_cat)
+            .map(|config| {
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+                    && config.enable_bongo_cat
+            })
             .unwrap_or(false),
         _ => false,
     };
@@ -860,6 +873,31 @@ pub fn set_auxiliary_window_visible(
     visible: bool,
     target: Option<String>,
 ) -> Result<PlacementOutcome, AppError> {
+    if visible {
+        let required_modules: &[&str] = match label.as_str() {
+            "overlay" => &[crate::domain::config::OPTIONAL_MODULE_OVERLAYS],
+            "stats-overlay" => &[
+                crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+            ],
+            "bongo-cat" => &[crate::domain::config::OPTIONAL_MODULE_PET],
+            _ => &[],
+        };
+        if !required_modules.is_empty() {
+            let config = state_from_app(&app)?
+                .configuration()
+                .snapshot()
+                .ok_or_else(|| AppError::Unknown("全局配置尚未加载".to_string()))?;
+            if required_modules
+                .iter()
+                .any(|module_id| !config.optional_module_installed(module_id))
+            {
+                return Err(AppError::Unknown(format!(
+                    "无法显示 {label}：对应模块尚未安装"
+                )));
+            }
+        }
+    }
     set_auxiliary_window_visible_for_app(&app, &label, visible, target.as_deref())
 }
 

@@ -448,47 +448,49 @@ export function RoomAutomationPanel({
         : copy.ready;
   return (
     <div className="room-automation-panel">
-      <header className="room-automation-header">
-        <div className="min-w-0">
-          <div className="room-automation-title-line">
+      <header className="spatial-panel room-automation-header">
+        <div className="room-automation-header-main">
+          <div className="min-w-0">
             <h2>{copy.title}</h2>
-            <span className="room-automation-semantic-status" data-tone={statusTone} role="status">
-              <span className="room-automation-state-dot" data-tone={statusTone} aria-hidden="true" />
-              {statusTitle}
-            </span>
+            <p>{copy.subtitle}</p>
           </div>
-          <p>{copy.subtitle}</p>
+          <div className="room-automation-header-actions">
+            {draft.enabled && (
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={editorDisabled || dirty || !validation?.valid || participantsMissingRoomTools.length > 0
+                  || !binding?.ready || !!bindingError || !onSaveLaunchScheme}
+                onClick={() => void onSaveLaunchScheme?.(participantAccountIds)}
+              >保存当前启动方案</Button>
+            )}
+            <Toggle
+              checked={draft.enabled}
+              disabled={editorDisabled}
+              ariaLabel={copy.enabled}
+              descriptionId={!draft.enabled ? "room-automation-module-description" : undefined}
+              onChange={(enabled) => {
+                if (enabled) enableRoomAutomation();
+                else updateDraft((current) => ({ ...current, enabled: false }));
+              }}
+            />
+          </div>
+        </div>
+        <div className="room-automation-readiness" data-tone={statusTone} role="status" aria-live="polite">
+          <span className="room-automation-semantic-status" data-tone={statusTone}>
+            <span className="room-automation-state-dot" data-tone={statusTone} aria-hidden="true" />
+            {statusTitle}
+          </span>
           <span className="room-automation-save-state" data-dirty={dirty ? "true" : undefined}>
             {saving || dirty ? copy.applying : copy.applied}
           </span>
         </div>
-        <div className="room-automation-header-actions">
-          {draft.enabled && (
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={editorDisabled || dirty || !validation?.valid || participantsMissingRoomTools.length > 0
-                || !binding?.ready || !!bindingError || !onSaveLaunchScheme}
-              onClick={() => void onSaveLaunchScheme?.(participantAccountIds)}
-            >保存当前启动方案</Button>
-          )}
-          <Toggle
-            checked={draft.enabled}
-            disabled={editorDisabled}
-            ariaLabel={copy.enabled}
-            descriptionId={!draft.enabled ? "room-automation-module-description" : undefined}
-            onChange={(enabled) => {
-              if (enabled) enableRoomAutomation();
-              else updateDraft((current) => ({ ...current, enabled: false }));
-            }}
-          />
-        </div>
+        {!draft.enabled && (
+          <p id="room-automation-module-description" className="room-automation-disabled-note">
+            {copy.disabledDescription}
+          </p>
+        )}
       </header>
-      {!draft.enabled && (
-        <p id="room-automation-module-description" className="room-automation-disabled-note">
-          {copy.disabledDescription}
-        </p>
-      )}
 
       {(stale || operationError) && (
         <div className="room-automation-state room-automation-state-block" data-tone="danger" role="alert">

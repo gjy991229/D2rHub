@@ -14,6 +14,7 @@ import {
   SETTINGS_OPTIONAL_HUB_COPY,
   isOptionalSettingsTab,
   normalizeSettingsLanguage,
+  type OptionalModuleTabId,
   type SettingsTabId,
 } from "./settingsRegistry";
 
@@ -23,6 +24,7 @@ interface SettingsNavigationProps {
   capabilityStatus?: CapabilityStatusSnapshot | null;
   capabilityStatusUnavailable?: boolean;
   language?: string | null;
+  installedModules?: readonly OptionalModuleTabId[];
   onSelect: (tab: SettingsTabId) => boolean | void;
 }
 
@@ -51,16 +53,16 @@ export function SettingsNavigation({
   capabilityStatus,
   capabilityStatusUnavailable = false,
   language,
+  installedModules = [],
   onSelect,
 }: SettingsNavigationProps) {
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
-  const lastOptionalTab = useRef<SettingsTabId>("automation");
   const [compact, setCompact] = useState(false);
   const locale = normalizeSettingsLanguage(language);
   const activeNavigationKey = isOptionalSettingsTab(activeTab) ? "optional-features" : activeTab;
   const primaryEntries = SETTINGS_GROUPS.flatMap((group) => (
     group.id === "optional-features"
-      ? [{ key: "optional-features", target: lastOptionalTab.current }]
+      ? [{ key: "optional-features", target: "module-management" as SettingsTabId }]
       : SETTINGS_FEATURES
           .filter((feature) => feature.group === group.id)
           .map((feature) => ({ key: feature.id, target: feature.id }))
@@ -76,7 +78,6 @@ export function SettingsNavigation({
   }, []);
 
   useEffect(() => {
-    if (isOptionalSettingsTab(activeTab)) lastOptionalTab.current = activeTab;
     const frame = window.requestAnimationFrame(() => {
       buttonRefs.current.get(activeNavigationKey)?.scrollIntoView?.({
         block: "nearest",
@@ -101,8 +102,7 @@ export function SettingsNavigation({
           ? (currentIndex + 1) % primaryEntries.length
           : (currentIndex - 1 + primaryEntries.length) % primaryEntries.length;
     const next = primaryEntries[nextIndex];
-    const target = next.key === "optional-features" ? lastOptionalTab.current : next.target;
-    const accepted = onSelect(target) !== false;
+    const accepted = onSelect(next.target) !== false;
     buttonRefs.current.get(accepted ? next.key : activeNavigationKey)?.focus();
   };
 
@@ -126,7 +126,7 @@ export function SettingsNavigation({
         if (group.id === "optional-features") {
           const hubCopy = SETTINGS_OPTIONAL_HUB_COPY[locale];
           const selected = isOptionalSettingsTab(activeTab);
-          const target = selected ? activeTab : lastOptionalTab.current;
+          const target: SettingsTabId = "module-management";
           return (
             <section className="settings-navigation-group" key={group.id} role="presentation">
               <div className="settings-navigation-heading">
@@ -156,7 +156,7 @@ export function SettingsNavigation({
                     <span className="settings-navigation-description">{hubCopy.description}</span>
                   </span>
                   <span className="settings-navigation-badge">
-                    {hubCopy.badge}
+                    {installedModules.length}/{hubCopy.badge}
                   </span>
                 </button>
               </div>

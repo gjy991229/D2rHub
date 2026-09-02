@@ -48,6 +48,7 @@ pub struct ModCapsule {
     pub origin: String,
     pub launch_arguments: String,
     pub default_launch_arguments: Option<String>,
+    pub source_mod_name: Option<String>,
     pub feature_groups: Vec<String>,
     pub auto_exit_on_death_enabled: bool,
     pub processed: bool,
@@ -297,7 +298,7 @@ fn capsule_feature_metadata(
     scanned: &[ScannedMod],
     edition: &str,
     arguments: &str,
-) -> (Vec<String>, bool, bool, bool, bool) {
+) -> (Vec<String>, Option<String>, bool, bool, bool, bool) {
     let active_name = active_mod_name(arguments).ok().flatten();
     let related = active_name.as_deref().and_then(|name| {
         scanned.iter().find(|entry| {
@@ -305,12 +306,13 @@ fn capsule_feature_metadata(
         })
     });
     related.map_or_else(
-        || (Vec::new(), false, false, false, false),
+        || (Vec::new(), None, false, false, false, false),
         |entry| {
             let processed =
                 !entry.installed.feature_groups.is_empty() || entry.installed.update_required;
             (
                 entry.installed.feature_groups.clone(),
+                entry.installed.source_mod_name.clone(),
                 processed,
                 entry.installed.update_required,
                 entry.installed.source_eligible,
@@ -338,6 +340,7 @@ fn build_pool(
                 origin: "scanned".to_string(),
                 launch_arguments: effective_scanned_arguments(payload, entry),
                 default_launch_arguments: Some(entry.default_arguments.clone()),
+                source_mod_name: entry.installed.source_mod_name.clone(),
                 feature_groups: entry.installed.feature_groups.clone(),
                 auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
                 processed,
@@ -352,6 +355,7 @@ fn build_pool(
     capsules.extend(payload.custom_entries.iter().map(|entry| {
         let (
             feature_groups,
+            source_mod_name,
             processed,
             update_required,
             source_eligible,
@@ -364,6 +368,7 @@ fn build_pool(
             origin: "custom".to_string(),
             launch_arguments: entry.launch_arguments.clone(),
             default_launch_arguments: None,
+            source_mod_name,
             feature_groups,
             auto_exit_on_death_enabled,
             processed,
@@ -827,6 +832,7 @@ mod tests {
             edition: "CN".to_string(),
             installed: InstalledMod {
                 name: "Sample".to_string(),
+                source_mod_name: None,
                 audio_ready: false,
                 update_required: false,
                 source_eligible: true,

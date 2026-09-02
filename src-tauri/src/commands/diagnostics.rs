@@ -77,6 +77,7 @@ pub fn export_diagnostic_bundle(state: tauri::State<'_, SharedState>) -> Result<
                 "cn_game_configured": !config.cn_game_path.trim().is_empty(),
                 "global_game_configured": !config.global_game_path.trim().is_empty(),
                 "browser_configured": !config.browser_path.trim().is_empty(),
+                "installed_optional_modules": config.installed_optional_modules.clone(),
                 "audio_requested": config.rune_audio_enabled,
                 "terror_zone_overlay_requested": config.enable_tz_overlay,
                 "statistics_overlay_requested": config.enable_stats_overlay,

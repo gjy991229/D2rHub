@@ -73,11 +73,21 @@ impl OverlayVisibility {
     fn from_config(config: Option<&GlobalConfig>) -> Self {
         Self {
             terror_zone: config
-                .map(|config| config.enable_tz_overlay)
-                .unwrap_or(true),
+                .map(|config| {
+                    config.optional_module_installed(
+                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                    ) && config.enable_tz_overlay
+                })
+                .unwrap_or(false),
             stats: config
-                .map(|config| config.enable_stats_overlay)
-                .unwrap_or(true),
+                .map(|config| {
+                    config.optional_module_installed(
+                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                    ) && config.optional_module_installed(
+                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                    ) && config.enable_stats_overlay
+                })
+                .unwrap_or(false),
         }
     }
 }

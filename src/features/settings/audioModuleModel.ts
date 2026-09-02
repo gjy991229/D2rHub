@@ -103,7 +103,11 @@ export function audioSetupDefaults(state: AudioModSetupState): {
   const recordedSource = sources.find((mod) => (
     !!state.source_mod_name && mod.name.toLowerCase() === state.source_mod_name.toLowerCase()
   ));
-  const source = recordedSource
+  const currentSource = sources.find((mod) => (
+    !!state.current_mod_name && mod.name.toLowerCase() === state.current_mod_name.toLowerCase()
+  ));
+  const source = (!state.update_required ? currentSource : undefined)
+    ?? recordedSource
     ?? (state.update_required && state.build_mode === "augment" && sources.length === 1 ? sources[0] : undefined)
     ?? (!state.update_required ? sources[0] : undefined);
   const preserveExisting = state.update_required

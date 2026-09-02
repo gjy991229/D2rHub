@@ -6,7 +6,10 @@ use crate::application::configuration::{
     ConfigurationMutation, ConfigurationObserver, ConfigurationPolicy, ConfigurationRepository,
 };
 use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
-use crate::domain::config::{default_enable_overlay, CURRENT_CONFIG_VERSION};
+use crate::domain::config::{
+    default_enable_overlay, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
+    OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
+};
 use crate::error::AppError;
 use crate::state::SharedState;
 
@@ -2161,6 +2164,32 @@ impl GlobalConfig {
                 "配置版本高于当前程序支持的 v{CURRENT_CONFIG_VERSION}，请使用更新版本的 D2RHub 打开"
             )));
         }
+        let had_optional_module_state = value.get("installed_optional_modules").is_some();
+        let legacy_combined_overlay_enabled = value
+            .get("enable_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let legacy_tz_overlay_enabled = value
+            .get("enable_tz_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(legacy_combined_overlay_enabled);
+        let legacy_stats_overlay_enabled = value
+            .get("enable_stats_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let legacy_audio_enabled = value
+            .get("rune_audio_enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let legacy_pet_enabled = value
+            .get("enable_bongo_cat")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let legacy_room_automation_enabled = value
+            .get("room_rotation")
+            .and_then(|room| room.get("enabled"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         if let Some(invalid_key) = [
             "game_path",
             "saved_games_path",
@@ -2244,8 +2273,38 @@ impl GlobalConfig {
             // Same-version extensions are preserved below, but older envelopes
             // continue through their explicit migrations without retaining
             // obsolete keys forever.
+            let pending_room_automation_import = config
+                .preserved_unknown_fields
+                .get("room_rotation")
+                .cloned();
             config.preserved_unknown_fields.clear();
+            if let Some(room_rotation) = pending_room_automation_import {
+                config
+                    .preserved_unknown_fields
+                    .insert("room_rotation".to_string(), room_rotation);
+            }
             config.version = CURRENT_CONFIG_VERSION;
+            migrated = true;
+        }
+        if !had_optional_module_state {
+            // Before v10 the feature switches were the only durable evidence
+            // that a user had opted into an optional capability. Promote those
+            // active features to installed modules instead of hiding their UI.
+            let recognition_installed = legacy_audio_enabled || legacy_stats_overlay_enabled;
+            let overlays_installed = legacy_tz_overlay_enabled || recognition_installed;
+            config.installed_optional_modules = [
+                overlays_installed.then_some(OPTIONAL_MODULE_OVERLAYS),
+                legacy_pet_enabled.then_some(OPTIONAL_MODULE_PET),
+                recognition_installed.then_some(OPTIONAL_MODULE_AUTOMATION),
+                legacy_room_automation_enabled.then_some(OPTIONAL_MODULE_ROOM_AUTOMATION),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_string)
+            .collect();
+            migrated = true;
+        }
+        if config.normalize_optional_module_configuration() {
             migrated = true;
         }
         let combined_overlay_enabled = config.enable_tz_overlay || config.enable_stats_overlay;
@@ -2886,8 +2945,8 @@ fn prepare_global_config_with_retired_accounts(
     cfg.preserved_unknown_fields = previous
         .map(|previous| previous.preserved_unknown_fields.clone())
         .unwrap_or_default();
-    // 保留旧字段作为向后兼容总状态，新代码只读取两个独立开关。
-    cfg.enable_overlay = cfg.enable_tz_overlay || cfg.enable_stats_overlay;
+    // 模块安装状态是可选能力的上层权限；旧开关只能在模块存在时生效。
+    cfg.normalize_optional_module_configuration();
     cfg.accounts_dir = app_accounts_dir(app_data_dir).to_string_lossy().to_string();
     cfg.rune_audio_tracked_categories =
         crate::rune_audio::item_catalog::normalize_tracked_categories(

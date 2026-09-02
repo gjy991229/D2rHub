@@ -68,9 +68,14 @@ export function useAudioModuleController({
     : trackingTargetId;
 
   const normalizedAudioSetupName = audioSetupName.trim();
-  const isAudioModUpgrade = !!audioModState?.current_mod_name && (
+  const hasCurrentProcessedMod = !!audioModState?.current_mod_name && (
     audioModState.update_required || audioModState.ready || audioModState.feature_groups.length > 0
   );
+  const editingCurrentProcessedMod = audioSetupMode === "existing"
+    && !!audioModState?.current_mod_name
+    && audioSetupSource.toLocaleLowerCase() === audioModState.current_mod_name.toLocaleLowerCase();
+  const isAudioModUpgrade = hasCurrentProcessedMod
+    && (!!audioModState?.update_required || editingCurrentProcessedMod);
   const isAudioModFeatureManagement = isAudioModUpgrade && !audioModState?.update_required;
   const installedAudioModNames = audioModState?.installed_mods.map((mod) => mod.name) ?? [];
   const audioSetupNameError = isAudioModUpgrade
@@ -352,11 +357,16 @@ export function useAudioModuleController({
     accountId: string,
     purpose: Exclude<ModProcessingPurpose, "manage">,
     autoStart = false,
+    sourceModName?: string,
   ) => {
     cacheRef.current.delete(accountId);
     setModProcessingTargetId(accountId);
     setAudioSetupPurpose(purpose);
     applyFeatureDefaults(purpose);
+    if (sourceModName) {
+      setAudioSetupMode("existing");
+      setAudioSetupSource(sourceModName);
+    }
     setAudioSetupOpen(true);
     if (autoStart) setAutoPrepareRequest((request) => request + 1);
     setActiveTab("mod-processing");

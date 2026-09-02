@@ -652,9 +652,18 @@ impl RuntimeBridge for TauriRuntimeBridge {
     }
 
     fn apply_requested(&self, enabled: bool) -> Result<(), String> {
+        let installed = self
+            .state
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| {
+                config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
+                )
+            });
         self.state
             .capabilities()
-            .set_requested(ROOM_AUTOMATION_ID, enabled)
+            .set_requested(ROOM_AUTOMATION_ID, installed && enabled)
             .map_err(|error| error.to_string())?;
         if let Some(supervisor) = self.app.try_state::<CapabilitySupervisor>() {
             supervisor.schedule_reconcile();
@@ -772,6 +781,16 @@ impl RoomAutomationManager {
                 .map_err(config_failure)?;
             snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())
                 .map_err(config_failure)?;
+            if !global.optional_module_installed(
+                crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
+            ) && snapshot.config.enabled
+            {
+                let mut disabled = snapshot.config.clone();
+                disabled.enabled = false;
+                snapshot = controller
+                    .save(snapshot.generation, disabled, &shortcuts)
+                    .map_err(config_failure)?;
+            }
 
             let mut validated = snapshot.config.clone();
             host.canonicalize_and_validate_accounts(&mut validated)

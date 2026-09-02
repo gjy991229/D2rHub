@@ -295,6 +295,11 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             .configuration()
             .snapshot()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
+        if !config.optional_module_installed(
+            crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+        ) {
+            return Err("识别与统计模块尚未安装".to_string());
+        }
         let account = config
             .resolve_rune_audio_target_account()
             .map_err(|error| error.to_string())?

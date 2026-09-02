@@ -6,7 +6,18 @@ use std::collections::BTreeMap;
 ///
 /// The command/application layer owns migrations, while this domain module owns
 /// the stable serialized shape and defaults.
-pub(crate) const CURRENT_CONFIG_VERSION: u32 = 9;
+pub(crate) const CURRENT_CONFIG_VERSION: u32 = 10;
+
+pub(crate) const OPTIONAL_MODULE_OVERLAYS: &str = "overlays";
+pub(crate) const OPTIONAL_MODULE_PET: &str = "pet";
+pub(crate) const OPTIONAL_MODULE_AUTOMATION: &str = "automation";
+pub(crate) const OPTIONAL_MODULE_ROOM_AUTOMATION: &str = "room-automation";
+const OPTIONAL_MODULE_ORDER: [&str; 4] = [
+    OPTIONAL_MODULE_OVERLAYS,
+    OPTIONAL_MODULE_PET,
+    OPTIONAL_MODULE_AUTOMATION,
+    OPTIONAL_MODULE_ROOM_AUTOMATION,
+];
 
 /// These values are persistence defaults, not runtime feature registration.
 /// Keeping them in the schema layer prevents the core configuration model from
@@ -89,6 +100,10 @@ pub struct GlobalConfig {
     pub app_data_roaming_bnet_path: String,
     pub accounts_dir: String,
     pub first_run_complete: bool,
+    /// Explicitly installed optional modules. Runtime capability flags are
+    /// always gated by this list so hidden settings cannot start background work.
+    #[serde(default)]
+    pub installed_optional_modules: Vec<String>,
     /// 浏览器可执行文件路径（Edge 或 Chrome）
     #[serde(default)]
     pub browser_path: String,
@@ -246,7 +261,7 @@ fn default_theme() -> String {
 }
 
 pub(crate) fn default_enable_overlay() -> bool {
-    true
+    false
 }
 
 fn default_auto_close_browser() -> bool {
@@ -262,7 +277,7 @@ fn default_first_launch() -> bool {
 }
 
 fn default_enable_bongo_cat() -> bool {
-    true
+    false
 }
 
 fn default_bongo_cat_chatterbox() -> bool {
@@ -281,6 +296,64 @@ fn default_bongo_cat_unlocked_skins() -> Vec<String> {
     vec!["original".to_string()]
 }
 
+impl GlobalConfig {
+    pub(crate) fn optional_module_installed(&self, module_id: &str) -> bool {
+        self.installed_optional_modules
+            .iter()
+            .any(|installed| installed == module_id)
+    }
+
+    /// Canonicalizes module identities and closes every legacy path that could
+    /// request an optional runtime without its owning settings module.
+    pub(crate) fn normalize_optional_module_configuration(&mut self) -> bool {
+        let mut normalized = OPTIONAL_MODULE_ORDER
+            .into_iter()
+            .filter(|module_id| self.optional_module_installed(module_id))
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if normalized
+            .iter()
+            .any(|module_id| module_id == OPTIONAL_MODULE_AUTOMATION)
+            && !normalized
+                .iter()
+                .any(|module_id| module_id == OPTIONAL_MODULE_OVERLAYS)
+        {
+            normalized.insert(0, OPTIONAL_MODULE_OVERLAYS.to_string());
+        }
+
+        let mut changed = normalized != self.installed_optional_modules;
+        self.installed_optional_modules = normalized;
+
+        let overlays_installed = self.optional_module_installed(OPTIONAL_MODULE_OVERLAYS);
+        let automation_installed = self.optional_module_installed(OPTIONAL_MODULE_AUTOMATION);
+        let pet_installed = self.optional_module_installed(OPTIONAL_MODULE_PET);
+
+        if !overlays_installed && self.enable_tz_overlay {
+            self.enable_tz_overlay = false;
+            changed = true;
+        }
+        if (!overlays_installed || !automation_installed) && self.enable_stats_overlay {
+            self.enable_stats_overlay = false;
+            changed = true;
+        }
+        if !automation_installed && self.rune_audio_enabled {
+            self.rune_audio_enabled = false;
+            changed = true;
+        }
+        if !pet_installed && self.enable_bongo_cat {
+            self.enable_bongo_cat = false;
+            changed = true;
+        }
+
+        let combined_overlay_enabled = self.enable_tz_overlay || self.enable_stats_overlay;
+        if self.enable_overlay != combined_overlay_enabled {
+            self.enable_overlay = combined_overlay_enabled;
+            changed = true;
+        }
+        changed
+    }
+}
+
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
@@ -295,16 +368,17 @@ impl Default for GlobalConfig {
             app_data_roaming_bnet_path: String::new(),
             accounts_dir: String::new(),
             first_run_complete: false,
+            installed_optional_modules: Vec::new(),
             browser_path: String::new(),
             browser_type: String::new(),
-            enable_bongo_cat: true,
+            enable_bongo_cat: false,
             bongo_cat_chatterbox: true,
             bongo_cat_scale: 1.0,
             bongo_cat_skin: "original".to_string(),
             bongo_cat_unlocked_skins: vec!["original".to_string()],
-            enable_overlay: true,
-            enable_tz_overlay: true,
-            enable_stats_overlay: true,
+            enable_overlay: false,
+            enable_tz_overlay: false,
+            enable_stats_overlay: false,
             theme: "light".to_string(),
             theme_overlay: "light".to_string(),
             auto_close_browser: true,

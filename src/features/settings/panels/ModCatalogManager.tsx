@@ -6,7 +6,7 @@ import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, ModCapsule } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
-import { capsuleFeatureLabels } from "../../modCapsules/model";
+import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/model";
 
 interface ModCatalogManagerProps {
   catalog: ModCapsuleController;
@@ -138,13 +138,14 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
                 <span className="mod-catalog-capsule"><PackageOpen size={13} /><b>{capsule.name}</b></span>
                 <small>{capsule.origin === "scanned" ? "游戏目录预设 · 名称由文件夹决定" : "自定义共享参数"}</small>
                 <div className="mod-catalog-state">
-                  {capsule.processed && <span>
-                    已加工：{featureLabels.length
-                      ? featureLabels.map((label, index) => (
-                          <span key={label}>{index > 0 ? " · " : ""}{label}</span>
-                        ))
-                      : "凭证待更新"}
-                  </span>}
+                  {capsule.processed && (
+                    <div className="mod-catalog-capability-capsules">
+                      <span data-kind="base" title="基 Mod">{capsuleBaseModLabel(capsule)}</span>
+                      {featureLabels.length
+                        ? featureLabels.map((label) => <span data-kind="feature" key={label}>{label}</span>)
+                        : <span data-kind="pending">凭证待更新</span>}
+                    </div>
+                  )}
                   {!!assignedNames && <small title={assignedNames}>使用中：{assignedNames}</small>}
                 </div>
               </div>
@@ -192,7 +193,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
               )}
               {!editing && (
                 <div className="mod-catalog-actions">
-                  {capsule.origin === "scanned" && !capsule.processed && capsule.source_eligible && (
+                  {capsule.origin === "scanned" && capsule.source_eligible && (
                     <Button size="sm" variant="ghost" onClick={() => void onProcess(capsule)}>加工</Button>
                   )}
                   <Button size="sm" variant="ghost" title="编辑启动参数" onClick={() => beginEdit(capsule)}>

@@ -30,13 +30,20 @@ fn validate_label(label: &str) -> Result<(), AppError> {
 
 fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
     let mut labels = Vec::with_capacity(AUXILIARY_WINDOW_LABELS.len());
-    if config.enable_tz_overlay {
+    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+        && config.enable_tz_overlay
+    {
         labels.push(TERROR_ZONE_OVERLAY_LABEL);
     }
-    if config.enable_stats_overlay {
+    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+        && config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        && config.enable_stats_overlay
+    {
         labels.push(STATS_OVERLAY_LABEL);
     }
-    if config.enable_bongo_cat {
+    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+        && config.enable_bongo_cat
+    {
         labels.push(DESKTOP_PET_LABEL);
     }
     labels
@@ -102,7 +109,7 @@ pub(crate) fn destroy_window(app: &AppHandle, label: &str) -> Result<bool, AppEr
         return Ok(false);
     };
     if label == STATS_OVERLAY_LABEL {
-        crate::input_listener::set_stats_overlay_mini_input_region(false, 0, 0, 0, 0);
+        crate::input_listener::set_stats_overlay_mini_input_region_state(false, 0, 0, 0, 0);
     }
     window
         .destroy()

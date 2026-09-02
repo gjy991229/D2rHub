@@ -14,6 +14,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "app_data_roaming_bnet_path",
   "accounts_dir",
   "first_run_complete",
+  "installed_optional_modules",
   "browser_path",
   "browser_type",
   "enable_bongo_cat",

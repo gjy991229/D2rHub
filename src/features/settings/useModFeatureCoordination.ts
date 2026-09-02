@@ -17,7 +17,12 @@ interface CoordinationOptions {
   trackingTargetId: string;
   modCatalog: ModCapsuleController;
   toggleAudio: (enabled: boolean, accountId?: string) => Promise<void>;
-  openProcessing: (accountId: string, purpose: Exclude<ModProcessingPurpose, "manage">, autoStart?: boolean) => void;
+  openProcessing: (
+    accountId: string,
+    purpose: Exclude<ModProcessingPurpose, "manage">,
+    autoStart?: boolean,
+    sourceModName?: string,
+  ) => void;
   onGlobalCommitted: (config: GlobalConfig) => void;
 }
 
@@ -49,7 +54,7 @@ export function useModFeatureCoordination({
       if (purpose === "recognition") await toggleAudio(true, accountId);
       return;
     }
-    openProcessing(accountId, purpose, autoStart && capsule.processed);
+    openProcessing(accountId, purpose, autoStart && capsule.processed, capsule.name);
   }, [modCatalog, openProcessing, toggleAudio]);
 
   const toggleRecognition = useCallback(async (enabled: boolean): Promise<boolean> => {

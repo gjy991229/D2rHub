@@ -1468,6 +1468,15 @@ pub fn open_stats_page(
     state: tauri::State<'_, SharedState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "全局配置尚未加载".to_string())?;
+    if !config.optional_module_installed(
+        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+    ) {
+        return Err("识别与统计模块尚未安装".to_string());
+    }
     // 1. 查询统计数据
     let stats_data = get_stats_data_inner(&state.app_data_dir)?;
     let stats_json =

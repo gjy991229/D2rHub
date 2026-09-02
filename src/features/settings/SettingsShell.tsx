@@ -4,13 +4,18 @@ import type { CapabilityStatusSnapshot, GlobalConfig } from "../../store/types";
 import { initCapabilityStatusSync } from "../capabilities";
 import { SettingsNavigation } from "./SettingsNavigation";
 import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
-import { isOptionalSettingsTab, type SettingsTabId } from "./settingsRegistry";
+import {
+  isOptionalSettingsTab,
+  type OptionalModuleTabId,
+  type SettingsTabId,
+} from "./settingsRegistry";
 
 interface SettingsShellProps {
   open: boolean;
   title: string;
   activeTab: SettingsTabId;
   config: GlobalConfig | null;
+  installedModules: readonly OptionalModuleTabId[];
   onClose: () => void;
   onTabChange: (tab: SettingsTabId) => boolean | void;
   children: ReactNode;
@@ -21,6 +26,7 @@ export function SettingsShell({
   title,
   activeTab,
   config,
+  installedModules,
   onClose,
   onTabChange,
   children,
@@ -66,6 +72,7 @@ export function SettingsShell({
             capabilityStatus={capabilityStatus}
             capabilityStatusUnavailable={capabilityStatusUnavailable}
             language={config?.app_language}
+            installedModules={installedModules}
             onSelect={onTabChange}
           />
           <div className="settings-panel-column">
@@ -76,6 +83,7 @@ export function SettingsShell({
                 capabilityStatus={capabilityStatus}
                 capabilityStatusUnavailable={capabilityStatusUnavailable}
                 language={config?.app_language}
+                installedModules={installedModules}
                 onSelect={onTabChange}
               />
             )}

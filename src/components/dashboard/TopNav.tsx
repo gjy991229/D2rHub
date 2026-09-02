@@ -30,13 +30,15 @@ const SHARE_RANGES: Array<{
 ];
 
 export function TopNav({
-  onAbout, onExit, onOpenConfig, onHelp, onStats, onShareReport, sharingReport,
+  onAbout, onExit, onOpenConfig, onHelp, onStats, statsModuleInstalled = false,
+  onShareReport, sharingReport,
 }: {
   onAbout: () => void;
   onExit: () => void;
   onOpenConfig: () => void;
   onHelp: () => void;
   onStats: () => void;
+  statsModuleInstalled?: boolean;
   onShareReport: (range: BattleReportQuickRange) => void;
   sharingReport: boolean;
 }) {
@@ -70,6 +72,10 @@ export function TopNav({
     setShareMenuPosition(null);
     if (restoreFocus) window.requestAnimationFrame(() => shareTriggerRef.current?.focus());
   }, []);
+
+  useEffect(() => {
+    if (!statsModuleInstalled) closeShareMenu();
+  }, [closeShareMenu, statsModuleInstalled]);
 
   useLayoutEffect(() => {
     if (shareMenuOpen) updateShareMenuPosition();
@@ -164,26 +170,30 @@ export function TopNav({
           >
             <Settings size={14} strokeWidth={1.8} />
           </button>
-          <button onClick={onStats}
-            className="icon-btn w-7 h-7" title="查看统计">
-            <BarChart3 size={14} strokeWidth={1.8} />
-          </button>
-          <button
-            ref={shareTriggerRef}
-            type="button"
-            onClick={handleShareTriggerClick}
-            onKeyDown={handleShareTriggerKeyDown}
-            className="icon-btn w-7 h-7 disabled:cursor-wait disabled:opacity-40"
-            title={sharingReport ? "正在生成战报" : "选择战报周期并复制图片"}
-            aria-label={sharingReport ? "正在生成战报" : "选择战报周期"}
-            aria-haspopup="menu"
-            aria-expanded={shareMenuOpen}
-            aria-controls={shareMenuOpen ? shareMenuId : undefined}
-            aria-busy={sharingReport}
-            disabled={sharingReport}
-          >
-            <Share2 size={14} strokeWidth={1.8} />
-          </button>
+          {statsModuleInstalled && (
+            <>
+              <button onClick={onStats}
+                className="icon-btn w-7 h-7" title="查看统计">
+                <BarChart3 size={14} strokeWidth={1.8} />
+              </button>
+              <button
+                ref={shareTriggerRef}
+                type="button"
+                onClick={handleShareTriggerClick}
+                onKeyDown={handleShareTriggerKeyDown}
+                className="icon-btn w-7 h-7 disabled:cursor-wait disabled:opacity-40"
+                title={sharingReport ? "正在生成战报" : "选择战报周期并复制图片"}
+                aria-label={sharingReport ? "正在生成战报" : "选择战报周期"}
+                aria-haspopup="menu"
+                aria-expanded={shareMenuOpen}
+                aria-controls={shareMenuOpen ? shareMenuId : undefined}
+                aria-busy={sharingReport}
+                disabled={sharingReport}
+              >
+                <Share2 size={14} strokeWidth={1.8} />
+              </button>
+            </>
+          )}
           <button onClick={onHelp}
             className="icon-btn w-7 h-7" title="帮助文档">
             <BookOpen size={14} strokeWidth={1.8} />
@@ -199,7 +209,7 @@ export function TopNav({
         </div>
       </div>
 
-      {shareMenuOpen && shareMenuPosition && createPortal(
+      {statsModuleInstalled && shareMenuOpen && shareMenuPosition && createPortal(
         <div
           ref={shareMenuRef}
           id={shareMenuId}

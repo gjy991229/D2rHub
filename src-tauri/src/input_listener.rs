@@ -228,13 +228,35 @@ pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-#[tauri::command]
-pub fn set_bongo_cat_input_visible(visible: bool) {
+pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
 }
 
 #[tauri::command]
-pub fn set_stats_overlay_mini_input_region(enabled: bool, x: i32, y: i32, width: u32, height: u32) {
+pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    if visible {
+        let installed = app
+            .state::<SharedState>()
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| {
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+            });
+        if !installed {
+            return Err("桌宠模块尚未安装".to_string());
+        }
+    }
+    set_bongo_cat_input_visible_state(visible);
+    Ok(())
+}
+
+pub(crate) fn set_stats_overlay_mini_input_region_state(
+    enabled: bool,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
     STATS_OVERLAY_MINI_LEFT.store(x, Ordering::Relaxed);
     STATS_OVERLAY_MINI_TOP.store(y, Ordering::Relaxed);
     STATS_OVERLAY_MINI_RIGHT.store(x.saturating_add_unsigned(width), Ordering::Relaxed);
@@ -242,6 +264,35 @@ pub fn set_stats_overlay_mini_input_region(enabled: bool, x: i32, y: i32, width:
     STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
     STATS_OVERLAY_POINTER_INSIDE.store(false, Ordering::Relaxed);
     STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
+}
+
+#[tauri::command]
+pub fn set_stats_overlay_mini_input_region(
+    app: AppHandle,
+    enabled: bool,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    if enabled {
+        let installed = app
+            .state::<SharedState>()
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| {
+                config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                )
+            });
+        if !installed {
+            return Err("识别与统计模块尚未安装".to_string());
+        }
+    }
+    set_stats_overlay_mini_input_region_state(enabled, x, y, width, height);
+    Ok(())
 }
 
 /// RAII guard：Drop 时自动调用 UnhookWindowsHookEx 并清空对应的全局钩子指针，

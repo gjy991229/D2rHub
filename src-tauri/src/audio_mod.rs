@@ -49,6 +49,7 @@ const REPLACE_JOURNAL_SUFFIX: &str = ".json";
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
     pub name: String,
+    pub source_mod_name: Option<String>,
     pub audio_ready: bool,
     pub update_required: bool,
     pub source_eligible: bool,
@@ -1621,6 +1622,10 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                         .collect::<Vec<_>>()
                 })
                 .unwrap_or_default();
+            let source_mod_name = validation
+                .as_ref()
+                .ok()
+                .and_then(|validated| validated.source_mod_name.clone());
             let audio_reusable = validation.as_ref().is_ok_and(|validated| {
                 validated.current_feature_protocol
                     && validated.feature_groups.iter().any(|group| {
@@ -1637,6 +1642,7 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 .is_ok_and(|validated| validated.auto_exit_on_death_enabled);
             Some(InstalledMod {
                 name,
+                source_mod_name,
                 audio_ready,
                 update_required,
                 source_eligible,

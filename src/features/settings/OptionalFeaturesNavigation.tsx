@@ -10,6 +10,7 @@ import {
   SETTINGS_COPY,
   SETTINGS_FEATURES,
   normalizeSettingsLanguage,
+  type OptionalModuleTabId,
   type SettingsTabId,
 } from "./settingsRegistry";
 
@@ -19,6 +20,7 @@ interface OptionalFeaturesNavigationProps {
   capabilityStatus?: CapabilityStatusSnapshot | null;
   capabilityStatusUnavailable?: boolean;
   language?: string | null;
+  installedModules?: readonly OptionalModuleTabId[];
   onSelect: (tab: SettingsTabId) => boolean | void;
 }
 
@@ -53,11 +55,16 @@ export function OptionalFeaturesNavigation({
   capabilityStatus,
   capabilityStatusUnavailable = false,
   language,
+  installedModules = [],
   onSelect,
 }: OptionalFeaturesNavigationProps) {
   const locale = normalizeSettingsLanguage(language);
   const buttonRefs = useRef(new Map<SettingsTabId, HTMLButtonElement>());
-  const features = OPTIONAL_SETTINGS_TABS.map((id) => (
+  const featureIds: readonly SettingsTabId[] = [
+    "module-management",
+    ...OPTIONAL_SETTINGS_TABS.filter((id) => installedModules.includes(id)),
+  ];
+  const features = featureIds.map((id) => (
     SETTINGS_FEATURES.find((feature) => feature.id === id)
   )).filter((feature): feature is NonNullable<typeof feature> => !!feature);
 

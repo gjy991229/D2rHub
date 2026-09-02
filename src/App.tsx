@@ -311,6 +311,7 @@ function App() {
               showToast("error", `打开统计失败: ${e}`);
             }
           }}
+          statsModuleInstalled={config?.installed_optional_modules?.includes("automation") === true}
           onShareReport={handleShareBattleReport}
           sharingReport={sharingReport}
           onHelp={async () => {

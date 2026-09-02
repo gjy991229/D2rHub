@@ -23,6 +23,7 @@ import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
 import { ModProcessingPanel } from "../../features/settings/panels/ModProcessingPanel";
 import { RoomAutomationPanel } from "../../features/settings/panels/RoomAutomationPanel";
+import { ModuleManagementPanel } from "../../features/settings/panels/ModuleManagementPanel";
 import { TaskRuntimePanel } from "../../features/tasks";
 import { useAudioModuleController } from "../../features/settings/useAudioModuleController";
 import { useAuxiliaryWindowActions } from "../../features/settings/useAuxiliaryWindowActions";
@@ -31,9 +32,17 @@ import { useModCapsulePool } from "../../features/modCapsules/useModCapsulePool"
 import { useModFeatureCoordination } from "../../features/settings/useModFeatureCoordination";
 import { useAccountSettingsController } from "../../features/settings/useAccountSettingsController";
 import {
+  isOptionalModuleTab,
   isSettingsTabId,
+  normalizeInstalledOptionalModules,
+  normalizeSettingsLanguage,
+  optionalModulesAfterInstall,
+  optionalModulesAfterUninstall,
+  type OptionalModuleTabId,
+  type SettingsLanguage,
   type SettingsTabId,
 } from "../../features/settings/settingsRegistry";
+import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import "../../features/settings/settings.css";
 
 interface Props {
@@ -59,6 +68,67 @@ function appearanceSettingsEqual(config: GlobalConfig | null, draft: AppearanceS
   return !!config && !!draft && JSON.stringify(appearanceFromConfig(config)) === JSON.stringify(draft);
 }
 
+function moduleInstallSuccessMessage(language: SettingsLanguage, module: OptionalModuleTabId): string {
+  if (language === "en-US") {
+    if (module === "automation") {
+      return "Recognition & Stats and its required Desktop Overlays module were added. Statistics and Terror Zone windows are now on.";
+    }
+    if (module === "overlays") {
+      return "Desktop Overlays was added. Terror Zone is now on; the statistics window keeps its current setting.";
+    }
+    return `${module === "pet" ? "Desktop Companion" : "Room Automation"} was added to Optional Features.`;
+  }
+  if (module === "automation") {
+    return "已添加“识别与统计”和所需的悬浮窗模块；场景统计与 TZ 播报窗口已开启";
+  }
+  if (module === "overlays") {
+    return "已添加“桌面悬浮窗”；TZ 播报窗口已开启，场景统计窗口保持原状态";
+  }
+  return `“${module === "pet" ? "桌宠" : "自动跟房"}”已添加到可选功能导航`;
+}
+
+function moduleUninstallSuccessMessage(
+  language: SettingsLanguage,
+  module: OptionalModuleTabId,
+  cascadesRecognition: boolean,
+): string {
+  if (language === "en-US") {
+    if (module === "automation") {
+      return "Recognition & Stats was removed. Recognition and statistics are off; Terror Zone keeps its current setting.";
+    }
+    if (cascadesRecognition) {
+      return "Desktop Overlays and dependent Recognition & Stats were removed. Their running features are now off.";
+    }
+    if (module === "overlays") {
+      return "Desktop Overlays was removed. Terror Zone is now off.";
+    }
+    return "The module was removed. Its settings are kept for the next time you add it.";
+  }
+  if (module === "automation") {
+    return "“识别与统计”已卸载，识别与场景统计已关闭；TZ 播报保持当前状态";
+  }
+  if (cascadesRecognition) {
+    return "悬浮窗依赖已移除，“识别与统计”也已卸载，相关运行功能均已关闭";
+  }
+  if (module === "overlays") {
+    return "“桌面悬浮窗”已卸载，TZ 播报窗口已关闭";
+  }
+  return "模块已卸载，配置内容会保留供下次添加时继续使用";
+}
+
+function moduleActionFailureMessage(
+  language: SettingsLanguage,
+  action: "install" | "uninstall",
+  error: unknown,
+): string {
+  if (language === "en-US") {
+    return action === "install"
+      ? "The module could not be added. Try again; if the problem continues, review the application logs."
+      : "The module could not be removed. Try again; if the problem continues, review the application logs.";
+  }
+  return `${action === "install" ? "添加" : "卸载"}模块失败：${error}`;
+}
+
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount } = useAccounts();
@@ -67,6 +137,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const shortcutAccounts = sortAccountsByCardOrder(accounts);
   const trackingTarget = validateTrackingTarget(config?.rune_audio_target_account ?? "", accounts);
   const trackingTargetId = trackingTarget.valid ? trackingTarget.account.id : "";
+  const installedModules = normalizeInstalledOptionalModules(config?.installed_optional_modules);
+  const installedModuleKey = installedModules.join("|");
+  const settingsLanguage = normalizeSettingsLanguage(config?.app_language);
 
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
@@ -160,9 +233,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   }, [open]);
 
   useEffect(() => {
+    if (open && isOptionalModuleTab(activeTab) && !installedModules.includes(activeTab)) {
+      setActiveTab("module-management");
+    }
+  }, [activeTab, installedModuleKey, open]);
+
+  useEffect(() => {
     if (open) {
       if (initialTab?.startsWith("mod-processing") || isSettingsTabId(initialTab)) {
-        setActiveTab(initialTab?.startsWith("mod-processing") ? "mod-processing" : initialTab as SettingsTabId);
+        const requested = initialTab?.startsWith("mod-processing") ? "mod-processing" : initialTab as SettingsTabId;
+        setActiveTab(isOptionalModuleTab(requested) && !installedModules.includes(requested)
+          ? "module-management"
+          : requested);
       } else {
         setActiveTab("accounts");
       }
@@ -225,6 +307,76 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     } catch (e) {
       showToast("error", `保存全局设置失败: ${e}`);
       return null;
+    }
+  };
+
+  const handleInstallModule = async (module: OptionalModuleTabId) => {
+    try {
+      const current = useGlobalConfig.getState().config;
+      if (!current) throw new Error("全局配置尚未加载");
+      const nextModules = optionalModulesAfterInstall(installedModules, module);
+      const candidate: GlobalConfig = {
+        ...current,
+        installed_optional_modules: nextModules,
+        enable_tz_overlay: module === "automation" || module === "overlays"
+          ? true
+          : current.enable_tz_overlay,
+        enable_stats_overlay: module === "automation" ? true : current.enable_stats_overlay,
+        enable_overlay: module === "automation" || module === "overlays"
+          ? true
+          : current.enable_overlay,
+      };
+      const saved = await persistGlobalDraft(candidate, true);
+      if (!saved) return;
+      showToast("success", moduleInstallSuccessMessage(settingsLanguage, module));
+    } catch (error) {
+      showToast("error", moduleActionFailureMessage(settingsLanguage, "install", error));
+    }
+  };
+
+  const handleUninstallModule = async (module: OptionalModuleTabId) => {
+    const removesRecognitionGroup = module === "automation"
+      || (module === "overlays" && installedModules.includes("automation"));
+    try {
+      const current = useGlobalConfig.getState().config;
+      if (!current) throw new Error("全局配置尚未加载");
+      const nextModules = optionalModulesAfterUninstall(installedModules, module);
+      if (module === "room-automation") {
+        const snapshot = await roomAutomationGateway.getConfig();
+        if (snapshot.config.enabled) {
+          await roomAutomationGateway.saveConfig(snapshot.generation, {
+            ...snapshot.config,
+            enabled: false,
+          });
+        }
+      }
+      const candidate: GlobalConfig = {
+        ...current,
+        installed_optional_modules: nextModules,
+        rune_audio_enabled: removesRecognitionGroup ? false : current.rune_audio_enabled,
+        enable_tz_overlay: module === "overlays"
+          ? false
+          : current.enable_tz_overlay,
+        enable_stats_overlay: removesRecognitionGroup ? false : current.enable_stats_overlay,
+        enable_bongo_cat: module === "pet" ? false : current.enable_bongo_cat,
+      };
+      candidate.enable_overlay = candidate.enable_tz_overlay || candidate.enable_stats_overlay;
+      const saved = await persistGlobalDraft(candidate, true);
+      if (!saved) return;
+      if (removesRecognitionGroup) {
+        await invokeCommand("stop_rune_audio_monitor").catch(() => undefined);
+      }
+      if (isOptionalModuleTab(activeTab) && !nextModules.includes(activeTab)) setActiveTab("module-management");
+      showToast(
+        "success",
+        moduleUninstallSuccessMessage(
+          settingsLanguage,
+          module,
+          removesRecognitionGroup && module === "overlays",
+        ),
+      );
+    } catch (error) {
+      showToast("error", moduleActionFailureMessage(settingsLanguage, "uninstall", error));
     }
   };
 
@@ -505,9 +657,20 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       title={`设置中心 · ${saveStatusText}`}
       activeTab={activeTab}
       config={config}
+      installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
     >
+            {activeTab === "module-management" && config && (
+              <ModuleManagementPanel
+                config={config}
+                installedModules={installedModules}
+                onInstall={handleInstallModule}
+                onUninstall={handleUninstallModule}
+                onOpen={(module) => { void handleTabChange(module); }}
+              />
+            )}
+
             {activeTab === "paths" && config && (
               <PathsPanel
                 config={config}
