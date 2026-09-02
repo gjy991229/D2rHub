@@ -1,12 +1,24 @@
 use parking_lot::{Mutex, MutexGuard};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::AppError;
 
 #[derive(Default)]
 struct AccountLeaseState {
-    active: Mutex<HashSet<String>>,
+    active: Mutex<HashMap<String, AccountLeaseEntry>>,
+}
+
+#[derive(Default)]
+struct AccountLeaseEntry {
+    readers: usize,
+    writer: bool,
+}
+
+#[derive(Clone, Copy)]
+enum AccountLeaseKind {
+    Read,
+    Write,
 }
 
 /// Core-owned lease manager for account lifecycle mutations.
@@ -21,6 +33,7 @@ pub struct AccountLeaseManager {
 pub struct AccountOperationLease {
     state: Arc<AccountLeaseState>,
     account_id: String,
+    kind: AccountLeaseKind,
 }
 
 /// A deterministically ordered all-or-nothing lease set.
@@ -51,15 +64,52 @@ impl AccountLeaseManager {
             return Err(AppError::Unknown("账号 ID 不能为空".to_string()));
         }
         let mut active = self.state.active.lock();
-        if !active.insert(operation_key.clone()) {
+        if active
+            .get(&operation_key)
+            .is_some_and(|entry| entry.writer || entry.readers > 0)
+        {
             return Err(AppError::Unknown(format!(
                 "账号 {account_id} 正在执行另一项操作，请稍后重试"
             )));
         }
+        active.insert(
+            operation_key.clone(),
+            AccountLeaseEntry {
+                readers: 0,
+                writer: true,
+            },
+        );
         drop(active);
         Ok(AccountOperationLease {
             state: Arc::clone(&self.state),
             account_id: operation_key,
+            kind: AccountLeaseKind::Write,
+        })
+    }
+
+    /// Acquires a shared account snapshot lease. Concurrent readers may proceed,
+    /// while directory swaps and other account mutations remain exclusive.
+    pub fn try_acquire_read(&self, account_id: &str) -> Result<AccountOperationLease, AppError> {
+        let operation_key = account_key(account_id);
+        if operation_key.is_empty() {
+            return Err(AppError::Unknown("账号 ID 不能为空".to_string()));
+        }
+        let mut active = self.state.active.lock();
+        let entry = active.entry(operation_key.clone()).or_default();
+        if entry.writer {
+            return Err(AppError::Unknown(format!(
+                "账号 {account_id} 正在执行另一项操作，请稍后重试"
+            )));
+        }
+        entry.readers = entry
+            .readers
+            .checked_add(1)
+            .ok_or_else(|| AppError::Unknown("账号读取租约计数溢出".to_string()))?;
+        drop(active);
+        Ok(AccountOperationLease {
+            state: Arc::clone(&self.state),
+            account_id: operation_key,
+            kind: AccountLeaseKind::Read,
         })
     }
 
@@ -81,12 +131,24 @@ impl AccountLeaseManager {
         // Check and reserve the whole set while holding one lock. No observer
         // can see a partially acquired workflow lease set.
         let mut active = self.state.active.lock();
-        if let Some(account_id) = ids.iter().find(|account_id| active.contains(*account_id)) {
+        if let Some(account_id) = ids.iter().find(|account_id| {
+            active
+                .get(*account_id)
+                .is_some_and(|entry| entry.writer || entry.readers > 0)
+        }) {
             return Err(AppError::Unknown(format!(
                 "账号 {account_id} 正在执行另一项操作，请稍后重试"
             )));
         }
-        active.extend(ids.iter().cloned());
+        active.extend(ids.iter().cloned().map(|account_id| {
+            (
+                account_id,
+                AccountLeaseEntry {
+                    readers: 0,
+                    writer: true,
+                },
+            )
+        }));
         drop(active);
 
         let leases = ids
@@ -94,6 +156,7 @@ impl AccountLeaseManager {
             .map(|account_id| AccountOperationLease {
                 state: Arc::clone(&self.state),
                 account_id,
+                kind: AccountLeaseKind::Write,
             })
             .collect();
         Ok(AccountOperationLeases { _leases: leases })
@@ -106,7 +169,10 @@ impl AccountLeaseManager {
 
     #[cfg(test)]
     pub fn contains(&self, account_id: &str) -> bool {
-        self.state.active.lock().contains(&account_key(account_id))
+        self.state
+            .active
+            .lock()
+            .contains_key(&account_key(account_id))
     }
 }
 
@@ -127,7 +193,23 @@ impl AccountCatalogLeaseManager {
 
 impl Drop for AccountOperationLease {
     fn drop(&mut self) {
-        self.state.active.lock().remove(&self.account_id);
+        let mut active = self.state.active.lock();
+        let remove = if let Some(entry) = active.get_mut(&self.account_id) {
+            match self.kind {
+                AccountLeaseKind::Read => {
+                    if entry.readers > 0 {
+                        entry.readers -= 1;
+                    }
+                }
+                AccountLeaseKind::Write => entry.writer = false,
+            }
+            !entry.writer && entry.readers == 0
+        } else {
+            false
+        };
+        if remove {
+            active.remove(&self.account_id);
+        }
     }
 }
 

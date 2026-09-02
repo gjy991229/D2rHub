@@ -551,7 +551,9 @@ export function AccountGridItem({
             <div className="drawer-grid">
               {drawerLoadError && (
                 <div className="scheme-settings-error hig-badge hig-badge-red" title={drawerLoadError}>
-                  画质配置{drawerLoaded ? "保存" : "读取"}失败，请检查 Settings.json
+                  {drawerLoadError.includes("正在执行另一项操作")
+                    ? "账号配置正忙，请稍后重试"
+                    : `画质配置${drawerLoaded ? "保存" : "读取"}失败`}
                 </div>
               )}
               <div className="drawer-resolution-fps-row">

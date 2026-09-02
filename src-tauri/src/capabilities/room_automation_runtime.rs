@@ -996,38 +996,20 @@ impl RoomAutomationManager {
         status_before = self.workflow.lock().snapshot();
         validate_primary_trigger(&status_before)?;
 
-        let had_leases = self.lifecycle.lock().leases.is_some();
-        if status_before.phase == WorkflowPhase::Waiting && !had_leases {
-            let message = "手动等待阶段的账号租约已丢失，已拒绝重试建房".to_string();
-            if let Some(task_id) = status_before.task_id {
-                self.fail_and_release(task_id, &message);
-            }
-            return Err(message);
-        }
-        if had_leases && status_before.phase != WorkflowPhase::Waiting {
-            return Err("检测到不属于等待阶段的账号租约，已拒绝启动".to_string());
+        if self.lifecycle.lock().leases.is_some() {
+            return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
         let raw_config = self.workflow_config_snapshot()?;
-        let new_leases = if had_leases {
-            None
-        } else {
-            Some(self.acquire_participant_leases(&raw_config)?)
-        };
-        // Primary runtime validation runs only after the complete participant
-        // set is reserved, closing the preflight-to-input mutation window.
-        // Creating the room only targets the primary account. Followers are
-        // resolved immediately before the follower stage, so an account that
-        // has not started yet cannot suppress the primary shortcut before its
-        // first ESC is delivered.
+        // 建房阶段只操作主号。跟随号会在真正跟进前重新解析并单独取得租约，
+        // 不应在主号操作或人工等待期间被提前锁住。
+        let primary_lease = self.acquire_primary_lease(&raw_config)?;
         let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
         let task = self
             .workflow
             .lock()
             .begin_primary(&config, Some(chrono::Local::now().to_rfc3339()))
             .map_err(|error| error.to_string())?;
-        if let Some(leases) = new_leases {
-            self.lifecycle.lock().leases = Some(leases);
-        }
+        self.lifecycle.lock().leases = Some(primary_lease);
         self.lifecycle.lock().last_error = None;
         let status = self.workflow.lock().snapshot();
         self.bridge.publish_status(&status);
@@ -1083,32 +1065,21 @@ impl RoomAutomationManager {
 
         let previously_completed = snapshot.completed_follower_account_ids.clone();
         let raw_config = self.workflow_config_snapshot()?;
-        let acquired_leases = if snapshot.phase == WorkflowPhase::Waiting {
-            if self.lifecycle.lock().leases.is_none() {
-                let message = "手动等待阶段的账号租约已丢失，已拒绝继续".to_string();
-                if let Some(task_id) = snapshot.task_id {
-                    self.fail_and_release(task_id, &message);
-                }
-                return Err(message);
-            }
-            None
-        } else {
-            Some(self.acquire_participant_leases(&raw_config)?)
-        };
-        // Includes primary foreground, runtime-window and Mod validation;
-        // all participant leases are already held at this point.
-        let (config, _primary, mut followers) = self.prepare_workflow(raw_config, true)?;
-        let (task_id, room, acquired_leases) = match snapshot.phase {
+        if self.lifecycle.lock().leases.is_some() {
+            return Err("检测到尚未释放的自动跟房账号租约，已拒绝继续".to_string());
+        }
+        // 跟进阶段重新校验所有仍可用的参与账号。等待阶段不保留租约，
+        // 因此账号设置和其他无关操作不会被人工等待长期阻断。
+        let ((config, _primary, mut followers), acquired_leases) =
+            self.prepare_and_reserve_workflow(raw_config, true)?;
+        let (task_id, room) = match snapshot.phase {
             WorkflowPhase::Waiting => {
                 let task_id = snapshot
                     .task_id
                     .ok_or_else(|| "等待任务缺少 ID".to_string())?;
                 self.workflow
                     .lock()
-                    .begin_selected_followers(
-                        task_id,
-                        config.follower_account_ids.clone(),
-                    )
+                    .begin_selected_followers(task_id, config.follower_account_ids.clone())
                     .map_err(|error| error.to_string())?;
                 let room = self
                     .workflow
@@ -1116,7 +1087,7 @@ impl RoomAutomationManager {
                     .pending_room()
                     .cloned()
                     .ok_or_else(|| "尚无待跟进房间".to_string())?;
-                (task_id, room, acquired_leases)
+                (task_id, room)
             }
             WorkflowPhase::Error | WorkflowPhase::Cancelled => {
                 let task = self
@@ -1124,13 +1095,11 @@ impl RoomAutomationManager {
                     .lock()
                     .resume_followers(&config, Some(chrono::Local::now().to_rfc3339()))
                     .map_err(|error| error.to_string())?;
-                (task.id, task.room, acquired_leases)
+                (task.id, task.room)
             }
             _ => unreachable!("follower trigger was validated above"),
         };
-        if let Some(leases) = acquired_leases {
-            self.lifecycle.lock().leases = Some(leases);
-        }
+        self.lifecycle.lock().leases = Some(acquired_leases);
         self.lifecycle.lock().last_error = None;
 
         // A follower-stage retry resumes the same pending room and skips
@@ -1141,12 +1110,18 @@ impl RoomAutomationManager {
                 .iter()
                 .any(|candidate| candidate.eq_ignore_ascii_case(account_id))
             {
-                let status = self
+                let completion = self
                     .workflow
                     .lock()
-                    .record_follower_complete(task_id, account_id)
-                    .map_err(|error| error.to_string())?;
-                self.bridge.publish_status(&status);
+                    .record_follower_complete(task_id, account_id);
+                match completion {
+                    Ok(status) => self.bridge.publish_status(&status),
+                    Err(error) => {
+                        let message = error.to_string();
+                        self.fail_and_release(task_id, &message);
+                        return Err(message);
+                    }
+                }
             }
         }
         followers.retain(|(account_id, _)| {
@@ -1359,6 +1334,28 @@ impl RoomAutomationManager {
             .map_err(|error| error.to_string())
     }
 
+    fn acquire_primary_lease(
+        &self,
+        config: &RoomAutomationConfig,
+    ) -> Result<AccountOperationLeases, String> {
+        self.leases
+            .try_acquire_many(std::iter::once(config.primary_account_id.as_str()))
+            .map_err(|error| error.to_string())
+    }
+
+    fn prepare_and_reserve_workflow(
+        &self,
+        config: RoomAutomationConfig,
+        require_primary_foreground: bool,
+    ) -> Result<(PreparedWorkflow, AccountOperationLeases), String> {
+        // 第一次解析筛掉当前没有可用窗口的跟随号，避免它们无意义地参与锁竞争；
+        // 取得实际参与者租约后再解析一次，关闭窗口/账号状态变化的竞态。
+        let (candidate_config, _, _) = self.prepare_workflow(config, require_primary_foreground)?;
+        let leases = self.acquire_participant_leases(&candidate_config)?;
+        let prepared = self.prepare_workflow(candidate_config, require_primary_foreground)?;
+        Ok((prepared, leases))
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn run_primary_worker(
         &self,
@@ -1405,6 +1402,9 @@ impl RoomAutomationManager {
             return;
         };
         self.bridge.publish_status(&status);
+        // 主号阶段已经结束。无论是人工等待还是自动延时，都不跨等待状态
+        // 持有账号租约；进入跟随阶段时会基于最新运行状态重新获取。
+        self.lifecycle.lock().leases = None;
         if !config.auto_followers_enabled {
             return;
         }
@@ -1420,17 +1420,20 @@ impl RoomAutomationManager {
                 return;
             }
         };
-        let (fresh_config, _primary, followers) = match self.prepare_workflow(raw_config, false) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.fail_and_release(task_id, &error);
-                return;
-            }
-        };
-        match self.workflow.lock().begin_selected_followers(
-            task_id,
-            fresh_config.follower_account_ids.clone(),
-        ) {
+        let ((fresh_config, _primary, followers), leases) =
+            match self.prepare_and_reserve_workflow(raw_config, false) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    self.fail_and_release(task_id, &error);
+                    return;
+                }
+            };
+        self.lifecycle.lock().leases = Some(leases);
+        match self
+            .workflow
+            .lock()
+            .begin_selected_followers(task_id, fresh_config.follower_account_ids.clone())
+        {
             Ok(status) => self.bridge.publish_status(&status),
             Err(_) => {
                 self.lifecycle.lock().leases = None;

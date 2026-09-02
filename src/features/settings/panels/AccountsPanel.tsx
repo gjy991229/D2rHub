@@ -54,6 +54,37 @@ const GAME_SETTINGS_TABS: ReadonlyArray<{ id: GameSettingsTab; label: string }> 
   { id: "game_automap", label: "地图" },
 ];
 
+function describeGameSettingsLoadError(error: string): { title: string; detail: string } {
+  if (error.includes("正在执行另一项操作")) {
+    return {
+      title: "账号配置正在使用中",
+      detail: `${error}。当前操作完成后重新读取。`,
+    };
+  }
+  if (error.includes("正在修改共享 Battle.net 环境")) {
+    return {
+      title: "启动流程正在准备配置",
+      detail: `${error}。账号启动完成后重新读取。`,
+    };
+  }
+  if (error.includes("Settings.json") && (error.includes("不存在") || error.includes("未检测到"))) {
+    return {
+      title: "尚未找到画质配置",
+      detail: `${error}。请先使用对应客户端进入游戏一次，再返回创建账号快照。`,
+    };
+  }
+  if (error.includes("序列化/反序列化") || error.includes("无效") || error.includes("为空")) {
+    return {
+      title: "画质配置格式无效",
+      detail: `${error}。请让游戏重新生成 Settings.json，或恢复一份有效配置。`,
+    };
+  }
+  return {
+    title: "未能读取画质配置",
+    detail: `${error}。请稍后重新读取；若持续失败，可在维护工具中打开运行日志。`,
+  };
+}
+
 export function AccountsPanel({
   accounts,
   selectedAccountId,
@@ -80,6 +111,9 @@ export function AccountsPanel({
   loadGameSettings,
 }: AccountsPanelProps) {
   const gameSubTabs = GAME_SETTINGS_TABS;
+  const gameSettingsError = gameSettingsLoadError
+    ? describeGameSettingsLoadError(gameSettingsLoadError)
+    : null;
   return (
 <div className="space-y-3">
   {accounts.length === 0 ? (
@@ -275,18 +309,18 @@ export function AccountsPanel({
             </div>
           )}
 
-          {gameSettingsTab !== "launch" && !gameSettingsLoading && gameSettingsLoadError && (
+          {gameSettingsTab !== "launch" && !gameSettingsLoading && gameSettingsError && (
             <div className="rounded-lg border border-warning/40 bg-warning/5 p-4">
-              <p className="text-sm font-semibold text-text-primary">画质配置暂不可用</p>
+              <p className="text-sm font-semibold text-text-primary">{gameSettingsError.title}</p>
               <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-                {gameSettingsLoadError}。请先启动对应客户端生成系统 Settings.json，再点击“快照系统配置”或重新检查。
+                {gameSettingsError.detail}
               </p>
               <button
                 type="button"
                 className="control-btn mt-3 h-8 px-3"
                 onClick={() => void loadGameSettings(selectedAccountId)}
               >
-                重新检查
+                重新读取
               </button>
             </div>
           )}

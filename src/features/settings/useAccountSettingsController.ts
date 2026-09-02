@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { showToast } from "../../components/ui/Toast";
 import type { SettingsMap } from "../../pages/SettingsEditor";
@@ -29,21 +29,25 @@ export function useAccountSettingsController({
   const [accountNicknameDraft, setAccountNicknameDraft] = useState("");
   const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
   const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
+  const gameSettingsRequestRef = useRef(0);
 
   const loadGameSettings = useCallback(async (accountId: string) => {
+    const requestId = ++gameSettingsRequestRef.current;
     setGameSettingsLoading(true);
     setGameSettingsLoadError(null);
     try {
       const data = await invokeCommand<SettingsMap>("get_account_settings", { accountId });
+      if (requestId !== gameSettingsRequestRef.current) return;
       setGameSettings(data);
       setGameSettingsChanged(false);
     } catch (error) {
+      if (requestId !== gameSettingsRequestRef.current) return;
       setGameSettings({});
       setGameSettingsChanged(false);
       setGameSettingsLoadError(String(error));
       showToast("error", `加载账号游戏配置失败: ${error}`);
     } finally {
-      setGameSettingsLoading(false);
+      if (requestId === gameSettingsRequestRef.current) setGameSettingsLoading(false);
     }
   }, []);
 

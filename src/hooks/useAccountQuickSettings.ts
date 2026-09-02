@@ -130,7 +130,6 @@ export function useAccountQuickSettings(accountId: string, enabled: boolean) {
         }
 
         await invokeCommand("save_account_settings", { accountId, settings: merged });
-        await invokeCommand("mark_settings_customized", { accountId });
 
         const account = useAccounts.getState().accounts.find((candidate) => candidate.id === accountId);
         if (account && !account.has_customized_settings) {

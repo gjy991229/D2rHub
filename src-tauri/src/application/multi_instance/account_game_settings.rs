@@ -16,7 +16,8 @@ impl<'a> AccountGameSettingsService<'a> {
     }
 
     pub fn get(&self, account_id: &str) -> Result<GameSettings, AppError> {
-        let _lease = self.leases.try_acquire(account_id)?;
+        // 共享读取允许多个设置面板并发加载，同时与账号目录切换事务互斥。
+        let _lease = self.leases.try_acquire_read(account_id)?;
         let account = self.accounts.load(account_id)?;
         if account.has_customized_settings {
             self.accounts.read_account_settings(account_id)
@@ -39,7 +40,7 @@ impl<'a> AccountGameSettingsService<'a> {
     }
 
     pub fn get_system_optional(&self, account_id: &str) -> Result<GameSettings, AppError> {
-        let _lease = self.leases.try_acquire(account_id)?;
+        let _lease = self.leases.try_acquire_read(account_id)?;
         let account = self.accounts.load(account_id)?;
         self.accounts.read_system_settings_optional(&account)
     }
