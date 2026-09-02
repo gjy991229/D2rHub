@@ -1,6 +1,6 @@
 import { Check } from "lucide-react";
-import type { CSSProperties } from "react";
 import { Button } from "../../../components/ui/Button";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import type { ThemeKey } from "../../../store/theme";
 import type { GlobalConfig } from "../../../store/types";
@@ -123,17 +123,13 @@ export function AppearancePanel({
             <span>%</span>
           </label>
         </div>
-        <input
-          type="range"
+        <RangeSlider
           aria-label="主界面背景不透明度"
           min={0}
           max={100}
           value={sliderValue}
           onChange={(event) => onChange({ main_opacity: sliderToPercent(Number(event.target.value)) })}
-          className="appearance-opacity-slider"
-          style={{
-            "--range-progress": `${sliderValue}%`,
-          } as CSSProperties}
+          className="w-full"
         />
       </section>
 

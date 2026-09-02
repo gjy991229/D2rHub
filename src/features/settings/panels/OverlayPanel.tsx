@@ -1,5 +1,6 @@
 import { LocateFixed, MonitorUp } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useGlobalConfig } from "../../../store/globalConfig";
 import type { GlobalConfig } from "../../../store/types";
@@ -91,8 +92,7 @@ export function OverlayPanel({
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <input
-              type="range"
+            <RangeSlider
               aria-label="信息悬浮窗背景不透明度"
               min={0}
               max={100}
@@ -101,7 +101,7 @@ export function OverlayPanel({
                 const value = sliderToPercent(parseInt(event.target.value));
                 updateConfig((current) => { current.overlay_opacity = value; });
               }}
-              className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer"
+              className="min-w-0 flex-1"
             />
           </div>
           <p className="text-2xs text-text-muted">

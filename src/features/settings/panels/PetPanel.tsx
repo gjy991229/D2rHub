@@ -1,5 +1,6 @@
 import { LocateFixed } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useGlobalConfig } from "../../../store/globalConfig";
 import type { GlobalConfig } from "../../../store/types";
@@ -67,9 +68,8 @@ export function PetPanel({
                 <label htmlFor="pet-scale" className="font-semibold text-text-secondary">猫咪显示缩放</label>
                 <span className="font-mono text-accent font-bold">{(config.bongo_cat_scale ?? 1.0).toFixed(1)}x</span>
               </div>
-              <input
+              <RangeSlider
                 id="pet-scale"
-                type="range"
                 min={5}
                 max={50}
                 value={Math.round((config.bongo_cat_scale ?? 1.0) * 10)}
@@ -83,7 +83,7 @@ export function PetPanel({
                     console.error("保存猫咪缩放失败", error);
                   }
                 }}
-                className="h-1.5 w-full rounded-full appearance-none bg-surface-hover cursor-pointer"
+                className="w-full"
               />
             </div>
 

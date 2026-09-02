@@ -1,4 +1,5 @@
 import { Toggle } from "../../../components/ui/Toggle";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
 import type { GlobalConfig } from "../../../store/types";
 
 interface LaunchStrategyPanelProps {
@@ -41,15 +42,14 @@ export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPane
           <div className="border-t border-border-default/50 pt-3 space-y-2">
             <span className="text-xs text-text-muted font-medium block">检测到 Agent 后延迟杀死（秒）</span>
             <div className="flex items-center gap-3">
-              <input
+              <RangeSlider
                 aria-label="Agent 终止延迟"
-                type="range"
                 min={0}
                 max={30}
                 step={0.1}
                 value={config.agent_delay_secs ?? 1}
                 onChange={e => updateConfig(c => { c.agent_delay_secs = parseFloat(parseFloat(e.target.value).toFixed(1)); })}
-                className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer"
+                className="min-w-0 flex-1"
               />
               <span className="text-xs font-mono text-text-primary w-12 text-right font-bold">
                 {(config.agent_delay_secs ?? 1).toFixed(1)}s

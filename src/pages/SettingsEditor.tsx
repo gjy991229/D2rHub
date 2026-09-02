@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Save, Monitor, Volume2, Gamepad2, Map, Image, X } from "lucide-react";
 import { emitEvent, invokeCommand } from "../platform/tauri";
 import { Button } from "../components/ui/Button";
+import { RangeSlider } from "../components/ui/RangeSlider";
 import { Toggle } from "../components/ui/Toggle";
 import { showToast } from "../components/ui/Toast";
 import type { AccountMeta } from "../store/types";
@@ -587,20 +588,15 @@ export function SliderInput({
   step?: number;
   onChange: (v: number) => void;
 }) {
-  const pct = ((value - min) / (max - min)) * 100;
   return (
     <div className="flex items-center gap-2 w-48">
-      <input
-        type="range"
+      <RangeSlider
         min={min}
         max={max}
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer"
-        style={{
-          background: `linear-gradient(to right, var(--accent) ${pct}%, var(--surface-hover) ${pct}%)`,
-        }}
+        className="min-w-0 flex-1"
       />
       <span className="text-xs text-text-primary tabular-nums w-10 text-right">{value}</span>
     </div>

@@ -6,8 +6,9 @@ import {
   Play,
   RotateCw,
 } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
+import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { showToast } from "../../../components/ui/Toast";
 import { invokeCommand } from "../../../platform/tauri";
@@ -875,8 +876,7 @@ export function AutomationPanel({
                     {filter.valueLabel}
                   </span>
                 </div>
-                <input
-                  type="range"
+                <RangeSlider
                   min={1}
                   max={filter.max}
                   step={1}
@@ -884,10 +884,7 @@ export function AutomationPanel({
                   disabled={!enabled}
                   aria-label={`${filter.label}最低记录等级`}
                   onChange={event => filter.onChange(Number(event.target.value))}
-                  className="tracking-filter-range mt-2 w-full"
-                  style={{
-                    "--range-progress": `${((filter.value - 1) / Math.max(1, filter.max - 1)) * 100}%`,
-                  } as CSSProperties}
+                  className="mt-2 w-full"
                 />
                 <div className="mt-1 flex items-center justify-between text-2xs text-text-muted">
                   <span>{filter.detail}</span>
