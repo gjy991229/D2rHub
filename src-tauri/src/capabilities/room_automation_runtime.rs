@@ -60,6 +60,8 @@ type PreparedWorkflow = (
     Vec<(String, RunningInstance)>,
 );
 
+type PreparedPrimaryWorkflow = (RoomAutomationConfig, RunningInstance);
+
 struct CancellationSignal {
     cancelled: AtomicBool,
     state: std::sync::Mutex<()>,
@@ -123,7 +125,7 @@ trait RuntimeHost: Send + Sync {
         config: &mut RoomAutomationConfig,
     ) -> Result<(), String>;
     fn validate_room_tools(&self, account_id: &str) -> Result<(), String>;
-    fn trusted_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
+    fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
     fn foreground_pid(&self) -> Option<u32>;
     fn run_primary(
         &self,
@@ -212,21 +214,13 @@ impl RuntimeHost for WindowsRuntimeHost {
     }
 
     fn validate_room_tools(&self, account_id: &str) -> Result<(), String> {
-        crate::audio_mod::validate_in_game_room_tools_for_account(&self.state, account_id)
+        crate::audio_mod::validate_room_automation_tools_for_account(
+            &self.state,
+            account_id,
+        )
     }
 
-    fn trusted_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
-        let instance = self
-            .state
-            .multi_instance()
-            .facade()
-            .instance(account_id)
-            .ok_or_else(|| format!("账号“{account_id}”没有已识别的运行中 D2R 进程"))?;
-        if instance.launch.is_none() {
-            return Err(format!(
-                "账号“{account_id}”当前会话没有受信任的启动快照，请用 D2RHub 重新启动"
-            ));
-        }
+    fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
         let global = self.global_config()?;
         let account = self
             .account_map()?
@@ -236,24 +230,55 @@ impl RuntimeHost for WindowsRuntimeHost {
             .map_err(|error| error.to_string())?
             .installation
             .game_executable;
-        let mut system = shared_system()
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        let system_pid = sysinfo::Pid::from(instance.pid as usize);
-        system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
-        let alive_and_expected = system.process(system_pid).is_some_and(|process| {
-            process
-                .name()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("D2R.exe")
-                && process.exe().is_some_and(|actual| {
-                    crate::infrastructure::system::executable_paths_match(actual, &expected)
-                })
-        });
-        if !alive_and_expected {
-            return Err(format!("账号“{account_id}”的 D2R 进程已退出或不匹配配置"));
+        if let Some(instance) = self
+            .state
+            .multi_instance()
+            .facade()
+            .instance(account_id)
+            .filter(|instance| instance.launch.is_some())
+        {
+            let mut system = shared_system()
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            let system_pid = sysinfo::Pid::from(instance.pid as usize);
+            system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
+            let alive_and_expected = system.process(system_pid).is_some_and(|process| {
+                process
+                    .name()
+                    .to_string_lossy()
+                    .eq_ignore_ascii_case("D2R.exe")
+                    && process.exe().is_some_and(|actual| {
+                        crate::infrastructure::system::executable_paths_match(actual, &expected)
+                    })
+            });
+            if alive_and_expected {
+                return Ok(instance);
+            }
         }
-        Ok(instance)
+
+        let window_title = if account.display_name.trim().is_empty() {
+            account.id.as_str()
+        } else {
+            account.display_name.as_str()
+        };
+        let pid = crate::infrastructure::system::find_unique_d2r_pid_by_exact_title(window_title)
+            .ok_or_else(|| {
+                format!(
+                    "账号“{account_id}”没有可用的启动快照，且未找到标题为“{window_title}”的唯一 D2R 窗口"
+                )
+            })?;
+        crate::logger::log_msg(
+            "WARN",
+            "RoomAutomation",
+            &format!(
+                "账号“{account_id}”没有可用的启动快照；已按精确窗口标题“{window_title}”兼容匹配 PID {pid}"
+            ),
+        );
+        Ok(RunningInstance {
+            account_id: account.id,
+            pid,
+            launch: None,
+        })
     }
 
     fn foreground_pid(&self) -> Option<u32> {
@@ -988,9 +1013,13 @@ impl RoomAutomationManager {
         } else {
             Some(self.acquire_participant_leases(&raw_config)?)
         };
-        // Runtime/account validation runs only after the complete participant
+        // Primary runtime validation runs only after the complete participant
         // set is reserved, closing the preflight-to-input mutation window.
-        let (config, primary, followers) = self.prepare_workflow(raw_config, true)?;
+        // Creating the room only targets the primary account. Followers are
+        // resolved immediately before the follower stage, so an account that
+        // has not started yet cannot suppress the primary shortcut before its
+        // first ESC is delivered.
+        let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
         let task = self
             .workflow
             .lock()
@@ -1018,7 +1047,6 @@ impl RoomAutomationManager {
                             task_id,
                             config,
                             primary,
-                            followers,
                             room.name,
                             room.sequence,
                             retrying,
@@ -1253,11 +1281,11 @@ impl RoomAutomationManager {
         Ok(config)
     }
 
-    fn prepare_workflow(
+    fn prepare_primary_workflow(
         &self,
         mut config: RoomAutomationConfig,
         require_primary_foreground: bool,
-    ) -> Result<PreparedWorkflow, String> {
+    ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let binding = self.chat_binding.status()?;
         if !binding.ready {
@@ -1265,14 +1293,24 @@ impl RoomAutomationManager {
         }
 
         self.host.validate_room_tools(&config.primary_account_id)?;
-        let primary = self.host.trusted_instance(&config.primary_account_id)?;
+        let primary = self.host.running_instance(&config.primary_account_id)?;
         if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
         }
+        Ok((config, primary))
+    }
+
+    fn prepare_workflow(
+        &self,
+        config: RoomAutomationConfig,
+        require_primary_foreground: bool,
+    ) -> Result<PreparedWorkflow, String> {
+        let (config, primary) =
+            self.prepare_primary_workflow(config, require_primary_foreground)?;
         let mut followers = Vec::with_capacity(config.follower_account_ids.len());
         for account_id in &config.follower_account_ids {
             self.host.validate_room_tools(account_id)?;
-            followers.push((account_id.clone(), self.host.trusted_instance(account_id)?));
+            followers.push((account_id.clone(), self.host.running_instance(account_id)?));
         }
         Ok((config, primary, followers))
     }
@@ -1295,7 +1333,6 @@ impl RoomAutomationManager {
         task_id: WorkflowTaskId,
         config: RoomAutomationConfig,
         primary: RunningInstance,
-        _followers: Vec<(String, RunningInstance)>,
         room_name: String,
         sequence: u32,
         retrying: bool,
@@ -1953,7 +1990,7 @@ mod tests {
             Ok(())
         }
 
-        fn trusted_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
+        fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
             Ok(Self::instance(account_id))
         }
 

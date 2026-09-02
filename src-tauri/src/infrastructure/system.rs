@@ -1981,6 +1981,88 @@ pub fn find_unique_d2r_pid_by_window_identity(
     None
 }
 
+/// Compatibility fallback for a D2RHub restart: returns a PID only when one
+/// visible D2R window has the exact account title. The normal runtime path
+/// continues to use its trusted launch snapshot and PID.
+#[cfg(target_os = "windows")]
+pub fn find_unique_d2r_pid_by_exact_title(title: &str) -> Option<u32> {
+    if title.trim().is_empty() {
+        return None;
+    }
+
+    extern "system" {
+        fn EnumWindows(
+            lpEnumFunc: unsafe extern "system" fn(hwnd: isize, lparam: isize) -> i32,
+            lparam: isize,
+        ) -> i32;
+        fn IsWindowVisible(hWnd: isize) -> i32;
+        fn GetWindowTextW(hWnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
+        fn GetWindowThreadProcessId(hWnd: isize, lpdwProcessId: *mut u32) -> u32;
+    }
+
+    struct Ctx {
+        target_title: String,
+        candidate_pids: Vec<u32>,
+    }
+
+    unsafe extern "system" fn callback(hwnd: isize, lparam: isize) -> i32 {
+        let ctx = &mut *(lparam as *mut Ctx);
+        if IsWindowVisible(hwnd) == 0 {
+            return 1;
+        }
+        let mut buffer = [0u16; 512];
+        let length = GetWindowTextW(hwnd, buffer.as_mut_ptr(), buffer.len() as i32);
+        if length <= 0 {
+            return 1;
+        }
+        let window_title = String::from_utf16_lossy(&buffer[..length as usize]);
+        if !window_title.eq_ignore_ascii_case(&ctx.target_title) {
+            return 1;
+        }
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid != 0 {
+            ctx.candidate_pids.push(pid);
+        }
+        1
+    }
+
+    let mut ctx = Ctx {
+        target_title: title.to_string(),
+        candidate_pids: Vec::new(),
+    };
+    unsafe {
+        EnumWindows(callback, &mut ctx as *mut Ctx as isize);
+    }
+
+    let mut system = shared_system()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    system.refresh_processes(ProcessesToUpdate::All);
+    let mut candidates = ctx
+        .candidate_pids
+        .into_iter()
+        .filter(|pid| {
+            system
+                .process(sysinfo::Pid::from(*pid as usize))
+                .is_some_and(|process| {
+                    process
+                        .name()
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case("D2R.exe")
+                })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_unstable();
+    candidates.dedup();
+    (candidates.len() == 1).then(|| candidates[0])
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn find_unique_d2r_pid_by_exact_title(_title: &str) -> Option<u32> {
+    None
+}
+
 /// 为一个已出现的游戏窗口设置账号级 AppUserModelID，使其获得独立任务栏分组。
 #[cfg(target_os = "windows")]
 pub fn set_game_window_app_user_model_id(pid: u32, app_id: &str) -> Result<(), String> {

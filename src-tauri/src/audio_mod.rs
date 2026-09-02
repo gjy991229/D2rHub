@@ -1669,6 +1669,7 @@ fn session_arguments(state: &SharedState, account: &AccountMeta) -> (String, Opt
     (account.mod_args.clone(), None, false)
 }
 
+#[allow(dead_code)] // retained for strict runtime consumers; automation has a title fallback
 fn require_verified_running_session(
     account_name: &str,
     session: (String, Option<u32>, bool),
@@ -1685,6 +1686,7 @@ fn require_verified_running_session(
     Ok((arguments, pid))
 }
 
+#[allow(dead_code)] // retained for callers that require a trusted launch snapshot
 pub(crate) fn validate_in_game_room_tools_for_account(
     state: &SharedState,
     account_id: &str,
@@ -1700,9 +1702,40 @@ pub(crate) fn validate_in_game_room_tools_for_account(
     // changed after that game process started.
     let (launch_arguments, _running_pid) =
         require_verified_running_session(account_name, session_arguments(state, &account))?;
-    let mod_name = active_mod_name(&launch_arguments)?
+    validate_in_game_room_tools_for_arguments(account_name, &context, &launch_arguments)
+}
+
+/// Validates room tools for automation while preserving the authoritative
+/// launch arguments when a trusted snapshot exists. If the application was
+/// restarted and that in-memory snapshot is unavailable, fall back to the
+/// account's configured arguments; window identity is resolved separately.
+pub(crate) fn validate_room_automation_tools_for_account(
+    state: &SharedState,
+    account_id: &str,
+) -> Result<(), String> {
+    let (_config, account, context) = configured_account(state, account_id)?;
+    let account_name = if account.display_name.trim().is_empty() {
+        account.id.as_str()
+    } else {
+        account.display_name.as_str()
+    };
+    let (snapshot_arguments, _running_pid, snapshot_verified) = session_arguments(state, &account);
+    let launch_arguments = if snapshot_verified {
+        snapshot_arguments.as_str()
+    } else {
+        account.mod_args.as_str()
+    };
+    validate_in_game_room_tools_for_arguments(account_name, &context, launch_arguments)
+}
+
+fn validate_in_game_room_tools_for_arguments(
+    account_name: &str,
+    context: &LaunchContext,
+    launch_arguments: &str,
+) -> Result<(), String> {
+    let mod_name = active_mod_name(launch_arguments)?
         .ok_or_else(|| format!("账号“{account_name}”没有启用经过 D2RHub 加工的 Mod"))?;
-    if !has_txt_argument(&launch_arguments)? {
+    if !has_txt_argument(launch_arguments)? {
         return Err(format!("账号“{account_name}”的 Mod 启动参数缺少 -txt"));
     }
     let mods_directory = context.installation.game_directory.join("mods");
