@@ -9,10 +9,12 @@ use crate::rune_audio::item_catalog::ITEM_CATALOG_FILE_NAME;
 use crate::rune_audio::protocol::PROTOCOL_VERSION;
 use crate::state::SharedState;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::Ordering;
+use std::sync::OnceLock;
+use std::time::SystemTime;
 use tauri::Emitter;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
@@ -21,9 +23,9 @@ const MANIFEST_FILE_NAME: &str = "d2rhub-mod-manifest.json";
 const LEGACY_MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 22;
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 23;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
-const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 1;
+const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 2;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 19;
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
@@ -45,6 +47,53 @@ const ROOM_TOOL_CONFIRM_Y: i64 = 92;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
+const ROOM_TOOL_VALIDATION_FILES: &[&str] = &[
+    "HudWarningshd.json",
+    "D2RHubRoomToolbarhd.json",
+    "D2RHubQuickRecreateConfirmhd.json",
+    "D2RHubQuickRecreatehd.json",
+    "D2RHubOpenCreateGamehd.json",
+    "D2RHubOpenJoinGamehd.json",
+    "pauselayouthd.json",
+    "pauselayoutgardenhd.json",
+    "D2RHubKeyboardOpenCreatehd.json",
+    "D2RHubKeyboardOpenJoinhd.json",
+    "creategamepanelhd.json",
+    "joingamepanelhd.json",
+    // The fast credential reader checks this file when auto-exit is present.
+    "youdiedmodalhd.json",
+];
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RoomToolFileStamp {
+    path: PathBuf,
+    kind: u8,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RoomToolValidationSignature {
+    account_name: String,
+    launch_arguments: String,
+    mod_directory: PathBuf,
+    files: Vec<RoomToolFileStamp>,
+}
+
+#[derive(Clone)]
+struct CachedRoomToolValidation {
+    signature: RoomToolValidationSignature,
+    result: Result<(), String>,
+}
+
+static ROOM_TOOL_VALIDATION_CACHE: OnceLock<
+    parking_lot::RwLock<HashMap<String, CachedRoomToolValidation>>,
+> = OnceLock::new();
+
+fn room_tool_validation_cache(
+) -> &'static parking_lot::RwLock<HashMap<String, CachedRoomToolValidation>> {
+    ROOM_TOOL_VALIDATION_CACHE.get_or_init(|| parking_lot::RwLock::new(HashMap::new()))
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InstalledMod {
@@ -612,8 +661,9 @@ fn validate_audio_feature_fingerprint(fingerprint: &str) -> Result<(), String> {
 ///
 /// The signed-by-construction manifest identity, recipe versions and feature
 /// fingerprints are enough to render setup state. Expensive recursive tree and
-/// generated-asset verification remains mandatory immediately before runtime,
-/// generation, replacement, recovery, and account application.
+/// generated-asset verification remains mandatory for generation, replacement,
+/// recovery, and account application. Runtime consumers may layer focused file
+/// validation and metadata-keyed caching over this credential check.
 fn validate_audio_mod_credential(
     mods_directory: &Path,
     mod_name: &str,
@@ -1725,7 +1775,130 @@ pub(crate) fn validate_room_automation_tools_for_account(
     } else {
         account.mod_args.as_str()
     };
-    validate_in_game_room_tools_for_arguments(account_name, &context, launch_arguments)
+    validate_cached_room_automation_tools(&account.id, account_name, &context, launch_arguments)
+}
+
+fn room_tool_file_stamp(path: PathBuf) -> RoomToolFileStamp {
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) => {
+            let file_type = metadata.file_type();
+            RoomToolFileStamp {
+                path,
+                kind: if file_type.is_file() {
+                    1
+                } else if file_type.is_dir() {
+                    2
+                } else if file_type.is_symlink() {
+                    3
+                } else {
+                    4
+                },
+                len: metadata.len(),
+                modified: metadata.modified().ok(),
+            }
+        }
+        Err(_) => RoomToolFileStamp {
+            path,
+            kind: 0,
+            len: 0,
+            modified: None,
+        },
+    }
+}
+
+fn room_tool_validation_signature(
+    account_name: &str,
+    launch_arguments: &str,
+    mod_directory: &Path,
+    mod_name: &str,
+) -> RoomToolValidationSignature {
+    let mpq_directory = mod_directory.join(format!("{mod_name}.mpq"));
+    let layout_directory = mpq_directory.join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let mut paths = vec![
+        mod_directory.to_path_buf(),
+        mpq_directory,
+        mod_directory.join(MANIFEST_FILE_NAME),
+        mod_directory.join(LEGACY_MANIFEST_FILE_NAME),
+    ];
+    paths.extend(
+        ROOM_TOOL_VALIDATION_FILES
+            .iter()
+            .map(|name| layout_directory.join(name)),
+    );
+    RoomToolValidationSignature {
+        account_name: account_name.to_string(),
+        launch_arguments: launch_arguments.to_string(),
+        mod_directory: mod_directory.to_path_buf(),
+        files: paths.into_iter().map(room_tool_file_stamp).collect(),
+    }
+}
+
+fn validate_cached_room_automation_tools(
+    account_id: &str,
+    account_name: &str,
+    context: &LaunchContext,
+    launch_arguments: &str,
+) -> Result<(), String> {
+    let mod_name = active_mod_name(launch_arguments)?
+        .ok_or_else(|| format!("账号“{account_name}”没有启用经过 D2RHub 加工的 Mod"))?;
+    if !has_txt_argument(launch_arguments)? {
+        return Err(format!("账号“{account_name}”的 Mod 启动参数缺少 -txt"));
+    }
+    let mods_directory = context.installation.game_directory.join("mods");
+    let installed_name = find_existing_mod_name(&mods_directory, &mod_name)?
+        .ok_or_else(|| format!("账号“{account_name}”配置的 Mod 不存在"))?;
+    let mod_directory = mods_directory.join(&installed_name);
+    let signature = room_tool_validation_signature(
+        account_name,
+        launch_arguments,
+        &mod_directory,
+        &installed_name,
+    );
+    let cache_key = account_id.to_ascii_lowercase();
+    if let Some(cached) = room_tool_validation_cache()
+        .read()
+        .get(&cache_key)
+        .filter(|cached| cached.signature == signature)
+    {
+        return cached.result.clone();
+    }
+
+    let result = validate_audio_mod_credential(&mods_directory, &installed_name)
+        .map_err(|error| format!("账号“{account_name}”：{error}"))
+        .and_then(|validated| {
+            validate_room_tool_capability(account_name, &validated)?;
+            validate_in_game_room_tool_layouts(&mod_directory, &installed_name)
+                .map_err(|error| format!("账号“{account_name}”：{error}"))
+        });
+    room_tool_validation_cache().write().insert(
+        cache_key,
+        CachedRoomToolValidation {
+            signature,
+            result: result.clone(),
+        },
+    );
+    result
+}
+
+fn validate_room_tool_capability(
+    account_name: &str,
+    validated: &ValidatedAudioMod,
+) -> Result<(), String> {
+    let room_group = validated
+        .feature_groups
+        .iter()
+        .find(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
+    if !validated.current_feature_protocol
+        || validated
+            .recipe_version
+            .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
+        || room_group.is_none()
+    {
+        return Err(format!(
+            "账号“{account_name}”的识别 Mod 不含受支持的局内房间工具，请重新加工并重启该账号"
+        ));
+    }
+    Ok(())
 }
 
 fn validate_in_game_room_tools_for_arguments(
@@ -1743,20 +1916,7 @@ fn validate_in_game_room_tools_for_arguments(
         .ok_or_else(|| format!("账号“{account_name}”配置的 Mod 不存在"))?;
     let validated = validate_audio_mod(&mods_directory, &installed_name)
         .map_err(|error| format!("账号“{account_name}”：{error}"))?;
-    let room_group = validated
-        .feature_groups
-        .iter()
-        .find(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
-    if !validated.current_feature_protocol
-        || validated
-            .recipe_version
-            .is_none_or(|version| version < REQUIRED_AUDIO_MOD_RECIPE_VERSION)
-        || room_group.is_none()
-    {
-        return Err(format!(
-            "账号“{account_name}”的识别 Mod 不含受支持的局内房间工具，请重新加工并重启该账号"
-        ));
-    }
+    validate_room_tool_capability(account_name, &validated)?;
     // `validate_audio_mod` already checks the r19 recipe/fingerprint and every required layout.
     Ok(())
 }

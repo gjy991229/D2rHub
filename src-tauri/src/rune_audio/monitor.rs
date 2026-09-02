@@ -16,7 +16,7 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use tauri::{Emitter, Manager};
 
 const CAPTURE_SAMPLE_RATE: u32 = 48_000;
@@ -160,6 +160,30 @@ static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static STATUS: OnceLock<Mutex<RuneAudioStatus>> = OnceLock::new();
 static DIAGNOSTIC_RECORDING: OnceLock<Mutex<Option<DiagnosticRecording>>> = OnceLock::new();
+static WORKER_EXITED: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
+
+fn worker_exit_signal() -> &'static (Mutex<()>, Condvar) {
+    WORKER_EXITED.get_or_init(|| (Mutex::new(()), Condvar::new()))
+}
+
+fn mark_worker_inactive() {
+    let (lock, changed) = worker_exit_signal();
+    let _guard = lock.lock().unwrap_or_else(|error| error.into_inner());
+    WORKER_ACTIVE.store(false, Ordering::SeqCst);
+    changed.notify_all();
+}
+
+fn wait_for_worker_exit(timeout: std::time::Duration) -> bool {
+    if !WORKER_ACTIVE.load(Ordering::SeqCst) {
+        return true;
+    }
+    let (lock, changed) = worker_exit_signal();
+    let guard = lock.lock().unwrap_or_else(|error| error.into_inner());
+    let (_guard, _) = changed
+        .wait_timeout_while(guard, timeout, |_| WORKER_ACTIVE.load(Ordering::SeqCst))
+        .unwrap_or_else(|error| error.into_inner());
+    !WORKER_ACTIVE.load(Ordering::SeqCst)
+}
 
 fn diagnostic_recording() -> &'static Mutex<Option<DiagnosticRecording>> {
     DIAGNOSTIC_RECORDING.get_or_init(|| Mutex::new(None))
@@ -210,8 +234,8 @@ fn write_diagnostic_samples(samples: &[f32]) {
         || active_target.1 != Some(recording.target_pid);
     let mut should_finish = target_changed || recording.write_error.is_some();
     if !should_finish {
-        let remaining = MAX_DIAGNOSTIC_RECORDING_FRAMES
-            .saturating_sub(recording.writer.duration()) as usize;
+        let remaining =
+            MAX_DIAGNOSTIC_RECORDING_FRAMES.saturating_sub(recording.writer.duration()) as usize;
         for sample in samples.iter().take(remaining) {
             let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
             if let Err(error) = recording.writer.write_sample(pcm) {
@@ -316,9 +340,7 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             .configuration()
             .snapshot()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
-        if !config.optional_module_installed(
-            crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-        ) {
+        if !config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION) {
             return Err("识别与统计模块尚未安装".to_string());
         }
         let account = config
@@ -608,6 +630,7 @@ fn handle_location_detection(
     tracker: &mut SegmentTracker,
     catalog: &LocationCatalog,
     marker: TelemetryMarker,
+    terror_zone_active: bool,
     observed_at_frame: u64,
     confidence: f32,
 ) {
@@ -615,8 +638,9 @@ fn handle_location_detection(
         return;
     };
     let now = chrono::Local::now();
-    let outcome = match tracker.observe_location(
+    let outcome = match tracker.observe_location_with_terror_state(
         marker,
+        terror_zone_active,
         observed_at_frame,
         now.timestamp_millis(),
         now.format("%Y/%m/%d/%H:%M:%S").to_string(),
@@ -650,10 +674,14 @@ fn handle_location_detection(
             | TelemetryMarker::Item { .. }
             | TelemetryMarker::Frontend => None,
         },
-        scene_key: location.scene_key,
-        scene_name: location.scene_name,
-        scene_name_en: location.scene_name_en,
-        tz: false,
+        scene_key: if outcome.snapshot.tz {
+            format!("terror_zone:{}", location.scene_name)
+        } else {
+            location.scene_key
+        },
+        scene_name: outcome.snapshot.current_scene.clone(),
+        scene_name_en: outcome.snapshot.current_scene_en.clone(),
+        tz: outcome.snapshot.tz,
         location_kind: location.kind,
         is_town: location.kind == LocationKind::Town,
         is_frontend: location.kind == LocationKind::Frontend,
@@ -678,6 +706,20 @@ fn handle_terror_zone_detection(
     confidence: f32,
 ) {
     let current_zone = crate::commands::terror_zone::cached_current_terror_zone();
+    if tracker.current_area_id().is_some()
+        && tracker
+            .current_terror_zone_scene()
+            .is_some_and(|scene_name| {
+                current_zone
+                    .as_ref()
+                    .is_none_or(|zone| terror_zone_contains_scene(zone, scene_name))
+            })
+    {
+        // A repeated 1023 heartbeat must not discard a previously validated
+        // exact Area. A conflicting forecast is a new activation and is
+        // allowed to replace it below.
+        return;
+    }
     let (scene_name, scene_name_en) = current_zone
         .map(|zone| (zone.location_name, "Terror Zone".to_string()))
         .unwrap_or_else(|| {
@@ -719,7 +761,7 @@ fn emit_terror_zone_tracking_update(
     let event = LocationAudioEvent {
         source: "terror_zone_audio".to_string(),
         account_id: config.account_id.clone(),
-        area_id: None,
+        area_id: snapshot.current_area_id,
         scene_key: snapshot
             .current_run_key
             .clone()
@@ -727,9 +769,9 @@ fn emit_terror_zone_tracking_update(
         scene_name: snapshot.current_scene.clone(),
         scene_name_en: snapshot.current_scene_en.clone(),
         tz: true,
-        location_kind: LocationKind::Wilderness,
-        is_town: false,
-        is_frontend: false,
+        location_kind: snapshot.location_kind.unwrap_or(LocationKind::Wilderness),
+        is_town: snapshot.is_town,
+        is_frontend: snapshot.is_frontend,
         confidence,
         timestamp: chrono::Local::now().to_rfc3339(),
     };
@@ -741,6 +783,48 @@ fn emit_terror_zone_tracking_update(
         );
     }
     emit_tracking_snapshot(app, snapshot);
+}
+
+fn comparable_scene_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn terror_zone_contains_scene(
+    zone: &crate::commands::terror_zone::TerrorZoneForecast,
+    scene_name: &str,
+) -> bool {
+    let expected = comparable_scene_name(scene_name);
+    !expected.is_empty()
+        && std::iter::once(zone.location_name.as_str())
+            .chain(zone.location_detail.split('/'))
+            .any(|candidate| comparable_scene_name(candidate) == expected)
+}
+
+fn area_in_current_terror_zone(
+    tracker: &SegmentTracker,
+    location: &crate::rune_audio::catalog::ResolvedLocation,
+    scene_changed: bool,
+) -> bool {
+    if !tracker.current_is_terror_zone() {
+        return false;
+    }
+    if let Some(zone) = crate::commands::terror_zone::cached_current_terror_zone() {
+        return terror_zone_contains_scene(&zone, &location.scene_name);
+    }
+    let Some(current_scene) = tracker.current_terror_zone_scene() else {
+        return false;
+    };
+    if current_scene == GENERIC_TERROR_ZONE_NAME {
+        // With no forecast cache, only a genuinely different Area may refine
+        // the generic TZ. Reusing the previous Area would reattach a stale
+        // ambience heartbeat to the new TZ activation.
+        return scene_changed;
+    }
+    comparable_scene_name(current_scene) == comparable_scene_name(&location.scene_name)
 }
 
 fn upgrade_cached_terror_zone_name(
@@ -865,30 +949,20 @@ fn capture_loop(
     let tz_refresh_generation = generation;
     tauri::async_runtime::spawn(async move {
         loop {
-            let refresh = tauri::async_runtime::spawn(async {
-                crate::commands::terror_zone::get_terror_zone_snapshot().await
-            });
-            while !refresh.inner().is_finished()
-                && monitor_generation_active(tz_refresh_generation)
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            }
+            let refresh = crate::commands::terror_zone::get_terror_zone_snapshot().await;
             if !monitor_generation_active(tz_refresh_generation) {
-                refresh.abort();
                 break;
             }
-            if let Ok(Err(error)) = refresh.await {
+            if let Err(error) = refresh {
                 crate::logger::log_msg(
                     "WARN",
                     "RuneAudio",
                     &format!("刷新当前 TZ 名称失败，将在声纹触发时使用通用名称: {error}"),
                 );
             }
-            for _ in 0..1_200 {
-                if !monitor_generation_active(tz_refresh_generation) {
-                    return;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
+            if !monitor_generation_active(tz_refresh_generation) {
+                break;
             }
         }
     });
@@ -971,7 +1045,6 @@ fn capture_loop(
                 );
                 if logical_event {
                     drop_gate.clear();
-                    scene_gate.clear();
                     handle_terror_zone_detection(
                         &app,
                         &config,
@@ -992,7 +1065,12 @@ fn capture_loop(
             match detection.marker {
                 marker @ TelemetryMarker::Rune { rune_number } => {
                     let tracked = should_record_rune(&config, &tracker, rune_number);
-                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
+                    let logical_event = tracked
+                        && drop_gate.observe_with_confidence(
+                            marker,
+                            detection.start_frame,
+                            detection.confidence,
+                        );
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -1015,7 +1093,12 @@ fn capture_loop(
                     let tracked = item_catalog
                         .resolve(item_id)
                         .is_some_and(|item| should_record_item(&config, &tracker, item));
-                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
+                    let logical_event = tracked
+                        && drop_gate.observe_with_confidence(
+                            marker,
+                            detection.start_frame,
+                            detection.confidence,
+                        );
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -1036,7 +1119,21 @@ fn capture_loop(
                     }
                 }
                 marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
-                    let logical_event = scene_gate.observe(marker, detection.start_frame);
+                    let scene_changed = scene_gate.observe(marker, detection.start_frame);
+                    let location = catalog.resolve(marker);
+                    let terror_zone_active = location.as_ref().is_some_and(|location| {
+                        matches!(marker, TelemetryMarker::Area { .. })
+                            && area_in_current_terror_zone(&tracker, location, scene_changed)
+                    });
+                    let exact_terror_zone_upgrade = match marker {
+                        TelemetryMarker::Area { area_id } => {
+                            terror_zone_active && tracker.current_area_id() != Some(area_id)
+                        }
+                        TelemetryMarker::Rune { .. }
+                        | TelemetryMarker::Item { .. }
+                        | TelemetryMarker::Frontend => false,
+                    };
+                    let logical_event = scene_changed || exact_terror_zone_upgrade;
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -1053,6 +1150,7 @@ fn capture_loop(
                             &mut tracker,
                             &catalog,
                             marker,
+                            terror_zone_active,
                             detection.start_frame,
                             detection.confidence,
                         );
@@ -1122,7 +1220,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         .spawn(move || {
             let result = capture_loop(app, config.clone(), generation, ready_tx);
             RUNNING.store(false, Ordering::SeqCst);
-            WORKER_ACTIVE.store(false, Ordering::SeqCst);
+            mark_worker_inactive();
             if GENERATION.load(Ordering::SeqCst) == generation {
                 let previous = status()
                     .lock()
@@ -1152,7 +1250,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         })
         .map_err(|error| {
             RUNNING.store(false, Ordering::SeqCst);
-            WORKER_ACTIVE.store(false, Ordering::SeqCst);
+            mark_worker_inactive();
             format!("创建符文声纹工作线程失败: {error}")
         })?;
 
@@ -1191,13 +1289,11 @@ fn request_stop() {
 
 pub(crate) fn stop_blocking() -> Result<(), String> {
     request_stop();
-    for _ in 0..60 {
-        if !WORKER_ACTIVE.load(Ordering::SeqCst) {
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+    if wait_for_worker_exit(std::time::Duration::from_secs(3)) {
+        Ok(())
+    } else {
+        Err("符文声纹工作线程未能在 3 秒内退出".to_string())
     }
-    Err("符文声纹工作线程未能在 3 秒内退出".to_string())
 }
 
 pub(crate) fn lifecycle_health() -> Result<(), String> {
@@ -1246,13 +1342,11 @@ pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), Str
     request_stop();
     let app_for_start = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        for _ in 0..60 {
-            if !WORKER_ACTIVE.load(Ordering::SeqCst) {
-                return start_blocking(app_for_start);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        if wait_for_worker_exit(std::time::Duration::from_secs(3)) {
+            start_blocking(app_for_start)
+        } else {
+            Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
         }
-        Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
     })
     .await
     .map_err(|error| format!("等待符文声纹监控器重启失败: {error}"))??;
