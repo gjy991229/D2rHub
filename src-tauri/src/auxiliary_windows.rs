@@ -101,6 +101,9 @@ pub(crate) fn destroy_window(app: &AppHandle, label: &str) -> Result<bool, AppEr
     let Some(window) = app.get_webview_window(label) else {
         return Ok(false);
     };
+    if label == STATS_OVERLAY_LABEL {
+        crate::input_listener::set_stats_overlay_mini_input_region(false, 0, 0, 0, 0);
+    }
     window
         .destroy()
         .map_err(|error| AppError::Unknown(format!("销毁辅助窗口失败 {label}: {error}")))?;

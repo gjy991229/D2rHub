@@ -53,6 +53,9 @@ if (surface === "overlay" && auditFrame?.startsWith("mini-")) {
     JSON.stringify({ width: 260, height: 28 }),
   );
 }
+if (surface === "stats-overlay" && auditFrame === "mini-stats-overlay") {
+  localStorage.setItem("d2rhub-statistics-overlay-mode", "mini");
+}
 
 mockWindows(currentWindowLabel, "main", "overlay", "stats-overlay", "bongo-cat");
 mockConvertFileSrc("windows");
@@ -719,7 +722,7 @@ async function primeStores() {
       elapsedMs: 73_400,
       dbAvgTime: 81.2,
       dbTotalRuns: 218,
-      sessionRuns: { "混沌魔殿": 6 },
+      sessionRuns: { "normal:混沌魔殿": 6 },
       currentDrops: [
         { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
         { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },

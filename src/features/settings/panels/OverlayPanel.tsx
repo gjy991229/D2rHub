@@ -158,7 +158,7 @@ export function OverlayPanel({
           <div>
             <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
             <p className="text-2xs text-text-muted">
-              独立显示运行账号、场景计时与符文掉落；支持贴边自动隐藏，不使用迷你模式
+              正常模式显示账号、计时与掉落；迷你模式仅保留场景、计时和场次，并开启鼠标穿透
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">

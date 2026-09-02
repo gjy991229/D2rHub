@@ -289,6 +289,7 @@ pub fn run() {
             commands::system::check_path_exists,
             logger::write_log,
             input_listener::set_bongo_cat_input_visible,
+            input_listener::set_stats_overlay_mini_input_region,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

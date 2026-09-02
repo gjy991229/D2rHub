@@ -92,6 +92,7 @@ export const TAURI_COMMANDS = [
   "scan_mod_capsule_pool",
   "set_account_window_position",
   "set_auxiliary_window_visible",
+  "set_stats_overlay_mini_input_region",
   "set_settings_customized",
   "snapshot_system_settings_to_account",
   "start_rune_audio_diagnostic_recording",

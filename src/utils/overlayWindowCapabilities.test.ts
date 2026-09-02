@@ -69,6 +69,7 @@ export function runTests() {
     "core:window:allow-set-min-size",
     "core:window:allow-set-max-size",
     "core:window:allow-set-resizable",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-start-dragging",
   ]) {
     assert(

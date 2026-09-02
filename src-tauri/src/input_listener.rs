@@ -8,7 +8,7 @@ use crate::state::SharedState;
 
 use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
@@ -16,6 +16,15 @@ static KEYBOARD_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::nul
 static MOUSE_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static BONGO_CAT_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 static BONGO_CAT_INPUT_VISIBLE: AtomicBool = AtomicBool::new(false);
+static STATS_OVERLAY_MINI_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
+static STATS_OVERLAY_MINI_LEFT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_TOP: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_RIGHT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_BOTTOM: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_LAST_CLICK_TIME: AtomicU32 = AtomicU32::new(0);
+static STATS_OVERLAY_LAST_CLICK_X: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
 static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
 static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
     OnceLock::new();
@@ -224,6 +233,17 @@ pub fn set_bongo_cat_input_visible(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
 }
 
+#[tauri::command]
+pub fn set_stats_overlay_mini_input_region(enabled: bool, x: i32, y: i32, width: u32, height: u32) {
+    STATS_OVERLAY_MINI_LEFT.store(x, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_TOP.store(y, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_RIGHT.store(x.saturating_add_unsigned(width), Ordering::Relaxed);
+    STATS_OVERLAY_MINI_BOTTOM.store(y.saturating_add_unsigned(height), Ordering::Relaxed);
+    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+    STATS_OVERLAY_POINTER_INSIDE.store(false, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
+}
+
 /// RAII guard：Drop 时自动调用 UnhookWindowsHookEx 并清空对应的全局钩子指针，
 /// 确保线程 panic 或提前退出时释放钩子且不留悬空指针。
 struct HookGuard {
@@ -266,6 +286,7 @@ const WH_MOUSE_LL: std::os::raw::c_int = 14;
 
 const WM_KEYDOWN: usize = 0x0100;
 const WM_SYSKEYDOWN: usize = 0x0104;
+const WM_MOUSEMOVE: usize = 0x0200;
 const WM_LBUTTONDOWN: usize = 0x0201;
 const WM_RBUTTONDOWN: usize = 0x0204;
 
@@ -301,6 +322,16 @@ struct KBDLLHOOKSTRUCT {
     dw_extra_info: usize,
 }
 
+#[repr(C)]
+#[allow(clippy::upper_case_acronyms)]
+struct MSLLHOOKSTRUCT {
+    pt: POINT,
+    mouse_data: u32,
+    flags: u32,
+    time: u32,
+    dw_extra_info: usize,
+}
+
 extern "system" {
     fn SetWindowsHookExW(
         idHook: std::os::raw::c_int,
@@ -330,6 +361,90 @@ extern "system" {
 
     fn GetKeyState(nVirtKey: i32) -> i16;
 
+    fn GetDoubleClickTime() -> u32;
+    fn GetSystemMetrics(nIndex: i32) -> i32;
+
+}
+
+unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+
+    if !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y) {
+        STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+        return;
+    }
+
+    let previous_time = STATS_OVERLAY_LAST_CLICK_TIME.swap(mouse.time, Ordering::Relaxed);
+    let previous_x = STATS_OVERLAY_LAST_CLICK_X.swap(mouse.pt.x, Ordering::Relaxed);
+    let previous_y = STATS_OVERLAY_LAST_CLICK_Y.swap(mouse.pt.y, Ordering::Relaxed);
+    const SM_CXDOUBLECLK: i32 = 36;
+    const SM_CYDOUBLECLK: i32 = 37;
+    let max_delta_x = GetSystemMetrics(SM_CXDOUBLECLK).max(1) / 2;
+    let max_delta_y = GetSystemMetrics(SM_CYDOUBLECLK).max(1) / 2;
+    if !is_stats_overlay_double_click(
+        previous_time,
+        mouse.time,
+        previous_x,
+        previous_y,
+        mouse.pt.x,
+        mouse.pt.y,
+        GetDoubleClickTime(),
+        max_delta_x,
+        max_delta_y,
+    ) {
+        return;
+    }
+
+    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+    if let Some(tx) = INPUT_EVENT_TX.get() {
+        let _ = tx.send("StatsOverlayMiniToggle");
+    }
+}
+
+fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+
+    let inside = is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y);
+    if STATS_OVERLAY_POINTER_INSIDE.swap(inside, Ordering::Relaxed) == inside {
+        return;
+    }
+    if let Some(tx) = INPUT_EVENT_TX.get() {
+        let _ = tx.send(if inside {
+            "StatsOverlayMiniHoverEnter"
+        } else {
+            "StatsOverlayMiniHoverLeave"
+        });
+    }
+}
+
+fn is_inside_stats_overlay_mini_region(x: i32, y: i32) -> bool {
+    let left = STATS_OVERLAY_MINI_LEFT.load(Ordering::Relaxed);
+    let top = STATS_OVERLAY_MINI_TOP.load(Ordering::Relaxed);
+    let right = STATS_OVERLAY_MINI_RIGHT.load(Ordering::Relaxed);
+    let bottom = STATS_OVERLAY_MINI_BOTTOM.load(Ordering::Relaxed);
+    x >= left && x < right && y >= top && y < bottom
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_stats_overlay_double_click(
+    previous_time: u32,
+    current_time: u32,
+    previous_x: i32,
+    previous_y: i32,
+    current_x: i32,
+    current_y: i32,
+    max_delay: u32,
+    max_delta_x: i32,
+    max_delta_y: i32,
+) -> bool {
+    previous_time != 0
+        && current_time.wrapping_sub(previous_time) <= max_delay
+        && (current_x - previous_x).abs() <= max_delta_x
+        && (current_y - previous_y).abs() <= max_delta_y
 }
 
 /// 将虚拟键码转换为可读键名
@@ -542,6 +657,14 @@ unsafe extern "system" fn mouse_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if code >= 0 && (wparam == WM_MOUSEMOVE || wparam == WM_LBUTTONDOWN) {
+        let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
+        if wparam == WM_MOUSEMOVE {
+            handle_stats_overlay_mini_pointer_move(mouse);
+        } else {
+            handle_stats_overlay_mini_double_click(mouse);
+        }
+    }
     if code >= 0
         && (wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN)
         && BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
@@ -622,12 +745,25 @@ pub fn start_input_listener(app_handle: AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch_capability_shortcut, register_capability_shortcuts, replace_capability_shortcuts,
-        replace_core_shortcut_reservations, validate_core_shortcut_reservations,
-        with_shortcut_routing_transaction,
+        dispatch_capability_shortcut, is_stats_overlay_double_click, register_capability_shortcuts,
+        replace_capability_shortcuts, replace_core_shortcut_reservations,
+        validate_core_shortcut_reservations, with_shortcut_routing_transaction,
     };
 
     static SHORTCUT_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn stats_overlay_click_through_double_click_keeps_time_and_position_limits() {
+        assert!(is_stats_overlay_double_click(
+            1_000, 1_240, 300, 200, 302, 201, 500, 2, 2,
+        ));
+        assert!(!is_stats_overlay_double_click(
+            1_000, 1_501, 300, 200, 302, 201, 500, 2, 2,
+        ));
+        assert!(!is_stats_overlay_double_click(
+            1_000, 1_240, 300, 200, 303, 201, 500, 2, 2,
+        ));
+    }
 
     #[test]
     fn capability_shortcuts_are_bounded_unique_and_owned_by_a_guard() {

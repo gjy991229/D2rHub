@@ -77,9 +77,15 @@ const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
 const OVERLAY_MINI_SIZE_VERSION_STORAGE_KEY = "d2rhub-information-overlay-mini-size-version";
 const OVERLAY_MINI_SIZE_VERSION = "2";
 const OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-information-overlay-expanded-size";
+const STATS_OVERLAY_MODE_STORAGE_KEY = "d2rhub-statistics-overlay-mode";
+const STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-statistics-overlay-expanded-size";
 const EXPANDED_OVERLAY_MIN_WIDTH = 200;
 const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
 const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 250 };
+const STATS_EXPANDED_OVERLAY_MIN_WIDTH = 220;
+const STATS_EXPANDED_OVERLAY_MIN_HEIGHT = 180;
+const DEFAULT_STATS_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 300 };
+const STATS_MINI_OVERLAY_SIZE: OverlaySize = { width: 320, height: 48 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
@@ -120,18 +126,31 @@ const MINI_OVERLAY_RESIZE_EDGES: MiniOverlayResizeEdge[] = [
   "n", "s", "e", "w", "ne", "nw", "se", "sw",
 ];
 
-function readStoredOverlayMode(): OverlayDisplayMode {
+function readStoredOverlayMode(storageKey: string): OverlayDisplayMode {
   try {
-    return localStorage.getItem(OVERLAY_MODE_STORAGE_KEY) === "mini" ? "mini" : "expanded";
+    return localStorage.getItem(storageKey) === "mini" ? "mini" : "expanded";
   } catch {
     return "expanded";
   }
+}
+
+function storeOverlayMode(storageKey: string, mode: OverlayDisplayMode) {
+  try {
+    localStorage.setItem(storageKey, mode);
+  } catch {}
 }
 
 function normalizeExpandedOverlaySize(size: OverlaySize): OverlaySize {
   return {
     width: Math.max(EXPANDED_OVERLAY_MIN_WIDTH, Math.round(size.width)),
     height: Math.max(EXPANDED_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
+  };
+}
+
+function normalizeStatsExpandedOverlaySize(size: OverlaySize): OverlaySize {
+  return {
+    width: Math.max(STATS_EXPANDED_OVERLAY_MIN_WIDTH, Math.round(size.width)),
+    height: Math.max(STATS_EXPANDED_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
   };
 }
 
@@ -224,6 +243,53 @@ async function applyExpandedOverlaySize(
   await win.setMinSize(
     new LogicalSize(EXPANDED_OVERLAY_MIN_WIDTH, EXPANDED_OVERLAY_MIN_HEIGHT),
   );
+}
+
+async function applyStatsMiniOverlaySize(win: ReturnType<typeof getCurrentWindow>) {
+  await win.setResizable(false);
+  await win.setMinSize(null);
+  await win.setMaxSize(null);
+  await win.setSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
+  await win.setMinSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
+  await win.setMaxSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
+}
+
+async function applyStatsExpandedOverlaySize(
+  win: ReturnType<typeof getCurrentWindow>,
+  expandedSize: OverlaySize,
+) {
+  await win.setResizable(true);
+  await win.setMinSize(null);
+  await win.setMaxSize(null);
+  await win.setSize(new LogicalSize(expandedSize.width, expandedSize.height));
+  await win.setMinSize(
+    new LogicalSize(STATS_EXPANDED_OVERLAY_MIN_WIDTH, STATS_EXPANDED_OVERLAY_MIN_HEIGHT),
+  );
+}
+
+async function syncStatsMiniInputRegion(
+  win: ReturnType<typeof getCurrentWindow>,
+  enabled: boolean,
+) {
+  if (!enabled) {
+    await invokeCommand("set_stats_overlay_mini_input_region", {
+      enabled: false,
+      x: 0,
+      y: 0,
+      width: 0,
+      height: 0,
+    });
+    return;
+  }
+
+  const [position, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
+  await invokeCommand("set_stats_overlay_mini_input_region", {
+    enabled: true,
+    x: position.x,
+    y: position.y,
+    width: size.width,
+    height: size.height,
+  });
 }
 const IMMUNITY_EN_LABELS: Record<string, string> = {
   f: "F",
@@ -345,7 +411,13 @@ function TerrorZoneInfo({
 export function Overlay() {
   const overlayWindowLabel = getCurrentWindow().label;
   const isStatsOverlay = overlayWindowLabel === "stats-overlay";
-  const supportsCompactMode = !isStatsOverlay;
+  const supportsCompactMode = overlayWindowLabel === "overlay" || isStatsOverlay;
+  const modeStorageKey = isStatsOverlay
+    ? STATS_OVERLAY_MODE_STORAGE_KEY
+    : OVERLAY_MODE_STORAGE_KEY;
+  const expandedSizeStorageKey = isStatsOverlay
+    ? STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY
+    : OVERLAY_EXPANDED_SIZE_STORAGE_KEY;
   const { config } = useGlobalConfig();
   const { theme } = useTheme();
   const { accounts, loadAccounts } = useAccounts();
@@ -353,19 +425,25 @@ export function Overlay() {
   const useEnglish = isEnglishLanguage(config?.app_language);
   const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
   const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
+  const [statsMiniHovered, setStatsMiniHovered] = useState(false);
   const [showAllDropGroups, setShowAllDropGroups] = useState(false);
   const [dropScope, setDropScope] = useState<DropScope>("current");
   const [dropSlideDirection, setDropSlideDirection] = useState<"previous" | "next">("next");
   const observedDropsRef = useRef(stats.currentDrops);
   const dropHighlightSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
-    supportsCompactMode ? readStoredOverlayMode() : "expanded",
+    supportsCompactMode ? readStoredOverlayMode(modeStorageKey) : "expanded",
   );
   const [isOverlayWindowVisible, setIsOverlayWindowVisible] = useState(false);
   const displayModeRef = useRef(displayMode);
   const miniSizeRef = useRef<OverlaySize | null>(readStoredMiniOverlaySize());
   const expandedSizeRef = useRef<OverlaySize>(
-    readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
+    isStatsOverlay
+      ? readStoredOverlaySize(
+          STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY,
+          normalizeStatsExpandedOverlaySize,
+        ) ?? DEFAULT_STATS_EXPANDED_OVERLAY_SIZE
+      : readStoredExpandedOverlaySize() ?? DEFAULT_EXPANDED_OVERLAY_SIZE,
   );
   const overlaySizeSaveTimerRef = useRef<number | null>(null);
   const modeTransitionRef = useRef(false);
@@ -628,6 +706,7 @@ export function Overlay() {
       programmaticDockMoveRef.current
       || modeTransitionRef.current
       || miniResizeSessionRef.current
+      || (isStatsOverlay && displayModeRef.current === "mini")
     ) {
       return;
     }
@@ -719,39 +798,57 @@ export function Overlay() {
       const { win, width, height } = await getOverlayWindowSize();
 
       if (displayModeRef.current === "expanded") {
-        const expandedSize = normalizeExpandedOverlaySize({ width, height });
+        const expandedSize = isStatsOverlay
+          ? normalizeStatsExpandedOverlaySize({ width, height })
+          : normalizeExpandedOverlaySize({ width, height });
         expandedSizeRef.current = expandedSize;
-        storeExpandedOverlaySize(expandedSize);
+        storeOverlaySize(expandedSizeStorageKey, expandedSize);
 
         displayModeRef.current = "mini";
+        setStatsMiniHovered(false);
         setDisplayMode("mini");
-        try {
-          localStorage.setItem(OVERLAY_MODE_STORAGE_KEY, "mini");
-        } catch {}
+        storeOverlayMode(modeStorageKey, "mini");
 
-        const miniSize =
-          miniSizeRef.current ??
-          readStoredMiniOverlaySize() ??
-          await resolveDefaultMiniOverlaySize();
-        miniSizeRef.current = miniSize;
-        storeMiniOverlaySize(miniSize);
-        await applyMiniOverlaySize(win, miniSize);
+        if (isStatsOverlay) {
+          clearDocking();
+          await applyStatsMiniOverlaySize(win);
+          await win.setIgnoreCursorEvents(true);
+          await syncStatsMiniInputRegion(win, true);
+        } else {
+          const miniSize =
+            miniSizeRef.current ??
+            readStoredMiniOverlaySize() ??
+            await resolveDefaultMiniOverlaySize();
+          miniSizeRef.current = miniSize;
+          storeMiniOverlaySize(miniSize);
+          await applyMiniOverlaySize(win, miniSize);
+        }
       } else {
-        const miniSize = normalizeMiniOverlaySize({ width, height });
-        miniSizeRef.current = miniSize;
-        storeMiniOverlaySize(miniSize);
+        if (isStatsOverlay) {
+          await syncStatsMiniInputRegion(win, false);
+          await win.setIgnoreCursorEvents(false);
+        } else {
+          const miniSize = normalizeMiniOverlaySize({ width, height });
+          miniSizeRef.current = miniSize;
+          storeMiniOverlaySize(miniSize);
+        }
 
         const expandedSize = expandedSizeRef.current;
         displayModeRef.current = "expanded";
+        setStatsMiniHovered(false);
         setDisplayMode("expanded");
-        try {
-          localStorage.setItem(OVERLAY_MODE_STORAGE_KEY, "expanded");
-        } catch {}
+        storeOverlayMode(modeStorageKey, "expanded");
 
-        await applyExpandedOverlaySize(win, expandedSize);
+        if (isStatsOverlay) {
+          await applyStatsExpandedOverlaySize(win, expandedSize);
+        } else {
+          await applyExpandedOverlaySize(win, expandedSize);
+        }
       }
-      if (dockStateRef.current) {
+      if (dockStateRef.current && !(isStatsOverlay && displayModeRef.current === "mini")) {
         await refreshDockPlacementAfterResize();
+      } else if (isStatsOverlay && displayModeRef.current === "expanded") {
+        await evaluateOverlayDocking();
       }
     } catch (err) {
       console.warn("[Overlay] toggle information overlay mode failed:", err);
@@ -760,8 +857,16 @@ export function Overlay() {
     }
   }
 
-  function handleTzOverlayDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
+  function handleOverlayDoubleClick(event: React.MouseEvent<HTMLDivElement>) {
     if (!supportsCompactMode) return;
+    const target = event.target;
+    if (
+      isStatsOverlay
+      && target instanceof Element
+      && target.closest('[data-overlay-interactive="true"]')
+    ) {
+      return;
+    }
     if (performance.now() < suppressOverlayDoubleClickUntilRef.current) {
       event.preventDefault();
       event.stopPropagation();
@@ -775,8 +880,16 @@ export function Overlay() {
   useEffect(() => {
     if (!supportsCompactMode) return;
 
-    const handleTzOverlayWindowKeyDown = (event: KeyboardEvent) => {
+    const handleOverlayWindowKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Enter" || event.repeat) return;
+      const target = event.target;
+      if (
+        isStatsOverlay
+        && target instanceof Element
+        && target.closest('[data-overlay-interactive="true"]')
+      ) {
+        return;
+      }
       event.preventDefault();
       event.stopPropagation();
       void toggleOverlayDisplayMode();
@@ -784,9 +897,29 @@ export function Overlay() {
 
     // Listen at the native window level so Enter works immediately after the
     // overlay is shown, even before any element inside the webview is focused.
-    window.addEventListener("keydown", handleTzOverlayWindowKeyDown, true);
-    return () => window.removeEventListener("keydown", handleTzOverlayWindowKeyDown, true);
-  }, [supportsCompactMode]);
+    window.addEventListener("keydown", handleOverlayWindowKeyDown, true);
+    return () => window.removeEventListener("keydown", handleOverlayWindowKeyDown, true);
+  }, [isStatsOverlay, supportsCompactMode]);
+
+  useEffect(() => {
+    if (!isStatsOverlay) return;
+    const unlisten = listenEvent<string>("global-input-event", (event) => {
+      if (event.payload === "StatsOverlayMiniHoverEnter") {
+        if (displayModeRef.current === "mini") setStatsMiniHovered(true);
+        return;
+      }
+      if (event.payload === "StatsOverlayMiniHoverLeave") {
+        setStatsMiniHovered(false);
+        return;
+      }
+      if (event.payload !== "StatsOverlayMiniToggle") return;
+      if (displayModeRef.current !== "mini") return;
+      void toggleOverlayDisplayMode();
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, [isStatsOverlay]);
 
   function finishCurrentTimer() {
     if (!useStats.getState().isTiming) return;
@@ -807,6 +940,7 @@ export function Overlay() {
   }
 
   function handleOverlayWindowPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (isStatsOverlay && displayModeRef.current === "mini") return;
     if (event.button !== 0 || event.detail > 1) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -827,6 +961,7 @@ export function Overlay() {
   }
 
   function handleOverlayWindowPointerMoveCapture(event: React.PointerEvent<HTMLDivElement>) {
+    if (isStatsOverlay && displayModeRef.current === "mini") return;
     const drag = overlayWindowDragStateRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
@@ -1283,18 +1418,37 @@ export function Overlay() {
         const win = getCurrentWindow();
 
         if (isStatsOverlay) {
-          await Promise.all([
-            win.setMinSize(new LogicalSize(220, 180)),
-            win.setMaxSize(null),
-            win.setResizable(true),
-          ]);
-          if (saved && saved.width >= 220 && saved.height >= 180) {
-            await win.setSize(new LogicalSize(saved.width, saved.height));
+          const savedExpandedSize =
+            displayModeRef.current === "expanded"
+            && saved
+            && saved.width >= STATS_EXPANDED_OVERLAY_MIN_WIDTH
+            && saved.height >= STATS_EXPANDED_OVERLAY_MIN_HEIGHT
+              ? normalizeStatsExpandedOverlaySize({ width: saved.width, height: saved.height })
+              : null;
+          const expandedSize =
+            readStoredOverlaySize(
+              STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY,
+              normalizeStatsExpandedOverlaySize,
+            ) ?? savedExpandedSize ?? DEFAULT_STATS_EXPANDED_OVERLAY_SIZE;
+          expandedSizeRef.current = expandedSize;
+          storeOverlaySize(STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY, expandedSize);
+
+          if (displayModeRef.current === "mini") {
+            await applyStatsMiniOverlaySize(win);
+            await win.setIgnoreCursorEvents(true);
+          } else {
+            await syncStatsMiniInputRegion(win, false);
+            await win.setIgnoreCursorEvents(false);
+            await applyStatsExpandedOverlaySize(win, expandedSize);
           }
           await restoreWindowPlacement("stats-overlay", saved);
-          window.setTimeout(() => {
-            if (!cancelled) void evaluateOverlayDocking();
-          }, OVERLAY_DOCK_SETTLE_DELAY_MS);
+          if (displayModeRef.current === "mini") {
+            await syncStatsMiniInputRegion(win, true);
+          } else {
+            window.setTimeout(() => {
+              if (!cancelled) void evaluateOverlayDocking();
+            }, OVERLAY_DOCK_SETTLE_DELAY_MS);
+          }
           return;
         }
 
@@ -1365,6 +1519,11 @@ export function Overlay() {
             if (modeTransitionRef.current || displayModeRef.current !== resizedMode) return;
             try {
               if (isStatsOverlay) {
+                if (resizedMode === "mini") return;
+                const { width, height } = await getOverlayWindowSize();
+                const expandedSize = normalizeStatsExpandedOverlaySize({ width, height });
+                expandedSizeRef.current = expandedSize;
+                storeOverlaySize(STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY, expandedSize);
                 if (dockStateRef.current) {
                   await refreshDockPlacementAfterResize(true);
                 } else {
@@ -1424,6 +1583,10 @@ export function Overlay() {
             || modeTransitionRef.current
             || miniResizeSessionRef.current
           ) {
+            return;
+          }
+          if (isStatsOverlay && displayModeRef.current === "mini") {
+            void syncStatsMiniInputRegion(win, true);
             return;
           }
           clearDockMoveTimer();
@@ -1717,6 +1880,9 @@ export function Overlay() {
   }, [activeAccountIdsKey, displayMode, focusedAccountId]);
 
   const avgTime = stats.dbAvgTime;
+  const currentSessionRuns = stats.sessionRuns[
+    getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)
+  ] || 0;
   const elapsedDisplay = stats.isTiming
     ? (stats.elapsedMs / 1000).toFixed(1)
     : "0.0";
@@ -1734,11 +1900,21 @@ export function Overlay() {
         ? (useEnglish ? "Awaiting forecast" : "等待预报")
         : (useEnglish ? "Syncing" : "同步中");
   const overlayRegionLabel = isStatsOverlay
-    ? (useEnglish ? "Statistics overlay" : "统计悬浮窗")
+    ? displayMode === "mini"
+      ? (useEnglish ? "Statistics overlay, mini click-through mode" : "统计悬浮窗，迷你穿透模式")
+      : (useEnglish ? "Statistics overlay" : "统计悬浮窗")
     : (useEnglish ? "Terror Zone broadcast overlay" : "TZ 播报悬浮窗");
-  const terrorZoneModeTitle = displayMode === "mini"
-    ? (useEnglish ? "Double-click anywhere or press Enter to expand" : "双击任意位置或按 Enter 展开")
-    : (useEnglish ? "Double-click anywhere or press Enter for mini mode" : "双击任意位置或按 Enter 切换迷你模式");
+  const overlayModeTitle = displayMode === "mini"
+    ? isStatsOverlay
+      ? (useEnglish
+          ? "Double-click or press Enter for normal mode · Click-through is on"
+          : "双击或按 Enter 返回正常模式 · 鼠标穿透已开启")
+      : (useEnglish ? "Double-click anywhere or press Enter to expand" : "双击任意位置或按 Enter 展开")
+    : isStatsOverlay
+      ? (useEnglish
+          ? "Double-click an empty area or press Enter for mini click-through mode"
+          : "双击空白区域或按 Enter 切换迷你穿透模式")
+      : (useEnglish ? "Double-click anywhere or press Enter for mini mode" : "双击任意位置或按 Enter 切换迷你模式");
   const timerActionTitle = stats.isTiming
     ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
     : (useEnglish ? "No active timer" : "当前没有正在进行的计时");
@@ -1769,6 +1945,7 @@ export function Overlay() {
       : (useEnglish ? "Syncing forecast" : "正在同步预报");
 
   function handleDockPointerEnter() {
+    if (isStatsOverlay && displayModeRef.current === "mini") return;
     pointerInsideDockRef.current = true;
     if (dockStateRef.current) void revealDockedOverlay();
   }
@@ -1783,6 +1960,7 @@ export function Overlay() {
   }
 
   function handleDockPointerLeave() {
+    if (isStatsOverlay && displayModeRef.current === "mini") return;
     pointerInsideDockRef.current = false;
     if (dockStateRef.current) scheduleDockHide();
   }
@@ -1794,15 +1972,15 @@ export function Overlay() {
         ...surfaceOpacityVars(config?.overlay_opacity, theme),
       }}
       data-overlay-kind={isStatsOverlay ? "stats" : "tz"}
-      data-overlay-mode={isStatsOverlay ? "stats" : displayMode}
+      data-overlay-mode={displayMode}
       data-dock-edge={dockEdge ?? undefined}
       data-dock-phase={dockPhase ?? undefined}
       role="region"
-      tabIndex={!isStatsOverlay ? 0 : undefined}
+      tabIndex={supportsCompactMode ? 0 : undefined}
       aria-label={overlayRegionLabel}
-      aria-keyshortcuts={!isStatsOverlay ? "Enter" : undefined}
-      title={!isStatsOverlay ? terrorZoneModeTitle : undefined}
-      onDoubleClickCapture={!isStatsOverlay ? handleTzOverlayDoubleClick : undefined}
+      aria-keyshortcuts={supportsCompactMode ? "Enter" : undefined}
+      title={supportsCompactMode ? overlayModeTitle : undefined}
+      onDoubleClickCapture={supportsCompactMode ? handleOverlayDoubleClick : undefined}
       onPointerDownCapture={handleOverlayWindowPointerDownCapture}
       onPointerMoveCapture={handleOverlayWindowPointerMoveCapture}
       onPointerUpCapture={finishOverlayWindowPointerGesture}
@@ -1827,7 +2005,7 @@ export function Overlay() {
       ))}
       <div
         className={`overlay-window flex h-full w-full overflow-hidden ${
-          !isStatsOverlay && displayMode === "mini"
+          displayMode === "mini"
             ? "overlay-window-mini"
             : "flex-col rounded-xl p-2.5"
         }`}
@@ -1839,7 +2017,7 @@ export function Overlay() {
       {/* ═══════════════════════════════════════════
           1. 账号胶囊（现有）
           ═══════════════════════════════════════════ */}
-      {isStatsOverlay && <div
+      {isStatsOverlay && displayMode === "expanded" && <div
         ref={accountScrollRef}
         className={`overlay-account-scroll flex min-h-0 w-full flex-none flex-nowrap items-center gap-1.5 overflow-x-auto ${
           accountStripScrollable ? "is-scrollable" : ""
@@ -1951,7 +2129,59 @@ export function Overlay() {
       </div>}
 
 
-      {!isStatsOverlay && displayMode === "mini" ? (
+      {isStatsOverlay && displayMode === "mini" ? (
+        <div
+          className="relative flex h-full min-w-0 flex-1 items-center gap-2"
+          aria-label={useEnglish
+            ? `${translateOverlaySceneName(stats.currentScene, true)}, ${elapsedDisplay} seconds, ${currentSessionRuns} runs this session`
+            : `${translateOverlaySceneName(stats.currentScene, false)}，${elapsedDisplay} 秒，本次 ${currentSessionRuns} 场`}
+        >
+          <div className="flex min-w-0 flex-1 flex-col justify-center leading-none">
+            <span className="text-2xs font-medium text-text-muted">
+              {useEnglish ? "Detected scene" : "识别场景"}
+            </span>
+            <span
+              className={`mt-1 truncate text-xs font-semibold ${
+                stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-primary"
+              }`}
+            >
+              {translateOverlaySceneName(stats.currentScene, useEnglish)}
+            </span>
+          </div>
+          <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
+          <div className="flex shrink-0 flex-col items-end justify-center font-mono leading-none tabular-nums">
+            <span
+              className="text-sm font-bold"
+              style={{ color: stats.isTiming ? "var(--success)" : "var(--text-muted)" }}
+            >
+              {elapsedDisplay}s
+            </span>
+            <span className="mt-1 text-2xs font-medium text-text-muted">
+              {useEnglish ? "Timer" : "计时"}
+            </span>
+          </div>
+          <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
+          <div className="flex shrink-0 flex-col items-end justify-center leading-none">
+            <span className="text-sm font-bold tabular-nums text-accent">{currentSessionRuns}</span>
+            <span className="mt-1 text-2xs font-medium text-text-muted">
+              {useEnglish ? "Runs" : "场次"}
+            </span>
+          </div>
+          {statsMiniHovered && (
+            <div
+              className="absolute inset-0 flex flex-col items-center justify-center rounded-md bg-surface-glass px-2 text-center"
+              aria-hidden="true"
+            >
+              <span className="text-xs font-semibold text-text-primary">
+                {useEnglish ? "Double-click or press Enter for normal mode" : "双击或按 Enter 返回正常模式"}
+              </span>
+              <span className="mt-1 text-2xs font-medium text-text-muted">
+                {useEnglish ? "Click-through remains active" : "鼠标穿透保持开启"}
+              </span>
+            </div>
+          )}
+        </div>
+      ) : !isStatsOverlay && displayMode === "mini" ? (
           <div
             className="overlay-mini-terror-zone flex min-h-0 items-center gap-1.5"
             title={`${miniNextTerrorZoneLabel}: ${miniNextTerrorZoneName}`}
@@ -2025,7 +2255,7 @@ export function Overlay() {
                 className="text-2xs font-medium select-none"
                 style={{ color: "var(--text-secondary)", opacity: 0.8 }}
               >
-                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {stats.sessionRuns[getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)] || 0} {runUnitLabel}
+                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {currentSessionRuns} {runUnitLabel}
               </span>
             </div>
           )}

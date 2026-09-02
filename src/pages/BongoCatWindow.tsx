@@ -148,6 +148,7 @@ export function BongoCatWindow() {
   useEffect(() => {
     const unlisten = listenEvent<string>("global-input-event", (event) => {
       const type = event.payload;
+      if (type !== "Keyboard" && type !== "MouseLeft" && type !== "MouseRight") return;
 
       // 1. Increment counter
       setClickCount((c) => c + 1);
