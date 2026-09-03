@@ -92,6 +92,7 @@ const APP_COMMANDS: &[&str] = &[
     "get_audio_mod_setup_state",
     "get_mod_capsule_pool",
     "scan_mod_capsule_pool",
+    "open_mods_directory",
     "set_mod_auto_exit_on_death_enabled",
     "add_mod_capsule",
     "update_mod_capsule",
@@ -125,6 +126,8 @@ const APP_COMMANDS: &[&str] = &[
 ];
 
 fn main() {
+    validate_command_surfaces();
+
     // Read version from config file
     let version = get_version_from_config();
     println!("cargo:rustc-env=APP_VERSION={}", version);
@@ -158,6 +161,116 @@ fn main() {
             .app_manifest(app_manifest),
     )
     .expect("failed to run build script");
+}
+
+fn validate_command_surfaces() {
+    use std::collections::BTreeSet;
+
+    println!("cargo:rerun-if-changed=src/lib.rs");
+    println!("cargo:rerun-if-changed=permissions/window-commands.toml");
+    println!("cargo:rerun-if-changed=../src/platform/tauri/contracts.ts");
+
+    let declared = APP_COMMANDS
+        .iter()
+        .map(|command| (*command).to_string())
+        .collect::<BTreeSet<_>>();
+
+    let lib_source = std::fs::read_to_string("src/lib.rs")
+        .expect("failed to read src/lib.rs while validating Tauri commands");
+    let handler_block = delimited_block(
+        &lib_source,
+        "tauri::generate_handler![",
+        "])",
+        "tauri::generate_handler!",
+    );
+    let registered = handler_block
+        .lines()
+        .filter_map(|line| {
+            let candidate = line.trim().trim_end_matches(',');
+            if candidate.is_empty() || candidate.starts_with("//") {
+                return None;
+            }
+            let command = candidate.rsplit("::").next()?;
+            command
+                .chars()
+                .all(|character| character == '_' || character.is_ascii_alphanumeric())
+                .then(|| command.to_string())
+        })
+        .collect::<BTreeSet<_>>();
+    assert_same_commands("invoke handler and APP_COMMANDS", &registered, &declared);
+
+    let permission_source = std::fs::read_to_string("permissions/window-commands.toml")
+        .expect("failed to read permissions/window-commands.toml while validating Tauri commands");
+    let main_permission = permission_source
+        .split_once("identifier = \"main-window-commands\"")
+        .map(|(_, section)| section)
+        .expect("main-window-commands permission is missing");
+    let main_acl = quoted_commands(delimited_block(
+        main_permission,
+        "commands.allow = [",
+        "]",
+        "main-window-commands allow list",
+    ));
+    assert_same_commands("APP_COMMANDS and main-window-commands ACL", &declared, &main_acl);
+
+    let contract_source = std::fs::read_to_string("../src/platform/tauri/contracts.ts")
+        .expect("failed to read frontend Tauri command contract");
+    let frontend_commands = quoted_commands(delimited_block(
+        &contract_source,
+        "export const TAURI_COMMANDS = [",
+        "] as const",
+        "frontend TAURI_COMMANDS",
+    ));
+    let unavailable = frontend_commands
+        .difference(&declared)
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unavailable.is_empty() {
+        panic!(
+            "frontend TAURI_COMMANDS contains unavailable commands: {}",
+            unavailable.join(", ")
+        );
+    }
+}
+
+fn delimited_block<'a>(
+    source: &'a str,
+    start: &str,
+    end: &str,
+    label: &str,
+) -> &'a str {
+    let (_, remainder) = source
+        .split_once(start)
+        .unwrap_or_else(|| panic!("{label} start marker is missing"));
+    remainder
+        .split_once(end)
+        .map(|(block, _)| block)
+        .unwrap_or_else(|| panic!("{label} end marker is missing"))
+}
+
+fn quoted_commands(source: &str) -> std::collections::BTreeSet<String> {
+    source
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+fn assert_same_commands(
+    label: &str,
+    expected: &std::collections::BTreeSet<String>,
+    actual: &std::collections::BTreeSet<String>,
+) {
+    let missing = expected.difference(actual).cloned().collect::<Vec<_>>();
+    let extra = actual.difference(expected).cloned().collect::<Vec<_>>();
+    if !missing.is_empty() || !extra.is_empty() {
+        panic!(
+            "{label} differ; missing: [{}]; extra: [{}]",
+            missing.join(", "),
+            extra.join(", ")
+        );
+    }
 }
 
 fn get_version_from_config() -> String {

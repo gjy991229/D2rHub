@@ -26,6 +26,7 @@ use crate::application::multi_instance::{
 use crate::application::task_runtime::{TaskHandle, TaskRequest};
 use crate::commands::account::AccountManager;
 use crate::domain::config::GlobalConfig;
+use crate::error::AppError;
 use crate::input_listener::{
     register_unbounded_capability_shortcuts, replace_unbounded_capability_shortcuts,
     CapabilityShortcutRegistration,
@@ -156,8 +157,18 @@ impl WindowsRuntimeHost {
         let config = self.global_config()?;
         let mut accounts = BTreeMap::new();
         for id in AccountManager::list_ids(&config.accounts_dir) {
-            let account = AccountManager::load_meta(&config.accounts_dir, &id)
-                .map_err(|error| error.to_string())?;
+            let account = match AccountManager::load_meta(&config.accounts_dir, &id) {
+                Ok(account) => account,
+                Err(AppError::AccountNotFound(_)) => {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("忽略缺少 account.json 的残留账号目录：{id}"),
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
             accounts.insert(id.to_ascii_lowercase(), account);
         }
         Ok(accounts)
@@ -761,8 +772,7 @@ impl RoomAutomationManager {
             let mut snapshot = controller
                 .load_or_initialize(legacy, &shortcuts)
                 .map_err(config_failure)?;
-            snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())
-                .map_err(config_failure)?;
+            snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())?;
             if !global
                 .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
                 && snapshot.config.enabled
@@ -1658,8 +1668,7 @@ impl CapabilityDriver for RoomAutomationManager {
         }
 
         let current = self.get_config();
-        let pruned = prune_missing_accounts(&self.controller, current, self.host.as_ref())
-            .map_err(config_failure)?;
+        let pruned = prune_missing_accounts(&self.controller, current, self.host.as_ref())?;
         if pruned != self.get_config() {
             *self.snapshot.write() = pruned.clone();
             self.bridge.publish_config(&pruned);
@@ -1867,10 +1876,10 @@ fn prune_missing_accounts(
     controller: &RoomAutomationConfigController,
     mut snapshot: RoomAutomationConfigSnapshot,
     host: &dyn RuntimeHost,
-) -> Result<RoomAutomationConfigSnapshot, RoomAutomationConfigControllerError> {
+) -> Result<RoomAutomationConfigSnapshot, CapabilityFailure> {
     let existing = host
         .existing_account_ids()
-        .map_err(|message| RoomAutomationConfigControllerError::InvalidLegacyPayload { message })?
+        .map_err(|message| CapabilityFailure::new("account-catalog-unavailable", message))?
         .into_iter()
         .map(|account_id| account_id.to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
@@ -1883,7 +1892,9 @@ fn prune_missing_accounts(
     referenced.dedup_by(|left, right| left.eq_ignore_ascii_case(right));
     for account_id in referenced {
         if !existing.contains(&account_id.to_ascii_lowercase()) {
-            snapshot = controller.remove_account(&account_id)?;
+            snapshot = controller
+                .remove_account(&account_id)
+                .map_err(config_failure)?;
         }
     }
     Ok(snapshot)

@@ -29,7 +29,7 @@ commands.allow = [
   "snapshot_processes", "wait_for_new_process", "exit_app", "open_logs_dir", "open_user_guide",
   "activate_application_runtime",
   "get_terror_zone_snapshot", "get_next_terror_zone",
-  "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool",
+  "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool", "open_mods_directory",
   "set_mod_auto_exit_on_death_enabled", "add_mod_capsule", "update_mod_capsule", "delete_mod_capsule",
   "assign_mod_capsule_to_account", "prepare_audio_mod", "upgrade_audio_mod", "apply_audio_mod_to_account",
   "start_rune_audio_monitor", "restart_rune_audio_monitor", "stop_rune_audio_monitor",
