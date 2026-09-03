@@ -93,6 +93,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   // Token wizard state
   const [tokenWizard, setTokenWizard] = useState<TokenWizardStep>("token_nick");
   const [tokenGuideLoading, setTokenGuideLoading] = useState(false);
+  const [tokenSubmitting, setTokenSubmitting] = useState(false);
 
   const cancelledRef = useRef(false);
   const accountIdRef = useRef("");
@@ -145,6 +146,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       }
       setShowGuide(false);
       setTokenGuideLoading(false);
+      setTokenSubmitting(false);
       cancelledRef.current = false;
       createdAccountIdRef.current = "";
       activeInitializationRef.current = null;
@@ -285,16 +287,20 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     if (cancelledRef.current) return;
 
     setCurrentStep("creating");
-    const id = (await createAccount(
-      nickname.trim(),
-      authMode,
-      region,
-      undefined,
-      language || undefined,
-      voicelanguage || undefined,
-    )) ?? "";
-    if (!id) {
-      if (!cancelledRef.current) setError("创建账号失败");
+    let id: string;
+    try {
+      id = await createAccount(
+        nickname.trim(),
+        authMode,
+        region,
+        undefined,
+        language || undefined,
+        voicelanguage || undefined,
+      );
+    } catch (accountCreationError) {
+      if (!cancelledRef.current) {
+        setError(`创建账号失败: ${String(accountCreationError)}`);
+      }
       return;
     }
 
@@ -372,35 +378,18 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     setTokenGuideLoading(true);
     setError(null);
     try {
-      let id = accountIdRef.current;
-      if (!id) {
-        const newId = await createAccount(nickname.trim(), "token", region, undefined, language || undefined, voicelanguage || undefined);
-        if (!newId) throw new Error("创建账号失败");
-        accountIdRef.current = newId;
-        createdAccountIdRef.current = newId;
-        setAccountId(newId);
-        id = newId;
-      }
-      setAccountId(id);
-
       if (config?.browser_path && config?.browser_type) {
-        try {
-          const tokenUrl = getTokenUrl(region);
-          await invokeCommand("open_url_in_browser", {
-            browserPath: config!.browser_path,
-            accountId: id,
-            url: tokenUrl,
-          }).catch(() => {});
-          await sleep(1200);
-          await invokeCommand("bring_self_to_foreground").catch(() => {});
-        } catch (e) {
-          showToast("warning", `浏览器启动失败（不影响核心功能）: ${e}`);
-        }
+        await invokeCommand("open_token_login_url", { url: getTokenUrl(region) });
+        await sleep(1200);
+        await invokeCommand("bring_self_to_foreground").catch(() => {});
+      } else {
+        const { open: openUrl } = await import("@tauri-apps/plugin-shell");
+        await openUrl(getTokenUrl(region));
       }
       setShowGuide(true);
     } catch (e) {
       if (cancelledRef.current) return;
-      setError(String(e));
+      setError(`打开 Token 登录页面失败: ${String(e)}`);
     } finally {
       setTokenGuideLoading(false);
     }
@@ -415,13 +404,8 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     if (e) e.stopPropagation();
     const tokenUrl = getTokenUrl(region);
     try {
-      const id = accountIdRef.current;
-      if (id && config?.browser_path && config?.browser_type) {
-        await invokeCommand("open_url_in_browser", {
-          browserPath: config.browser_path,
-          accountId: id,
-          url: tokenUrl,
-        });
+      if (config?.browser_path && config?.browser_type) {
+        await invokeCommand("open_token_login_url", { url: tokenUrl });
       } else {
         const { open: openUrl } = await import("@tauri-apps/plugin-shell");
         await openUrl(tokenUrl);
@@ -433,15 +417,18 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   };
 
   const tokenStepPasteNext = async () => {
+    if (tokenSubmitting) return;
     const extractedToken = extractBattleNetToken(token);
     if (!extractedToken) {
       setError("未找到完整 Token，请粘贴包含 ST=...& 的完整链接");
       return;
     }
     setError(null);
-    const id = accountIdRef.current;
-    if (id) {
-      try {
+    setTokenSubmitting(true);
+    const updatingExistingAccount = Boolean(accountIdRef.current);
+    try {
+      let id = accountIdRef.current;
+      if (id) {
         await invokeCommand("update_account_meta", {
           accountId: id,
           authMode: "token",
@@ -450,17 +437,31 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
           language,
           voicelanguage,
         });
-      } catch (e) {
-        showToast("error", `更新账号配置失败: ${e}`);
-        return;
+      } else {
+        id = await createAccount(
+          nickname.trim(),
+          "token",
+          region,
+          extractedToken,
+          language || undefined,
+          voicelanguage || undefined,
+        );
+        accountIdRef.current = id;
+        createdAccountIdRef.current = id;
+        setAccountId(id);
       }
-    }
-    onDone(id);
-    onClose();
-    if (updateAccount) {
-      showToast("success", migratingToToken ? "已迁移为 Token 直启！" : "Token 已更新！");
-    } else {
-      showToast("success", "Token 账号 " + nickname.trim() + " 初始化完成！");
+      onDone(id);
+      onClose();
+      if (updateAccount) {
+        showToast("success", migratingToToken ? "已迁移为 Token 直启！" : "Token 已更新！");
+      } else {
+        showToast("success", "Token 账号 " + nickname.trim() + " 初始化完成！");
+      }
+    } catch (e) {
+      const action = updatingExistingAccount ? "更新账号配置" : "创建账号";
+      setError(`${action}失败: ${String(e)}`);
+    } finally {
+      setTokenSubmitting(false);
     }
   };
 
@@ -664,7 +665,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
             <div className="flex flex-col gap-3">
               <div className="flex items-center gap-2 text-accent">
                 <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">正在以无痕模式打开登录页面...</span>
+                <span className="text-sm">正在打开 Token 登录页面...</span>
               </div>
               {tokenGuideLoading && (
                 <p className="text-xs text-text-muted">浏览器启动后，请在新打开的登录页中获取 Token，软件将自动弹出指引图</p>
@@ -689,7 +690,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                   软件会自动提取 ST= 与下一个 &amp; 之间的 Token；复制内容中夹带中文说明也可以识别。
                 </p>
               </div>
-              <Button variant="primary" size="sm" onClick={tokenStepPasteNext} disabled={!extractBattleNetToken(token)}>确认完成</Button>
+              <Button variant="primary" size="sm" onClick={tokenStepPasteNext} disabled={!extractBattleNetToken(token) || tokenSubmitting}>
+                {tokenSubmitting ? "正在保存..." : "确认完成"}
+              </Button>
             </>
           )}
         </div>

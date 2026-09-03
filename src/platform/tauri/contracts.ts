@@ -63,6 +63,7 @@ export const TAURI_COMMANDS = [
   "open_logs_dir",
   "open_mods_directory",
   "open_stats_page",
+  "open_token_login_url",
   "open_url_in_browser",
   "open_user_guide",
   "patch_desktop_pet_settings",

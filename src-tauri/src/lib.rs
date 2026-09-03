@@ -250,6 +250,7 @@ pub fn run() {
             // ── 浏览器 ──
             commands::browser::launch_browser_for_account,
             commands::browser::open_url_in_browser,
+            commands::browser::open_token_login_url,
             commands::browser::check_browser_running,
             commands::browser::kill_browser_processes,
             // ── 系统工具 ──

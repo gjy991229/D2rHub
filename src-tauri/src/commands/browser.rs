@@ -356,6 +356,38 @@ pub fn open_url_in_browser(
     Ok(())
 }
 
+/// 使用已配置的浏览器在无痕窗口中打开 Token 登录页。
+///
+/// 获取 Token 发生在账号正式创建之前，因此这里不能依赖账号目录或账号租约。
+/// URL 仍受 Battle.net 登录页白名单约束，浏览器也只能使用全局配置中的路径。
+#[tauri::command]
+pub fn open_token_login_url(
+    state: tauri::State<'_, SharedState>,
+    url: String,
+) -> Result<(), AppError> {
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
+
+    if config.browser_path.trim().is_empty() {
+        return Err(AppError::ConfigReadError(
+            "尚未配置用于获取 Token 的浏览器".to_string(),
+        ));
+    }
+    ensure_allowed_bnet_login_url(&url)?;
+
+    #[cfg(target_os = "windows")]
+    let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
+
+    launch_private_browser_impl(&config, &config.browser_path, Some(&url))?;
+
+    #[cfg(target_os = "windows")]
+    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

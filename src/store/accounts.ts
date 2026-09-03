@@ -10,7 +10,7 @@ interface AccountsState {
   error: string | null;
 
   loadAccounts: () => Promise<void>;
-  createAccount: (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => Promise<string | null>;
+  createAccount: (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => Promise<string>;
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<boolean>;
   updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<boolean>;
@@ -51,8 +51,7 @@ export const useAccounts = create<AccountsState>((set, get) => ({
       return id;
     } catch (e) {
       set({ error: String(e) });
-      showToast("error", `创建账号失败: ${e}`);
-      return null;
+      throw e;
     }
   },
 
