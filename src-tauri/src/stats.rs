@@ -446,14 +446,9 @@ fn migrate_legacy_drops(drops_json: &str) -> Vec<DropEntry> {
 }
 
 fn ensure_stats_module_installed(state: &SharedState) -> Result<(), String> {
-    let installed = state
-        .configuration()
-        .snapshot()
-        .is_some_and(|config| {
-            config.optional_module_installed(
-                crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-            )
-        });
+    let installed = state.configuration().snapshot().is_some_and(|config| {
+        config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+    });
     installed
         .then_some(())
         .ok_or_else(|| "识别与统计模块尚未安装".to_string())
@@ -1534,9 +1529,7 @@ pub fn open_stats_page(
         .configuration()
         .snapshot()
         .ok_or_else(|| "全局配置尚未加载".to_string())?;
-    if !config.optional_module_installed(
-        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-    ) {
+    if !config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION) {
         return Err("识别与统计模块尚未安装".to_string());
     }
     // 1. 查询统计数据

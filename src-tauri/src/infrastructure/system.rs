@@ -3,8 +3,8 @@ use sysinfo::{ProcessesToUpdate, System};
 use tauri::Manager;
 
 use crate::application::multi_instance::{GameWindowIdentity, GameWindowPort, WindowPosition};
-use crate::infrastructure::process::{kill_processes_by_name, shared_system, silent_cmd};
 use crate::error::AppError;
+use crate::infrastructure::process::{kill_processes_by_name, shared_system, silent_cmd};
 use crate::launch_context::paths_have_same_identity;
 
 /// 启动进度事件（通过 Tauri event 推送到前端）
@@ -1993,10 +1993,7 @@ pub fn find_unique_d2r_pid_by_exact_title(title: &str) -> Option<u32> {
         EnumWindows(callback, &mut ctx as *mut Ctx as isize);
     }
 
-    let mut candidates = ctx
-        .candidate_pids
-        .into_iter()
-        .collect::<Vec<_>>();
+    let mut candidates = ctx.candidate_pids.into_iter().collect::<Vec<_>>();
     candidates.sort_unstable();
     candidates.dedup();
     (candidates.len() == 1).then(|| candidates[0])

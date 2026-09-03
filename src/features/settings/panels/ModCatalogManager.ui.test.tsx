@@ -81,9 +81,9 @@ describe("ModCatalogManager", () => {
 
     expect(screen.getAllByText("游戏目录预设 · 名称由文件夹决定")).toHaveLength(3);
     const processed = screen.getByText("Ready").closest("article");
-    expect(processed?.textContent).toContain("已加工");
+    expect(processed?.textContent).toContain("原版");
     expect(processed?.textContent).toContain("声纹识别");
-    expect(screen.getByRole("button", { name: "加工" })).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "加工" })).toHaveLength(3);
     expect(screen.queryByTitle("删除自定义参数")).toBeNull();
   });
 

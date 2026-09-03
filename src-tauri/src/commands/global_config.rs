@@ -7,8 +7,9 @@ use crate::application::configuration::{
 };
 use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
 use crate::domain::config::{
-    default_enable_bongo_cat, default_enable_overlay, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
-    OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
+    default_enable_bongo_cat, default_enable_overlay, CURRENT_CONFIG_VERSION,
+    OPTIONAL_MODULE_AUTOMATION, OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET,
+    OPTIONAL_MODULE_ROOM_AUTOMATION,
 };
 use crate::error::AppError;
 use crate::state::SharedState;
@@ -200,6 +201,7 @@ mod validation_tests {
         saved_games_settings_exists, should_validate_installation_paths,
         sync_configuration_staging, validate_installation_paths, GlobalConfig, GlobalConfigPolicy,
         LaunchGroup, LaunchGroupMember, LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        OPTIONAL_MODULE_AUTOMATION, OPTIONAL_MODULE_OVERLAYS,
     };
     use crate::application::configuration::ConfigurationPolicy;
     use crate::commands::account::{AccountManager, AccountMeta};
@@ -827,6 +829,7 @@ mod validation_tests {
             object.insert("enable_overlay".to_string(), serde_json::json!(enabled));
             object.remove("enable_tz_overlay");
             object.remove("enable_stats_overlay");
+            object.remove("installed_optional_modules");
             std::fs::write(
                 root.join("global_config.json"),
                 serde_json::to_vec_pretty(&legacy).unwrap(),
@@ -1002,6 +1005,10 @@ mod validation_tests {
             first_run_complete: true,
             rune_audio_enabled: true,
             rune_audio_target_account: account.id,
+            installed_optional_modules: vec![
+                OPTIONAL_MODULE_OVERLAYS.to_string(),
+                OPTIONAL_MODULE_AUTOMATION.to_string(),
+            ],
             ..GlobalConfig::default()
         };
         config.save(root.to_str().unwrap()).unwrap();
@@ -2938,9 +2945,9 @@ pub fn patch_desktop_pet_settings(
         "bongo_cat_skin",
         "bongo_cat_unlocked_skins",
     ];
-    let object = patch.as_object().ok_or_else(|| {
-        AppError::ConfigWriteError("桌宠设置补丁必须是对象".to_string())
-    })?;
+    let object = patch
+        .as_object()
+        .ok_or_else(|| AppError::ConfigWriteError("桌宠设置补丁必须是对象".to_string()))?;
     if let Some(field) = object
         .keys()
         .find(|field| !ALLOWED_FIELDS.contains(&field.as_str()))

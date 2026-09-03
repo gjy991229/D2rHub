@@ -764,19 +764,18 @@ pub fn recover_auxiliary_windows_for_app(
         "overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-                ) && config.enable_tz_overlay
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                    && config.enable_tz_overlay
             })
             .unwrap_or(false),
         "stats-overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-                ) && config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                ) && config.enable_stats_overlay
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                    && config.optional_module_installed(
+                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                    )
+                    && config.enable_stats_overlay
             })
             .unwrap_or(false),
         "bongo-cat" => config

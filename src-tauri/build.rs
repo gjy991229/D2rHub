@@ -157,7 +157,7 @@ fn main() {
             .windows_attributes(windows)
             .app_manifest(app_manifest),
     )
-        .expect("failed to run build script");
+    .expect("failed to run build script");
 }
 
 fn get_version_from_config() -> String {

@@ -1,11 +1,12 @@
 {
   "identifier": "default",
-  "description": "Default capabilities for D2RHub",
+  "description": "Shared safe window capabilities for D2RHub application and overlays",
   "windows": [
-    "main"
+    "main",
+    "overlay",
+    "stats-overlay"
   ],
   "permissions": [
-    "main-window-commands",
     "core:default",
     "core:event:default",
     "core:window:default",
@@ -19,13 +20,6 @@
     "core:window:allow-set-position",
     "core:window:allow-set-focus",
     "core:window:allow-set-ignore-cursor-events",
-    "core:window:allow-start-dragging",
-    "shell:allow-open",
-    "dialog:default",
-    "dialog:allow-open",
-    "dialog:allow-save",
-    "dialog:allow-message",
-    "dialog:allow-ask",
-    "clipboard-manager:allow-write-image"
+    "core:window:allow-start-dragging"
   ]
 }

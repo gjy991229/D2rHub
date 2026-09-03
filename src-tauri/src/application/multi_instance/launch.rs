@@ -1,6 +1,6 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use parking_lot::Mutex;
 use std::collections::BTreeSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::domain::account::is_valid_account_id;
 use crate::error::AppError;
@@ -51,7 +51,9 @@ impl LaunchOrchestrator {
     }
 
     pub fn complete(&self, ticket: CancellationTicket) {
-        self.cancelled_operations.lock().remove(&ticket.operation_id);
+        self.cancelled_operations
+            .lock()
+            .remove(&ticket.operation_id);
     }
 
     pub fn cancel_current_operation(&self) {

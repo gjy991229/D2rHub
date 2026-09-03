@@ -624,16 +624,26 @@ fn handle_item_detection(
     emit_tracking_snapshot(app, &snapshot);
 }
 
+struct LocationDetectionContext {
+    marker: TelemetryMarker,
+    terror_zone_active: bool,
+    observed_at_frame: u64,
+    confidence: f32,
+}
+
 fn handle_location_detection(
     app: &tauri::AppHandle,
     config: &MonitorConfig,
     tracker: &mut SegmentTracker,
     catalog: &LocationCatalog,
-    marker: TelemetryMarker,
-    terror_zone_active: bool,
-    observed_at_frame: u64,
-    confidence: f32,
+    detection: LocationDetectionContext,
 ) {
+    let LocationDetectionContext {
+        marker,
+        terror_zone_active,
+        observed_at_frame,
+        confidence,
+    } = detection;
     let Some(location) = catalog.resolve(marker) else {
         return;
     };
@@ -1149,10 +1159,12 @@ fn capture_loop(
                             &config,
                             &mut tracker,
                             &catalog,
-                            marker,
-                            terror_zone_active,
-                            detection.start_frame,
-                            detection.confidence,
+                            LocationDetectionContext {
+                                marker,
+                                terror_zone_active,
+                                observed_at_frame: detection.start_frame,
+                                confidence: detection.confidence,
+                            },
                         );
                     }
                 }
@@ -1585,6 +1597,11 @@ mod tests {
             write_error: None,
             detections: Vec::new(),
         });
+        {
+            let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
+            current.account_id = Some("test-account".to_string());
+            current.target_pid = Some(42);
+        }
         write_diagnostic_samples(&[0.0, 0.25, -0.25]);
         append_diagnostic_detection(TelemetryMarker::Rune { rune_number: 24 }, 0.91, 1_234, true);
         assert_eq!(

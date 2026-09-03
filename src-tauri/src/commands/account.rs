@@ -3478,9 +3478,7 @@ fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta
                     crate::logger::log_msg(
                         "WARN",
                         "AccountSnapshot",
-                        &format!(
-                            "runtime 快照无效，已回退到通过校验的纯旧版快照: {runtime_error}"
-                        ),
+                        &format!("runtime 快照无效，已回退到通过校验的纯旧版快照: {runtime_error}"),
                     );
                 }
                 Some(Err(legacy_error)) => {
@@ -3551,8 +3549,7 @@ pub(crate) fn resolve_account_runtime_snapshot(
 
     if meta.snapshot_edition.is_some() {
         return Err(AppError::ConfigReadError(
-            "新版 runtime 快照不存在，拒绝回退可能过期的旧版认证数据；请重新初始化账号"
-                .to_string(),
+            "新版 runtime 快照不存在，拒绝回退可能过期的旧版认证数据；请重新初始化账号".to_string(),
         ));
     }
     resolve_legacy_account_runtime_snapshot(account_dir, meta, expected_edition)

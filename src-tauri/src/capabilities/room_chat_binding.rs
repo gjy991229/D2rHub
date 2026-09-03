@@ -11,8 +11,6 @@ use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-#[cfg(test)]
-use std::time::Duration;
 
 use crate::infrastructure::durable_fs;
 
@@ -32,8 +30,6 @@ const STAGING_SUFFIX: &str = ".d2rhub-chat-f13.stage";
 const ROLLBACK_SUFFIX: &str = ".d2rhub-chat-f13.rollback";
 const JOURNAL_SUFFIX: &str = ".d2rhub-chat-f13.journal";
 const REPLACE_JOURNAL_VERSION: u8 = 1;
-#[cfg(test)]
-const WATCH_POLL_INTERVAL: Duration = Duration::from_millis(75);
 #[cfg(test)]
 const UNBOUND_KEY: u16 = 0xFFFF;
 
@@ -364,10 +360,7 @@ impl ChatF13BindingService {
                 }
                 Ok::<(Vec<String>, bool), String>((cleanup_warnings, restored_any))
             })();
-        let (cleanup_warnings, restored_any) = match restore_result {
-            Ok(outcome) => outcome,
-            Err(error) => return Err(error),
-        };
+        let (cleanup_warnings, restored_any) = restore_result?;
         let mut status = self.status()?;
         if !restored_any {
             status
@@ -389,7 +382,6 @@ impl ChatF13BindingService {
         let snapshot = inspect_filesystem(&self.inner.directories)?;
         Ok(build_status(&self.inner, &snapshot))
     }
-
 }
 
 fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
@@ -1356,16 +1348,6 @@ mod tests {
         bytes
     }
 
-    fn wait_until(mut predicate: impl FnMut() -> bool) {
-        for _ in 0..80 {
-            if predicate() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        panic!("condition was not met before timeout");
-    }
-
     #[test]
     fn patches_only_native_chat_secondary_slot() {
         let original = sample_key_file();
@@ -1434,14 +1416,14 @@ mod tests {
     }
 
     #[test]
-    fn install_is_explicit_backs_up_then_starts_owned_watcher() {
+    fn install_is_explicit_and_backs_up_without_starting_a_watcher() {
         let directory = TestDirectory::new("install");
         let path = directory.key("hero.keyo", &sample_key_file());
         let service = service(&directory);
         let status = service.install().unwrap();
         assert!(status.ready);
         assert!(status.consent_granted);
-        assert!(status.watcher_running);
+        assert!(!status.watcher_running);
         assert_eq!(status.backup_files, 1);
         assert_eq!(
             inspect_key_bytes(&std::fs::read(path).unwrap()),
@@ -1512,23 +1494,26 @@ mod tests {
     }
 
     #[test]
-    fn watcher_patches_new_files_and_stop_joins_it() {
+    fn explicit_rescan_patches_new_files_and_stop_leaves_later_files_unchanged() {
         let directory = TestDirectory::new("watcher_stop");
         directory.key("existing.key", &sample_key_file());
         let service = service(&directory);
         service.install().unwrap();
 
         let new_file = directory.key("new.keyo", &sample_key_file());
-        wait_until(|| {
-            std::fs::read(&new_file)
-                .ok()
-                .and_then(|bytes| inspect_key_bytes(&bytes).ok())
-                == Some(BindingState::Installed)
-        });
+        assert_eq!(
+            inspect_key_bytes(&std::fs::read(&new_file).unwrap()),
+            Ok(BindingState::Eligible)
+        );
+        let rescanned = service.install().unwrap();
+        assert!(rescanned.ready);
+        assert_eq!(
+            inspect_key_bytes(&std::fs::read(&new_file).unwrap()),
+            Ok(BindingState::Installed)
+        );
         service.stop().unwrap();
 
         let after_stop = directory.key("after-stop.keyo", &sample_key_file());
-        std::thread::sleep(WATCH_POLL_INTERVAL * 3);
         assert_eq!(
             inspect_key_bytes(&std::fs::read(after_stop).unwrap()),
             Ok(BindingState::Eligible)
@@ -1558,7 +1543,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_persisted_consent_accepts_a_manually_installed_f13() {
+    fn explicit_persisted_consent_accepts_a_manually_installed_f13_without_a_watcher() {
         let directory = TestDirectory::new("persisted_requires_backup");
         let patched = patch_f13(&sample_key_file()).unwrap();
         directory.key("hero.key", &patched);
@@ -1568,7 +1553,7 @@ mod tests {
         assert!(status.ready);
         assert_eq!(status.backup_files, 0);
         assert!(status.consent_granted);
-        assert!(status.watcher_running);
+        assert!(!status.watcher_running);
         assert!(status.message.contains("其他工具管理"));
         service.stop().unwrap();
     }
@@ -1597,7 +1582,7 @@ mod tests {
     }
 
     #[test]
-    fn rejected_repeat_install_or_restore_keeps_the_existing_watcher() {
+    fn repeat_install_is_a_safe_scan_and_rejected_restore_preserves_consent() {
         let directory = TestDirectory::new("failed_repeat_keeps_watcher");
         directory.key("hero.key", &sample_key_file());
         let d2r_running = Arc::new(AtomicBool::new(false));
@@ -1609,15 +1594,14 @@ mod tests {
         service.install().unwrap();
 
         d2r_running.store(true, Ordering::Release);
-        assert!(service.install().unwrap_err().contains("关闭全部 D2R"));
-        let after_install = service.status().unwrap();
+        let after_install = service.install().unwrap();
         assert!(after_install.consent_granted);
-        assert!(after_install.watcher_running);
+        assert!(!after_install.watcher_running);
 
         assert!(service.restore().unwrap_err().contains("关闭全部 D2R"));
         let after_restore = service.status().unwrap();
         assert!(after_restore.consent_granted);
-        assert!(after_restore.watcher_running);
+        assert!(!after_restore.watcher_running);
 
         d2r_running.store(false, Ordering::Release);
         service.stop().unwrap();
@@ -1643,7 +1627,7 @@ mod tests {
     }
 
     #[test]
-    fn persisted_explicit_consent_resumes_only_after_full_validation() {
+    fn persisted_explicit_consent_resumes_only_after_full_validation_without_a_watcher() {
         let directory = TestDirectory::new("persisted_resume");
         directory.key("hero.key", &sample_key_file());
         {
@@ -1656,7 +1640,7 @@ mod tests {
         let status = restarted.start_watcher_with_consent(consent).unwrap();
         assert!(status.ready);
         assert!(status.consent_granted);
-        assert!(status.watcher_running);
+        assert!(!status.watcher_running);
     }
 
     #[test]

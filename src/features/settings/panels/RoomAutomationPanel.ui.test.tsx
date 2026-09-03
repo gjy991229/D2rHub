@@ -178,14 +178,14 @@ describe("RoomAutomationPanel", () => {
       />,
     );
 
-    expect(await screen.findByText("配置会保留，但快捷键、文件监视和跟房任务均不会运行。")).toBeTruthy();
+    expect(await screen.findByText("配置会保留，但快捷键和跟房任务均不会运行。")).toBeTruthy();
     expect(screen.queryByText("局内房间工具是必要条件")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "启用自动跟房模块" }));
     expect(screen.queryByRole("heading", { name: "启用自动跟房" })).toBeNull();
     expect(onRequireRoomTools).toHaveBeenCalledWith("two", undefined, false);
   });
 
-  it("aligns the room primary with an enabled recognition target while preserving participants", async () => {
+  it("keeps the room primary independent from the recognition target", async () => {
     const { gateway, saveConfig } = makeGateway();
     const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
     gateway.startSync = vi.fn(async (handlers) => {
@@ -205,8 +205,8 @@ describe("RoomAutomationPanel", () => {
     await user.click(await screen.findByRole("switch", { name: "启用自动跟房模块" }));
     await waitFor(() => expect(saveConfig).toHaveBeenCalled());
     const saved = saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
-    expect(saved.primary_account_id).toBe("two");
-    expect(saved.follower_account_ids).toEqual(["one"]);
+    expect(saved.primary_account_id).toBe("one");
+    expect(saved.follower_account_ids).toEqual(["two"]);
   });
 
   it("keeps module copy local, shows a room preview, and saves with generation CAS", async () => {
@@ -231,7 +231,7 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByRole("button", { name: /让跟随账号加入/ })).toBeNull();
   });
 
-  it("installs the F13 binding automatically when an enabled module needs it", async () => {
+  it("requires an explicit F13 scan when an enabled module needs it", async () => {
     const { gateway } = makeGateway(idleStatus, binding);
     const consentSnapshot = {
       ...snapshot,
@@ -249,8 +249,9 @@ describe("RoomAutomationPanel", () => {
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);
 
     expect(await screen.findByText(/旧版配置中的自动授权已被撤销/)).toBeTruthy();
+    expect(gateway.installChatBinding).not.toHaveBeenCalled();
+    await userEvent.click(screen.getAllByRole("button", { name: "扫描并补装 F13" })[0]);
     await waitFor(() => expect(gateway.installChatBinding).toHaveBeenCalledTimes(1));
-    expect(screen.queryByRole("button", { name: "授权并安装 F13 绑定" })).toBeNull();
   });
 
   it("keeps configuration available when the binding status fails and releases sync on unmount", async () => {
@@ -400,6 +401,7 @@ describe("RoomAutomationPanel", () => {
     const user = userEvent.setup();
     render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
 
+    await user.click(await screen.findByText("In-game chat binding"));
     const restore = await screen.findByRole("button", { name: "Restore original binding" });
     expect((restore as HTMLButtonElement).disabled).toBe(false);
     await user.click(restore);
