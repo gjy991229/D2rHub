@@ -27,6 +27,7 @@ commands.allow = [
   "bring_self_to_foreground", "bring_window_by_title_to_front", "get_foreground_window_title",
   "get_d2r_window_titles", "refresh_account_running_state", "check_game_connected", "send_keys_to_window",
   "snapshot_processes", "wait_for_new_process", "exit_app", "open_logs_dir", "open_user_guide",
+  "activate_application_runtime",
   "get_terror_zone_snapshot", "get_next_terror_zone",
   "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool",
   "set_mod_auto_exit_on_death_enabled", "add_mod_capsule", "update_mod_capsule", "delete_mod_capsule",
