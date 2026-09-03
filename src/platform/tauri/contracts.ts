@@ -6,6 +6,7 @@
  * payload shapes remain owned by the feature that consumes them.
  */
 export const TAURI_COMMANDS = [
+  "activate_application_runtime",
   "add_mod_capsule",
   "apply_audio_mod_to_account",
   "assign_mod_capsule_to_account",

@@ -92,7 +92,7 @@ impl OverlayVisibility {
     }
 }
 
-pub(crate) fn install(app: &tauri::App) {
+pub(crate) fn install(app: &tauri::AppHandle) {
     let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };

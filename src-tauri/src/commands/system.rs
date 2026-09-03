@@ -7,6 +7,11 @@ use crate::error::AppError;
 use crate::infrastructure::system as adapter;
 
 #[tauri::command]
+pub fn activate_application_runtime(app: tauri::AppHandle) -> Result<bool, String> {
+    crate::activate_application_runtime(&app)
+}
+
+#[tauri::command]
 pub fn get_d2r_pids() -> Vec<u32> {
     adapter::get_d2r_pids()
 }

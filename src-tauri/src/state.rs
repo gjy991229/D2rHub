@@ -25,6 +25,10 @@ pub struct AppState {
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
+    /// 首次披露确认后的运行服务启动锁，确保并发 IPC 也只会激活一次。
+    pub(crate) runtime_activation_lock: Mutex<()>,
+    /// 高风险运行服务是否已经完成激活。
+    pub(crate) runtime_activated: AtomicBool,
     /// 本进程内已经逻辑删除的稳定账号 ID。配置策略用它阻止排队中的陈旧
     /// 全量保存重新引入已删除账号；不扫描目录，避免与账号目录替换窗口竞争。
     retired_account_ids: RwLock<HashSet<String>>,
@@ -56,6 +60,8 @@ impl AppState {
             multi_instance: MultiInstanceRuntime::default(),
             tasks: TaskRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
+            runtime_activation_lock: Mutex::new(()),
+            runtime_activated: AtomicBool::new(false),
             retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),

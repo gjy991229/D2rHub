@@ -24,8 +24,32 @@ mod window_placement;
 
 use crate::domain::config::GlobalConfig;
 use state::AppState;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use tauri::Manager;
+
+pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<state::SharedState>();
+    let _activation_guard = state.runtime_activation_lock.lock();
+    if state.runtime_activated.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "全局配置尚未安全加载，拒绝激活运行服务".to_string())?;
+    capabilities::start(app).map_err(|error| {
+        logger::log_msg("ERROR", "Capabilities", &error);
+        error
+    })?;
+    auxiliary_windows::create_configured_windows(app, &config);
+    input_listener::start_input_listener(app.clone());
+    mod_catalog::refresh_on_startup(state.inner().clone(), app.clone());
+    state.runtime_activated.store(true, Ordering::Release);
+    logger::log_msg("INFO", "System", "用户确认披露后，应用运行服务已激活");
+    Ok(true)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -141,22 +165,11 @@ pub fn run() {
             }
             window_placement::ensure_main_window_visible(app.handle());
 
-            if let Some(config) = app.state::<state::SharedState>().configuration().snapshot() {
-                auxiliary_windows::create_configured_windows(app.handle(), &config);
-            }
-
             capabilities::install(app);
             commands::task::install_observer(app.handle(), &app_state);
 
             // 初始化托盘
             let _ = tray::create_tray(app.handle());
-
-            // 启动全局输入监听
-            input_listener::start_input_listener(app.handle().clone());
-
-            mod_catalog::refresh_on_startup(app_state.clone(), app.handle().clone());
-
-            capabilities::start(app);
 
             Ok(())
         })
@@ -254,6 +267,7 @@ pub fn run() {
             commands::system::exit_app,
             commands::system::open_logs_dir,
             commands::system::open_user_guide,
+            commands::system::activate_application_runtime,
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──

@@ -53,7 +53,6 @@ impl CapabilityDriver for UnavailableCapability {
 
 /// Install capability-owned policies and register concrete lifecycle drivers.
 pub(crate) fn install(app: &tauri::App) {
-    overlay_windows::install(app);
     crate::input_listener::set_bongo_cat_input_enabled(false);
 
     let desktop_pet_driver: Arc<dyn CapabilityDriver> =
@@ -215,24 +214,19 @@ pub(crate) fn install(app: &tauri::App) {
 
 /// Starts the serialized supervisor after all platform services are ready and
 /// reconciles the latest committed configuration snapshot.
-pub(crate) fn start(app: &tauri::App) {
+pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<SharedState>();
     let registry = Arc::clone(state.capabilities());
-    let supervisor = match CapabilitySupervisor::start(app.handle().clone(), registry) {
-        Ok(supervisor) => supervisor,
-        Err(error) => {
-            crate::logger::log_msg("ERROR", "Capabilities", &error);
-            return;
-        }
-    };
+    let supervisor = CapabilitySupervisor::start(app.clone(), registry)?;
     if !app.manage(supervisor) {
-        crate::logger::log_msg("ERROR", "Capabilities", "capability supervisor 重复安装");
-        return;
+        return Err("capability supervisor 重复安装".to_string());
     }
+    overlay_windows::install(app);
 
     if let Some(config) = state.configuration().snapshot() {
-        apply_configuration(state.inner(), Some(app.handle()), &config);
+        apply_configuration(state.inner(), Some(app), &config);
     }
+    Ok(())
 }
 
 /// Bounded projection from legacy global fields to lifecycle intent. It is

@@ -9,38 +9,62 @@ interface ApplicationDisclosureState {
   checking: boolean;
   required: boolean;
   version: string | null;
-  accept: () => void;
+  accepting: boolean;
+  accept: () => Promise<void>;
 }
 
 export function useApplicationDisclosure(ready: boolean): ApplicationDisclosureState {
   const [checking, setChecking] = useState(true);
   const [required, setRequired] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
+  const [accepting, setAccepting] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
 
-    void invokeCommand<string>("get_app_version")
-      .catch(() => "unknown")
-      .then((currentVersion) => {
-        if (cancelled) return;
-        const normalizedVersion = currentVersion.replace(/^v/i, "").trim() || "unknown";
-        setVersion(normalizedVersion);
-        setRequired(!hasAcceptedApplicationDisclosure(normalizedVersion));
+    void (async () => {
+      const currentVersion = await invokeCommand<string>("get_app_version").catch(() => "unknown");
+      if (cancelled) return;
+
+      const normalizedVersion = currentVersion.replace(/^v/i, "").trim() || "unknown";
+      setVersion(normalizedVersion);
+      if (
+        normalizedVersion === "unknown"
+        || !hasAcceptedApplicationDisclosure(normalizedVersion)
+      ) {
+        setRequired(true);
         setChecking(false);
-      });
+        return;
+      }
+
+      try {
+        await invokeCommand<boolean>("activate_application_runtime");
+        if (!cancelled) setRequired(false);
+      } catch (error) {
+        console.error("Failed to activate application runtime:", error);
+        if (!cancelled) setRequired(true);
+      } finally {
+        if (!cancelled) setChecking(false);
+      }
+    })();
 
     return () => {
       cancelled = true;
     };
   }, [ready]);
 
-  const accept = useCallback(() => {
-    if (!version) return;
-    acceptApplicationDisclosure(version);
-    setRequired(false);
-  }, [version]);
+  const accept = useCallback(async () => {
+    if (!version || accepting) return;
+    setAccepting(true);
+    try {
+      await invokeCommand<boolean>("activate_application_runtime");
+      if (version !== "unknown") acceptApplicationDisclosure(version);
+      setRequired(false);
+    } finally {
+      setAccepting(false);
+    }
+  }, [accepting, version]);
 
-  return { checking, required, version, accept };
+  return { checking, required, version, accepting, accept };
 }

@@ -62,7 +62,7 @@ type View =
 
 function App() {
   const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
-  const applicationDisclosure = useApplicationDisclosure(!initialLoading);
+  const applicationDisclosure = useApplicationDisclosure(!initialLoading && config !== null);
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
@@ -88,6 +88,9 @@ function App() {
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
   const [killing, setKilling] = useState(false);
+  const disclosureBlockingStartup = initialLoading
+    || applicationDisclosure.checking
+    || applicationDisclosure.required;
 
   const handleKillAllD2R = async () => {
     setKilling(true);
@@ -106,7 +109,10 @@ function App() {
   const launchGroups = useLaunchGroupController();
   const launchGroupDraft = launchGroups.draft;
   const launchGroupPendingDelete = launchGroups.pendingDelete;
-  const modCapsules = useModCapsulePool({ active: view.type === "main", onAssigned: loadAccounts });
+  const modCapsules = useModCapsulePool({
+    active: view.type === "main" && !disclosureBlockingStartup,
+    onAssigned: loadAccounts,
+  });
   const openModManager = (action?: "add", edition?: string | null) => {
     setSettingsTab(action === "add" ? `mod-processing:add:${edition ?? ""}` : "mod-processing");
     setSettingsAccountId(null);
@@ -198,10 +204,6 @@ function App() {
   }, [config?.font_scale]);
 
   // Execute App Side Effects
-  const disclosureBlockingStartup = initialLoading
-    || applicationDisclosure.checking
-    || applicationDisclosure.required;
-
   useBongoCatWindow(disclosureBlockingStartup, config);
   useLaunchEvents(config);
   useAutoUpdate(disclosureBlockingStartup, config, (version, url) => {
@@ -222,19 +224,28 @@ function App() {
     }
   };
 
+  const handleDisclosureAccept = async () => {
+    try {
+      await applicationDisclosure.accept();
+    } catch (error) {
+      showToast("error", `启动 D2RHub 运行服务失败：${error}`);
+    }
+  };
+
   const applicationDisclosureDialog = (
     <DisclosureDialog
       open={applicationDisclosure.required}
       language={config?.app_language === "en-US" ? "en-US" : "zh-CN"}
       target={{ type: "application", version: applicationDisclosure.version }}
+      accepting={applicationDisclosure.accepting}
       canceling={exitingForDisclosure}
       onCancel={() => void handleDisclosureExit()}
-      onAccept={applicationDisclosure.accept}
+      onAccept={handleDisclosureAccept}
     />
   );
 
   useEffect(() => {
-    if (initialLoading || !config?.rune_audio_enabled) {
+    if (disclosureBlockingStartup || !config?.rune_audio_enabled) {
       setAudioModUpdate(null);
       return;
     }
@@ -255,7 +266,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [initialLoading, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
+  }, [disclosureBlockingStartup, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
 
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
@@ -296,6 +307,18 @@ function App() {
         </div>
       </div>
     </AppShell>
+  );
+
+  // Do not mount setup or dashboard children until the application-level
+  // disclosure has been accepted; several children perform detection work on mount.
+  if (applicationDisclosure.required) return (
+    <>
+      <AppShell>
+        <div className="flex-1" />
+      </AppShell>
+      <ToastContainer />
+      {applicationDisclosureDialog}
+    </>
   );
 
   // ── setup ──
