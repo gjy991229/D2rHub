@@ -307,7 +307,7 @@ let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
     sequence_width: 3,
     background_text_strategy: "post_keys",
     strategy_version: 17,
-    flow: { step_delay_ms: 80, character_delay_ms: 10 },
+    flow: { step_delay_ms: 100, character_delay_ms: 25 },
   },
   normalization: {
     source_strategy_version: 17,
