@@ -93,6 +93,7 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     error,
     refresh,
     scan,
+    openDirectory: (edition: string) => invokeCommand<void>("open_mods_directory", { edition }),
     add: (edition: string, launchArguments: string) => mutate("add_mod_capsule", { edition, launchArguments }),
     update: (capsuleId: string, launchArguments: string) => mutate("update_mod_capsule", { capsuleId, launchArguments }),
     remove: (capsuleId: string) => mutate("delete_mod_capsule", { capsuleId }),

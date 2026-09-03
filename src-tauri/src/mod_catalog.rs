@@ -563,6 +563,45 @@ pub async fn scan_mod_capsule_pool(
 }
 
 #[tauri::command]
+pub fn open_mods_directory(
+    state: tauri::State<'_, SharedState>,
+    edition: String,
+) -> Result<(), String> {
+    let edition = normalize_edition(&edition)?;
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "尚未完成首次配置".to_string())?;
+    let game_directory = if edition == "CN" {
+        config.cn_game_path.trim()
+    } else {
+        config.global_game_path.trim()
+    };
+    if game_directory.is_empty() {
+        return Err(format!("尚未配置{edition}游戏目录"));
+    }
+    let game_directory = Path::new(game_directory);
+    if !game_directory.is_dir() {
+        return Err(format!("游戏目录不存在：{}", game_directory.display()));
+    }
+    let mods_directory = game_directory.join("mods");
+    std::fs::create_dir_all(&mods_directory)
+        .map_err(|error| format!("无法创建 mods 文件夹 {}：{error}", mods_directory.display()))?;
+
+    #[cfg(target_os = "windows")]
+    std::process::Command::new("explorer")
+        .arg(&mods_directory)
+        .spawn()
+        .map_err(|error| format!("打开 mods 文件夹失败：{error}"))?;
+    #[cfg(not(target_os = "windows"))]
+    std::process::Command::new("open")
+        .arg(&mods_directory)
+        .spawn()
+        .map_err(|error| format!("打开 mods 文件夹失败：{error}"))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn set_mod_auto_exit_on_death_enabled(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,

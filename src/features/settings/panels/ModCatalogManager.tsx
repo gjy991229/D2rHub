@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Check, Edit3, PackageOpen, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
+import { Check, Edit3, FolderOpen, PackageOpen, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
@@ -20,7 +20,7 @@ interface ModCatalogManagerProps {
 const COPY = {
   "zh-CN": {
     title: "Mod 管理", description: "游戏目录中的 Mod 自动成为共享预设；账号、声纹识别和自动跟房都从这里选择同一份配置。",
-    scan: "扫描目录", editions: "游戏版本", cn: "国服", global: "国际服", add: "添加自定义参数",
+    scan: "扫描目录", openFolder: "打开文件夹", openFolderTitle: "打开当前版本的 mods 文件夹", editions: "游戏版本", cn: "国服", global: "国际服", add: "添加自定义参数",
     addLabel: "添加自定义共享参数", customTitle: "自定义共享参数",
     customHelp: "用于保留旧账号或特殊启动写法；普通 Mod 会由目录扫描自动加入。",
     cancel: "取消", save: "保存", addSuccess: "自定义参数已加入 Mod 列表",
@@ -38,7 +38,7 @@ const COPY = {
   },
   "en-US": {
     title: "Mod Management", description: "Mods in the game directory become shared presets. Accounts, recognition, and room automation all use this catalog.",
-    scan: "Scan folders", editions: "Game edition", cn: "China", global: "Global", add: "Add custom arguments",
+    scan: "Scan folders", openFolder: "Open folder", openFolderTitle: "Open the mods folder for this game edition", editions: "Game edition", cn: "China", global: "Global", add: "Add custom arguments",
     addLabel: "Add shared custom arguments", customTitle: "Shared custom arguments",
     customHelp: "Keep legacy or specialized launch syntax here. Regular Mods are discovered from the game directory.",
     cancel: "Cancel", save: "Save", addSuccess: "Custom arguments added to the Mod list",
@@ -110,9 +110,21 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           <h2>{copy.title}</h2>
           <p>{copy.description}</p>
         </div>
-        <Button size="sm" variant="ghost" loading={catalog.loading} onClick={() => void catalog.scan()}>
-          <RefreshCw size={13} />{copy.scan}
-        </Button>
+        <div className="mod-processing-header-actions">
+          <Button
+            size="sm"
+            variant="ghost"
+            title={copy.openFolderTitle}
+            onClick={() => void catalog.openDirectory(edition).catch((error) => {
+              showToast("error", String(error));
+            })}
+          >
+            <FolderOpen size={13} />{copy.openFolder}
+          </Button>
+          <Button size="sm" variant="ghost" loading={catalog.loading} onClick={() => void catalog.scan()}>
+            <RefreshCw size={13} />{copy.scan}
+          </Button>
+        </div>
       </header>
 
       <div className="mod-catalog-toolbar">
