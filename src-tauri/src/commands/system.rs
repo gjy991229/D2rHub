@@ -6,7 +6,10 @@
 use crate::error::AppError;
 use crate::infrastructure::system as adapter;
 
-#[tauri::command]
+// Runtime activation creates auxiliary WebViews. Dispatch this synchronous
+// function through Tauri's async command path so WebView creation can marshal
+// work back to the main event loop instead of deadlocking that same thread.
+#[tauri::command(async)]
 pub fn activate_application_runtime(app: tauri::AppHandle) -> Result<bool, String> {
     crate::activate_application_runtime(&app)
 }
