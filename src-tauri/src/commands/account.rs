@@ -3421,14 +3421,37 @@ fn validate_battle_net_config_for_edition(
 fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta) {
     let runtime_root = account_dir.join("runtime");
     if !runtime_root.exists() {
+        if meta.snapshot_edition.is_some() {
+            meta.initialized = false;
+            crate::logger::log_msg(
+                "WARN",
+                "AccountSnapshot",
+                "新版 runtime 快照缺失，拒绝回退可能过期的旧版认证数据",
+            );
+        }
         return;
     }
 
-    let validation = (|| -> Result<AccountRuntimeSnapshotManifest, AppError> {
+    let expected_edition = (|| -> Result<ClientEdition, AppError> {
         let region = meta.region.as_deref().ok_or_else(|| {
             AppError::ConfigReadError("账号缺少区服，无法校验 runtime 快照".to_string())
         })?;
-        let expected_edition = GameRegion::parse(region)?.edition();
+        Ok(GameRegion::parse(region)?.edition())
+    })();
+    let expected_edition = match expected_edition {
+        Ok(edition) => edition,
+        Err(error) => {
+            meta.initialized = false;
+            crate::logger::log_msg(
+                "WARN",
+                "AccountSnapshot",
+                &format!("忽略无效 runtime 快照: {error}"),
+            );
+            return;
+        }
+    };
+
+    let validation = (|| -> Result<AccountRuntimeSnapshotManifest, AppError> {
         validate_runtime_snapshot_root(&runtime_root, expected_edition)?;
         let manifest: AccountRuntimeSnapshotManifest = serde_json::from_str(
             &std::fs::read_to_string(runtime_root.join("snapshot.json"))?,
@@ -3443,14 +3466,47 @@ fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta
             meta.last_reset_at = Some(manifest.created_at);
             meta.snapshot_edition = Some(manifest.edition);
         }
-        Err(error) => {
-            meta.initialized = false;
-            meta.snapshot_edition = None;
-            crate::logger::log_msg(
-                "WARN",
-                "AccountSnapshot",
-                &format!("忽略无效 runtime 快照: {error}"),
-            );
+        Err(runtime_error) => {
+            let legacy_fallback = can_use_legacy_snapshot_as_runtime_fallback(meta);
+            match legacy_fallback.then(|| {
+                resolve_legacy_account_runtime_snapshot(account_dir, meta, expected_edition)
+            }) {
+                Some(Ok(_)) => {
+                    // 没有新版来源标记说明该账号仍以旧布局为权威；继续保留 None，
+                    // 让每次使用旧快照时都重新按产品键证明版区。
+                    meta.initialized = true;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "runtime 快照无效，已回退到通过校验的纯旧版快照: {runtime_error}"
+                        ),
+                    );
+                }
+                Some(Err(legacy_error)) => {
+                    meta.initialized = false;
+                    meta.snapshot_edition = None;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "忽略无效 runtime 快照，旧版快照也不可用: {runtime_error}; {legacy_error}"
+                        ),
+                    );
+                }
+                None => {
+                    // 有 snapshot_edition 表示新版 runtime 曾成功提交；顶层旧快照可能已经
+                    // 过期，不能为了绕过损坏而恢复错误的认证数据。
+                    meta.initialized = false;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "忽略无效 runtime 快照且拒绝回退可能过期的旧版快照: {runtime_error}"
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -3462,9 +3518,57 @@ pub(crate) fn resolve_account_runtime_snapshot(
 ) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let runtime_root = account_dir.join("runtime");
     if runtime_root.exists() {
-        return validate_runtime_snapshot_root(&runtime_root, expected_edition);
+        match validate_runtime_snapshot_root(&runtime_root, expected_edition) {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(runtime_error) => {
+                if !can_use_legacy_snapshot_as_runtime_fallback(meta) {
+                    return Err(AppError::ConfigReadError(format!(
+                        "runtime 快照无效，且旧版快照不是可证明的当前权威来源，拒绝回退: {runtime_error}"
+                    )));
+                }
+                return match resolve_legacy_account_runtime_snapshot(
+                    account_dir,
+                    meta,
+                    expected_edition,
+                ) {
+                    Ok(snapshot) => {
+                        crate::logger::log_msg(
+                            "WARN",
+                            "AccountSnapshot",
+                            &format!(
+                                "runtime 快照无效，恢复时回退到通过校验的纯旧版快照: {runtime_error}"
+                            ),
+                        );
+                        Ok(snapshot)
+                    }
+                    Err(legacy_error) => Err(AppError::ConfigReadError(format!(
+                        "runtime 快照无效: {runtime_error}; 旧版快照也不可用: {legacy_error}"
+                    ))),
+                };
+            }
+        }
     }
 
+    if meta.snapshot_edition.is_some() {
+        return Err(AppError::ConfigReadError(
+            "新版 runtime 快照不存在，拒绝回退可能过期的旧版认证数据；请重新初始化账号"
+                .to_string(),
+        ));
+    }
+    resolve_legacy_account_runtime_snapshot(account_dir, meta, expected_edition)
+}
+
+fn can_use_legacy_snapshot_as_runtime_fallback(meta: &AccountMeta) -> bool {
+    // snapshot_edition 与新版 runtime 布局在同一迁移中引入。只有已初始化且没有该
+    // 来源标记的账号才能证明仍以纯旧布局为权威；否则顶层旧文件可能已经过期。
+    meta.initialized && meta.snapshot_edition.is_none()
+}
+
+fn resolve_legacy_account_runtime_snapshot(
+    account_dir: &Path,
+    meta: &AccountMeta,
+    expected_edition: ClientEdition,
+) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let bnet_directory = account_dir.join("Battle.net");
     if !bnet_directory.join("Battle.net.config").is_file() {
         return Err(AppError::FileError(format!(

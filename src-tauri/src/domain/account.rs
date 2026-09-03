@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use thiserror::Error;
 
 /// 账号级窗口位置胶囊。`window_x/window_y` 仍作为兼容旧版本的默认位置镜像保留。
@@ -206,6 +206,9 @@ pub struct AccountMeta {
     /// 配音语言 ("zhCN" / "zhTW" / "enUS"，默认取决于区服)
     #[serde(default)]
     pub voicelanguage: Option<String>,
+    /// 保留较新或实验版本写入的未知字段，避免旧版本修改账号时静默丢失数据。
+    #[serde(default, flatten)]
+    pub(crate) preserved_unknown_fields: BTreeMap<String, serde_json::Value>,
 }
 
 impl AccountMeta {
@@ -233,6 +236,7 @@ impl AccountMeta {
             snapshot_edition: None,
             language: None,
             voicelanguage: None,
+            preserved_unknown_fields: BTreeMap::new(),
         }
     }
 
