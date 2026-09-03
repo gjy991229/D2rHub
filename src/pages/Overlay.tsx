@@ -101,6 +101,7 @@ const OVERLAY_MINI_SIZE_VERSION_STORAGE_KEY = "d2rhub-information-overlay-mini-s
 const OVERLAY_MINI_SIZE_VERSION = "2";
 const OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-information-overlay-expanded-size";
 const STATS_OVERLAY_MODE_STORAGE_KEY = "d2rhub-statistics-overlay-mode";
+const STATS_OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-statistics-overlay-mini-size";
 const STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-statistics-overlay-expanded-size";
 const EXPANDED_OVERLAY_MIN_WIDTH = 200;
 const EXPANDED_OVERLAY_MIN_HEIGHT = 180;
@@ -108,7 +109,10 @@ const DEFAULT_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 250 };
 const STATS_EXPANDED_OVERLAY_MIN_WIDTH = 220;
 const STATS_EXPANDED_OVERLAY_MIN_HEIGHT = 180;
 const DEFAULT_STATS_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 300 };
-const STATS_MINI_OVERLAY_SIZE: OverlaySize = { width: 320, height: 48 };
+const STATS_MINI_OVERLAY_MIN_WIDTH = 240;
+const STATS_MINI_OVERLAY_MIN_HEIGHT = 48;
+const STATS_MINI_OVERLAY_RESIZE_INSET = 6;
+const DEFAULT_STATS_MINI_OVERLAY_SIZE: OverlaySize = { width: 320, height: 48 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
@@ -177,6 +181,13 @@ function normalizeStatsExpandedOverlaySize(size: OverlaySize): OverlaySize {
   };
 }
 
+function normalizeStatsMiniOverlaySize(size: OverlaySize): OverlaySize {
+  return {
+    width: Math.max(STATS_MINI_OVERLAY_MIN_WIDTH, Math.round(size.width)),
+    height: Math.max(STATS_MINI_OVERLAY_MIN_HEIGHT, Math.round(size.height)),
+  };
+}
+
 function readStoredOverlaySize(
   storageKey: string,
   normalize: (size: OverlaySize) => OverlaySize,
@@ -204,6 +215,13 @@ function readStoredMiniOverlaySize(): OverlaySize | null {
 
 function readStoredExpandedOverlaySize(): OverlaySize | null {
   return readStoredOverlaySize(OVERLAY_EXPANDED_SIZE_STORAGE_KEY, normalizeExpandedOverlaySize);
+}
+
+function readStoredStatsMiniOverlaySize(): OverlaySize | null {
+  return readStoredOverlaySize(
+    STATS_OVERLAY_MINI_SIZE_STORAGE_KEY,
+    normalizeStatsMiniOverlaySize,
+  );
 }
 
 function storeOverlaySize(storageKey: string, size: OverlaySize) {
@@ -268,13 +286,17 @@ async function applyExpandedOverlaySize(
   );
 }
 
-async function applyStatsMiniOverlaySize(win: ReturnType<typeof getCurrentWindow>) {
+async function applyStatsMiniOverlaySize(
+  win: ReturnType<typeof getCurrentWindow>,
+  miniSize: OverlaySize,
+) {
   await win.setResizable(false);
   await win.setMinSize(null);
   await win.setMaxSize(null);
-  await win.setSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
-  await win.setMinSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
-  await win.setMaxSize(new LogicalSize(STATS_MINI_OVERLAY_SIZE.width, STATS_MINI_OVERLAY_SIZE.height));
+  await win.setSize(new LogicalSize(miniSize.width, miniSize.height));
+  await win.setMinSize(
+    new LogicalSize(STATS_MINI_OVERLAY_MIN_WIDTH, STATS_MINI_OVERLAY_MIN_HEIGHT),
+  );
 }
 
 async function applyStatsExpandedOverlaySize(
@@ -301,6 +323,9 @@ async function syncStatsMiniInputRegion(
       y: 0,
       width: 0,
       height: 0,
+      minWidth: STATS_MINI_OVERLAY_MIN_WIDTH,
+      minHeight: STATS_MINI_OVERLAY_MIN_HEIGHT,
+      resizeInset: STATS_MINI_OVERLAY_RESIZE_INSET,
     });
     return;
   }
@@ -312,6 +337,9 @@ async function syncStatsMiniInputRegion(
     y: position.y,
     width: size.width,
     height: size.height,
+    minWidth: STATS_MINI_OVERLAY_MIN_WIDTH,
+    minHeight: STATS_MINI_OVERLAY_MIN_HEIGHT,
+    resizeInset: STATS_MINI_OVERLAY_RESIZE_INSET,
   });
 }
 const IMMUNITY_EN_LABELS: Record<string, string> = {
@@ -459,7 +487,9 @@ export function Overlay() {
   );
   const [isOverlayWindowVisible, setIsOverlayWindowVisible] = useState(false);
   const displayModeRef = useRef(displayMode);
-  const miniSizeRef = useRef<OverlaySize | null>(readStoredMiniOverlaySize());
+  const miniSizeRef = useRef<OverlaySize | null>(
+    isStatsOverlay ? readStoredStatsMiniOverlaySize() : readStoredMiniOverlaySize(),
+  );
   const expandedSizeRef = useRef<OverlaySize>(
     isStatsOverlay
       ? readStoredOverlaySize(
@@ -834,7 +864,13 @@ export function Overlay() {
 
         if (isStatsOverlay) {
           clearDocking();
-          await applyStatsMiniOverlaySize(win);
+          const miniSize =
+            miniSizeRef.current ??
+            readStoredStatsMiniOverlaySize() ??
+            DEFAULT_STATS_MINI_OVERLAY_SIZE;
+          miniSizeRef.current = miniSize;
+          storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
+          await applyStatsMiniOverlaySize(win, miniSize);
           await win.setIgnoreCursorEvents(true);
           await syncStatsMiniInputRegion(win, true);
         } else {
@@ -848,6 +884,9 @@ export function Overlay() {
         }
       } else {
         if (isStatsOverlay) {
+          const miniSize = normalizeStatsMiniOverlaySize({ width, height });
+          miniSizeRef.current = miniSize;
+          storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
           await syncStatsMiniInputRegion(win, false);
           await win.setIgnoreCursorEvents(false);
         } else {
@@ -1453,11 +1492,25 @@ export function Overlay() {
               STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY,
               normalizeStatsExpandedOverlaySize,
             ) ?? savedExpandedSize ?? DEFAULT_STATS_EXPANDED_OVERLAY_SIZE;
+          const savedMiniSize =
+            displayModeRef.current === "mini"
+            && saved
+            && saved.width >= STATS_MINI_OVERLAY_MIN_WIDTH
+            && saved.height >= STATS_MINI_OVERLAY_MIN_HEIGHT
+            && saved.height < STATS_EXPANDED_OVERLAY_MIN_HEIGHT
+              ? normalizeStatsMiniOverlaySize({ width: saved.width, height: saved.height })
+              : null;
+          const miniSize =
+            readStoredStatsMiniOverlaySize()
+            ?? savedMiniSize
+            ?? DEFAULT_STATS_MINI_OVERLAY_SIZE;
+          miniSizeRef.current = miniSize;
           expandedSizeRef.current = expandedSize;
+          storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
           storeOverlaySize(STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY, expandedSize);
 
           if (displayModeRef.current === "mini") {
-            await applyStatsMiniOverlaySize(win);
+            await applyStatsMiniOverlaySize(win, miniSize);
             await win.setIgnoreCursorEvents(true);
           } else {
             await syncStatsMiniInputRegion(win, false);
@@ -1542,8 +1595,15 @@ export function Overlay() {
             if (modeTransitionRef.current || displayModeRef.current !== resizedMode) return;
             try {
               if (isStatsOverlay) {
-                if (resizedMode === "mini") return;
                 const { width, height } = await getOverlayWindowSize();
+                if (resizedMode === "mini") {
+                  const miniSize = normalizeStatsMiniOverlaySize({ width, height });
+                  miniSizeRef.current = miniSize;
+                  storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
+                  await syncStatsMiniInputRegion(getCurrentWindow(), true);
+                  await persistOverlayGeometry(undefined, true);
+                  return;
+                }
                 const expandedSize = normalizeStatsExpandedOverlaySize({ width, height });
                 expandedSizeRef.current = expandedSize;
                 storeOverlaySize(STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY, expandedSize);
@@ -1609,7 +1669,20 @@ export function Overlay() {
             return;
           }
           if (isStatsOverlay && displayModeRef.current === "mini") {
-            void syncStatsMiniInputRegion(win, true);
+            clearDockMoveTimer();
+            dockMoveTimerRef.current = window.setTimeout(() => {
+              dockMoveTimerRef.current = null;
+              if (!cancelled && displayModeRef.current === "mini") {
+                void (async () => {
+                  try {
+                    await syncStatsMiniInputRegion(win, true);
+                    await persistOverlayGeometry(undefined, true);
+                  } catch (err) {
+                    reportOverlayIssue("WARN", "persist moved stats mini overlay failed", err);
+                  }
+                })();
+              }
+            }, OVERLAY_DOCK_SETTLE_DELAY_MS);
             return;
           }
           clearDockMoveTimer();
@@ -1924,14 +1997,16 @@ export function Overlay() {
         : (useEnglish ? "Syncing" : "同步中");
   const overlayRegionLabel = isStatsOverlay
     ? displayMode === "mini"
-      ? (useEnglish ? "Statistics overlay, mini click-through mode" : "统计悬浮窗，迷你穿透模式")
+      ? (useEnglish
+          ? "Statistics overlay, resizable mini click-through mode"
+          : "统计悬浮窗，可缩放的迷你穿透模式")
       : (useEnglish ? "Statistics overlay" : "统计悬浮窗")
     : (useEnglish ? "Terror Zone broadcast overlay" : "TZ 播报悬浮窗");
   const overlayModeTitle = displayMode === "mini"
     ? isStatsOverlay
       ? (useEnglish
-          ? "Double-click or press Enter for normal mode · Click-through is on"
-          : "双击或按 Enter 返回正常模式 · 鼠标穿透已开启")
+          ? "Middle-drag to move · Drag an edge to resize · Double-click or press Enter for normal mode"
+          : "中键拖动位置 · 拖拽边缘调节大小 · 双击或按 Enter 返回正常模式")
       : (useEnglish ? "Double-click anywhere or press Enter to expand" : "双击任意位置或按 Enter 展开")
     : isStatsOverlay
       ? (useEnglish
@@ -2196,10 +2271,10 @@ export function Overlay() {
               aria-hidden="true"
             >
               <span className="text-xs font-semibold text-text-primary">
-                {useEnglish ? "Double-click or press Enter for normal mode" : "双击或按 Enter 返回正常模式"}
+                {useEnglish ? "Middle-drag to move · Drag an edge to resize" : "中键拖动位置 · 拖拽边缘调节大小"}
               </span>
               <span className="mt-1 text-2xs font-medium text-text-muted">
-                {useEnglish ? "Click-through remains active" : "鼠标穿透保持开启"}
+                {useEnglish ? "Double-click for normal mode · Click-through stays on" : "双击返回正常模式 · 鼠标穿透保持开启"}
               </span>
             </div>
           )}

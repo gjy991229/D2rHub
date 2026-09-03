@@ -25,6 +25,19 @@ static STATS_OVERLAY_LAST_CLICK_TIME: AtomicU32 = AtomicU32::new(0);
 static STATS_OVERLAY_LAST_CLICK_X: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
+static STATS_OVERLAY_MINI_HWND: AtomicPtr<std::ffi::c_void> =
+    AtomicPtr::new(std::ptr::null_mut());
+static STATS_OVERLAY_MINI_GESTURE: AtomicU32 = AtomicU32::new(0);
+static STATS_OVERLAY_MINI_RESIZE_EDGE: AtomicU32 = AtomicU32::new(0);
+static STATS_OVERLAY_GESTURE_START_CURSOR_X: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_GESTURE_START_CURSOR_Y: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_GESTURE_START_LEFT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_GESTURE_START_TOP: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_GESTURE_START_RIGHT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_GESTURE_START_BOTTOM: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MIN_WIDTH: AtomicU32 = AtomicU32::new(240);
+static STATS_OVERLAY_MIN_HEIGHT: AtomicU32 = AtomicU32::new(48);
+static STATS_OVERLAY_RESIZE_INSET: AtomicI32 = AtomicI32::new(6);
 static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
 static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
     OnceLock::new();
@@ -317,6 +330,11 @@ pub(crate) fn set_stats_overlay_mini_input_region_state(
     STATS_OVERLAY_MINI_BOTTOM.store(y.saturating_add_unsigned(height), Ordering::Relaxed);
     STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
     STATS_OVERLAY_POINTER_INSIDE.store(false, Ordering::Relaxed);
+    if !enabled {
+        STATS_OVERLAY_MINI_GESTURE.store(0, Ordering::Release);
+        STATS_OVERLAY_MINI_RESIZE_EDGE.store(0, Ordering::Relaxed);
+        STATS_OVERLAY_MINI_HWND.store(std::ptr::null_mut(), Ordering::Release);
+    }
     STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
 }
 
@@ -328,6 +346,9 @@ pub fn set_stats_overlay_mini_input_region(
     y: i32,
     width: u32,
     height: u32,
+    min_width: u32,
+    min_height: u32,
+    resize_inset: u32,
 ) -> Result<(), String> {
     if enabled {
         let installed = app
@@ -343,6 +364,25 @@ pub fn set_stats_overlay_mini_input_region(
         if !installed {
             return Err("识别与统计模块尚未安装".to_string());
         }
+
+        let window = app
+            .get_webview_window("stats-overlay")
+            .ok_or_else(|| "统计悬浮窗尚未创建".to_string())?;
+        let hwnd = window
+            .hwnd()
+            .map_err(|error| format!("获取统计悬浮窗句柄失败: {error}"))?;
+        let scale_factor = window.scale_factor().unwrap_or(1.0).max(0.1);
+        let physical_min_width =
+            (f64::from(min_width) * scale_factor).round().max(1.0) as u32;
+        let physical_min_height =
+            (f64::from(min_height) * scale_factor).round().max(1.0) as u32;
+        let physical_resize_inset =
+            (f64::from(resize_inset) * scale_factor).round().max(1.0) as i32;
+
+        STATS_OVERLAY_MIN_WIDTH.store(physical_min_width, Ordering::Relaxed);
+        STATS_OVERLAY_MIN_HEIGHT.store(physical_min_height, Ordering::Relaxed);
+        STATS_OVERLAY_RESIZE_INSET.store(physical_resize_inset, Ordering::Relaxed);
+        STATS_OVERLAY_MINI_HWND.store(hwnd.0, Ordering::Release);
     }
     set_stats_overlay_mini_input_region_state(enabled, x, y, width, height);
     Ok(())
@@ -394,7 +434,18 @@ const WM_SYSKEYDOWN: usize = 0x0104;
 const WM_SYSKEYUP: usize = 0x0105;
 const WM_MOUSEMOVE: usize = 0x0200;
 const WM_LBUTTONDOWN: usize = 0x0201;
+const WM_LBUTTONUP: usize = 0x0202;
 const WM_RBUTTONDOWN: usize = 0x0204;
+const WM_MBUTTONDOWN: usize = 0x0207;
+const WM_MBUTTONUP: usize = 0x0208;
+
+const STATS_OVERLAY_GESTURE_NONE: u32 = 0;
+const STATS_OVERLAY_GESTURE_MOVE: u32 = 1;
+const STATS_OVERLAY_GESTURE_RESIZE: u32 = 2;
+const STATS_OVERLAY_RESIZE_LEFT: u32 = 1 << 0;
+const STATS_OVERLAY_RESIZE_RIGHT: u32 = 1 << 1;
+const STATS_OVERLAY_RESIZE_TOP: u32 = 1 << 2;
+const STATS_OVERLAY_RESIZE_BOTTOM: u32 = 1 << 3;
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -402,6 +453,16 @@ const WM_RBUTTONDOWN: usize = 0x0204;
 struct POINT {
     x: i32,
     y: i32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[allow(clippy::upper_case_acronyms)]
+struct RECT {
+    left: i32,
+    top: i32,
+    right: i32,
+    bottom: i32,
 }
 
 #[repr(C)]
@@ -470,6 +531,183 @@ extern "system" {
     fn GetDoubleClickTime() -> u32;
     fn GetSystemMetrics(nIndex: i32) -> i32;
 
+    fn GetWindowRect(
+        hWnd: *mut std::ffi::c_void,
+        lpRect: *mut RECT,
+    ) -> std::os::raw::c_int;
+    fn SetWindowPos(
+        hWnd: *mut std::ffi::c_void,
+        hWndInsertAfter: *mut std::ffi::c_void,
+        X: i32,
+        Y: i32,
+        cx: i32,
+        cy: i32,
+        uFlags: u32,
+    ) -> std::os::raw::c_int;
+}
+
+fn stats_overlay_resize_edge(x: i32, y: i32) -> u32 {
+    let left = STATS_OVERLAY_MINI_LEFT.load(Ordering::Relaxed);
+    let top = STATS_OVERLAY_MINI_TOP.load(Ordering::Relaxed);
+    let right = STATS_OVERLAY_MINI_RIGHT.load(Ordering::Relaxed);
+    let bottom = STATS_OVERLAY_MINI_BOTTOM.load(Ordering::Relaxed);
+    let inset = STATS_OVERLAY_RESIZE_INSET.load(Ordering::Relaxed).max(1);
+    let mut edge = 0;
+
+    if x - left < inset {
+        edge |= STATS_OVERLAY_RESIZE_LEFT;
+    } else if right - x <= inset {
+        edge |= STATS_OVERLAY_RESIZE_RIGHT;
+    }
+    if y - top < inset {
+        edge |= STATS_OVERLAY_RESIZE_TOP;
+    } else if bottom - y <= inset {
+        edge |= STATS_OVERLAY_RESIZE_BOTTOM;
+    }
+    edge
+}
+
+unsafe fn begin_stats_overlay_mini_gesture(
+    mouse: &MSLLHOOKSTRUCT,
+    gesture: u32,
+    resize_edge: u32,
+) -> bool {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire)
+        || STATS_OVERLAY_MINI_GESTURE.load(Ordering::Acquire) != STATS_OVERLAY_GESTURE_NONE
+        || !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y)
+    {
+        return false;
+    }
+
+    let hwnd = STATS_OVERLAY_MINI_HWND.load(Ordering::Acquire);
+    if hwnd.is_null() {
+        return false;
+    }
+    let mut rect = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    if GetWindowRect(hwnd, &mut rect) == 0 {
+        return false;
+    }
+
+    STATS_OVERLAY_GESTURE_START_CURSOR_X.store(mouse.pt.x, Ordering::Relaxed);
+    STATS_OVERLAY_GESTURE_START_CURSOR_Y.store(mouse.pt.y, Ordering::Relaxed);
+    STATS_OVERLAY_GESTURE_START_LEFT.store(rect.left, Ordering::Relaxed);
+    STATS_OVERLAY_GESTURE_START_TOP.store(rect.top, Ordering::Relaxed);
+    STATS_OVERLAY_GESTURE_START_RIGHT.store(rect.right, Ordering::Relaxed);
+    STATS_OVERLAY_GESTURE_START_BOTTOM.store(rect.bottom, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_RESIZE_EDGE.store(resize_edge, Ordering::Relaxed);
+    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_GESTURE.store(gesture, Ordering::Release);
+    true
+}
+
+unsafe fn begin_stats_overlay_mini_resize(mouse: &MSLLHOOKSTRUCT) -> bool {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire)
+        || !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y)
+    {
+        return false;
+    }
+    let edge = stats_overlay_resize_edge(mouse.pt.x, mouse.pt.y);
+    edge != 0
+        && begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_RESIZE, edge)
+}
+
+unsafe fn update_stats_overlay_mini_gesture(mouse: &MSLLHOOKSTRUCT) -> bool {
+    let gesture = STATS_OVERLAY_MINI_GESTURE.load(Ordering::Acquire);
+    if gesture == STATS_OVERLAY_GESTURE_NONE {
+        return false;
+    }
+
+    let hwnd = STATS_OVERLAY_MINI_HWND.load(Ordering::Acquire);
+    if hwnd.is_null() {
+        STATS_OVERLAY_MINI_GESTURE.store(STATS_OVERLAY_GESTURE_NONE, Ordering::Release);
+        return false;
+    }
+
+    let delta_x = mouse
+        .pt
+        .x
+        .saturating_sub(STATS_OVERLAY_GESTURE_START_CURSOR_X.load(Ordering::Relaxed));
+    let delta_y = mouse
+        .pt
+        .y
+        .saturating_sub(STATS_OVERLAY_GESTURE_START_CURSOR_Y.load(Ordering::Relaxed));
+    let start_left = STATS_OVERLAY_GESTURE_START_LEFT.load(Ordering::Relaxed);
+    let start_top = STATS_OVERLAY_GESTURE_START_TOP.load(Ordering::Relaxed);
+    let start_right = STATS_OVERLAY_GESTURE_START_RIGHT.load(Ordering::Relaxed);
+    let start_bottom = STATS_OVERLAY_GESTURE_START_BOTTOM.load(Ordering::Relaxed);
+    let mut left = start_left;
+    let mut top = start_top;
+    let mut right = start_right;
+    let mut bottom = start_bottom;
+
+    if gesture == STATS_OVERLAY_GESTURE_MOVE {
+        left = start_left.saturating_add(delta_x);
+        top = start_top.saturating_add(delta_y);
+        right = start_right.saturating_add(delta_x);
+        bottom = start_bottom.saturating_add(delta_y);
+    } else {
+        let edge = STATS_OVERLAY_MINI_RESIZE_EDGE.load(Ordering::Relaxed);
+        let min_width = STATS_OVERLAY_MIN_WIDTH.load(Ordering::Relaxed).max(1) as i32;
+        let min_height = STATS_OVERLAY_MIN_HEIGHT.load(Ordering::Relaxed).max(1) as i32;
+        if edge & STATS_OVERLAY_RESIZE_LEFT != 0 {
+            left = start_left
+                .saturating_add(delta_x)
+                .min(start_right.saturating_sub(min_width));
+        } else if edge & STATS_OVERLAY_RESIZE_RIGHT != 0 {
+            right = start_right
+                .saturating_add(delta_x)
+                .max(start_left.saturating_add(min_width));
+        }
+        if edge & STATS_OVERLAY_RESIZE_TOP != 0 {
+            top = start_top
+                .saturating_add(delta_y)
+                .min(start_bottom.saturating_sub(min_height));
+        } else if edge & STATS_OVERLAY_RESIZE_BOTTOM != 0 {
+            bottom = start_bottom
+                .saturating_add(delta_y)
+                .max(start_top.saturating_add(min_height));
+        }
+    }
+
+    let width = right.saturating_sub(left).max(1);
+    let height = bottom.saturating_sub(top).max(1);
+    const SWP_NOZORDER: u32 = 0x0004;
+    const SWP_NOACTIVATE: u32 = 0x0010;
+    if SetWindowPos(
+        hwnd,
+        std::ptr::null_mut(),
+        left,
+        top,
+        width,
+        height,
+        SWP_NOZORDER | SWP_NOACTIVATE,
+    ) == 0
+    {
+        return true;
+    }
+
+    STATS_OVERLAY_MINI_LEFT.store(left, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_TOP.store(top, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_RIGHT.store(right, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_BOTTOM.store(bottom, Ordering::Relaxed);
+    STATS_OVERLAY_POINTER_INSIDE.store(true, Ordering::Relaxed);
+    true
+}
+
+fn finish_stats_overlay_mini_gesture(expected_gesture: u32) -> bool {
+    STATS_OVERLAY_MINI_GESTURE
+        .compare_exchange(
+            expected_gesture,
+            STATS_OVERLAY_GESTURE_NONE,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        )
+        .is_ok()
 }
 
 unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) -> bool {
@@ -778,15 +1016,43 @@ unsafe extern "system" fn mouse_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if code >= 0 && (wparam == WM_MOUSEMOVE || wparam == WM_LBUTTONDOWN) {
+    if code >= 0 {
         let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
-        if wparam == WM_MOUSEMOVE {
-            handle_stats_overlay_mini_pointer_move(mouse);
-        } else if handle_stats_overlay_mini_double_click(mouse) {
-            // The first click remains click-through. Swallow the confirming
-            // second press so the foreground game cannot also interpret the
-            // gesture as a double-click action.
-            return 1;
+        match wparam {
+            WM_MOUSEMOVE => {
+                if !update_stats_overlay_mini_gesture(mouse) {
+                    handle_stats_overlay_mini_pointer_move(mouse);
+                }
+            }
+            WM_LBUTTONDOWN => {
+                if begin_stats_overlay_mini_resize(mouse) {
+                    // The narrow edge region is the only part of mini mode that
+                    // claims a normal left drag; its content remains click-through.
+                    return 1;
+                }
+                if handle_stats_overlay_mini_double_click(mouse) {
+                    // The first click remains click-through. Swallow the confirming
+                    // second press so the foreground game cannot also interpret the
+                    // gesture as a double-click action.
+                    return 1;
+                }
+            }
+            WM_LBUTTONUP => {
+                if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_RESIZE) {
+                    return 1;
+                }
+            }
+            WM_MBUTTONDOWN => {
+                if begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_MOVE, 0) {
+                    return 1;
+                }
+            }
+            WM_MBUTTONUP => {
+                if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_MOVE) {
+                    return 1;
+                }
+            }
+            _ => {}
         }
     }
     if code >= 0
