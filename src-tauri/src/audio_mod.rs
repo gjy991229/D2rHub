@@ -2116,7 +2116,7 @@ fn resolve_source_directory(
                 .map_err(|error| format!("这个 D2RHub Mod 不能作为增量来源：{error}"))?;
             if !validated.current_feature_protocol {
                 return Err(
-                    "旧版 D2RHub Mod 可以继续运行，但不能安全增量加工；请改选原始 Mod 或 r22+ 产物"
+                    "旧版 D2RHub Mod 可以继续运行，但不能安全增量加工；请改选原始 Mod 或当前功能组协议产物"
                         .to_string(),
                 );
             }
@@ -3565,7 +3565,7 @@ async fn upgrade_audio_mod_impl(
         && current_validated.is_none()
     {
         return Err(
-            "当前 r22+ Mod 无法通过完整安全校验，不能在未知功能组状态下原位更新；请保留原目录并重新准备"
+            "当前功能组协议 Mod 无法通过完整安全校验，不能在未知功能组状态下原位更新；请保留原目录并重新准备"
                 .to_string(),
         );
     }
@@ -3595,13 +3595,13 @@ async fn upgrade_audio_mod_impl(
     }
     ensure_audio_mod_not_in_use(&shared_state, &config, mod_name)?;
 
-    let current_r22_source = current_validated
+    let current_protocol_source = current_validated
         .as_ref()
         .filter(|validated| validated.current_feature_protocol)
         .map(|validated| validated.directory.clone());
-    let source_directory = if let Some(current_source) = current_r22_source {
-        // Generate into a separate temporary root while using the current verified r22 Mod as the
-        // additive source. The generator carries opaque future groups forward from this manifest.
+    let source_directory = if let Some(current_source) = current_protocol_source {
+        // Generate into a separate temporary root while using the verified current-protocol Mod
+        // as the additive source. The generator carries opaque future groups forward from it.
         Some(current_source)
     } else {
         if current.build_mode.as_deref() == Some("augment") && source_mod_name.is_none() {
