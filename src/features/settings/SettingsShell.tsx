@@ -18,6 +18,7 @@ interface SettingsShellProps {
   installedModules: readonly OptionalModuleTabId[];
   onClose: () => void;
   onTabChange: (tab: SettingsTabId) => boolean | void;
+  dismissible?: boolean;
   children: ReactNode;
 }
 
@@ -29,6 +30,7 @@ export function SettingsShell({
   installedModules,
   onClose,
   onTabChange,
+  dismissible = true,
   children,
 }: SettingsShellProps) {
   const [capabilityStatus, setCapabilityStatus] = useState<CapabilityStatusSnapshot | null>(null);
@@ -63,7 +65,14 @@ export function SettingsShell({
   }, [open]);
 
   return (
-    <Modal open={open} onClose={onClose} title={title} width="settings-modal-size" closeOnContextMenu>
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={title}
+      width="settings-modal-size"
+      closeOnContextMenu
+      dismissible={dismissible}
+    >
       <div className="settings-center-shell flex flex-col">
         <div className="settings-center-layout">
           <SettingsNavigation

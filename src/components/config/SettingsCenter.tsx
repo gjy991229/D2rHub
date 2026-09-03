@@ -725,6 +725,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
+      dismissible={!pendingDisclosureModule}
     >
             {activeTab === "module-management" && config && (
               <ModuleManagementPanel
