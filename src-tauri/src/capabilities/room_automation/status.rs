@@ -110,6 +110,11 @@ pub struct FollowersTask {
 pub struct WorkflowTaskState {
     status: WorkflowStatus,
     pending_room: Option<PendingRoom>,
+    /// Passwords stay runtime-private and never enter the published status.
+    #[serde(skip)]
+    pending_password: Option<String>,
+    #[serde(skip)]
+    primary_password: Option<String>,
     next_task_id: u64,
 }
 
@@ -158,9 +163,13 @@ impl WorkflowTaskState {
         self.pending_room.as_ref()
     }
 
-    /// Starts a primary task. Manual waiting preserves the v16 duplicate-room
-    /// flow: pressing the primary shortcut confirms the dialog and consumes
-    /// the next durable sequence. Automatic waiting remains worker-owned.
+    pub fn pending_password(&self) -> Option<&str> {
+        self.pending_password.as_deref()
+    }
+
+    /// Starts a primary task. A second primary shortcut during manual waiting
+    /// supersedes the pending room and consumes the next durable sequence.
+    /// Automatic waiting remains worker-owned.
     pub fn begin_primary(
         &mut self,
         config: &RoomAutomationConfig,
@@ -188,10 +197,9 @@ impl WorkflowTaskState {
             });
         }
 
-        // Only manual waiting represents the native duplicate-room dialog.
-        // A technical primary failure must reopen the form normally; its
-        // durable reservation already advanced `config.next_sequence` when
-        // keyboard delivery may have begun.
+        // `retrying` is retained as an internal supersession marker for task
+        // history. Native input no longer treats it as a duplicate-dialog
+        // confirmation: every shortcut opens a fresh create form.
         let retrying = self.status.phase == WorkflowPhase::Waiting
             && self.status.waiting_mode == Some(WaitingMode::Manual)
             && self.pending_room.is_some();
@@ -232,6 +240,7 @@ impl WorkflowTaskState {
             last_error: None,
             recovery_action: None,
         };
+        self.primary_password = Some(config.password.clone());
 
         Ok(PrimaryTask {
             id: task_id,
@@ -260,8 +269,13 @@ impl WorkflowTaskState {
                 .ok_or(WorkflowStateError::MissingPendingRoom)?,
         };
         let revision = self.next_revision()?;
+        let password = self
+            .primary_password
+            .take()
+            .ok_or(WorkflowStateError::MissingPendingRoom)?;
 
         self.pending_room = Some(room);
+        self.pending_password = Some(password);
         self.status.revision = revision;
         self.status.phase = WorkflowPhase::Waiting;
         self.status.running = matches!(mode, WaitingMode::Automatic { .. });
@@ -487,6 +501,8 @@ impl WorkflowTaskState {
         self.status.last_error = None;
         self.status.recovery_action = None;
         self.pending_room = None;
+        self.pending_password = None;
+        self.primary_password = None;
     }
 
     fn require_task(&self, actual: WorkflowTaskId) -> Result<(), WorkflowStateError> {

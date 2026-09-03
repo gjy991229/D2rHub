@@ -137,20 +137,6 @@ pub(crate) fn fill_room_form(
     deliver_key(hwnd, VK_RETURN, false, strategy, 20, cancel)
 }
 
-pub(crate) fn confirm_retry(
-    pid: u32,
-    background_text_strategy: &str,
-    step_delay_ms: u64,
-    cancel: &dyn CancellationCheck,
-) -> Result<(), String> {
-    let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
-        .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {pid})"))?;
-    validate_target(hwnd)?;
-    let strategy = BackgroundTextStrategy::from_value(background_text_strategy);
-    deliver_key(hwnd, VK_RETURN, false, strategy, 20, cancel)?;
-    wait(cancel, Duration::from_millis(step_delay_ms))
-}
-
 fn open_room_form(
     hwnd: isize,
     create: bool,

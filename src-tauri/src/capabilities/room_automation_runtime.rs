@@ -266,26 +266,22 @@ impl RuntimeHost for WindowsRuntimeHost {
         config: &RoomAutomationConfig,
         pid: u32,
         room_name: &str,
-        retrying: bool,
+        _retrying: bool,
         cancel: &CancellationSignal,
     ) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
             let flow = config.flow();
-            if retrying {
-                windows::confirm_retry(
-                    pid,
-                    &config.background_text_strategy,
-                    flow.step_delay_ms,
-                    cancel,
-                )?;
-            }
             windows::fill_room_form(
                 windows::RoomFormRequest {
                     pid,
                     background_text_strategy: &config.background_text_strategy,
                     create: true,
-                    open_form: !retrying,
+                    // Every physical create-shortcut press starts a new room
+                    // form. The old lobby-era duplicate-dialog confirmation
+                    // path made manual waiting indistinguishable from retrying
+                    // the previous native submission.
+                    open_form: true,
                     name: room_name,
                     password: &config.password,
                     flow,
@@ -295,7 +291,7 @@ impl RuntimeHost for WindowsRuntimeHost {
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (config, pid, room_name, retrying, cancel);
+            let _ = (config, pid, room_name, cancel);
             Err("自动跟房仅支持 Windows".to_string())
         }
     }
@@ -1033,7 +1029,14 @@ impl RoomAutomationManager {
         validate_follower_trigger(&snapshot)?;
 
         let previously_completed = snapshot.completed_follower_account_ids.clone();
-        let raw_config = self.workflow_config_snapshot()?;
+        let pending_password = self
+            .workflow
+            .lock()
+            .pending_password()
+            .map(str::to_owned)
+            .ok_or_else(|| "尚无待跟进房间密码".to_string())?;
+        let mut raw_config = self.workflow_config_snapshot()?;
+        raw_config.password = pending_password;
         if self.lifecycle.lock().leases.is_some() {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝继续".to_string());
         }
@@ -1324,6 +1327,7 @@ impl RoomAutomationManager {
         retrying: bool,
         cancel: Arc<CancellationSignal>,
     ) {
+        let room_password = config.password.clone();
         if cancel.check_active().is_err() {
             self.fail_and_release(task_id, "自动跟房流程已取消");
             return;
@@ -1370,13 +1374,14 @@ impl RoomAutomationManager {
             self.fail_and_release(task_id, "自动跟房流程已取消");
             return;
         }
-        let raw_config = match self.workflow_config_snapshot() {
+        let mut raw_config = match self.workflow_config_snapshot() {
             Ok(config) => config,
             Err(error) => {
                 self.fail_and_release(task_id, &error);
                 return;
             }
         };
+        raw_config.password = room_password;
         let ((fresh_config, _primary, followers), leases) =
             match self.prepare_and_reserve_workflow(raw_config, false) {
                 Ok(prepared) => prepared,
