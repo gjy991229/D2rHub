@@ -34,6 +34,9 @@ const AUTO_EXIT_ON_DEATH_LEGACY_ENABLED_FINGERPRINT: &str =
 const AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT: &str =
     "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100;enabled=0";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+const ROOM_TOOL_GATEWAY_HUB: &str = "D2RHubKeyboardGatewayHub";
+const ROOM_TOOL_CREATE_GATEWAY: &str = "D2RHubKeyboardCreateGateway";
+const ROOM_TOOL_JOIN_GATEWAY: &str = "D2RHubKeyboardJoinGateway";
 const AUTO_EXIT_ON_DEATH_PANEL: &str = "D2RHubAutoExitOnDeath";
 const NEXT_GAME_TOOLTIP_OFFSET_Y: i64 = 267;
 const ROOM_TOOL_BUTTON_SCALE: f64 = 0.30;
@@ -782,6 +785,51 @@ fn find_layout_node<'a>(
         .find_map(|child| find_layout_node(child, name))
 }
 
+fn validate_routed_pause_buttons(
+    node: &serde_json::Value,
+    pause_name: &str,
+) -> Result<usize, String> {
+    let mut routed = 0;
+    if node.get("type").and_then(serde_json::Value::as_str) == Some("ButtonWidget") {
+        let name = node.get("name").and_then(serde_json::Value::as_str);
+        let is_gateway = name.is_some_and(|name| {
+            [
+                ROOM_TOOL_GATEWAY_HUB,
+                ROOM_TOOL_CREATE_GATEWAY,
+                ROOM_TOOL_JOIN_GATEWAY,
+            ]
+            .contains(&name)
+        });
+        if !is_gateway {
+            if node
+                .pointer("/fields/navigation/left/name")
+                .and_then(serde_json::Value::as_str)
+                != Some(ROOM_TOOL_CREATE_GATEWAY)
+                || node
+                    .pointer("/fields/navigation/right/name")
+                    .and_then(serde_json::Value::as_str)
+                    != Some(ROOM_TOOL_JOIN_GATEWAY)
+            {
+                return Err(format!(
+                    "暂停布局按钮未连接安全键盘入口：{pause_name}/{}",
+                    name.unwrap_or("<unnamed>")
+                ));
+            }
+            routed += 1;
+        }
+    }
+
+    if let Some(children) = node.get("children") {
+        let children = children
+            .as_array()
+            .ok_or_else(|| format!("暂停布局 children 不是数组：{pause_name}"))?;
+        for child in children {
+            routed += validate_routed_pause_buttons(child, pause_name)?;
+        }
+    }
+    Ok(routed)
+}
+
 fn read_auto_exit_on_death_layout(
     layout_directory: &Path,
     name: &str,
@@ -1001,40 +1049,45 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
 
     for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&layout_directory, pause_name)?;
-        let safe_hub = find_layout_node(&pause, "D2RHubKeyboardGatewayHub")
+        let safe_hub = find_layout_node(&pause, ROOM_TOOL_GATEWAY_HUB)
             .ok_or_else(|| format!("暂停布局缺少安全键盘焦点：{pause_name}"))?;
         if pause
             .pointer("/fields/defaultWidget")
             .and_then(serde_json::Value::as_str)
-            != Some("D2RHubKeyboardGatewayHub")
+            != Some(ROOM_TOOL_GATEWAY_HUB)
             || safe_hub
                 .pointer("/fields/acceptsReturnKey")
                 .and_then(serde_json::Value::as_bool)
                 != Some(false)
+            || safe_hub
+                .pointer("/fields/navigation/left/name")
+                .and_then(serde_json::Value::as_str)
+                != Some(ROOM_TOOL_CREATE_GATEWAY)
+            || safe_hub
+                .pointer("/fields/navigation/right/name")
+                .and_then(serde_json::Value::as_str)
+                != Some(ROOM_TOOL_JOIN_GATEWAY)
         {
             return Err(format!("暂停布局安全键盘焦点无效：{pause_name}"));
         }
-        let return_to_game = find_layout_node(&pause, "ReturnToGame")
-            .ok_or_else(|| format!("暂停布局缺少 ReturnToGame：{pause_name}"))?;
-        if return_to_game
-            .pointer("/fields/navigation/left/name")
-            .and_then(serde_json::Value::as_str)
-            != Some("D2RHubKeyboardCreateGateway")
-            || return_to_game
-                .pointer("/fields/navigation/right/name")
-                .and_then(serde_json::Value::as_str)
-                != Some("D2RHubKeyboardJoinGateway")
-        {
-            return Err(format!("暂停布局没有连接创建/加入键盘入口：{pause_name}"));
+        if find_layout_node(&pause, "ReturnToGame").is_none() {
+            return Err(format!("暂停布局缺少 ReturnToGame：{pause_name}"));
         }
-        for (gateway, action) in [
+        if validate_routed_pause_buttons(&pause, pause_name)? == 0 {
+            return Err(format!("暂停布局没有可验证的真实按钮：{pause_name}"));
+        }
+        for (gateway, action, select_direction, back_direction) in [
             (
-                "D2RHubKeyboardCreateGateway",
+                ROOM_TOOL_CREATE_GATEWAY,
                 "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate",
+                "left",
+                "right",
             ),
             (
-                "D2RHubKeyboardJoinGateway",
+                ROOM_TOOL_JOIN_GATEWAY,
                 "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin",
+                "right",
+                "left",
             ),
         ] {
             let node = find_layout_node(&pause, gateway)
@@ -1047,6 +1100,14 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
                     .pointer("/fields/acceptsReturnKey")
                     .and_then(serde_json::Value::as_bool)
                     != Some(true)
+                || node
+                    .pointer(&format!("/fields/navigation/{select_direction}/name"))
+                    .and_then(serde_json::Value::as_str)
+                    != Some(gateway)
+                || node
+                    .pointer(&format!("/fields/navigation/{back_direction}/name"))
+                    .and_then(serde_json::Value::as_str)
+                    != Some(ROOM_TOOL_GATEWAY_HUB)
             {
                 return Err(format!("暂停布局键盘入口无效 {gateway}：{pause_name}"));
             }
