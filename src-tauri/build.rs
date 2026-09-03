@@ -67,6 +67,7 @@ const APP_COMMANDS: &[&str] = &[
     "get_game_settings",
     "snapshot_system_settings_to_account",
     "launch_browser_for_account",
+    "open_token_login_url",
     "open_url_in_browser",
     "check_browser_running",
     "kill_browser_processes",

@@ -22,7 +22,7 @@ commands.allow = [
   "export_accounts", "import_accounts",
   "launch_accounts", "launch_battle_net_only", "cancel_launch",
   "get_account_settings", "save_account_settings", "get_game_settings", "snapshot_system_settings_to_account",
-  "launch_browser_for_account", "open_url_in_browser", "check_browser_running", "kill_browser_processes",
+  "launch_browser_for_account", "open_token_login_url", "open_url_in_browser", "check_browser_running", "kill_browser_processes",
   "is_admin", "get_d2r_pids", "kill_all_d2r_processes", "bring_bnet_to_foreground",
   "bring_self_to_foreground", "bring_window_by_title_to_front", "get_foreground_window_title",
   "get_d2r_window_titles", "refresh_account_running_state", "check_game_connected", "send_keys_to_window",
