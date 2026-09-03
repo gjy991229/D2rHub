@@ -76,9 +76,16 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindo
     let lifecycle = app
         .try_state::<AuxiliaryWindowLifecycle>()
         .ok_or_else(|| AppError::Unknown("辅助窗口生命周期尚未就绪".to_string()))?;
-    let _create_guard = lifecycle.create_lock.lock();
+    // A worker can be waiting for the Tauri main thread while it owns this
+    // lock. Never block that same main thread behind the worker: the current
+    // owner will finish the creation, and capability reconciliation retries a
+    // transient loser.
+    let _create_guard = lifecycle.create_lock.try_lock().ok_or_else(|| {
+        AppError::Unknown(format!("辅助窗口正在创建，请稍后重试: {label}"))
+    })?;
 
-    // Another caller may have completed creation while this caller waited.
+    // Another caller may have completed creation between the initial lookup
+    // and this successful lock acquisition.
     if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }
