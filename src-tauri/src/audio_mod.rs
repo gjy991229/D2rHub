@@ -21,11 +21,11 @@ const MANIFEST_FILE_NAME: &str = "d2rhub-mod-manifest.json";
 const LEGACY_MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 23;
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 24;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 2;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 19;
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 20;
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -1603,6 +1603,10 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             } else {
                 Err("普通 Mod 没有 D2RHub 加工凭证".to_string())
             };
+            let update_metadata = validation
+                .as_ref()
+                .err()
+                .and_then(|_| official_update_metadata(mods_directory, &name));
             let audio_ready = validation
                 .as_ref()
                 .is_ok_and(|validated| validated.has_audio_telemetry);
@@ -1611,7 +1615,7 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                     !validated.current_feature_protocol
                 }
                 Ok(_) => false,
-                Err(_) => official_update_metadata(mods_directory, &name).is_some(),
+                Err(_) => update_metadata.is_some(),
             };
             let feature_groups = validation
                 .as_ref()
@@ -1626,7 +1630,12 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
             let source_mod_name = validation
                 .as_ref()
                 .ok()
-                .and_then(|validated| validated.source_mod_name.clone());
+                .and_then(|validated| validated.source_mod_name.clone())
+                .or_else(|| {
+                    update_metadata
+                        .as_ref()
+                        .and_then(|metadata| metadata.source_mod_name.clone())
+                });
             let audio_reusable = validation.as_ref().is_ok_and(|validated| {
                 validated.current_feature_protocol
                     && validated.feature_groups.iter().any(|group| {
@@ -1743,7 +1752,7 @@ fn validate_in_game_room_tools_for_arguments(
     let validated = validate_audio_mod(&mods_directory, &installed_name)
         .map_err(|error| format!("账号“{account_name}”：{error}"))?;
     validate_room_tool_capability(account_name, &validated)?;
-    // `validate_audio_mod` already checks the r19 recipe/fingerprint and every required layout.
+    // `validate_audio_mod` already checks the current recipe/fingerprint and every required layout.
     Ok(())
 }
 
@@ -3473,6 +3482,11 @@ async fn upgrade_audio_mod_impl(
         .mod_name
         .as_deref()
         .ok_or_else(|| "当前账号没有配置识别 Mod".to_string())?;
+    // The manifest is the source of truth for legacy augment builds. A caller
+    // may omit the base Mod (or be unable to expose it after strict validation
+    // rejects an old recipe), but a recorded source must still drive the safe
+    // rebuild and same-name replacement automatically.
+    let source_mod_name = current.source_mod_name.clone().or(source_mod_name);
     let mut explicitly_requested = RequestedFeatureGroups::from_options(
         include_audio_telemetry,
         include_room_tools,
