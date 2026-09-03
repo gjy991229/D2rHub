@@ -406,10 +406,17 @@ export function useAudioModuleController({
       if (isAudioModUpgrade) {
         const currentAudioConfig = useGlobalConfig.getState().config;
         const wasEnabled = !!currentAudioConfig?.rune_audio_enabled;
+        const targetIsConfigured = audioModState?.current_mod_name?.toLocaleLowerCase()
+          === audioProcessingTarget.toLocaleLowerCase();
+        const recordedSourceModName = selectedProcessingTarget?.source_mod_name
+          ?? (targetIsConfigured ? audioModState?.source_mod_name : null);
+        const selectedSourceModName = audioSetupMode === "existing"
+          ? audioSetupSource.trim() || null
+          : null;
         const upgraded = await invokeCommand<AudioModSetupState>("upgrade_audio_mod", {
           accountId,
           modName: audioProcessingTarget,
-          sourceModName: selectedProcessingTarget?.source_mod_name ?? null,
+          sourceModName: recordedSourceModName ?? selectedSourceModName,
           ...featureOptions,
         });
         const targetWasAlreadyApplied = audioModState?.current_mod_name?.toLocaleLowerCase()
