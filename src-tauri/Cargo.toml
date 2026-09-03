@@ -1,6 +1,6 @@
 [package]
 name = "d2rhub"
-version = "0.9.8"
+version = "0.9.12"
 description = "Diablo II Resurrected Multi-Account Manager"
 authors = ["D2RHub"]
 edition = "2021"
@@ -41,6 +41,7 @@ windows = { version = "0.58", features = [
     "Foundation",
     "Win32_Foundation",
     "Win32_Security_Cryptography",
+    "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_UI_Shell_PropertiesSystem"
 ] }
@@ -50,6 +51,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 open = "5"
 hound = "3.5.1"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 ferrisetw = "1.2"

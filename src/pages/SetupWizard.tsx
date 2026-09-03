@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { FolderOpen, Check, HardDrive, Save, Search, ArrowRight, Wrench, AlertTriangle, Globe } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig } from "../store/types";
@@ -10,13 +10,14 @@ import { resolveLegacyPathMigration, type LegacyPathResolution } from "../utils/
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 6, cn_battle_net_path: "",
+  version: 10, cn_battle_net_path: "",
   cn_game_path: "", cn_saved_games_path: "",
   global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
   accounts_dir: "", first_run_complete: false,
-  browser_path: "", browser_type: "", enable_overlay: true,
-  enable_tz_overlay: true, enable_stats_overlay: true,
+  installed_optional_modules: [],
+  browser_path: "", browser_type: "", enable_overlay: false,
+  enable_tz_overlay: false, enable_stats_overlay: false,
   theme: "light", theme_overlay: "light", auto_close_browser: true,
   enable_auto_update: true, first_launch: true,
   rune_audio_enabled: false, rune_audio_target_account: "",
@@ -27,10 +28,11 @@ const defaultConfig: GlobalConfig = {
   rune_audio_tracked_charm_codes: ["cm1", "cm2", "cm3"],
   shortcut_bindings_json: "",
   overlay_opacity: 95, main_opacity: 95, font_scale: "default",
-  enable_bongo_cat: true, bongo_cat_chatterbox: true,
+  enable_bongo_cat: false, bongo_cat_chatterbox: true,
   bongo_cat_scale: 1.0, bongo_cat_skin: "original",
   bongo_cat_unlocked_skins: ["original"],
   launch_groups: [],
+  favorite_launch_group_ids: [],
 };
 
 export function SetupWizard({ onComplete, initialConfig }: Props) {
@@ -51,7 +53,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   const handleSelectBrowser = async (btype: "chrome" | "edge") => {
     try {
-      const path = await invoke<string | null>("detect_browser_path_by_type", { browserType: btype });
+      const path = await invokeCommand<string | null>("detect_browser_path_by_type", { browserType: btype });
       if (path) {
         setConfig(c => ({ ...c, browser_path: path, browser_type: btype }));
         showToast("success", `自动检测并选择 ${btype === "edge" ? "Microsoft Edge" : "Google Chrome"} 成功`);
@@ -169,7 +171,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         return;
       }
       try {
-        const exists = await invoke<boolean>("check_saved_games_settings", { path });
+        const exists = await invokeCommand<boolean>("check_saved_games_settings", { path });
         if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: exists }));
       } catch {
         if (active) setSettingsJsonAvailable(previous => ({ ...previous, [edition]: false }));
@@ -204,7 +206,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
       }
 
       try {
-        const exists = await invoke<boolean>("check_path_exists", {
+        const exists = await invokeCommand<boolean>("check_path_exists", {
           path: step.value,
           isFile: step.isFile,
         });

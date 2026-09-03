@@ -1,15 +1,23 @@
 import React, { useState, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
-import { Play, RotateCw, Sliders, Trash2, FolderOpen, AlertTriangle, X, Locate, Globe2 } from "lucide-react";
-import { useSortable } from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
+import { invokeCommand } from "../../platform/tauri";
+import {
+  AlertTriangle,
+  FolderOpen,
+  Globe2,
+  Locate,
+  Play,
+  RotateCw,
+  Sliders,
+  Trash2,
+  X,
+} from "lucide-react";
 
 import type {
   AccountMeta,
   GlobalConfig,
   LaunchGroupMember,
   LaunchProgress,
+  ModCapsulePool,
   WindowPositionPreset,
 } from "../../store/types";
 import { useAccounts } from "../../store/accounts";
@@ -21,6 +29,11 @@ import {
   requiresTokenMigration,
 } from "../../utils/regionPaths";
 import { AccountRegionSwitcher } from "./AccountRegionSwitcher";
+import { AccountModEditor } from "./AccountModEditor";
+import {
+  type AccountQuickSettings,
+  useAccountQuickSettings,
+} from "../../hooks/useAccountQuickSettings";
 
 const stepOrder = ["clean", "copy", "launch", "game", "mutex", "connect", "cleanup", "done"];
 const stepLabels: Record<string, string> = {
@@ -28,7 +41,7 @@ const stepLabels: Record<string, string> = {
   mutex: "互斥", connect: "连接", cleanup: "收尾", done: "完成",
 };
 
-interface GridItemProps {
+export interface GridItemProps {
   account: AccountMeta;
   onRename: (id: string, name: string) => Promise<boolean>;
   onDelete: (id: string) => void;
@@ -41,38 +54,13 @@ interface GridItemProps {
   onToggleSelect?: (id: string) => void;
   schemeMember?: LaunchGroupMember;
   onSchemeMemberChange?: (id: string, patch: Partial<LaunchGroupMember>) => void;
-  getModSchemeUsage?: (id: string, modArgs: string) => string[];
+  modCapsulePool?: ModCapsulePool | null;
+  modCapsuleAssigningAccountId?: string | null;
+  onAssignModCapsule?: (accountId: string, capsuleId: string | null) => Promise<unknown>;
+  onOpenModManager?: (action?: "add", edition?: string | null) => void;
   getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
-}
-
-/** Token 有效期: 720 小时（30 天） */
-const TOKEN_VALID_HOURS = 720;
-
-function getTokenStatus(lastResetAt: string | null | undefined): {
-  expired: boolean;
-  warning: boolean;
-  remainingHours: number;
-  label: string;
-} {
-  if (!lastResetAt) {
-    return { expired: false, warning: false, remainingHours: 0, label: "" };
-  }
-  const reset = new Date(lastResetAt);
-  const now = new Date();
-  const elapsedHours = (now.getTime() - reset.getTime()) / (1000 * 60 * 60);
-  const remaining = Math.max(0, TOKEN_VALID_HOURS - elapsedHours);
-
-  if (remaining <= 0) {
-    return { expired: true, warning: true, remainingHours: 0, label: "过期" };
-  }
-  if (remaining <= 48) {
-    const h = Math.floor(remaining);
-    return { expired: false, warning: true, remainingHours: remaining, label: h + "h" };
-  }
-  const days = Math.floor(remaining / 24);
-  return { expired: false, warning: false, remainingHours: remaining, label: days + "d" };
 }
 
 function fmtRelative(iso: string): string {
@@ -87,15 +75,6 @@ function fmtRelative(iso: string): string {
     if (days < 7) return `${days} 天前`;
     return d.toLocaleDateString("zh-CN");
   } catch { return ""; }
-}
-
-function getModChipLabel(mod: string): string {
-  const tokens = mod.match(/"[^"]*"|'[^']*'|\S+/g) || [];
-  const names = tokens
-    .map(token => token.replace(/^(['"])(.*)\1$/, "$2"))
-    .filter(token => token && !token.startsWith("-"));
-
-  return names.join(" ") || mod;
 }
 
 function createPositionId(): string {
@@ -181,99 +160,38 @@ function ProgressWrapper({ progress, accountId }: { progress: NonNullable<Launch
 export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
+  modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
+  getPositionSchemeUsage, onUpdateToken, config,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
   const [nameDraft, setNameDraft] = useState(display);
   const [confirmDel, setConfirmDel] = useState(false);
-  const [modDelConfirmIdx, setModDelConfirmIdx] = useState<number | null>(null);
   const [reinit, setReinit] = useState(false);
-  const [modEditing, setModEditing] = useState(false);
-  const [modDraft, setModDraft] = useState(account.mod_args || "");
   const [positionEditing, setPositionEditing] = useState(false);
   const [positionNameDraft, setPositionNameDraft] = useState("");
   const [positionXDraft, setPositionXDraft] = useState("0");
   const [positionYDraft, setPositionYDraft] = useState("0");
   const [positionDelConfirmId, setPositionDelConfirmId] = useState<string | null>(null);
   const {
-    addAccountMod,
     reinitializeAccount,
-    updateAccountMods,
     updateAccountPositions,
-    markSettingsCustomized,
   } = useAccounts();
 
   // ── 抽屉配置面板 ──
   const [expanded, setExpanded] = useState(false);
-  const [drawerLoaded, setDrawerLoaded] = useState(false);
-  const [drawerLoadError, setDrawerLoadError] = useState<string | null>(null);
-  type DrawerSettings = { resolution: string; fps: number };
-  const [drawer, setDrawer] = useState<DrawerSettings>({ resolution: "1280x720", fps: 30 });
-
-  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingSettingsRef = useRef<Record<string, unknown>>({});
-  const modRowDragRef = useRef<{
-    pointerId: number;
-    startX: number;
-    scrollLeft: number;
-    moved: boolean;
-    captured: boolean;
-  } | null>(null);
-  const suppressModClickRef = useRef(false);
-  const suppressModClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const modCommitInFlightRef = useRef(false);
+  const quickSettingsEnabled = account.initialized
+    && (expanded || (Boolean(isSelectionMode) && Boolean(selected)));
+  const {
+    settings: drawer,
+    loaded: drawerLoaded,
+    loading: drawerLoading,
+    error: drawerLoadError,
+    load: loadDrawerSettings,
+    update: updateDrawerSettings,
+    flush: flushDrawerSettings,
+  } = useAccountQuickSettings(account.id, quickSettingsEnabled);
   const nameCommitInFlightRef = useRef(false);
-
-  useEffect(() => { setModDraft(account.mod_args || ""); }, [account.mod_args]);
-
-  useEffect(() => () => {
-    if (suppressModClickTimerRef.current) {
-      clearTimeout(suppressModClickTimerRef.current);
-    }
-  }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    const setupListener = async () => {
-      const stopListening = await listen<{ accountId: string }>("account-settings-updated", (event) => {
-        if (event.payload.accountId === account.id) {
-          loadDrawerSettings(true);
-        }
-      });
-      if (cancelled) stopListening();
-      else unlisten = stopListening;
-    };
-    void setupListener();
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [account.id]);
-
-  const loadDrawerSettings = async (force = false) => {
-    if (drawerLoaded && !force) return;
-    try {
-      const raw = await invoke<Record<string, unknown>>("get_account_settings", { accountId: account.id });
-      setDrawer({
-        resolution: String(raw["Screen Resolution (Windowed)"] ?? "1280x720"),
-        fps: Number(raw["Framerate Target"] ?? raw["Framerate Cap"] ?? 30),
-      });
-      setDrawerLoaded(true);
-      setDrawerLoadError(null);
-    } catch (e) {
-      setDrawerLoaded(false);
-      setDrawerLoadError(String(e));
-      console.warn("Failed to load settings for", account.id, e);
-    }
-  };
-
-  useEffect(() => {
-    if (account.initialized) {
-      loadDrawerSettings();
-    }
-  }, [account.id, account.initialized]);
 
   useEffect(() => {
     if (!isSelectionMode || !selected || !schemeMember || !drawerLoaded
@@ -294,65 +212,6 @@ export function AccountGridItem({
     selected,
   ]);
 
-  const commitMod = async () => {
-    if (modCommitInFlightRef.current) return;
-    setModEditing(false);
-    const v = modDraft.trim();
-    if (!v) return;
-
-    modCommitInFlightRef.current = true;
-    try {
-      if (isSelectionMode) {
-        const existing = (account.mod_list || []).find(mod => mod.trim() === v);
-        if (existing) {
-          onSchemeMemberChange?.(account.id, { mod_args: existing });
-          showToast("info", "已有完全相同的 Mod 配置，已为当前方案选中");
-          return;
-        }
-        const saved = await updateAccountMods(
-          account.id,
-          account.mod_args,
-          [...(account.mod_list || []), v],
-        );
-        if (saved) onSchemeMemberChange?.(account.id, { mod_args: v });
-        return;
-      }
-      const added = await addAccountMod(account.id, v);
-      if (added === false) {
-        showToast("info", "已有完全相同的 Mod 配置，已跳过添加");
-      }
-    } finally {
-      modCommitInFlightRef.current = false;
-    }
-  };
-
-  const saveDrawerSetting = (key: string, value: unknown) => {
-    setDrawer(prev => ({ ...prev, [key]: value }));
-
-    const configKey = key === "resolution"
-      ? "Screen Resolution (Windowed)"
-      : "Framerate Target";
-    pendingSettingsRef.current[configKey] = value;
-
-    if (saveTimerRef.current) {
-      clearTimeout(saveTimerRef.current);
-    }
-
-    saveTimerRef.current = setTimeout(async () => {
-      try {
-        const raw = await invoke<Record<string, unknown>>("get_account_settings", { accountId: account.id });
-        const merged = { ...raw, ...pendingSettingsRef.current };
-        await invoke("save_account_settings", { accountId: account.id, settings: merged });
-        await markSettingsCustomized(account.id);
-        pendingSettingsRef.current = {};
-
-        await emit("account-settings-updated", { accountId: account.id });
-      } catch (e) {
-        showToast("error", `保存设置失败: ${e}`);
-      }
-    }, 1000);
-  };
-
   const positionPresets = account.position_presets || [];
   const selectedPositionId = isSelectionMode
     ? schemeMember?.position_preset_id ?? null
@@ -369,7 +228,7 @@ export function AccountGridItem({
     void updateAccountPositions(account.id, positionId, positionPresets);
   };
 
-  const selectDrawerSetting = (key: keyof DrawerSettings, value: string | number) => {
+  const selectDrawerSetting = (key: keyof AccountQuickSettings, value: string | number) => {
     if (isSelectionMode) {
       onSchemeMemberChange?.(account.id, {
         graphics_configured: true,
@@ -377,7 +236,7 @@ export function AccountGridItem({
       });
       return;
     }
-    saveDrawerSetting(key, value);
+    updateDrawerSettings({ [key]: value });
   };
 
   const commitPosition = async () => {
@@ -441,7 +300,7 @@ export function AccountGridItem({
       return;
     }
     if (!account.initialized) return;
-    if (!expanded) loadDrawerSettings();
+    if (!expanded) void loadDrawerSettings().catch(() => undefined);
     setExpanded(!expanded);
   };
 
@@ -481,14 +340,13 @@ export function AccountGridItem({
   const handleOpenFolder = async (e: React.MouseEvent) => {
     e.stopPropagation();
     try {
-      await invoke("open_account_dir", { accountId: account.id });
+      await invokeCommand("open_account_dir", { accountId: account.id });
     } catch (e) {
       showToast("error", `打开文件夹失败: ${e}`);
     }
   };
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
-  const tokenStatus = account.initialized ? getTokenStatus(account.last_reset_at) : null;
   const regionLabel = accountRegionLabel(account.region);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"
@@ -503,7 +361,6 @@ export function AccountGridItem({
   const configModeLabel = isSelectionMode
     ? "方案画质"
     : account.has_customized_settings ? "独立配置" : "系统配置";
-  const activeMod = isSelectionMode ? schemeMember?.mod_args ?? "" : account.mod_args;
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
@@ -513,103 +370,6 @@ export function AccountGridItem({
     : [effectiveResolution, ...resOptions];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
-
-  const handleModWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY;
-    if (delta === 0) return;
-
-    const maxScrollLeft = row.scrollWidth - row.clientWidth;
-    const nextScrollLeft = Math.min(maxScrollLeft, Math.max(0, row.scrollLeft + delta));
-    if (nextScrollLeft === row.scrollLeft) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollLeft = nextScrollLeft;
-  };
-
-  const handleModPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    event.stopPropagation();
-    if (event.button !== 0 || (event.target as HTMLElement).closest("input")) return;
-
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    suppressModClickRef.current = false;
-    modRowDragRef.current = {
-      pointerId: event.pointerId,
-      startX: event.clientX,
-      scrollLeft: row.scrollLeft,
-      moved: false,
-      captured: false,
-    };
-  };
-
-  const handleModPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = modRowDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const distance = event.clientX - drag.startX;
-    if (!drag.moved && Math.abs(distance) >= 4) {
-      drag.moved = true;
-      drag.captured = true;
-      event.currentTarget.setPointerCapture(event.pointerId);
-      event.currentTarget.dataset.dragging = "true";
-    }
-    if (!drag.moved) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    event.currentTarget.scrollLeft = drag.scrollLeft - distance;
-  };
-
-  const finishModPointerDrag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const drag = modRowDragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) return;
-
-    const row = event.currentTarget;
-    modRowDragRef.current = null;
-    delete row.dataset.dragging;
-    if (drag.captured && row.hasPointerCapture(event.pointerId)) {
-      row.releasePointerCapture(event.pointerId);
-    }
-    event.stopPropagation();
-
-    if (drag.moved) {
-      suppressModClickRef.current = true;
-      if (suppressModClickTimerRef.current) clearTimeout(suppressModClickTimerRef.current);
-      suppressModClickTimerRef.current = setTimeout(() => {
-        suppressModClickRef.current = false;
-        suppressModClickTimerRef.current = null;
-      }, 0);
-    }
-  };
-
-  const handleModClickCapture = (event: React.MouseEvent<HTMLDivElement>) => {
-    if (!suppressModClickRef.current) return;
-    suppressModClickRef.current = false;
-    event.preventDefault();
-    event.stopPropagation();
-  };
-
-  const handleModKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
-    const row = event.currentTarget;
-    if (row.scrollWidth <= row.clientWidth) return;
-
-    let nextScrollLeft: number | null = null;
-    if (event.key === "ArrowLeft") nextScrollLeft = row.scrollLeft - 72;
-    if (event.key === "ArrowRight") nextScrollLeft = row.scrollLeft + 72;
-    if (event.key === "Home") nextScrollLeft = 0;
-    if (event.key === "End") nextScrollLeft = row.scrollWidth;
-    if (nextScrollLeft === null) return;
-
-    event.preventDefault();
-    event.stopPropagation();
-    row.scrollTo({ left: nextScrollLeft, behavior: "smooth" });
-  };
 
   return (
     <div
@@ -670,129 +430,21 @@ export function AccountGridItem({
                     setEditingName(true);
                   }}
                 >
-                  {display}
+                  <span data-i18n-skip>{display}</span>
                 </button>
               )}
 
               {(!isSelectionMode || selected) && (
-                <div
-                  className="mod-row inline-mod-row"
-                  role="group"
-                  aria-label="Mod 配置，横向滚动查看更多"
-                  tabIndex={0}
-                  onWheel={handleModWheel}
-                  onPointerDown={handleModPointerDown}
-                  onPointerMove={handleModPointerMove}
-                  onPointerUp={finishModPointerDrag}
-                  onPointerCancel={finishModPointerDrag}
-                  onLostPointerCapture={finishModPointerDrag}
-                  onClickCapture={handleModClickCapture}
-                  onKeyDown={handleModKeyDown}
-                >
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation();
-                      if (activeMod === "") return;
-                      if (isSelectionMode) {
-                        onSchemeMemberChange?.(account.id, { mod_args: "" });
-                      } else {
-                        void updateAccountMods(account.id, "", account.mod_list || []);
-                      }
-                    }}
-                    className={`hig-badge mod-chip shrink-0 active:scale-[0.97] ${activeMod === "" ? "mod-chip-active" : ""}`}
-                    title={activeMod === "" ? "当前不使用 Mod" : "不使用 Mod"}
-                  >
-                    无 Mod
-                  </button>
-                  {(account.mod_list || []).map((mod, idx) => {
-                    const isActive = activeMod === mod;
-                    const isConfirming = modDelConfirmIdx === idx;
-                    const modLabel = getModChipLabel(mod);
-                    return (
-                      <div key={idx} className="group/mod relative flex items-center" onMouseLeave={() => setModDelConfirmIdx(null)}>
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (!isActive) {
-                              if (isSelectionMode) {
-                                onSchemeMemberChange?.(account.id, { mod_args: mod });
-                              } else {
-                                void updateAccountMods(account.id, mod, account.mod_list || []);
-                              }
-                            }
-                          }}
-                          className={`hig-badge mod-chip max-w-[118px] truncate font-mono active:scale-[0.97] ${isActive ? "mod-chip-active" : ""}`}
-                          title={isActive ? `${mod}（当前生效）` : `${mod}（点击生效）`}
-                        >
-                          {modLabel}
-                        </button>
-                        <button
-                          className={`absolute -right-1.5 -top-1.5 z-10 flex h-4 w-4 items-center justify-center rounded-full transition-all ${
-                            isConfirming
-                              ? "scale-110 text-white opacity-100"
-                              : "text-text-muted opacity-0 hover:scale-110 group-hover/mod:opacity-100"
-                          }`}
-                          style={{ background: isConfirming ? "var(--error)" : "var(--surface-glass)", border: "1px solid var(--border-default)" }}
-                          onClick={e => {
-                            e.stopPropagation();
-                            if (isConfirming) {
-                              const usedBy = getModSchemeUsage?.(account.id, mod) ?? [];
-                              if (usedBy.length > 0) {
-                                showToast("warning", `Mod“${modLabel}”正被方案“${usedBy.join("、")}”使用，请先更换方案配置`);
-                                setModDelConfirmIdx(null);
-                                return;
-                              }
-                              const newMods = (account.mod_list || []).filter((_, i) => i !== idx);
-                              const nextActive = account.mod_args === mod ? (newMods[0] || "") : account.mod_args;
-                              void updateAccountMods(account.id, nextActive, newMods).then(saved => {
-                                if (saved && isSelectionMode && isActive) {
-                                  onSchemeMemberChange?.(account.id, { mod_args: "" });
-                                }
-                              });
-                              setModDelConfirmIdx(null);
-                            } else {
-                              setModDelConfirmIdx(idx);
-                            }
-                          }}
-                          title={isConfirming ? "确认删除" : "删除配置"}
-                        >
-                          <X size={9} />
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {(modEditing ? (
-                    <input
-                      className="line-input h-[24px] w-28 px-2 font-mono text-xs"
-                      value={modDraft}
-                      onChange={e => setModDraft(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === "Enter") {
-                          e.stopPropagation();
-                          void commitMod();
-                        }
-                        if (e.key === "Escape") {
-                          e.stopPropagation();
-                          setModDraft("");
-                          setModEditing(false);
-                        }
-                      }}
-                      onBlur={() => { void commitMod(); }}
-                      onClick={e => e.stopPropagation()}
-                      placeholder="-mod xxx"
-                      autoFocus
-                    />
-                  ) : (
-                    <button
-                      onClick={e => { e.stopPropagation(); setModDraft(""); setModEditing(true); }}
-                      className="hig-badge mod-chip w-[24px] justify-center px-0"
-                      title="添加 mod"
-                    >
-                      +
-                    </button>
-                  ))}
-                </div>
+                <AccountModEditor
+                  account={account}
+                  isSelectionMode={isSelectionMode}
+                  schemeMember={schemeMember}
+                  onSchemeMemberChange={onSchemeMemberChange}
+                  modCapsulePool={modCapsulePool}
+                  assigning={modCapsuleAssigningAccountId === account.id}
+                  onAssign={onAssignModCapsule}
+                  onOpenModManager={onOpenModManager}
+                />
               )}
             </div>
           </div>
@@ -817,14 +469,6 @@ export function AccountGridItem({
             <span className="hig-badge hig-badge-blue">战网认证</span>
           )}
           {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
-          {tokenStatus && tokenStatus.label && account.auth_mode !== "token" && !tokenMigrationRequired && (
-            <span
-              className={`hig-badge ${tokenStatus.expired ? "hig-badge-red" : tokenStatus.warning ? "hig-badge-gold" : "hig-badge-green"}`}
-              title={tokenStatus.expired ? "Token 已过期，需重新初始化" : `Token ${tokenStatus.warning ? "即将过期" : "有效"}，剩余 ${tokenStatus.label}`}
-            >
-              {tokenStatus.expired ? "过期" : tokenStatus.label}
-            </span>
-          )}
           {account.auth_mode === "token" && <span className="hig-badge hig-badge-green">长期</span>}
           {!account.initialized && <span className="hig-badge hig-badge-red">未初始化</span>}
         </div>
@@ -855,12 +499,10 @@ export function AccountGridItem({
               ) : account.initialized && (
                 <button
                   onClick={e => { stop(e); onLaunch(account.id); }}
-                  disabled={account.auth_mode !== "token" && tokenStatus?.expired}
-                  className={(account.auth_mode !== "token" && tokenStatus?.expired) ? "danger-cta" : "primary-cta"}
-                  title={(account.auth_mode !== "token" && tokenStatus?.expired) ? "Token 已过期，请重新初始化" : undefined}
+                  className="primary-cta"
                 >
-                  {(account.auth_mode !== "token" && tokenStatus?.expired) ? <AlertTriangle size={12} /> : <Play size={12} />}
-                  {(account.auth_mode !== "token" && tokenStatus?.expired) ? "重置" : "启动"}
+                  <Play size={12} />
+                  启动
                 </button>
               )}
             <div className="spatial-tools account-card-tools tools">
@@ -907,9 +549,11 @@ export function AccountGridItem({
         <div style={{ overflow: "hidden", minHeight: 0 }}>
           <div className="drawer-body">
             <div className="drawer-grid">
-              {isSelectionMode && drawerLoadError && (
+              {drawerLoadError && (
                 <div className="scheme-settings-error hig-badge hig-badge-red" title={drawerLoadError}>
-                  画质配置读取失败，请检查 Settings.json
+                  {drawerLoadError.includes("正在执行另一项操作")
+                    ? "账号配置正忙，请稍后重试"
+                    : `画质配置${drawerLoaded ? "保存" : "读取"}失败`}
                 </div>
               )}
               <div className="drawer-resolution-fps-row">
@@ -918,7 +562,9 @@ export function AccountGridItem({
                   <select
                     value={effectiveResolution}
                     onChange={e => selectDrawerSetting("resolution", e.target.value)}
+                    onBlur={() => void flushDrawerSettings().catch(() => undefined)}
                     onClick={stop}
+                    disabled={drawerLoading}
                     className="line-select w-full px-2.5"
                   >
                     {effectiveResOptions.map(r => <option key={r} value={r}>{r}</option>)}
@@ -936,6 +582,8 @@ export function AccountGridItem({
                       value={effectiveFps}
                       onClick={stop}
                       onChange={e => selectDrawerSetting("fps", Math.max(0, Math.min(500, Number(e.target.value) || 0)))}
+                      onBlur={() => void flushDrawerSettings().catch(() => undefined)}
+                      disabled={drawerLoading}
                     />
                     <datalist id={`fps-options-${account.id}`}>
                       {fpsOptions.map(f => <option key={f} value={f}>{f === 0 ? "无限制" : `${f} FPS`}</option>)}
@@ -1007,7 +655,7 @@ export function AccountGridItem({
                     onClick={async (e) => {
                       e.stopPropagation();
                       try {
-                        await invoke("move_game_window", { accountId: account.id });
+                        await invokeCommand("move_game_window", { accountId: account.id });
                         showToast("success", "已尝试复位游戏窗口");
                       } catch (err: any) {
                         showToast("error", "复位窗口失败: " + err);
@@ -1069,53 +717,6 @@ export function AccountGridItem({
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-export function SortableAccountCard({
-  account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly,
-  isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
-  getModSchemeUsage, getPositionSchemeUsage, onUpdateToken, config
-}: GridItemProps) {
-  const {
-    attributes, listeners, setNodeRef, transform, transition, isDragging,
-  } = useSortable({ id: account.id, disabled: isSelectionMode });
-  const { progress } = useLaunch();
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : undefined,
-    width: "100%",
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...(isSelectionMode ? {} : attributes)}
-      {...(isSelectionMode ? {} : listeners)}
-    >
-      <AccountGridItem
-        account={account}
-        onRename={onRename}
-        onDelete={onDelete}
-        onConfigure={onConfigure}
-        onLaunch={onLaunch}
-        onBattleNetOnly={onBattleNetOnly}
-        progress={progress[account.id] || null}
-        isSelectionMode={isSelectionMode}
-        selected={selected}
-        onToggleSelect={onToggleSelect}
-        schemeMember={schemeMember}
-        onSchemeMemberChange={onSchemeMemberChange}
-        getModSchemeUsage={getModSchemeUsage}
-        getPositionSchemeUsage={getPositionSchemeUsage}
-        onUpdateToken={onUpdateToken}
-        config={config}
-      />
     </div>
   );
 }

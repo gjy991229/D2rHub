@@ -3,11 +3,12 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 use crate::commands::account::{
-    normalized_account_display_name, remove_path_if_exists, replace_path_with_backup,
-    resolve_account_runtime_snapshot, sibling_with_suffix, AccountManager, AccountMeta,
+    remove_path_if_exists, replace_path_with_backup, resolve_account_runtime_snapshot,
+    sibling_with_suffix, AccountManager, AccountMeta,
 };
+use crate::domain::account::{normalize_account_display_name, AuthMode, GameRegion};
 use crate::error::AppError;
-use crate::launch_context::{AuthMode, ContextPurpose, GameRegion, LaunchContext};
+use crate::launch_context::{ContextPurpose, LaunchContext};
 use crate::state::{AccountLifecycleLease, SharedState};
 
 const EXPORT_FORMAT: &str = "D2RHub.AccountExport";
@@ -336,7 +337,7 @@ fn existing_display_names(accounts_dir: &str) -> HashSet<String> {
             } else {
                 meta.display_name
             };
-            normalized_account_display_name(&name)
+            normalize_account_display_name(&name)
         })
         .collect()
 }
@@ -347,12 +348,12 @@ fn unique_import_name(requested: &str, used: &mut HashSet<String>) -> String {
     } else {
         requested.trim().to_string()
     };
-    if used.insert(normalized_account_display_name(&base)) {
+    if used.insert(normalize_account_display_name(&base)) {
         return base;
     }
     for index in 2..=10_000 {
         let candidate = format!("{base}（导入 {index}）");
-        if used.insert(normalized_account_display_name(&candidate)) {
+        if used.insert(normalize_account_display_name(&candidate)) {
             return candidate;
         }
     }
@@ -537,7 +538,7 @@ fn prepare_imported_credentials(
                 .region
                 .as_deref()
                 .ok_or_else(|| AppError::ConfigReadError("缺少游戏区服".to_string()))
-                .and_then(GameRegion::parse)
+                .and_then(|region| GameRegion::parse(region).map_err(AppError::from))
                 .and_then(|region| {
                     resolve_account_runtime_snapshot(staging, meta, region.edition()).map(|_| ())
                 });
@@ -598,10 +599,8 @@ pub fn export_accounts(
     }
 
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let mut lease_ids = account_ids.clone();
     lease_ids.sort_by_key(|id| id.to_ascii_lowercase());
@@ -696,13 +695,11 @@ pub fn import_accounts(
     }
 
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     // 与新建、重命名共用账号清单锁，确保导入生成名称期间唯一性不被并发绕过。
-    let _catalog_guard = state.account_catalog.lock();
+    let _catalog_guard = state.multi_instance().catalog_leases().acquire();
     std::fs::create_dir_all(&cfg.accounts_dir)?;
     let mut used_names = existing_display_names(&cfg.accounts_dir);
     let next_order = AccountManager::list_ids(&cfg.accounts_dir)

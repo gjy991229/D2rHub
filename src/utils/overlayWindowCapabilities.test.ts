@@ -22,7 +22,15 @@ export function runTests() {
   };
   const tauriConfigPath = path.join(g.process.cwd(), "src-tauri", "tauri.conf.json");
   const tauriConfig = JSON.parse(fs.readFileSync(tauriConfigPath, "utf8")) as {
-    app?: { windows?: Array<{ label?: string; url?: string; minWidth?: number; minHeight?: number }> };
+    app?: {
+      windows?: Array<{
+        label?: string;
+        create?: boolean;
+        url?: string;
+        minWidth?: number;
+        minHeight?: number;
+      }>;
+    };
   };
   const permissions = new Set(capability.permissions ?? []);
 
@@ -34,6 +42,13 @@ export function runTests() {
     capability.windows?.includes("stats-overlay") === true,
     "the statistics overlay window is covered by the default capability",
   );
+  const auxiliaryWindows = tauriConfig.app?.windows?.filter((window) =>
+    ["overlay", "stats-overlay", "bongo-cat"].includes(window.label ?? ""));
+  assert(
+    auxiliaryWindows?.length === 3
+      && auxiliaryWindows.every((window) => window.create === false),
+    "all auxiliary WebViews are declared as lazy native windows",
+  );
   assert(
     tauriConfig.app?.windows?.find((window) => window.label === "overlay")?.minHeight
       === MINI_OVERLAY_MIN_HEIGHT
@@ -43,7 +58,8 @@ export function runTests() {
   );
   const statsWindow = tauriConfig.app?.windows?.find((window) => window.label === "stats-overlay");
   assert(
-    statsWindow?.url === "overlay.html"
+    statsWindow?.create === false
+      && statsWindow.url === "overlay.html"
       && statsWindow.minWidth === 220
       && statsWindow.minHeight === 180,
     "the statistics overlay has an independent native window with practical resize limits",
@@ -53,6 +69,7 @@ export function runTests() {
     "core:window:allow-set-min-size",
     "core:window:allow-set-max-size",
     "core:window:allow-set-resizable",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-start-dragging",
   ]) {
     assert(

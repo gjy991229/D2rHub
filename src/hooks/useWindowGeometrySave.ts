@@ -1,8 +1,20 @@
 import { useEffect, useCallback, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand, type TauriCommandName } from "../platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
-export function useWindowGeometrySave(commandName: string, minWidth: number = 100, minHeight: number = 100) {
+type GeometryPersistenceTarget = TauriCommandName | `localStorage:${string}`;
+
+function isLocalStorageTarget(
+  target: GeometryPersistenceTarget,
+): target is `localStorage:${string}` {
+  return target.startsWith("localStorage:");
+}
+
+export function useWindowGeometrySave(
+  commandName: GeometryPersistenceTarget,
+  minWidth: number = 100,
+  minHeight: number = 100,
+) {
   const saveTimeout = useRef<number | null>(null);
 
   const scheduleGeometrySave = useCallback(() => {
@@ -31,11 +43,11 @@ export function useWindowGeometrySave(commandName: string, minWidth: number = 10
           height: h,
         };
 
-        if (commandName.startsWith("localStorage:")) {
+        if (isLocalStorageTarget(commandName)) {
           const key = commandName.replace("localStorage:", "");
           localStorage.setItem(key, JSON.stringify(geometry));
         } else {
-          await invoke(commandName, { geometry });
+          await invokeCommand(commandName, { geometry });
         }
       } catch (err) {
         console.error(`Failed to save geometry using ${commandName}:`, err);

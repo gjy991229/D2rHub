@@ -1,11 +1,26 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use tauri::{Emitter, Manager};
 
+use crate::application::configuration::{
+    ConfigurationMutation, ConfigurationObserver, ConfigurationPolicy, ConfigurationRepository,
+};
 use crate::commands::account::{recover_account_transactions, AccountManager, AccountMeta};
+use crate::domain::config::{
+    default_enable_bongo_cat, default_enable_overlay, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
+    OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
+};
 use crate::error::AppError;
 use crate::state::SharedState;
 
-const CURRENT_CONFIG_VERSION: u32 = 8;
+// Keep the former command-module paths valid for in-flight feature branches
+// while core/application code migrates to `domain::config`.
+#[allow(unused_imports)]
+pub use crate::domain::config::{
+    GlobalConfig, LaunchGroup, LaunchGroupMember, LegacyPathMigration,
+};
+
+pub mod detection;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LegacyRegionPathMigration {
@@ -20,246 +35,117 @@ struct LegacyBattleNetPathMigration {
     pending_path: Option<String>,
 }
 
-/// 无法自动判断归属的旧版单客户端路径。仅用于把迁移候选交给设置向导；
-/// 用户明确选择国服或国际服之前，不得写回并覆盖旧配置文件。
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LegacyPathMigration {
-    #[serde(default)]
-    pub game_path: String,
-    #[serde(default)]
-    pub saved_games_path: String,
-    #[serde(default)]
-    pub battle_net_path: String,
-}
-
-/// 全局配置
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaunchGroupMember {
-    pub account_id: String,
-    /// None 表示由旧版启动组迁移而来，继续继承账号默认 Mod；Some("") 表示明确不使用 Mod。
-    #[serde(default)]
-    pub mod_args: Option<String>,
-    /// 位置胶囊引用；None 可表示“不指定位置”。
-    #[serde(default)]
-    pub position_preset_id: Option<String>,
-    /// 区分旧版缺失位置配置与新版明确选择“不指定位置”。
-    #[serde(default)]
-    pub position_configured: bool,
-    /// 区分 v7 及更早方案的“继承账号画质”与 v8 明确保存的独立画质。
-    #[serde(default)]
-    pub graphics_configured: bool,
-    #[serde(default)]
-    pub resolution: Option<String>,
-    #[serde(default)]
-    pub fps: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LaunchGroup {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub account_ids: Vec<String>,
-    /// 新版启动方案成员配置。account_ids 作为旧版本兼容镜像继续保留。
-    #[serde(default)]
-    pub members: Vec<LaunchGroupMember>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GlobalConfig {
-    pub version: u32,
-    #[serde(default)]
-    pub cn_battle_net_path: String,
-    /// 国服游戏安装目录。
-    #[serde(default)]
-    pub cn_game_path: String,
-    /// 国服存档目录（通常以 Diablo II Resurrected (CN) 结尾）。
-    #[serde(default)]
-    pub cn_saved_games_path: String,
-    /// 国际服游戏安装目录（亚服、美服、欧服共用）。
-    #[serde(default)]
-    pub global_game_path: String,
-    /// 国际服存档目录（亚服、美服、欧服共用）。
-    #[serde(default)]
-    pub global_saved_games_path: String,
-    /// 待用户确认归属的旧版路径。该状态存在时禁止持久化配置。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub legacy_path_migration: Option<LegacyPathMigration>,
-    pub program_data_agent_path: String,
-    pub app_data_roaming_bnet_path: String,
-    pub accounts_dir: String,
-    pub first_run_complete: bool,
-    /// 浏览器可执行文件路径（Edge 或 Chrome）
-    #[serde(default)]
-    pub browser_path: String,
-    /// 浏览器类型: "edge" | "chrome" | "" (未配置)
-    #[serde(default)]
-    pub browser_type: String,
-    #[serde(default = "default_enable_bongo_cat")]
-    pub enable_bongo_cat: bool,
-    #[serde(default = "default_bongo_cat_chatterbox")]
-    pub bongo_cat_chatterbox: bool,
-    #[serde(default = "default_bongo_cat_scale")]
-    pub bongo_cat_scale: f32,
-    #[serde(default = "default_bongo_cat_skin")]
-    pub bongo_cat_skin: String,
-    #[serde(default = "default_bongo_cat_unlocked_skins")]
-    pub bongo_cat_unlocked_skins: Vec<String>,
-    /// 旧版合并开关，仅作为向后兼容字段保存；运行时读取下方两个独立开关。
-    #[serde(default = "default_enable_overlay")]
-    pub enable_overlay: bool,
-    /// 邪恶区域播报悬浮窗。旧配置从 enable_overlay 迁移。
-    #[serde(default = "default_enable_overlay")]
-    pub enable_tz_overlay: bool,
-    /// 音频遥测场景计时与掉落统计悬浮窗。旧配置从 enable_overlay 迁移。
-    #[serde(default = "default_enable_overlay")]
-    pub enable_stats_overlay: bool,
-    /// 主题选择: "onyx" | "light"
-    #[serde(default = "default_theme")]
-    pub theme: String,
-    /// 悬浮窗主题选择: "onyx" | "light"
-    #[serde(default = "default_theme")]
-    pub theme_overlay: String,
-    /// 是否在登录后/流程结束后自动关闭浏览器，以及在启动前做清理
-    #[serde(default = "default_auto_close_browser")]
-    pub auto_close_browser: bool,
-    /// 是否在每天启动时自动检查更新
-    #[serde(default = "default_enable_auto_update")]
-    pub enable_auto_update: bool,
-    /// 是否首次启动（自动弹出帮助文档）
-    #[serde(default = "default_first_launch")]
-    pub first_launch: bool,
-    /// 是否启用按 D2R 进程捕获的符文声纹识别。
-    #[serde(default)]
-    pub rune_audio_enabled: bool,
-    /// 被监控的账号 ID（对应 account.json 中的 id）。
-    #[serde(default)]
-    pub rune_audio_target_account: String,
-    /// Gold 码相关识别阈值。
-    #[serde(default = "default_rune_audio_detection_threshold")]
-    pub rune_audio_detection_threshold: f32,
-    /// Drop categories decoded and persisted by the audio monitor.
-    #[serde(default = "default_rune_audio_tracked_categories")]
-    pub rune_audio_tracked_categories: Vec<String>,
-    /// 最低记录符文编号（含）；低于该编号的有效声纹只诊断、不入库。
-    #[serde(default = "default_rune_audio_min_rune_number")]
-    pub rune_audio_min_rune_number: u32,
-    /// 最低记录宝石等级（1=碎裂，5=完美）。
-    #[serde(default = "default_rune_audio_min_gem_level")]
-    pub rune_audio_min_gem_level: u32,
-    /// 独立记录的护身符基础代码；旧配置默认三种全部记录。
-    #[serde(default = "default_rune_audio_tracked_charm_codes")]
-    pub rune_audio_tracked_charm_codes: Vec<String>,
-    /// 快捷键绑定 JSON: {"1": "Ctrl+1", "2": "Ctrl+2", ...} ，key 为账号位置序号（1-based）
-    /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
-    #[serde(default)]
-    pub shortcut_bindings_json: String,
-    /// 悬浮窗透明度 (10-100, 默认 95)
-    #[serde(default = "default_opacity")]
-    pub overlay_opacity: u8,
-    /// 主界面透明度 (10-100, 默认 95)
-    #[serde(default = "default_opacity")]
-    pub main_opacity: u8,
-    /// 界面字体缩放 ("small" / "default" / "large")
-    #[serde(default = "default_font_scale")]
-    pub font_scale: String,
-    /// 是否为每个游戏账号窗口设置独立的任务栏 AppUserModelID。
-    #[serde(default)]
-    pub separate_game_taskbar_icons: bool,
-    /// 应用界面语言 ("zh-CN" / "en-US")
-    #[serde(default = "default_app_language")]
-    pub app_language: String,
-    /// Agent 多开模式: 1=延时杀, 2=进程数阈值杀
-    #[serde(default = "default_agent_mode")]
-    pub agent_mode: u8,
-    /// 模式1: Agent 存活延迟 (秒), 0-30, 默认 1.0
-    #[serde(default = "default_agent_delay_secs")]
-    pub agent_delay_secs: f64,
-    /// 模式2: bnet_count 阈值, 4/5/7, 默认 5
-    #[serde(default = "default_agent_threshold")]
-    pub agent_threshold: u32,
-    /// 可复用的账号启动组合。账号启动顺序由账号卡片当前排序决定。
-    #[serde(default)]
-    pub launch_groups: Vec<LaunchGroup>,
-}
-
-fn default_font_scale() -> String {
-    "default".to_string()
-}
-fn default_app_language() -> String {
-    "zh-CN".to_string()
-}
-fn default_opacity() -> u8 {
-    95
-}
-
-fn default_rune_audio_detection_threshold() -> f32 {
-    0.56
-}
-
-fn default_rune_audio_tracked_categories() -> Vec<String> {
-    crate::rune_audio::item_catalog::default_tracked_categories()
-}
-
-fn default_rune_audio_min_rune_number() -> u32 {
-    1
-}
-
-fn default_rune_audio_min_gem_level() -> u32 {
-    1
-}
-
-fn default_rune_audio_tracked_charm_codes() -> Vec<String> {
-    crate::rune_audio::item_catalog::default_tracked_charm_codes()
-}
-
-fn default_agent_mode() -> u8 {
-    1
-}
-fn default_agent_delay_secs() -> f64 {
-    1.0
-}
-fn default_agent_threshold() -> u32 {
-    5
-}
-
-fn default_theme() -> String {
-    "light".to_string()
-}
-
-fn default_enable_overlay() -> bool {
-    true
-}
-
-fn default_auto_close_browser() -> bool {
-    true
-}
-
-fn default_enable_auto_update() -> bool {
-    true
-}
-
-fn default_first_launch() -> bool {
-    true
-}
-fn default_enable_bongo_cat() -> bool {
-    true
-}
-fn default_bongo_cat_chatterbox() -> bool {
-    true
-}
-fn default_bongo_cat_scale() -> f32 {
-    1.0
-}
-fn default_bongo_cat_skin() -> String {
-    "original".to_string()
-}
-fn default_bongo_cat_unlocked_skins() -> Vec<String> {
-    vec!["original".to_string()]
-}
-
 fn app_accounts_dir(app_data_dir: &str) -> PathBuf {
     Path::new(app_data_dir).join("accounts")
+}
+
+fn sync_configuration_staging(path: &Path) -> Result<(), AppError> {
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
+    file.sync_all()
+        .map_err(|error| AppError::ConfigWriteError(error.to_string()))
+}
+
+struct GlobalConfigRepository<'a> {
+    app_data_dir: &'a str,
+}
+
+impl<'a> GlobalConfigRepository<'a> {
+    fn new(app_data_dir: &'a str) -> Self {
+        Self { app_data_dir }
+    }
+}
+
+impl ConfigurationRepository for GlobalConfigRepository<'_> {
+    fn load(&self) -> Result<GlobalConfig, AppError> {
+        GlobalConfig::load(self.app_data_dir)
+    }
+
+    fn save(&self, config: &GlobalConfig) -> Result<(), AppError> {
+        config.save(self.app_data_dir)
+    }
+
+    fn artifacts_exist(&self) -> bool {
+        GlobalConfig::config_path(self.app_data_dir).exists()
+            || GlobalConfig::config_backup_path(self.app_data_dir).exists()
+            || GlobalConfig::config_staging_path(self.app_data_dir).exists()
+    }
+
+    fn ensure_directories(&self, config: &GlobalConfig) -> Result<(), AppError> {
+        config.ensure_dirs()
+    }
+}
+
+struct GlobalConfigPolicy<'a> {
+    state: &'a SharedState,
+}
+
+impl<'a> GlobalConfigPolicy<'a> {
+    fn new(state: &'a SharedState) -> Self {
+        Self { state }
+    }
+}
+
+impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
+    fn apply_patch(
+        &self,
+        current: &GlobalConfig,
+        patch: serde_json::Value,
+    ) -> Result<GlobalConfig, AppError> {
+        current.apply_user_patch(patch)
+    }
+
+    fn prepare(
+        &self,
+        previous: Option<&GlobalConfig>,
+        candidate: GlobalConfig,
+    ) -> Result<GlobalConfig, AppError> {
+        let retired_account_ids = self.state.retired_account_ids_snapshot();
+        let prepared = prepare_global_config_with_retired_accounts(
+            &self.state.app_data_dir,
+            previous,
+            candidate,
+            &retired_account_ids,
+        )?;
+        if let Ok(bindings) = serde_json::from_str::<std::collections::HashMap<String, String>>(
+            &prepared.shortcut_bindings_json,
+        ) {
+            crate::input_listener::validate_core_shortcut_reservations(
+                bindings.values().map(String::as_str),
+            )
+            .map_err(AppError::ConfigWriteError)?;
+        }
+        Ok(prepared)
+    }
+}
+
+struct RuntimeConfigurationObserver<'a> {
+    state: &'a SharedState,
+    app: Option<&'a tauri::AppHandle>,
+}
+
+impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
+    fn apply(&self, config: &GlobalConfig) {
+        update_shortcut_map(self.state, config);
+        if !config.optional_module_installed(OPTIONAL_MODULE_AUTOMATION) {
+            crate::stats::stop_stats_api();
+        }
+        crate::capabilities::apply_configuration(self.state, self.app, config);
+    }
+
+    fn publish(&self, config: &GlobalConfig) {
+        if let Some(app) = self.app {
+            if let Err(error) = app.emit("global-config-updated", config) {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Config",
+                    &format!("发布全局配置提交事件失败: {error}"),
+                );
+            }
+        }
+    }
 }
 
 fn saved_games_settings_exists(path: &Path) -> bool {
@@ -310,10 +196,12 @@ fn should_validate_installation_paths(
 #[cfg(test)]
 mod validation_tests {
     use super::{
+        prepare_global_config, prepare_global_config_with_retired_accounts,
         saved_games_settings_exists, should_validate_installation_paths,
-        validate_installation_paths, GlobalConfig, LaunchGroup, LaunchGroupMember,
-        LegacyPathMigration, CURRENT_CONFIG_VERSION,
+        sync_configuration_staging, validate_installation_paths, GlobalConfig, GlobalConfigPolicy,
+        LaunchGroup, LaunchGroupMember, LegacyPathMigration, CURRENT_CONFIG_VERSION,
     };
+    use crate::application::configuration::ConfigurationPolicy;
     use crate::commands::account::{AccountManager, AccountMeta};
 
     fn temp_dir(name: &str) -> std::path::PathBuf {
@@ -347,6 +235,41 @@ mod validation_tests {
         };
 
         assert!(validate_installation_paths(&config).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn global_save_rejects_a_core_shortcut_reserved_by_an_active_capability() {
+        let state = std::sync::Arc::new(crate::state::AppState::new());
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = crate::input_listener::register_capability_shortcuts(
+            "global-config-shortcut-collision-test",
+            [("Ctrl+F24".to_string(), "optional-action")],
+            sender,
+        )
+        .unwrap();
+        let candidate = GlobalConfig {
+            shortcut_bindings_json: r#"{"1":"Ctrl+F24"}"#.to_string(),
+            ..GlobalConfig::default()
+        };
+
+        let error = GlobalConfigPolicy::new(&state)
+            .prepare(None, candidate)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("global-config-shortcut-collision-test"));
+
+        drop(registration);
+    }
+
+    #[test]
+    fn staging_sync_open_failure_is_not_treated_as_a_successful_commit() {
+        let root = temp_dir("config_staging_sync_failure");
+        let directory_instead_of_file = root.join("global_config.json.tmp");
+        std::fs::create_dir_all(&directory_instead_of_file).unwrap();
+
+        assert!(sync_configuration_staging(&directory_instead_of_file).is_err());
+
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -620,7 +543,7 @@ mod validation_tests {
             ..GlobalConfig::default()
         };
 
-        assert!(config.remove_account_from_launch_groups("account-a"));
+        assert!(config.remove_account_from_launch_groups("ACCOUNT-A"));
         assert_eq!(config.launch_groups.len(), 2);
         assert!(config.launch_groups[0].account_ids.is_empty());
         assert_eq!(
@@ -630,6 +553,100 @@ mod validation_tests {
         assert_eq!(config.launch_groups[1].members.len(), 1);
         assert_eq!(config.launch_groups[1].members[0].account_id, "account-b");
         assert!(!config.remove_account_from_launch_groups("missing"));
+    }
+
+    #[test]
+    fn stale_full_save_cannot_reintroduce_a_retired_account() {
+        let root = temp_dir("retired_account_stale_save");
+        let retired_id = "acount1".to_string();
+        let previous = GlobalConfig::default();
+        let stale_candidate = GlobalConfig {
+            rune_audio_enabled: true,
+            rune_audio_target_account: retired_id.clone(),
+            launch_groups: vec![LaunchGroup {
+                id: "stale".to_string(),
+                name: "陈旧方案".to_string(),
+                account_ids: vec![retired_id.clone()],
+                members: vec![LaunchGroupMember {
+                    account_id: retired_id.clone(),
+                    ..LaunchGroupMember::default()
+                }],
+            }],
+            ..GlobalConfig::default()
+        };
+
+        let prepared = prepare_global_config_with_retired_accounts(
+            root.to_str().unwrap(),
+            Some(&previous),
+            stale_candidate,
+            &[retired_id],
+        )
+        .unwrap();
+
+        assert!(!prepared.rune_audio_enabled);
+        assert!(prepared.rune_audio_target_account.is_empty());
+        assert!(prepared.launch_groups[0].account_ids.is_empty());
+        assert!(prepared.launch_groups[0].members.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn favorite_launch_groups_are_ordered_unique_and_must_exist() {
+        let mut config = GlobalConfig {
+            launch_groups: vec![
+                LaunchGroup {
+                    id: "group-a".to_string(),
+                    name: "A".to_string(),
+                    account_ids: Vec::new(),
+                    members: Vec::new(),
+                },
+                LaunchGroup {
+                    id: "group-b".to_string(),
+                    name: "B".to_string(),
+                    account_ids: Vec::new(),
+                    members: Vec::new(),
+                },
+            ],
+            favorite_launch_group_ids: vec![
+                " group-b ".to_string(),
+                "group-b".to_string(),
+                "missing".to_string(),
+                "group-a".to_string(),
+                " ".to_string(),
+            ],
+            ..GlobalConfig::default()
+        };
+
+        assert!(config.normalize_favorite_launch_group_ids());
+        assert_eq!(config.favorite_launch_group_ids, ["group-b", "group-a"]);
+    }
+
+    #[test]
+    fn user_patch_changes_only_requested_fields_on_the_latest_config() {
+        let latest = GlobalConfig {
+            theme: "light".to_string(),
+            font_scale: "large".to_string(),
+            ..GlobalConfig::default()
+        };
+
+        let patched = latest
+            .apply_user_patch(serde_json::json!({ "theme": "onyx" }))
+            .unwrap();
+
+        assert_eq!(patched.theme, "onyx");
+        assert_eq!(patched.font_scale, "large");
+    }
+
+    #[test]
+    fn user_patch_rejects_unknown_and_server_managed_fields() {
+        let config = GlobalConfig::default();
+
+        assert!(config
+            .apply_user_patch(serde_json::json!({ "unknown_field": true }))
+            .is_err());
+        assert!(config
+            .apply_user_patch(serde_json::json!({ "accounts_dir": "stale" }))
+            .is_err());
     }
 
     #[test]
@@ -1444,6 +1461,114 @@ mod validation_tests {
     }
 
     #[test]
+    fn released_v0_9_8_v8_fixture_migrates_without_losing_user_settings() {
+        let root = temp_dir("released_v0_9_8_v8_fixture");
+        let config_path = root.join("global_config.json");
+        std::fs::write(
+            &config_path,
+            include_bytes!("fixtures/v0.9.8-global-config-v8.json"),
+        )
+        .unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+
+        assert_eq!(loaded.version, CURRENT_CONFIG_VERSION);
+        assert_eq!(loaded.theme, "onyx");
+        assert_eq!(loaded.theme_overlay, "light");
+        assert_eq!(loaded.app_language, "en-US");
+        assert_eq!(loaded.overlay_opacity, 88);
+        assert_eq!(loaded.main_opacity, 92);
+        assert_eq!(loaded.rune_audio_min_rune_number, 20);
+        assert_eq!(loaded.rune_audio_tracked_categories, ["runes", "charms"]);
+        assert_eq!(loaded.launch_groups.len(), 1);
+        assert_eq!(
+            loaded.launch_groups[0].members[0].resolution.as_deref(),
+            Some("1920x1080")
+        );
+        assert_eq!(loaded.launch_groups[0].members[0].fps, Some(60));
+        assert!(loaded.favorite_launch_group_ids.is_empty());
+
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+        assert_eq!(persisted["version"], CURRENT_CONFIG_VERSION);
+        assert_eq!(persisted["theme"], "onyx");
+        assert_eq!(persisted["launch_groups"][0]["members"][0]["fps"], 60);
+        assert_eq!(
+            persisted["favorite_launch_group_ids"],
+            serde_json::json!([])
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn same_version_branch_extensions_survive_unrelated_patch_and_full_save() {
+        let root = temp_dir("same_version_branch_extensions");
+        let config_path = root.join("global_config.json");
+        let room_extension = serde_json::json!({
+            "enabled": true,
+            "primary_account_id": "account-a",
+            "follower_account_ids": ["account-b"],
+            "shortcut": "Ctrl+Alt+R",
+            "name_prefix": "run-",
+            "next_sequence": 17,
+            "strategy_version": 6,
+            "standard_flow": {
+                "character_delay_ms": 10,
+                "ui_profile": { "create_tab": { "x": 730, "y": 20 } }
+            }
+        });
+        let standby_extension = serde_json::json!(["account-b"]);
+        let mut branch_config = serde_json::to_value(GlobalConfig::default()).unwrap();
+        branch_config["version"] = serde_json::json!(CURRENT_CONFIG_VERSION);
+        branch_config["room_rotation"] = room_extension.clone();
+        branch_config["standby_account_ids"] = standby_extension.clone();
+        std::fs::write(
+            &config_path,
+            serde_json::to_vec_pretty(&branch_config).unwrap(),
+        )
+        .unwrap();
+
+        let loaded = GlobalConfig::load(root.to_str().unwrap()).unwrap();
+        assert_eq!(
+            loaded.preserved_unknown_fields["room_rotation"],
+            room_extension
+        );
+        assert_eq!(
+            loaded.preserved_unknown_fields["standby_account_ids"],
+            standby_extension
+        );
+
+        let patched = loaded
+            .apply_user_patch(serde_json::json!({ "theme": "onyx" }))
+            .unwrap();
+        assert_eq!(
+            patched.preserved_unknown_fields,
+            loaded.preserved_unknown_fields
+        );
+
+        // Simulate a typed frontend that sends only fields it understands. The
+        // backend policy must restore opaque fields from the latest snapshot.
+        let mut frontend_candidate = patched;
+        frontend_candidate.preserved_unknown_fields.clear();
+        frontend_candidate.preserved_unknown_fields.insert(
+            "untrusted_extension".to_string(),
+            serde_json::json!({ "enabled": true }),
+        );
+        let prepared =
+            prepare_global_config(root.to_str().unwrap(), Some(&loaded), frontend_candidate)
+                .unwrap();
+        prepared.save(root.to_str().unwrap()).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).unwrap()).unwrap();
+
+        assert_eq!(persisted["room_rotation"], room_extension);
+        assert_eq!(persisted["standby_account_ids"], standby_extension);
+        assert_eq!(persisted["theme"], "onyx");
+        assert!(persisted.get("untrusted_extension").is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn real_v1_shape_migrates_without_requiring_modern_fields() {
         let root = temp_dir("real_v1_shape");
         let config_path = root.join("global_config.json");
@@ -1600,6 +1725,43 @@ mod validation_tests {
     }
 }
 
+#[cfg(test)]
+mod contract_tests {
+    use super::{GlobalConfig, LegacyPathMigration};
+
+    #[test]
+    fn rust_and_typescript_global_config_fields_stay_in_sync() {
+        let typescript_contract = include_str!("../../../src/store/globalConfigContract.ts");
+        let declaration = typescript_contract
+            .split_once("export const GLOBAL_CONFIG_FIELDS = ")
+            .expect("TypeScript config field declaration is missing")
+            .1;
+        let end = declaration
+            .find("] as const")
+            .expect("TypeScript config field declaration has an unexpected format");
+        let mut typescript_fields: Vec<String> =
+            serde_json::from_str(&declaration[..=end]).expect("config field list must be JSON");
+
+        let config = GlobalConfig {
+            // This compatibility marker is normally omitted when absent. Set
+            // it here so the serialized schema exposes every supported field.
+            legacy_path_migration: Some(LegacyPathMigration::default()),
+            ..GlobalConfig::default()
+        };
+        let serialized = serde_json::to_value(config).expect("default config must serialize");
+        let mut rust_fields: Vec<String> = serialized
+            .as_object()
+            .expect("global config must serialize as an object")
+            .keys()
+            .cloned()
+            .collect();
+
+        typescript_fields.sort();
+        rust_fields.sort();
+        assert_eq!(rust_fields, typescript_fields);
+    }
+}
+
 /// 窗口几何信息（位置+尺寸持久化）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WindowGeometry {
@@ -1607,56 +1769,6 @@ pub struct WindowGeometry {
     pub y: i32,
     pub width: u32,
     pub height: u32,
-}
-
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            version: CURRENT_CONFIG_VERSION,
-            cn_battle_net_path: String::new(),
-            cn_game_path: String::new(),
-            cn_saved_games_path: String::new(),
-            global_game_path: String::new(),
-            global_saved_games_path: String::new(),
-            legacy_path_migration: None,
-            program_data_agent_path: String::new(),
-            app_data_roaming_bnet_path: String::new(),
-            accounts_dir: String::new(),
-            first_run_complete: false,
-            browser_path: String::new(),
-            browser_type: String::new(),
-            enable_bongo_cat: true,
-            bongo_cat_chatterbox: true,
-            bongo_cat_scale: 1.0,
-            bongo_cat_skin: "original".to_string(),
-            bongo_cat_unlocked_skins: vec!["original".to_string()],
-            enable_overlay: true,
-            enable_tz_overlay: true,
-            enable_stats_overlay: true,
-            theme: "light".to_string(),
-            theme_overlay: "light".to_string(),
-            auto_close_browser: true,
-            enable_auto_update: true,
-            first_launch: true,
-            rune_audio_enabled: false,
-            rune_audio_target_account: String::new(),
-            rune_audio_detection_threshold: default_rune_audio_detection_threshold(),
-            rune_audio_tracked_categories: default_rune_audio_tracked_categories(),
-            rune_audio_min_rune_number: default_rune_audio_min_rune_number(),
-            rune_audio_min_gem_level: default_rune_audio_min_gem_level(),
-            rune_audio_tracked_charm_codes: default_rune_audio_tracked_charm_codes(),
-            shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
-            overlay_opacity: 95,
-            main_opacity: 95,
-            font_scale: "default".to_string(),
-            separate_game_taskbar_icons: false,
-            app_language: "zh-CN".to_string(),
-            agent_mode: 1,
-            agent_delay_secs: 1.0,
-            agent_threshold: 5,
-            launch_groups: Vec::new(),
-        }
-    }
 }
 
 fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
@@ -1676,21 +1788,75 @@ fn validate_scheme_resolution(resolution: &str) -> Result<(), &'static str> {
 }
 
 impl GlobalConfig {
+    fn apply_user_patch(&self, patch: serde_json::Value) -> Result<Self, AppError> {
+        let patch = patch
+            .as_object()
+            .ok_or_else(|| AppError::ConfigWriteError("配置补丁必须是 JSON 对象".to_string()))?;
+        let mut merged = serde_json::to_value(self)?;
+        let merged_object = merged.as_object_mut().ok_or_else(|| {
+            AppError::ConfigWriteError("当前配置无法转换为 JSON 对象".to_string())
+        })?;
+
+        for (key, value) in patch {
+            if matches!(
+                key.as_str(),
+                "version" | "accounts_dir" | "legacy_path_migration"
+            ) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "配置字段 {key} 由程序管理，不能通过补丁修改"
+                )));
+            }
+            if self.preserved_unknown_fields.contains_key(key) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "配置字段 {key} 由兼容层保留，当前版本不能修改"
+                )));
+            }
+            if !merged_object.contains_key(key) {
+                return Err(AppError::ConfigWriteError(format!(
+                    "未知的全局配置字段: {key}"
+                )));
+            }
+            merged_object.insert(key.clone(), value.clone());
+        }
+
+        serde_json::from_value(merged).map_err(Into::into)
+    }
+
     pub(crate) fn remove_account_from_launch_groups(&mut self, account_id: &str) -> bool {
         let mut removed = false;
         for group in &mut self.launch_groups {
             let previous_len = group.account_ids.len();
             group
                 .account_ids
-                .retain(|member_id| member_id != account_id);
+                .retain(|member_id| !member_id.eq_ignore_ascii_case(account_id));
             removed |= group.account_ids.len() != previous_len;
             let previous_member_len = group.members.len();
             group
                 .members
-                .retain(|member| member.account_id != account_id);
+                .retain(|member| !member.account_id.eq_ignore_ascii_case(account_id));
             removed |= group.members.len() != previous_member_len;
         }
         removed
+    }
+
+    fn normalize_favorite_launch_group_ids(&mut self) -> bool {
+        let original = self.favorite_launch_group_ids.clone();
+        let launch_group_ids: std::collections::HashSet<&str> = self
+            .launch_groups
+            .iter()
+            .map(|group| group.id.as_str())
+            .collect();
+        let mut seen = std::collections::HashSet::new();
+        self.favorite_launch_group_ids = self
+            .favorite_launch_group_ids
+            .iter()
+            .map(|group_id| group_id.trim())
+            .filter(|group_id| launch_group_ids.contains(group_id))
+            .filter(|group_id| seen.insert((*group_id).to_string()))
+            .map(str::to_string)
+            .take(3)
+            .collect();
+        original != self.favorite_launch_group_ids
     }
 
     fn normalize_launch_groups(&mut self) -> bool {
@@ -2005,6 +2171,32 @@ impl GlobalConfig {
                 "配置版本高于当前程序支持的 v{CURRENT_CONFIG_VERSION}，请使用更新版本的 D2RHub 打开"
             )));
         }
+        let had_optional_module_state = value.get("installed_optional_modules").is_some();
+        let legacy_combined_overlay_enabled = value
+            .get("enable_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(default_enable_overlay);
+        let legacy_tz_overlay_enabled = value
+            .get("enable_tz_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(legacy_combined_overlay_enabled);
+        let legacy_stats_overlay_enabled = value
+            .get("enable_stats_overlay")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(legacy_combined_overlay_enabled);
+        let legacy_audio_enabled = value
+            .get("rune_audio_enabled")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        let legacy_pet_enabled = value
+            .get("enable_bongo_cat")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or_else(default_enable_bongo_cat);
+        let legacy_room_automation_enabled = value
+            .get("room_rotation")
+            .and_then(|room| room.get("enabled"))
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
         if let Some(invalid_key) = [
             "game_path",
             "saved_games_path",
@@ -2084,7 +2276,42 @@ impl GlobalConfig {
         });
 
         if config.version != CURRENT_CONFIG_VERSION {
+            // Historical unknown fields belonged to removed legacy features.
+            // Same-version extensions are preserved below, but older envelopes
+            // continue through their explicit migrations without retaining
+            // obsolete keys forever.
+            let pending_room_automation_import = config
+                .preserved_unknown_fields
+                .get("room_rotation")
+                .cloned();
+            config.preserved_unknown_fields.clear();
+            if let Some(room_rotation) = pending_room_automation_import {
+                config
+                    .preserved_unknown_fields
+                    .insert("room_rotation".to_string(), room_rotation);
+            }
             config.version = CURRENT_CONFIG_VERSION;
+            migrated = true;
+        }
+        if !had_optional_module_state {
+            // Before v10 the feature switches were the only durable evidence
+            // that a user had opted into an optional capability. Promote those
+            // active features to installed modules instead of hiding their UI.
+            let recognition_installed = legacy_audio_enabled || legacy_stats_overlay_enabled;
+            let overlays_installed = legacy_tz_overlay_enabled || recognition_installed;
+            config.installed_optional_modules = [
+                overlays_installed.then_some(OPTIONAL_MODULE_OVERLAYS),
+                legacy_pet_enabled.then_some(OPTIONAL_MODULE_PET),
+                recognition_installed.then_some(OPTIONAL_MODULE_AUTOMATION),
+                legacy_room_automation_enabled.then_some(OPTIONAL_MODULE_ROOM_AUTOMATION),
+            ]
+            .into_iter()
+            .flatten()
+            .map(str::to_string)
+            .collect();
+            migrated = true;
+        }
+        if config.normalize_optional_module_configuration() {
             migrated = true;
         }
         let combined_overlay_enabled = config.enable_tz_overlay || config.enable_stats_overlay;
@@ -2100,7 +2327,7 @@ impl GlobalConfig {
         }
 
         // 声纹目标依赖账号目录。必须先回滚中断的账号目录交换，再判断目标是否有效。
-        recover_account_transactions(&config.accounts_dir);
+        recover_account_transactions(&config.accounts_dir, Some(&config));
 
         // 迁移：从未配置过快捷键的旧用户，自动写入默认值
         if config.shortcut_bindings_json.is_empty() {
@@ -2117,6 +2344,9 @@ impl GlobalConfig {
         }
 
         if config.normalize_launch_groups() {
+            migrated = true;
+        }
+        if config.normalize_favorite_launch_group_ids() {
             migrated = true;
         }
 
@@ -2170,7 +2400,7 @@ impl GlobalConfig {
                 battle_net_path,
             });
         };
-        let is_cn = edition == crate::launch_context::ClientEdition::Cn;
+        let is_cn = edition == crate::domain::account::ClientEdition::Cn;
         let (game_key, saves_key) = if is_cn {
             ("cn_game_path", "cn_saved_games_path")
         } else {
@@ -2232,15 +2462,15 @@ impl GlobalConfig {
 
     fn infer_legacy_saved_games_edition(
         saved_games_path: &str,
-    ) -> Option<crate::launch_context::ClientEdition> {
+    ) -> Option<crate::domain::account::ClientEdition> {
         let directory_name = saved_games_path
             .trim_end_matches(['\\', '/'])
             .rsplit(['\\', '/'])
             .next()?;
         if directory_name.eq_ignore_ascii_case("Diablo II Resurrected (CN)") {
-            Some(crate::launch_context::ClientEdition::Cn)
+            Some(crate::domain::account::ClientEdition::Cn)
         } else if directory_name.eq_ignore_ascii_case("Diablo II Resurrected") {
-            Some(crate::launch_context::ClientEdition::Global)
+            Some(crate::domain::account::ClientEdition::Global)
         } else {
             None
         }
@@ -2349,10 +2579,7 @@ impl GlobalConfig {
                 .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
         }
         std::fs::write(&staging, content).map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
-        if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&staging) {
-            file.sync_all()
-                .map_err(|e| AppError::ConfigWriteError(e.to_string()))?;
-        }
+        sync_configuration_staging(&staging)?;
 
         let had_primary = path.exists();
         if had_primary {
@@ -2553,70 +2780,208 @@ impl GlobalConfig {
 }
 
 pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
-    let mut map = state.shortcut_map.write();
-    map.clear();
     let bindings: std::collections::HashMap<String, String> =
         serde_json::from_str(&cfg.shortcut_bindings_json).unwrap_or_default();
-    for (pos_str, shortcut) in &bindings {
-        if let Ok(pos) = pos_str.parse::<usize>() {
-            if pos >= 1 {
-                map.insert(shortcut.to_lowercase(), pos);
+    let normalized = bindings
+        .iter()
+        .filter_map(|(pos_str, shortcut)| {
+            pos_str
+                .parse::<usize>()
+                .ok()
+                .filter(|position| *position >= 1)
+                .map(|position| (shortcut.to_lowercase(), position))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
+    crate::input_listener::replace_core_shortcut_reservations(
+        normalized
+            .iter()
+            .map(|(shortcut, position)| (shortcut.clone(), *position)),
+    );
+    let mut map = state.shortcut_map.write();
+    map.clear();
+    map.extend(normalized);
+}
+
+/// Loads the global configuration through the shared application transaction
+/// runtime. Startup and command callers therefore publish the same snapshot.
+pub(crate) fn load_global_config_into_state(state: &SharedState) -> Result<GlobalConfig, AppError> {
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let observer = RuntimeConfigurationObserver { state, app: None };
+        let loaded = state.configuration().get_or_load(&repository, &observer)?;
+        Ok(loaded.config)
+    })
+}
+
+/// Applies a copy-on-write mutation only when configuration is already loaded.
+/// `Missing` remains observable so account lifecycle callers can preserve their
+/// historical no-configuration behavior without triggering an implicit load.
+pub(crate) fn mutate_loaded_global_config<F>(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    mutate: F,
+) -> Result<ConfigurationMutation, AppError>
+where
+    F: FnOnce(&mut GlobalConfig) -> Result<bool, AppError>,
+{
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state);
+    let observer = RuntimeConfigurationObserver {
+        state,
+        app: Some(app),
+    };
+    let mutation =
+        state
+            .configuration()
+            .mutate_if_loaded(&repository, &policy, &observer, |config| {
+                let shortcuts = config.shortcut_bindings_json.clone();
+                let changed = mutate(config)?;
+                if config.shortcut_bindings_json != shortcuts {
+                    return Err(AppError::ConfigWriteError(
+                        "内部配置变更不得绕过快捷键路由事务".to_string(),
+                    ));
+                }
+                Ok(changed)
+            })?;
+    Ok(mutation)
+}
+
+pub(crate) fn mutate_loaded_global_config_with_post_commit<F, P>(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    mutate: F,
+    post_commit: P,
+) -> Result<ConfigurationMutation, AppError>
+where
+    F: FnOnce(&mut GlobalConfig) -> Result<bool, AppError>,
+    P: FnOnce(&GlobalConfig),
+{
+    let repository = GlobalConfigRepository::new(&state.app_data_dir);
+    let policy = GlobalConfigPolicy::new(state);
+    let observer = RuntimeConfigurationObserver {
+        state,
+        app: Some(app),
+    };
+    state.configuration().mutate_if_loaded_with_post_commit(
+        &repository,
+        &policy,
+        &observer,
+        |config| {
+            let shortcuts = config.shortcut_bindings_json.clone();
+            let changed = mutate(config)?;
+            if config.shortcut_bindings_json != shortcuts {
+                return Err(AppError::ConfigWriteError(
+                    "内部配置变更不得绕过快捷键路由事务".to_string(),
+                ));
             }
-        }
-    }
+            Ok(changed)
+        },
+        post_commit,
+    )
 }
 
 // ── Tauri Commands ──
 
 #[tauri::command]
 pub fn get_global_config(state: tauri::State<'_, SharedState>) -> Result<GlobalConfig, AppError> {
-    let config = state.config.read();
-    match &*config {
-        Some(c) => Ok(c.clone()),
-        None => {
-            // 首次调用，尝试从磁盘加载
-            drop(config);
-            let _config_io = state.config_io.lock();
-            if let Some(loaded) = state.config.read().clone() {
-                return Ok(loaded);
-            }
-            let loaded = GlobalConfig::load(&state.app_data_dir)?;
-            let mut cfg = state.config.write();
-            *cfg = Some(loaded.clone());
-            update_shortcut_map(&state, &loaded);
-            Ok(loaded)
-        }
-    }
+    load_global_config_into_state(state.inner())
 }
 
 #[tauri::command]
 pub fn save_global_config(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     config: GlobalConfig,
 ) -> Result<GlobalConfig, AppError> {
-    let _config_io = state.config_io.lock();
-    if config.legacy_path_migration.is_some() {
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let policy = GlobalConfigPolicy::new(state.inner());
+        let observer = RuntimeConfigurationObserver {
+            state: state.inner(),
+            app: Some(&app),
+        };
+        state
+            .configuration()
+            .save_candidate(&repository, &policy, &observer, config)
+    })
+}
+
+#[tauri::command]
+pub fn patch_global_config(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    patch: serde_json::Value,
+) -> Result<GlobalConfig, AppError> {
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let policy = GlobalConfigPolicy::new(state.inner());
+        let observer = RuntimeConfigurationObserver {
+            state: state.inner(),
+            app: Some(&app),
+        };
+        state
+            .configuration()
+            .patch_current(&repository, &policy, &observer, patch)
+    })
+}
+
+#[tauri::command]
+pub fn patch_desktop_pet_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    patch: serde_json::Value,
+) -> Result<GlobalConfig, AppError> {
+    const ALLOWED_FIELDS: [&str; 5] = [
+        "enable_bongo_cat",
+        "bongo_cat_chatterbox",
+        "bongo_cat_scale",
+        "bongo_cat_skin",
+        "bongo_cat_unlocked_skins",
+    ];
+    let object = patch.as_object().ok_or_else(|| {
+        AppError::ConfigWriteError("桌宠设置补丁必须是对象".to_string())
+    })?;
+    if let Some(field) = object
+        .keys()
+        .find(|field| !ALLOWED_FIELDS.contains(&field.as_str()))
+    {
+        return Err(AppError::ConfigWriteError(format!(
+            "桌宠窗口无权修改全局配置字段: {field}"
+        )));
+    }
+    patch_global_config(app, state, patch)
+}
+
+#[cfg(test)]
+fn prepare_global_config(
+    app_data_dir: &str,
+    previous: Option<&GlobalConfig>,
+    cfg: GlobalConfig,
+) -> Result<GlobalConfig, AppError> {
+    prepare_global_config_with_retired_accounts(app_data_dir, previous, cfg, &[])
+}
+
+fn prepare_global_config_with_retired_accounts(
+    app_data_dir: &str,
+    previous: Option<&GlobalConfig>,
+    mut cfg: GlobalConfig,
+    retired_account_ids: &[String],
+) -> Result<GlobalConfig, AppError> {
+    if cfg.legacy_path_migration.is_some() {
         return Err(AppError::ConfigWriteError(
             "请先确认旧版路径属于国服还是国际服".to_string(),
         ));
     }
-    let existing_config_artifact = GlobalConfig::config_path(&state.app_data_dir).exists()
-        || GlobalConfig::config_backup_path(&state.app_data_dir).exists()
-        || GlobalConfig::config_staging_path(&state.app_data_dir).exists();
-    if state.config.read().is_none() && existing_config_artifact {
-        return Err(AppError::ConfigWriteError(
-            "现有配置未能安全加载，已阻止用新配置覆盖；请先检查日志和 global_config.json"
-                .to_string(),
-        ));
-    }
-    let previous = state.config.read().clone();
-    let mut cfg = config.clone();
     cfg.version = CURRENT_CONFIG_VERSION;
-    // 保留旧字段作为向后兼容总状态，新代码只读取两个独立开关。
-    cfg.enable_overlay = cfg.enable_tz_overlay || cfg.enable_stats_overlay;
-    cfg.accounts_dir = app_accounts_dir(&state.app_data_dir)
-        .to_string_lossy()
-        .to_string();
+    // Opaque same-version extensions are never owned by this build. A full save
+    // must keep exactly the latest committed values: callers may neither erase,
+    // replace nor inject fields that only a future module can interpret.
+    cfg.preserved_unknown_fields = previous
+        .map(|previous| previous.preserved_unknown_fields.clone())
+        .unwrap_or_default();
+    // 模块安装状态是可选能力的上层权限；旧开关只能在模块存在时生效。
+    cfg.normalize_optional_module_configuration();
+    cfg.accounts_dir = app_accounts_dir(app_data_dir).to_string_lossy().to_string();
     cfg.rune_audio_tracked_categories =
         crate::rune_audio::item_catalog::normalize_tracked_categories(
             &cfg.rune_audio_tracked_categories,
@@ -2628,19 +2993,25 @@ pub fn save_global_config(
             &cfg.rune_audio_tracked_charm_codes,
         );
     cfg.normalize_launch_groups();
+    for account_id in retired_account_ids {
+        if cfg
+            .rune_audio_target_account
+            .trim()
+            .eq_ignore_ascii_case(account_id)
+        {
+            cfg.rune_audio_target_account.clear();
+            cfg.rune_audio_enabled = false;
+        }
+        cfg.remove_account_from_launch_groups(account_id);
+    }
     cfg.validate_launch_groups()?;
+    cfg.normalize_favorite_launch_group_ids();
 
-    if should_validate_installation_paths(previous.as_ref(), &cfg) {
+    if should_validate_installation_paths(previous, &cfg) {
         validate_installation_paths(&cfg)?;
     }
     cfg.resolve_rune_audio_target_account()?;
 
-    cfg.save(&state.app_data_dir)?;
-    cfg.ensure_dirs()?;
-    let mut stored = state.config.write();
-    *stored = Some(cfg.clone());
-    update_shortcut_map(&state, &cfg);
-    crate::input_listener::set_bongo_cat_input_enabled(cfg.enable_bongo_cat);
     Ok(cfg)
 }
 
@@ -2666,110 +3037,12 @@ pub fn load_window_geometry(
     Ok(GlobalConfig::load_geometry(&state.app_data_dir))
 }
 
-fn detect_saved_games_path_for_edition(cn: bool) -> Option<String> {
-    let user = dirs::home_dir()?;
-    let saved_games = user.join("Saved Games");
-    let entries = std::fs::read_dir(&saved_games).ok()?;
-    entries.flatten().find_map(|entry| {
-        let name = entry.file_name().to_string_lossy().to_string();
-        let is_d2r = name.starts_with("Diablo II Resurrected");
-        let is_cn = name.to_ascii_lowercase().contains("(cn)");
-        (is_d2r && is_cn == cn).then(|| saved_games.join(name).to_string_lossy().to_string())
-    })
-}
-
-/// 自动探测国服游戏存档路径。
-#[tauri::command]
-pub fn detect_saved_games_path() -> Option<String> {
-    detect_saved_games_path_for_edition(true)
-}
-
-/// 自动探测国际服游戏存档路径。
-#[tauri::command]
-pub fn detect_global_saved_games_path() -> Option<String> {
-    detect_saved_games_path_for_edition(false)
-}
-
-/// 检测 ProgramData 下的 Agent 路径
-#[tauri::command]
-pub fn detect_program_data_agent_path() -> Option<String> {
-    let path = r"C:\ProgramData\Battle.net\Agent";
-    if Path::new(path).exists() {
-        Some(path.to_string())
-    } else {
-        None
-    }
-}
-
 /// 供非命令函数（如 tray）获取全局配置
 pub fn get_global_config_ext(app: &tauri::AppHandle) -> Option<GlobalConfig> {
     use tauri::Manager;
     if let Some(state) = app.try_state::<SharedState>() {
-        let config_lock = state.config.read();
-        return config_lock.clone();
+        return state.configuration().snapshot();
     }
-    None
-}
-
-/// 检测 AppData\Roaming\Battle.net 路径
-#[tauri::command]
-pub fn detect_app_data_roaming_bnet_path() -> Option<String> {
-    if let Some(appdata) = dirs::config_dir() {
-        // config_dir on Windows = %APPDATA%
-        let bnet = appdata.join("Battle.net");
-        if bnet.exists() {
-            return Some(bnet.to_string_lossy().to_string());
-        }
-    }
-    None
-}
-/// 自动探测浏览器路径（仅支持 Edge 和 Chrome）
-/// 返回 (path, browser_type) 或 None
-#[tauri::command]
-pub fn detect_browser_path() -> Option<(String, String)> {
-    // 1. 优先检测 Microsoft Edge（系统自带，路径稳定）
-    let edge_candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ];
-    for p in &edge_candidates {
-        if std::path::Path::new(p).exists() {
-            return Some((p.to_string(), "edge".to_string()));
-        }
-    }
-    // 也尝试通过 LocalAppData 找
-    if let Some(local) = dirs::data_local_dir() {
-        let edge = local
-            .join("Microsoft")
-            .join("Edge")
-            .join("Application")
-            .join("msedge.exe");
-        if edge.exists() {
-            return Some((edge.to_string_lossy().to_string(), "edge".to_string()));
-        }
-    }
-
-    // 2. 检测 Google Chrome
-    let chrome_candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-    ];
-    for p in &chrome_candidates {
-        if std::path::Path::new(p).exists() {
-            return Some((p.to_string(), "chrome".to_string()));
-        }
-    }
-    if let Some(local) = dirs::data_local_dir() {
-        let chrome = local
-            .join("Google")
-            .join("Chrome")
-            .join("Application")
-            .join("chrome.exe");
-        if chrome.exists() {
-            return Some((chrome.to_string_lossy().to_string(), "chrome".to_string()));
-        }
-    }
-
     None
 }
 
@@ -2814,62 +3087,14 @@ pub fn save_theme(
     theme: String,
     window: tauri::Window,
 ) -> Result<(), AppError> {
-    let _config_io = state.config_io.lock();
-    let mut config_lock = state.config.write();
-    if let Some(ref mut cfg) = *config_lock {
-        if window.label() == "overlay" {
+    let is_overlay = window.label() == "overlay";
+    let _ = mutate_loaded_global_config(state.inner(), window.app_handle(), move |cfg| {
+        if is_overlay {
             cfg.theme_overlay = theme;
         } else {
             cfg.theme = theme;
         }
-        cfg.save(&state.app_data_dir)?;
-    }
+        Ok(true)
+    })?;
     Ok(())
-}
-
-/// 根据选择的浏览器类型（edge 或 chrome）自动探测路径
-#[tauri::command]
-pub fn detect_browser_path_by_type(browser_type: String) -> Option<String> {
-    if browser_type == "edge" {
-        let edge_candidates = [
-            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-            r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-        ];
-        for p in &edge_candidates {
-            if std::path::Path::new(p).exists() {
-                return Some(p.to_string());
-            }
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            let edge = local
-                .join("Microsoft")
-                .join("Edge")
-                .join("Application")
-                .join("msedge.exe");
-            if edge.exists() {
-                return Some(edge.to_string_lossy().to_string());
-            }
-        }
-    } else if browser_type == "chrome" {
-        let chrome_candidates = [
-            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        ];
-        for p in &chrome_candidates {
-            if std::path::Path::new(p).exists() {
-                return Some(p.to_string());
-            }
-        }
-        if let Some(local) = dirs::data_local_dir() {
-            let chrome = local
-                .join("Google")
-                .join("Chrome")
-                .join("Application")
-                .join("chrome.exe");
-            if chrome.exists() {
-                return Some(chrome.to_string_lossy().to_string());
-            }
-        }
-    }
-    None
 }

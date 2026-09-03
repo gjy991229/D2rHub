@@ -1,0 +1,8 @@
+{
+  "max_startup_to_window_ms": 15000,
+  "max_warm_idle_cpu_percent": 2.0,
+  "max_working_set_mib": 150,
+  "max_private_memory_mib": 200,
+  "max_thread_count": 100,
+  "max_direct_child_process_count": 12
+}

@@ -10,7 +10,16 @@ html[data-visual-audit-frame="mini-overlay"] body {
   padding: 16px;
 }
 
+html[data-visual-audit-frame="mini-stats-overlay"] body {
+  padding: 16px;
+}
+
 html[data-visual-audit-frame="mini-overlay"] [data-overlay-mode] {
   width: 18vw;
   height: 8vh;
+}
+
+html[data-visual-audit-frame="mini-stats-overlay"] [data-overlay-mode] {
+  width: 320px;
+  height: 48px;
 }

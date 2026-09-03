@@ -1,0 +1,14 @@
+﻿{
+    "measured_at_utc":  "2026-09-01T12:48:46.1613537Z",
+    "executable":  "D:\\pro\\D2rHub\\src-tauri\\target\\release\\d2rhub.exe",
+    "startup_to_window_ms":  206,
+    "warm_idle_cpu_percent":  0,
+    "working_set_mib":  39.3,
+    "private_memory_mib":  60.1,
+    "thread_count":  50,
+    "direct_child_process_count":  1,
+    "main_window_ready":  true,
+    "d2r_process_set_unchanged":  true,
+    "protected_files_unchanged":  true,
+    "performance_budget_passed":  true
+}

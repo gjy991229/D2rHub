@@ -1,10 +1,13 @@
 import type { AccountMeta, LaunchGroup } from "../store/types";
 import {
+  favoriteLaunchGroups,
   inspectLaunchGroup,
   launchEntriesForGroup,
   launchGroupNameExists,
   materializeLaunchGroupMembers,
   nextLaunchGroupName,
+  normalizeFavoriteLaunchGroupIds,
+  toggleFavoriteLaunchGroupId,
 } from "./launchGroups";
 
 function assert(condition: boolean, message: string) {
@@ -147,3 +150,20 @@ const names: LaunchGroup[] = [
 assert(nextLaunchGroupName(names) === "启动方案 2", "new schemes receive the next unused default name");
 assert(launchGroupNameExists(names, " farm "), "group name comparison ignores case and outer whitespace");
 assert(!launchGroupNameExists(names, "Farm", "farm"), "editing a group does not conflict with its own name");
+
+assert(
+  JSON.stringify(normalizeFavoriteLaunchGroupIds(names, [" farm ", "missing", "farm", "one"]))
+    === JSON.stringify(["farm", "one"]),
+  "favorite scheme ids are trimmed, deduplicated, ordered, and limited to existing schemes",
+);
+assert(
+  favoriteLaunchGroups(names, ["farm", "one"]).map(candidate => candidate.id).join(",") === "farm,one",
+  "favorite schemes preserve the user's toolbar order",
+);
+assert(
+  JSON.stringify(toggleFavoriteLaunchGroupId(names, ["farm"], "one"))
+    === JSON.stringify(["farm", "one"])
+    && JSON.stringify(toggleFavoriteLaunchGroupId(names, ["farm", "one"], "farm"))
+      === JSON.stringify(["one"]),
+  "favorite schemes can be added and removed with one toggle",
+);

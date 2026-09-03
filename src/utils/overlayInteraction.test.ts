@@ -34,10 +34,33 @@ export function runTests() {
   );
   assert(
     overlaySource.includes('data-overlay-kind={isStatsOverlay ? "stats" : "tz"}')
-      && overlaySource.includes("onDoubleClickCapture={!isStatsOverlay ? handleTzOverlayDoubleClick : undefined}")
-      && overlaySource.includes('window.addEventListener("keydown", handleTzOverlayWindowKeyDown, true)')
+      && overlaySource.includes("onDoubleClickCapture={supportsCompactMode ? handleOverlayDoubleClick : undefined}")
+      && overlaySource.includes('window.addEventListener("keydown", handleOverlayWindowKeyDown, true)')
       && overlaySource.includes('if (event.key !== "Enter" || event.repeat) return;'),
-    "TZ overlay toggles mini mode from any double-click or Enter while statistics does not",
+    "both information overlays expose double-click and Enter mode switching",
+  );
+  assert(
+    overlaySource.includes('STATS_OVERLAY_MODE_STORAGE_KEY = "d2rhub-statistics-overlay-mode"')
+      && overlaySource.includes('STATS_OVERLAY_EXPANDED_SIZE_STORAGE_KEY = "d2rhub-statistics-overlay-expanded-size"')
+      && overlaySource.includes('isStatsOverlay && displayMode === "mini"')
+      && overlaySource.includes('useEnglish ? "Detected scene" : "识别场景"')
+      && overlaySource.includes('useEnglish ? "Runs" : "场次"'),
+    "statistics mini mode persists independently and keeps only scene, timer, and run count",
+  );
+  assert(
+    overlaySource.includes("await win.setIgnoreCursorEvents(true)")
+      && overlaySource.includes("await win.setIgnoreCursorEvents(false)")
+      && overlaySource.includes("await applyStatsMiniOverlaySize(win)")
+      && overlaySource.includes('if (isStatsOverlay && displayModeRef.current === "mini") return;'),
+    "statistics mini mode is fixed, click-through, and excluded from drag and docking gestures",
+  );
+  assert(
+    overlaySource.includes('event.payload !== "StatsOverlayMiniToggle"')
+      && overlaySource.includes('event.payload === "StatsOverlayMiniHoverEnter"')
+      && overlaySource.includes("statsMiniHovered")
+      && overlaySource.includes('syncStatsMiniInputRegion(win, true)')
+      && overlaySource.includes('syncStatsMiniInputRegion(win, false)'),
+    "click-through mini mode keeps native hover guidance and a double-click recovery path",
   );
   assert(
     overlaySource.includes('className="tz-expanded-layout')
@@ -60,11 +83,11 @@ export function runTests() {
     "statistics overlay keeps independent geometry while sharing edge docking and its reveal handle",
   );
   assert(
-    overlaySource.includes("if (isStatsOverlay) {\n          await Promise.all([")
-      && overlaySource.includes('await restoreWindowPlacement("stats-overlay", saved);')
+    overlaySource.includes('await restoreWindowPlacement("stats-overlay", saved);')
+      && overlaySource.includes('if (displayModeRef.current === "mini") {\n            await syncStatsMiniInputRegion(win, true);')
       && overlaySource.includes("if (!cancelled) void evaluateOverlayDocking();")
       && overlaySource.includes("if (dockStateRef.current) {\n                  await refreshDockPlacementAfterResize(true);"),
-    "statistics overlay restores edge docking after startup and refreshes it after resize",
+    "statistics overlay restores its active mode and refreshes edge docking in normal mode",
   );
   assert(
     overlaySource.includes("onDoubleClick={handleTimerDoubleClick}")
@@ -73,10 +96,17 @@ export function runTests() {
     "timer double-click and audio-tracked town detection share the same run-finishing transition",
   );
   assert(
-    overlaySource.includes("aggregateOverlayDrops(stats.currentDrops)")
+    overlaySource.includes("aggregateOverlayDrops(scopedDrops)")
       && overlaySource.includes("displayedDropGroups.map(({ key, drop, count, latestIndex })")
+      && overlaySource.includes('dropScope === "overview"')
       && overlaySource.includes("stats.removeCurrentDrop(latestIndex)"),
-    "statistics overlay groups repeated drops and removes the latest occurrence from a group",
+    "statistics overlay groups the selected drop range and limits front-end removal to the overview",
+  );
+  assert(
+    overlaySource.includes('type DropScope = "current" | "previous" | "overview"')
+      && overlaySource.includes('setDropScope(scopes[nextIndex])')
+      && overlaySource.includes('data-direction={dropSlideDirection}'),
+    "statistics overlay cycles smoothly between current, previous, and overview drops",
   );
   assert(
     overlaySource.includes('aria-live="polite"')
@@ -92,7 +122,8 @@ export function runTests() {
     "audio tracking remains active when the statistics window is hidden",
   );
   assert(
-    overlaySource.includes("stats.sessionRuns[getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)]")
+    overlaySource.includes("const currentSessionRuns = stats.sessionRuns[")
+      && overlaySource.includes("getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)")
       && statsSource.includes("const sessionKey = getSessionRunKey(currentRunName || currentScene, currentTz)"),
     "session run totals separate normal and terror-zone runs for automatic and manual finishes",
   );

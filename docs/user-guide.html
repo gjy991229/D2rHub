@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
-<title>D2RHub v0.9 使用手册</title>
+<title>D2RHub v0.9.12 使用手册</title>
 <style>
   :root {
     --bg: #090a0c;
@@ -227,7 +227,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.12</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -251,11 +251,11 @@
 
   <main>
     <header class="hero" id="overview">
-      <p class="eyebrow">CURRENT MANUAL · 2026-08</p>
-      <h1>D2RHub v0.9<br>使用手册</h1>
-      <p class="lede">面向当前 0.9.x 统一桌面版本的完整操作说明，覆盖国服/国际服双客户端、多账号认证、音频声纹、悬浮窗与本地统计。</p>
+      <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
+      <h1>D2RHub v0.9.12<br>使用手册</h1>
+      <p class="lede">面向 v0.9.12 桌面版本的完整操作说明，覆盖首次披露、国服/国际服双客户端、多账号认证、按需模块、音频声纹、悬浮窗与本地统计。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.x</span>
+        <span class="badge accent">适用版本 v0.9.12</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -264,15 +264,16 @@
 
     <section>
       <h2>统一桌面版本</h2>
-      <p>D2RHub 只维护一个功能完整的桌面版本，默认包含账号管理、多开、画质设置、音频声纹、统计页、悬浮窗和桌宠。MSI 与 NSIS 使用相同代码和功能，只是安装格式不同。</p>
+      <p>D2RHub 只维护一个桌面发行版：账号管理、多开、画质设置和 Mod 管理属于核心能力；桌面悬浮窗、识别与统计、桌宠和自动跟房作为内置可选模块按需添加。MSI 与 NSIS 使用相同代码和功能，只是安装格式不同。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>能力</th><th>当前版本</th><th>说明</th></tr></thead>
           <tbody>
             <tr><td>账号管理、网页 Token / 战网认证、多开</td><td>支持</td><td>保持原有能力</td></tr>
             <tr><td>国服与国际服安装档案、账号独立画质</td><td>支持</td><td>保持原有能力</td></tr>
-            <tr><td>性能悬浮窗、快捷键、Bongo Cat</td><td>支持</td><td>保持原有能力</td></tr>
-            <tr><td>识别 Mod 一键准备、按进程声纹识别与统计</td><td>支持</td><td>统一版本默认包含</td></tr>
+            <tr><td>窗口快捷键、Mod 管理</td><td>支持</td><td>多开核心能力</td></tr>
+            <tr><td>桌面悬浮窗、Bongo Cat、自动跟房</td><td>按需添加</td><td>在模块管理中独立添加或卸载</td></tr>
+            <tr><td>识别 Mod 一键准备、按进程声纹识别与统计</td><td>按需添加</td><td>添加“识别与统计”时自动补齐悬浮窗依赖</td></tr>
           </tbody>
         </table>
       </div>
@@ -283,10 +284,11 @@
       <h2>快速开始</h2>
       <div class="steps">
         <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
+        <div class="step"><strong>阅读应用级说明</strong><p>当前版本首次打开时必须阅读并确认应用级说明。接受后才会激活全局输入监听、声纹监控、可选能力监督器和 Mod 启动扫描；选择退出不会启动这些运行服务。</p></div>
         <div class="step"><strong>至少配置一套客户端档案</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。使用战网认证时，再填写该客户端的 Battle.net.exe。</p></div>
         <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
-        <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，使用“启动全部”依次处理全部可用账号，或创建并复用命名启动组。启动进度和错误会显示在卡片及运行日志中。</p></div>
-        <div class="step"><strong>一键准备并开启识别</strong><p>在“设置中心 → 自动化”选择已初始化账号，再选择“我玩原版”或一个现有 Mod，并为生成的新 Mod 输入名称，点击“一键准备并开启”。无论是否使用源 Mod，名称都为必填，仅可使用英文字母、数字、短横线和下划线。D2RHub 会生成并复核新的识别 Mod，同时为该账号配置 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>；游戏已运行时需重启该账号一次。</p></div>
+        <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，使用“启动全部”依次处理所有可用账号，或创建并复用命名启动方案。常用方案可以固定在主界面直接启动；启动进度和错误会显示在卡片及运行日志中。</p></div>
+        <div class="step"><strong>一键准备并开启识别</strong><p>如需声纹功能，先在“设置中心 → 可选功能 → 模块管理”添加“识别与统计”并确认模块说明，再选择已初始化账号、“我玩原版”或一个现有 Mod，并为生成的新 Mod 输入名称，点击“一键准备并开启”。无论是否使用源 Mod，名称都为必填，仅可使用英文字母、数字、短横线和下划线。D2RHub 会生成并复核新的识别 Mod，同时为该账号配置 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>；游戏已运行时需重启该账号一次。</p></div>
       </div>
       <div class="callout"><strong>路径检测边界：</strong>当前向导可自动探测国服/国际服存档目录、Agent、Roaming 配置和 Edge/Chrome；游戏安装目录及 Battle.net.exe 仍应由你确认或手动选择。</div>
     </section>
@@ -314,6 +316,7 @@
       <p class="eyebrow">03 · ACCOUNTS</p>
       <h2>账号与认证</h2>
       <p>添加账号向导顺序为：<strong>昵称 → 区服/语言/配音 → 认证模式 → 获取 Token → 粘贴 Token</strong>。选择战网认证后，流程会改为客户端登录、采集本地认证快照并清理临时状态。</p>
+      <p>战网账号初始化成功后，以账号目录内带客户端版本清单的 <code>runtime/</code> 快照作为权威认证来源。若该新版快照缺失、损坏或版区不匹配，程序会要求重新初始化，不会静默改用可能过期的顶层旧文件；只有从未迁移、仍标记为已初始化且能由唯一产品键证明版区的纯旧账号，才允许兼容恢复。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
@@ -337,13 +340,14 @@
 
     <section id="launch">
       <p class="eyebrow">04 · LAUNCH</p>
-      <h2>启动组与进程控制</h2>
+      <h2>启动方案与进程控制</h2>
       <ul>
         <li><strong>单账号：</strong>点击账号卡片的启动按钮。</li>
-        <li><strong>启动全部：</strong>按当前账号顺序依次处理全部可启动账号。</li>
-        <li><strong>启动组：</strong>从工具栏展开已保存的账号组合并直接启动；同一账号可以加入多个组。</li>
-        <li><strong>编辑启动组：</strong>新建或编辑时填写组名并勾选账号，再明确保存。取消编辑不会改变原配置；新增账号不会自动加入已有组。</li>
-        <li><strong>启动前检查：</strong>启动顺序跟随账号卡片当前排序；只要组内存在未初始化、已删除或需要迁移 Token 的账号，整组启动就会被阻止并提示先处理。</li>
+        <li><strong>启动全部：</strong>按当前账号顺序依次处理所有可启动账号。</li>
+        <li><strong>启动方案：</strong>从工具栏展开已保存的账号组合并直接启动；同一账号可以加入多个方案。</li>
+        <li><strong>常用方案：</strong>在“启动方案”菜单中点击方案右侧的星标，可将其固定在“启动方案”和“一键关闭”之间；点击固定按钮即可直接启动，再次点击星标可移除。</li>
+        <li><strong>编辑启动方案：</strong>新建或编辑时填写方案名并勾选账号，再明确保存。取消编辑不会改变原配置；新增账号不会自动加入已有方案。</li>
+        <li><strong>启动前检查：</strong>启动顺序跟随账号卡片当前排序；只要方案内存在未初始化、已删除或需要迁移 Token 的账号，整个方案启动都会被阻止并提示先处理。</li>
         <li><strong>取消：</strong>启动队列运行时可以取消；程序会尽量收束本轮产生的战网/认证临时状态。</li>
         <li><strong>窗口聚焦：</strong>使用已绑定快捷键，或在展开悬浮窗双击账号名称。</li>
       </ul>
@@ -355,15 +359,18 @@
       <p class="eyebrow">05 · SETTINGS CENTER</p>
       <h2>设置中心速查</h2>
       <div class="metric-list">
-        <div class="metric"><strong>连接</strong><span>国服/国际服游戏、战网、存档、Agent、Roaming 与浏览器路径</span></div>
-        <div class="metric"><strong>账号</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
+        <div class="metric"><strong>运行环境</strong><span>国服/国际服游戏、战网、存档、Agent、Roaming 与浏览器路径</span></div>
+        <div class="metric"><strong>账号与实例</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
         <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；隔离浏览器和每日更新</span></div>
-        <div class="metric"><strong>快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
-        <div class="metric"><strong>显示</strong><span>界面语言、主题、主窗口/悬浮窗透明度、字体和悬浮窗开关</span></div>
-        <div class="metric"><strong>自动化</strong><span>声纹接收、追踪类别、目标账号、识别阈值、诊断与统计页</span></div>
-        <div class="metric"><strong>伴随</strong><span>Bongo Cat 开关、对话框、缩放和已解锁皮肤</span></div>
-        <div class="metric"><strong>维护</strong><span>打开日志目录、重新运行首次配置向导</span></div>
+        <div class="metric"><strong>窗口快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
+        <div class="metric"><strong>外观与界面</strong><span>界面语言、主题、主窗口透明度和字体</span></div>
+        <div class="metric"><strong>后台任务</strong><span>查看进度、取消、重试与诊断时间线</span></div>
+        <div class="metric"><strong>Mod 管理</strong><span>扫描、选择、编辑共享 Mod，并加工功能模块</span></div>
+        <div class="metric"><strong>模块管理</strong><span>按需添加或卸载桌面悬浮窗、识别与统计、桌宠和自动跟房</span></div>
+        <div class="metric"><strong>维护与迁移</strong><span>打开日志目录、重新运行首次配置向导与账号迁移</span></div>
       </div>
+      <h3>可选模块</h3>
+      <p>进入“设置中心 → 可选功能 → 模块管理”添加真正需要的模块。添加后模块才出现在可选功能导航；卸载会立即停止对应运行能力，但保留原设置供再次添加时恢复。“识别与统计”依赖“桌面悬浮窗”：添加识别模块会自动补齐依赖并开启场景统计与 TZ 播报，卸载悬浮窗时也会一并移除识别模块。桌宠和自动跟房可以独立管理。带有进程控制、输入或自动化风险的模块首次启用前会显示独立说明，未确认不会启用。</p>
       <h3>账号独立游戏设置</h3>
       <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。修改会自动保存。选择“系统配置”时跟随当前存档目录的 <code>Settings.json</code>；选择独立配置后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置到当前账号”。</p>
     </section>
@@ -372,13 +379,13 @@
       <p class="eyebrow">06 · PERFORMANCE OVERLAY</p>
       <h2>性能悬浮窗</h2>
       <p>悬浮窗常驻桌面上方，可显示运行账号、当前场景、刷图计时和所选掉落。场景统计窗口会把同类物品合并为 <code>#15 海尔 ×2</code> 一类的计数胶囊；刚识别的掉落会在分组列表上方短时弹出，最多同时显示 3 种。分组列表默认显示最近 5 种，点击“展开其余”可查看全部，再次点击即可收起。</p>
-      <p>分组右侧的删除按钮只移除该组最近一次掉落。统计悬浮窗也支持贴边自动隐藏，但始终保持完整布局，不切换迷你模式。关闭场景统计窗口只会隐藏界面；只要“音频声纹自动识别”仍处于开启状态，按进程捕获、计时与落库会继续运行。</p>
+      <p>分组右侧的删除按钮只移除该组最近一次掉落。统计悬浮窗支持贴边自动隐藏，也可切换为只显示识别场景、计时器和本次场次的迷你模式；迷你模式固定当前位置、关闭缩放并开启鼠标穿透。关闭场景统计窗口只会隐藏界面；只要“音频声纹自动识别”仍处于开启状态，按进程捕获、计时与落库会继续运行。</p>
       <h3>展开与迷你</h3>
       <ul>
-        <li>展开模式双击空白区域，或迷你模式双击悬浮窗，可切换模式。</li>
-        <li>窗口获得焦点时按 <kbd>Enter</kbd> 或 <kbd>Space</kbd> 也可切换。</li>
-        <li>展开和迷你模式分别记住尺寸；展开模式双击账号可聚焦对应游戏。</li>
-        <li>迷你双层布局最低为 <strong>36 逻辑像素</strong>；继续向下缩放会切成单行，最低为 <strong>18 逻辑像素</strong>。拉高到阈值会恢复双层；高 DPI / 2K 屏会按系统缩放正确换算。</li>
+        <li>TZ 播报窗可在任意位置双击切换；场景统计窗在正常模式下双击空白区域切换，账号和计时器仍保留原有操作。</li>
+        <li>窗口获得焦点时按 <kbd>Enter</kbd> 也可切换；统计窗进入迷你模式后仍可用 <kbd>Enter</kbd> 返回正常模式。</li>
+        <li>统计窗迷你模式开启鼠标穿透；鼠标悬浮时会提示切换方式，双击其显示区域仍会恢复正常模式，但点击会继续传递给下方窗口。</li>
+        <li>正常模式记住用户调整的尺寸；统计窗迷你模式使用固定的一行摘要尺寸，且不可移动或缩放。</li>
       </ul>
       <h3>贴边吸附与自动隐藏</h3>
       <ol>
@@ -436,7 +443,7 @@
           </tbody>
         </table>
       </div>
-      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>config\stateData</code> 或导出 JSON。</div>
+      <div class="callout danger"><strong>删除不可撤销：</strong>在统计页删除整场或单个掉落会直接改写本地数据库。重要数据请先备份 <code>%APPDATA%\D2RHub\stateData</code> 或导出 JSON。</div>
     </section>
 
     <section id="pet">
@@ -453,19 +460,22 @@
     <section id="data">
       <p class="eyebrow">10 · DATA & PRIVACY</p>
       <h2>数据位置、备份与更新</h2>
-      <p>D2RHub 当前使用<strong>程序可执行文件同级目录</strong>保存运行数据，而不是 Windows AppData：</p>
+      <p>D2RHub 使用当前 Windows 用户的 <strong><code>%APPDATA%\D2RHub</code></strong> 保存运行数据；日志保存在程序可执行文件同级目录：</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>位置</th><th>内容</th></tr></thead>
           <tbody>
-            <tr><td><code>config\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
-            <tr><td><code>config\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照、账号游戏设置</td></tr>
-            <tr><td><code>config\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\global_config.json</code></td><td>全局路径、界面、启动策略、快捷键、声纹与桌宠设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\accounts\</code></td><td>账号元数据、DPAPI 加密 Token、带版本清单的 Battle.net / UnifiedAuth 运行快照、账号游戏设置</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\modules\</code></td><td>可选模块的版本化 sidecar 配置、备份与恢复数据</td></tr>
+            <tr><td><code>%APPDATA%\D2RHub\stateData\data.db</code></td><td>场次历史与通用掉落声纹观测数据库（旧符文观测会自动迁移）</td></tr>
             <tr><td><code>logs\</code></td><td>程序运行日志；每次启动新建，自动最多保留 16 个</td></tr>
           </tbody>
         </table>
       </div>
-      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>config</code> 目录；排障需要时也可一并备份 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
+      <p>从旧版便携格式升级时，程序会自动把程序同级 <code>config</code> 搬迁到用户数据目录；迁移失败会继续使用旧目录并在下次启动重试。如果新旧两处都已有配置、账号或统计数据，程序会保留两边而不会静默合并或覆盖，并在日志中报告冲突。</p>
+      <p>应用级说明的接受状态按应用版本保存在当前 Windows 用户的本地存储中，升级版本后会重新显示。确认前不会启动全局输入监听、声纹监控、可选能力监督器或 Mod 启动扫描；可选模块说明则按模块单独记录。</p>
+      <p>迁移或重装前，退出 D2RHub 并备份整个 <code>%APPDATA%\D2RHub</code> 目录；如果旧 <code>config</code> 仍存在或日志报告迁移冲突，请在核对完成前同时备份它。排障需要时也可一并备份程序同级 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
       <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
       <p>D2RHub 不会主动上传账号配置、Token 或声纹统计。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；统计数据留在本机。</p>
     </section>
@@ -476,7 +486,7 @@
       <h3>账号无法创建或对应区服不可选</h3>
       <p>检查该客户端的游戏目录和存档目录是否成组配置。战网认证还需对应客户端的 Battle.net.exe；亚/美/欧服统一检查国际服档案。</p>
       <h3>战网初始化超时或快照失效</h3>
-      <p>确认 Battle.net 已实际登录完成、路径对应正确客户端，并避免同时执行另一个战网认证操作。账号卡片显示过期或启动失败时，执行重新初始化。</p>
+      <p>确认 Battle.net 已实际登录完成、路径对应正确客户端，并避免同时执行另一个战网认证操作。账号卡片显示过期、<code>runtime/</code> 快照缺失/损坏或启动失败时，执行重新初始化；不要手工复制顶层旧认证文件来绕过快照校验。</p>
       <h3>网页 Token 获取页打不开</h3>
       <p>在“连接”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
       <h3>画质设置无法读取</h3>
@@ -492,7 +502,7 @@
     </section>
 
     <footer class="footer">
-      D2RHub v0.9.x · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.12 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>

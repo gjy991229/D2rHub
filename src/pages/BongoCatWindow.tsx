@@ -1,14 +1,14 @@
 import { useState, useEffect, useRef } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand, listenEvent } from "../platform/tauri";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
-import { useGlobalConfig, initConfigListener } from "../store/globalConfig";
+import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
+import type { GlobalConfig } from "../store/types";
 import { Lock, Check } from "lucide-react";
 import { DROPS, WHITE_DROPS_COMMON, WHITE_DROPS_THEMED } from "./catDropsData";
 import { useWindowPlacementSave } from "../hooks/useWindowPlacementSave";
 import { usePreventDragRegionDoubleClick } from "../hooks/useAppEffects";
 import {
   restoreWindowPlacement,
-  setAuxiliaryWindowVisible,
   type LegacyWindowGeometry,
 } from "../utils/windowPlacement";
 
@@ -22,7 +22,8 @@ interface ActiveDrop {
 }
 
 export function BongoCatWindow() {
-  const { config, save, load } = useGlobalConfig();
+  const { config } = useGlobalConfig();
+  const isEnglish = config?.app_language === "en-US";
   const [clickCount, setClickCount] = useState(0);
   const placementRestoredRef = useRef(false);
   const markPlacementInteraction = useWindowPlacementSave({
@@ -32,7 +33,6 @@ export function BongoCatWindow() {
 
   // Load config on mount
   useEffect(() => {
-    load();
     // Apply font scale on startup
     try {
       const saved = localStorage.getItem("d2rhub-font-scale");
@@ -44,10 +44,10 @@ export function BongoCatWindow() {
     } catch {
       document.documentElement.dataset.fontScale = "default";
     }
-    // Start config listener for live updates from main window
+    // Subscribe before loading so no main-window commit is missed.
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then(fn => {
+    initConfigSync().then(fn => {
       if (cancelled) fn();
       else unlisten = fn;
     });
@@ -55,7 +55,7 @@ export function BongoCatWindow() {
       cancelled = true;
       unlisten?.();
     };
-  }, [load]);
+  }, []);
 
   // Sync font scale from config changes
   useEffect(() => {
@@ -148,8 +148,9 @@ export function BongoCatWindow() {
 
   // Global events listener
   useEffect(() => {
-    const unlisten = listen<string>("global-input-event", (event) => {
+    const unlisten = listenEvent<string>("global-input-event", (event) => {
       const type = event.payload;
+      if (type !== "Keyboard" && type !== "MouseLeft" && type !== "MouseRight") return;
 
       // 1. Increment counter
       setClickCount((c) => c + 1);
@@ -182,19 +183,19 @@ export function BongoCatWindow() {
 
   // Listen for launch-ended events from store and trigger success/failure drops
   useEffect(() => {
-    const unlistenPromise = listen<{ success: boolean }>("launch-ended", (event) => {
+    const unlistenPromise = listenEvent<{ success: boolean }>("launch-ended", (event) => {
       const { success } = event.payload;
       if (success) {
-        addDrop("启动成功！", "#189f18"); // Trigger green success pop-up
+        addDrop(isEnglish ? "Launch complete!" : "启动成功！", "#189f18"); // Trigger green success pop-up
       } else {
-        addDrop("启动失败...检查一下？", "#ff3333"); // Trigger red/yellow failure pop-up
+        addDrop(isEnglish ? "Launch failed — check status" : "启动失败...检查一下？", "#ff3333"); // Trigger red/yellow failure pop-up
       }
     });
 
     return () => {
       unlistenPromise.then((u) => u());
     };
-  }, []);
+  }, [isEnglish]);
 
 
 
@@ -213,7 +214,7 @@ export function BongoCatWindow() {
 
       // Special: unlock Mage skin
       if (!config?.bongo_cat_unlocked_skins?.includes("mage")) {
-        save({ ...config!, bongo_cat_unlocked_skins: [...(config?.bongo_cat_unlocked_skins || []), "mage"] });
+        void patchPetSettings({ bongo_cat_unlocked_skins: [...(config?.bongo_cat_unlocked_skins || []), "mage"] });
       }
     } else if (rand < 0.0004) { // 0.03% Unique/Gold (暗金色)
       rolledQuality = "gold";
@@ -261,9 +262,16 @@ export function BongoCatWindow() {
     setMenuPos(null);
   };
 
+  const patchPetSettings = async (patch: Partial<Pick<GlobalConfig,
+    "enable_bongo_cat" | "bongo_cat_skin" | "bongo_cat_unlocked_skins"
+  >>) => {
+    const saved = await invokeCommand<GlobalConfig>("patch_desktop_pet_settings", { patch });
+    useGlobalConfig.setState({ config: saved });
+  };
+
   const hideWindow = async () => {
     try {
-      await setAuxiliaryWindowVisible("bongo-cat", false);
+      await patchPetSettings({ enable_bongo_cat: false });
     } catch {}
   };
 
@@ -382,29 +390,29 @@ export function BongoCatWindow() {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-2.5 py-1 text-2xs font-bold text-neutral-500 uppercase tracking-wider select-none">
-            选择皮肤
+            {isEnglish ? "Choose skin" : "选择皮肤"}
           </div>
           <button              onClick={() => {
-                save({ ...config!, bongo_cat_skin: "original" });
+                void patchPetSettings({ bongo_cat_skin: "original" });
                 setMenuPos(null);
               }}
               className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded text-xs hover:bg-neutral-800 text-neutral-200"
             >
-              <span>原版猫咪</span>
+              <span>{isEnglish ? "Original cat" : "原版猫咪"}</span>
               {config?.bongo_cat_skin === "original" && <Check size={10} className="text-accent" />}
             </button>
 
             <button
               onClick={() => {
                 if (config?.bongo_cat_unlocked_skins?.includes("mage")) {
-                  save({ ...config!, bongo_cat_skin: "mage" });
+                  void patchPetSettings({ bongo_cat_skin: "mage" });
                 }
                 setMenuPos(null);
               }}
               disabled={!config?.bongo_cat_unlocked_skins?.includes("mage")}
               className="w-full flex items-center justify-between text-left px-2.5 py-1.5 rounded text-xs hover:bg-neutral-800 text-neutral-200 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <span>法师猫咪</span>
+              <span>{isEnglish ? "Mage cat" : "法师猫咪"}</span>
               {config?.bongo_cat_unlocked_skins?.includes("mage") ? (
                 config?.bongo_cat_skin === "mage" && <Check size={10} className="text-accent" />
               ) : (
@@ -418,14 +426,14 @@ export function BongoCatWindow() {
             onClick={() => { setClickCount(0); closeMenu(); }}
             className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-neutral-800 text-neutral-200"
           >
-            重置计数
+            {isEnglish ? "Reset count" : "重置计数"}
           </button>
 
           <button
             onClick={() => { hideWindow(); closeMenu(); }}
             className="w-full text-left px-2.5 py-1.5 rounded text-xs hover:bg-neutral-800 text-red-400 hover:text-red-300"
           >
-            关闭悬浮窗
+            {isEnglish ? "Close companion" : "关闭悬浮窗"}
           </button>
         </div>
       )}

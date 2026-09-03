@@ -1,8 +1,9 @@
 use crate::commands::account::AccountManager;
-use crate::commands::global_config::GlobalConfig;
 use crate::commands::utils::{sanitize_folder_name, shared_system, silent_cmd};
+use crate::domain::account::AuthMode;
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
-use crate::launch_context::{paths_have_same_identity, AuthMode};
+use crate::launch_context::paths_have_same_identity;
 use crate::state::{AccountLifecycleLease, SharedState};
 use sysinfo::ProcessesToUpdate;
 
@@ -244,15 +245,13 @@ pub fn launch_browser_for_account(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let config = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
 
     // 在启动浏览器之前，收集现有的 Chrome/Edge 窗口句柄列表
     #[cfg(target_os = "windows")]
-    let before_hwnds = crate::commands::system::collect_chrome_windows();
+    let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
     let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
     if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
@@ -263,7 +262,7 @@ pub fn launch_browser_for_account(
 
     // 启动后台监测线程，自动将新打开的浏览器空白窗口置顶并激活
     #[cfg(target_os = "windows")]
-    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
 
     Ok(())
 }
@@ -334,14 +333,12 @@ pub fn open_url_in_browser(
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let config = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
 
     #[cfg(target_os = "windows")]
-    let before_hwnds = crate::commands::system::collect_chrome_windows();
+    let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
     ensure_browser_path_allowed(&config, &browser_path)?;
     ensure_allowed_bnet_login_url(&url)?;
@@ -354,7 +351,7 @@ pub fn open_url_in_browser(
     }
 
     #[cfg(target_os = "windows")]
-    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
 
     Ok(())
 }
@@ -365,7 +362,7 @@ mod tests {
         browser_profile_name, browser_profile_paths, ensure_allowed_bnet_login_url,
         private_browser_arguments,
     };
-    use crate::commands::global_config::GlobalConfig;
+    use crate::domain::config::GlobalConfig;
     use std::path::Path;
 
     #[test]

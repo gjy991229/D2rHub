@@ -44,6 +44,7 @@ export interface GlobalConfig {
   app_data_roaming_bnet_path: string;
   accounts_dir: string;
   first_run_complete: boolean;
+  installed_optional_modules?: string[];
   browser_path: string;
   browser_type: string;
   enable_bongo_cat: boolean;
@@ -76,6 +77,43 @@ export interface GlobalConfig {
   agent_delay_secs?: number;
   agent_threshold?: number;
   launch_groups: LaunchGroup[];
+  favorite_launch_group_ids?: string[];
+}
+
+// ── 可选能力运行状态 ──
+
+/**
+ * Runtime state reported by the backend capability supervisor.
+ *
+ * This deliberately describes observed lifecycle state, not a value inferred
+ * from global configuration. `requested_enabled` remains separate so a module
+ * that was requested but failed to start is not presented as healthy.
+ */
+export type CapabilityRuntimeState =
+  | "disabled"
+  | "stopped"
+  | "starting"
+  | "running"
+  | "degraded"
+  | "failed";
+
+export interface CapabilityStatus {
+  /** Stable, non-localized, kebab-case module identifier. */
+  id: string;
+  /** Persisted user intent as resolved by the backend compatibility adapter. */
+  requested_enabled: boolean;
+  /** Actual lifecycle state observed by the backend supervisor. */
+  state: CapabilityRuntimeState;
+  /** Stable machine-readable reason; localized copy remains frontend-owned. */
+  reason_code: string | null;
+  /** Sanitized backend failure detail for diagnostics and recovery guidance. */
+  last_error?: string | null;
+}
+
+export interface CapabilityStatusSnapshot {
+  /** Monotonic backend revision used to reject stale command responses. */
+  revision: number;
+  capabilities: CapabilityStatus[];
 }
 
 // ── 数据统计 ──
@@ -157,6 +195,17 @@ export interface ItemAudioEvent {
   confidence: number;
 }
 
+export interface TrackingDropSnapshot {
+  observation_id: number;
+  kind: DropKind;
+  telemetry_id: number;
+  code?: string | null;
+  category: string;
+  name: string;
+  name_en: string;
+  rune_number?: number | null;
+}
+
 export interface TrackingSnapshot {
   revision: number;
   account_id: string;
@@ -172,16 +221,9 @@ export interface TrackingSnapshot {
   current_run_key: string | null;
   current_run_name: string | null;
   current_run_name_en: string | null;
-  current_run_drops: Array<{
-    observation_id: number;
-    kind: DropKind;
-    telemetry_id: number;
-    code?: string | null;
-    category: string;
-    name: string;
-    name_en: string;
-    rune_number?: number | null;
-  }>;
+  current_run_drops: TrackingDropSnapshot[];
+  previous_run_drops?: TrackingDropSnapshot[];
+  session_drops?: TrackingDropSnapshot[];
   session_runs: Record<string, number>;
 }
 
@@ -243,9 +285,20 @@ export interface AudioModRuntimeWarning {
 
 export interface InstalledAudioMod {
   name: string;
+  source_mod_name?: string | null;
   audio_ready: boolean;
   update_required: boolean;
   source_eligible: boolean;
+  feature_groups: string[];
+  audio_reusable: boolean;
+  auto_exit_on_death_enabled: boolean;
+}
+
+export interface AudioModFeatureGroup {
+  id: string;
+  recipe_version: number;
+  fingerprint: string;
+  reused_from_source: boolean;
 }
 
 export interface AudioModSetupState {
@@ -260,6 +313,8 @@ export interface AudioModSetupState {
   required_recipe_version: number;
   build_mode: "minimal" | "augment" | null;
   source_mod_name: string | null;
+  feature_groups: string[];
+  auto_exit_on_death_enabled: boolean;
   reason_code: string;
   message: string;
   installed_mods: InstalledAudioMod[];
@@ -268,4 +323,38 @@ export interface AudioModSetupState {
   active_session_ready: boolean | null;
   active_session_update_required: boolean | null;
   restart_required: boolean;
+}
+
+export interface ModCapsule {
+  id: string;
+  edition: "CN" | "Global" | string;
+  name: string;
+  origin: "scanned" | "custom" | string;
+  launch_arguments: string;
+  default_launch_arguments: string | null;
+  source_mod_name?: string | null;
+  feature_groups: string[];
+  auto_exit_on_death_enabled?: boolean;
+  processed: boolean;
+  source_eligible: boolean;
+  update_required: boolean;
+  ready: boolean;
+  deletable: boolean;
+  assigned_account_ids: string[];
+}
+
+export interface ModCapsuleAccountSelection {
+  account_id: string;
+  account_name: string;
+  edition: "CN" | "Global" | string | null;
+  selected_capsule_id: string | null;
+  legacy_mod_arguments: string;
+  issue: string | null;
+}
+
+export interface ModCapsulePool {
+  generation: number;
+  scanned_at: string;
+  capsules: ModCapsule[];
+  accounts: ModCapsuleAccountSelection[];
 }

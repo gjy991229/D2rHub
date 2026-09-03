@@ -445,12 +445,27 @@ fn migrate_legacy_drops(drops_json: &str) -> Vec<DropEntry> {
     Vec::new()
 }
 
+fn ensure_stats_module_installed(state: &SharedState) -> Result<(), String> {
+    let installed = state
+        .configuration()
+        .snapshot()
+        .is_some_and(|config| {
+            config.optional_module_installed(
+                crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+            )
+        });
+    installed
+        .then_some(())
+        .ok_or_else(|| "识别与统计模块尚未安装".to_string())
+}
+
 /// 保存一条场景记录
 #[tauri::command]
 pub fn save_scene_record(
     state: tauri::State<'_, SharedState>,
     record: SceneRecord,
 ) -> Result<(), String> {
+    ensure_stats_module_installed(state.inner())?;
     save_scene_record_inner(&state, &record).map(|_| ())
 }
 
@@ -695,6 +710,7 @@ fn update_merge_strategy(
 /// 获取所有统计数据（结构体形式，供前端使用）
 #[tauri::command]
 pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData, String> {
+    ensure_stats_module_installed(state.inner())?;
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
     let records = query_scene_records(&conn)?;
@@ -712,6 +728,7 @@ pub fn get_stats_data(state: tauri::State<'_, SharedState>) -> Result<StatsData,
 pub fn get_stats_page_preferences(
     state: tauri::State<'_, SharedState>,
 ) -> Result<Option<serde_json::Value>, String> {
+    ensure_stats_module_installed(state.inner())?;
     read_stats_page_preferences(&state.app_data_dir)
 }
 
@@ -720,6 +737,7 @@ pub fn save_stats_page_preferences(
     state: tauri::State<'_, SharedState>,
     preferences: serde_json::Value,
 ) -> Result<(), String> {
+    ensure_stats_module_installed(state.inner())?;
     write_stats_page_preferences(&state.app_data_dir, &preferences)
 }
 
@@ -801,6 +819,7 @@ pub fn get_scene_avg_time(
     scene_name: String,
     tz: Option<bool>,
 ) -> Result<Option<f64>, String> {
+    ensure_stats_module_installed(state.inner())?;
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
     Ok(query_scene_stats(&conn, &scene_name, tz.unwrap_or(false))?.map(|stats| stats.avg_time))
@@ -820,6 +839,7 @@ pub fn get_scene_stats(
     scene_name: String,
     tz: Option<bool>,
 ) -> Result<Option<SceneStats>, String> {
+    ensure_stats_module_installed(state.inner())?;
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
     query_scene_stats(&conn, &scene_name, tz.unwrap_or(false))
@@ -828,6 +848,7 @@ pub fn get_scene_stats(
 /// 删除一条场景记录（不可恢复）
 #[tauri::command]
 pub fn delete_scene_record(state: tauri::State<'_, SharedState>, id: i64) -> Result<(), String> {
+    ensure_stats_module_installed(state.inner())?;
     let db = get_db(&state.app_data_dir)?;
     let conn = db.lock().map_err(|e| format!("数据库锁失败: {}", e))?;
 
@@ -979,24 +1000,54 @@ const STATS_API_CORS_HEADERS: &str = "Access-Control-Allow-Origin: null\r\n\
                                        Access-Control-Allow-Methods: GET, POST, PUT, DELETE, OPTIONS\r\n\
                                        Access-Control-Allow-Headers: Content-Type, X-D2RHub-Stats-Token\r\n";
 
-/// 统计 API 服务端口
-static STATS_API_PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
-static STATS_API_TOKEN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+struct StatsApiRuntime {
+    port: u16,
+    token: String,
+    worker: std::thread::JoinHandle<()>,
+}
+
+static STATS_API_RUNTIME: std::sync::OnceLock<std::sync::Mutex<Option<StatsApiRuntime>>> =
+    std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static STATS_API_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn stats_api_runtime() -> &'static std::sync::Mutex<Option<StatsApiRuntime>> {
+    STATS_API_RUNTIME.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+pub(crate) fn stop_stats_api() {
+    STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    let runtime = stats_api_runtime()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .take();
+    let Some(runtime) = runtime else {
+        return;
+    };
+    // Wake `listener.incoming()` so the worker can observe the stop flag.
+    let _ = std::net::TcpStream::connect(("127.0.0.1", runtime.port));
+    if runtime.worker.join().is_err() {
+        crate::logger::log_msg("WARN", "Stats", "统计 API 线程停止时发生 panic");
+    }
+}
 
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
 fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
-    if STATS_API_RUNNING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        let port = STATS_API_PORT
-            .get()
-            .copied()
+    let mut runtime = stats_api_runtime()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    if STATS_API_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+        let running = runtime
+            .as_ref()
             .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
-        let token = STATS_API_TOKEN
-            .get()
-            .cloned()
-            .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
-        return Ok((port, token));
+        return Ok((running.port, running.token.clone()));
     }
+    if let Some(stale) = runtime.take() {
+        let _ = stale.worker.join();
+    }
+    STATS_API_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
+    let generation = STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| {
         STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1018,7 +1069,9 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
 
     let api_thread = std::thread::Builder::new().name("stats-api".into()).spawn(move || {
         for stream in listener.incoming() {
-            if !STATS_API_RUNNING.load(std::sync::atomic::Ordering::SeqCst) {
+            if !STATS_API_RUNNING.load(std::sync::atomic::Ordering::SeqCst)
+                || STATS_API_GENERATION.load(std::sync::atomic::Ordering::SeqCst) != generation
+            {
                 break;
             }
             if let Ok(mut stream) = stream {
@@ -1442,14 +1495,23 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
                 let _ = stream.write_all(resp_body.as_bytes());
             }
         }
+        if STATS_API_GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation {
+            STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     });
-    if let Err(error) = api_thread {
-        STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-        return Err(format!("启动统计 API 线程失败: {error}"));
-    }
+    let api_thread = match api_thread {
+        Ok(worker) => worker,
+        Err(error) => {
+            STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+            return Err(format!("启动统计 API 线程失败: {error}"));
+        }
+    };
 
-    let _ = STATS_API_PORT.set(port);
-    let _ = STATS_API_TOKEN.set(api_token.clone());
+    *runtime = Some(StatsApiRuntime {
+        port,
+        token: api_token.clone(),
+        worker: api_thread,
+    });
     Ok((port, api_token))
 }
 
@@ -1468,6 +1530,15 @@ pub fn open_stats_page(
     state: tauri::State<'_, SharedState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "全局配置尚未加载".to_string())?;
+    if !config.optional_module_installed(
+        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+    ) {
+        return Err("识别与统计模块尚未安装".to_string());
+    }
     // 1. 查询统计数据
     let stats_data = get_stats_data_inner(&state.app_data_dir)?;
     let stats_json =
@@ -1514,12 +1585,10 @@ pub fn open_stats_page(
         .unwrap_or_else(|| "null".to_string());
     let preferences_json = escape_json_for_html_script(&preferences_json);
     let stats_theme = state
-        .config
-        .read()
-        .as_ref()
-        .map(|config| config.theme.as_str())
-        .unwrap_or("light")
-        .to_string();
+        .configuration()
+        .snapshot()
+        .map(|config| config.theme)
+        .unwrap_or_else(|| "light".to_string());
     let html = render_stats_template(
         &template,
         &stats_json,

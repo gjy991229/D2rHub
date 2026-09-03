@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 interface Options {
@@ -44,7 +44,7 @@ export function useWindowPlacementSave({
         const logicalHeight = Math.round(size.height / scaleFactor);
         if (logicalWidth < minWidth || logicalHeight < minHeight) return;
 
-        await invoke("save_window_placement", {
+        await invokeCommand("save_window_placement", {
           label,
           positionOverride: null,
           dockEdge: null,

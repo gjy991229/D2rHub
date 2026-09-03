@@ -1,12 +1,14 @@
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::application::multi_instance::{GameWindowPort, WindowMatch};
 use crate::commands::account::{AccountManager, AccountMeta};
-use crate::commands::system;
+use crate::infrastructure::system;
 use crate::state::SharedState;
 
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
@@ -14,15 +16,333 @@ static KEYBOARD_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::nul
 static MOUSE_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static BONGO_CAT_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 static BONGO_CAT_INPUT_VISIBLE: AtomicBool = AtomicBool::new(false);
+static STATS_OVERLAY_MINI_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
+static STATS_OVERLAY_MINI_LEFT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_TOP: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_RIGHT: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_MINI_BOTTOM: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_LAST_CLICK_TIME: AtomicU32 = AtomicU32::new(0);
+static STATS_OVERLAY_LAST_CLICK_X: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
+static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
 static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
+static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
+    OnceLock::new();
+static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
+static ACTIVE_HANDLED_SHORTCUT_KEYS: OnceLock<parking_lot::Mutex<HashSet<u32>>> = OnceLock::new();
+static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Clone)]
+enum CapabilityShortcutSender {
+    Bounded(std::sync::mpsc::SyncSender<&'static str>),
+    Unbounded(std::sync::mpsc::Sender<&'static str>),
+}
+
+struct CapabilityShortcutRoute {
+    action: &'static str,
+    sender: CapabilityShortcutSender,
+}
+
+#[derive(Default)]
+struct CapabilityShortcutRegistry {
+    core: HashMap<String, usize>,
+    owners: HashMap<&'static str, (u64, HashMap<String, CapabilityShortcutRoute>)>,
+}
+
+/// RAII registration owned by an optional capability driver. Dropping the
+/// guard removes every route, so a disabled module cannot keep consuming a
+/// global shortcut.
+pub(crate) struct CapabilityShortcutRegistration {
+    owner_id: &'static str,
+    generation: u64,
+}
+
+fn capability_shortcuts() -> &'static parking_lot::RwLock<CapabilityShortcutRegistry> {
+    CAPABILITY_SHORTCUTS.get_or_init(|| parking_lot::RwLock::new(Default::default()))
+}
+
+fn active_handled_shortcut_keys() -> &'static parking_lot::Mutex<HashSet<u32>> {
+    ACTIVE_HANDLED_SHORTCUT_KEYS.get_or_init(|| parking_lot::Mutex::new(HashSet::new()))
+}
+
+/// Serializes durable core-shortcut commits with optional route registration.
+/// Callers may perform filesystem I/O while holding this lock, but must not
+/// call capability lifecycle hooks synchronously from the transaction.
+pub(crate) fn with_shortcut_routing_transaction<T>(operation: impl FnOnce() -> T) -> T {
+    let transaction = SHORTCUT_ROUTING_TRANSACTION.get_or_init(|| parking_lot::Mutex::new(()));
+    let _transaction = transaction.lock();
+    operation()
+}
+
+/// Replaces the committed core reservation projection. The caller must hold
+/// `with_shortcut_routing_transaction` whenever the values may differ from the
+/// previous commit.
+pub(crate) fn replace_core_shortcut_reservations(
+    shortcuts: impl IntoIterator<Item = (String, usize)>,
+) {
+    capability_shortcuts().write().core = shortcuts
+        .into_iter()
+        .filter_map(|(shortcut, position)| {
+            let shortcut = shortcut.trim().to_ascii_lowercase();
+            (!shortcut.is_empty()).then_some((shortcut, position))
+        })
+        .collect();
+}
+
+/// Rejects a core multi-instance shortcut that would be shadowed by an
+/// already-running optional capability. This closes the reverse registration
+/// order: capability startup already rejects core collisions, while global
+/// configuration saves must reject a later core assignment as well.
+pub(crate) fn validate_core_shortcut_reservations<'a>(
+    shortcuts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let registry = capability_shortcuts().read();
+    for shortcut in shortcuts {
+        let shortcut = shortcut.trim().to_ascii_lowercase();
+        if shortcut.is_empty() {
+            continue;
+        }
+        if let Some(owner) = registry
+            .owners
+            .iter()
+            .find_map(|(owner, (_, routes))| routes.contains_key(&shortcut).then_some(*owner))
+        {
+            return Err(format!(
+                "账号快捷键 {shortcut} 与已启用模块 {owner} 的快捷键冲突"
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn register_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Bounded(sender),
+        false,
+    )
+}
+
+pub(crate) fn register_unbounded_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::Sender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Unbounded(sender),
+        false,
+    )
+}
+
+/// Atomically replaces one capability's routes while preserving every other
+/// owner's conflict checks. The previous guard becomes inert through its
+/// generation token, so dropping it cannot remove the replacement.
+pub(crate) fn replace_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::SyncSender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Bounded(sender),
+        true,
+    )
+}
+
+pub(crate) fn replace_unbounded_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: std::sync::mpsc::Sender<&'static str>,
+) -> Result<CapabilityShortcutRegistration, String> {
+    install_capability_shortcuts(
+        owner_id,
+        routes,
+        CapabilityShortcutSender::Unbounded(sender),
+        true,
+    )
+}
+
+fn install_capability_shortcuts(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: CapabilityShortcutSender,
+    replace_owner: bool,
+) -> Result<CapabilityShortcutRegistration, String> {
+    with_shortcut_routing_transaction(|| {
+        install_capability_shortcuts_in_transaction(owner_id, routes, sender, replace_owner)
+    })
+}
+
+fn install_capability_shortcuts_in_transaction(
+    owner_id: &'static str,
+    routes: impl IntoIterator<Item = (String, &'static str)>,
+    sender: CapabilityShortcutSender,
+    replace_owner: bool,
+) -> Result<CapabilityShortcutRegistration, String> {
+    let mut normalized = HashMap::new();
+    for (shortcut, action) in routes {
+        let shortcut = shortcut.trim().to_ascii_lowercase();
+        if shortcut.is_empty() {
+            return Err(format!("capability {owner_id} 注册了空快捷键"));
+        }
+        if normalized
+            .insert(
+                shortcut.clone(),
+                CapabilityShortcutRoute {
+                    action,
+                    sender: sender.clone(),
+                },
+            )
+            .is_some()
+        {
+            return Err(format!("capability {owner_id} 的快捷键重复: {shortcut}"));
+        }
+    }
+    if normalized.is_empty() {
+        return Err(format!("capability {owner_id} 没有可注册的快捷键"));
+    }
+
+    let mut registry = capability_shortcuts().write();
+    if !replace_owner && registry.owners.contains_key(owner_id) {
+        return Err(format!("capability {owner_id} 的快捷键已注册"));
+    }
+    for shortcut in normalized.keys() {
+        if let Some(position) = registry.core.get(shortcut) {
+            return Err(format!(
+                "快捷键 {shortcut} 已由多开核心账号位置 {position} 使用"
+            ));
+        }
+        if let Some(conflicting_owner) = registry
+            .owners
+            .iter()
+            .filter(|(owner, _)| **owner != owner_id)
+            .find_map(|(owner, (_, routes))| routes.contains_key(shortcut).then_some(*owner))
+        {
+            return Err(format!(
+                "快捷键 {shortcut} 已由 capability {conflicting_owner} 注册"
+            ));
+        }
+    }
+    let generation = CAPABILITY_SHORTCUT_GENERATION.fetch_add(1, Ordering::Relaxed);
+    registry.owners.insert(owner_id, (generation, normalized));
+    Ok(CapabilityShortcutRegistration {
+        owner_id,
+        generation,
+    })
+}
+
+fn dispatch_capability_shortcut(shortcut: &str) -> bool {
+    let delivery = capability_shortcuts()
+        .read()
+        .owners
+        .values()
+        .find_map(|(_, routes)| {
+            routes
+                .get(shortcut)
+                .map(|route| (route.sender.clone(), route.action))
+        });
+    let Some((sender, action)) = delivery else {
+        return false;
+    };
+    match sender {
+        CapabilityShortcutSender::Bounded(sender) => match sender.try_send(action) {
+            Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => true,
+            Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
+        },
+        CapabilityShortcutSender::Unbounded(sender) => sender.send(action).is_ok(),
+    }
+}
+
+impl Drop for CapabilityShortcutRegistration {
+    fn drop(&mut self) {
+        let mut registry = capability_shortcuts().write();
+        if registry
+            .owners
+            .get(self.owner_id)
+            .is_some_and(|(generation, _)| *generation == self.generation)
+        {
+            registry.owners.remove(self.owner_id);
+        }
+    }
+}
 
 pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
 }
 
-#[tauri::command]
-pub fn set_bongo_cat_input_visible(visible: bool) {
+pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
+}
+
+#[tauri::command]
+pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    if visible {
+        let installed = app
+            .state::<SharedState>()
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| {
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+            });
+        if !installed {
+            return Err("桌宠模块尚未安装".to_string());
+        }
+    }
+    set_bongo_cat_input_visible_state(visible);
+    Ok(())
+}
+
+pub(crate) fn set_stats_overlay_mini_input_region_state(
+    enabled: bool,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
+    STATS_OVERLAY_MINI_LEFT.store(x, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_TOP.store(y, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_RIGHT.store(x.saturating_add_unsigned(width), Ordering::Relaxed);
+    STATS_OVERLAY_MINI_BOTTOM.store(y.saturating_add_unsigned(height), Ordering::Relaxed);
+    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+    STATS_OVERLAY_POINTER_INSIDE.store(false, Ordering::Relaxed);
+    STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
+}
+
+#[tauri::command]
+pub fn set_stats_overlay_mini_input_region(
+    app: AppHandle,
+    enabled: bool,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    if enabled {
+        let installed = app
+            .state::<SharedState>()
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| {
+                config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.optional_module_installed(
+                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                )
+            });
+        if !installed {
+            return Err("识别与统计模块尚未安装".to_string());
+        }
+    }
+    set_stats_overlay_mini_input_region_state(enabled, x, y, width, height);
+    Ok(())
 }
 
 /// RAII guard：Drop 时自动调用 UnhookWindowsHookEx 并清空对应的全局钩子指针，
@@ -66,7 +386,10 @@ const WH_KEYBOARD_LL: std::os::raw::c_int = 13;
 const WH_MOUSE_LL: std::os::raw::c_int = 14;
 
 const WM_KEYDOWN: usize = 0x0100;
+const WM_KEYUP: usize = 0x0101;
 const WM_SYSKEYDOWN: usize = 0x0104;
+const WM_SYSKEYUP: usize = 0x0105;
+const WM_MOUSEMOVE: usize = 0x0200;
 const WM_LBUTTONDOWN: usize = 0x0201;
 const WM_RBUTTONDOWN: usize = 0x0204;
 
@@ -102,6 +425,16 @@ struct KBDLLHOOKSTRUCT {
     dw_extra_info: usize,
 }
 
+#[repr(C)]
+#[allow(clippy::upper_case_acronyms)]
+struct MSLLHOOKSTRUCT {
+    pt: POINT,
+    mouse_data: u32,
+    flags: u32,
+    time: u32,
+    dw_extra_info: usize,
+}
+
 extern "system" {
     fn SetWindowsHookExW(
         idHook: std::os::raw::c_int,
@@ -131,6 +464,91 @@ extern "system" {
 
     fn GetKeyState(nVirtKey: i32) -> i16;
 
+    fn GetDoubleClickTime() -> u32;
+    fn GetSystemMetrics(nIndex: i32) -> i32;
+
+}
+
+unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) -> bool {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
+        return false;
+    }
+
+    if !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y) {
+        STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+        return false;
+    }
+
+    let previous_time = STATS_OVERLAY_LAST_CLICK_TIME.swap(mouse.time, Ordering::Relaxed);
+    let previous_x = STATS_OVERLAY_LAST_CLICK_X.swap(mouse.pt.x, Ordering::Relaxed);
+    let previous_y = STATS_OVERLAY_LAST_CLICK_Y.swap(mouse.pt.y, Ordering::Relaxed);
+    const SM_CXDOUBLECLK: i32 = 36;
+    const SM_CYDOUBLECLK: i32 = 37;
+    let max_delta_x = GetSystemMetrics(SM_CXDOUBLECLK).max(1) / 2;
+    let max_delta_y = GetSystemMetrics(SM_CYDOUBLECLK).max(1) / 2;
+    if !is_stats_overlay_double_click(
+        previous_time,
+        mouse.time,
+        previous_x,
+        previous_y,
+        mouse.pt.x,
+        mouse.pt.y,
+        GetDoubleClickTime(),
+        max_delta_x,
+        max_delta_y,
+    ) {
+        return false;
+    }
+
+    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
+    if let Some(tx) = INPUT_EVENT_TX.get() {
+        let _ = tx.send("StatsOverlayMiniToggle");
+    }
+    true
+}
+
+fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
+    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
+        return;
+    }
+
+    let inside = is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y);
+    if STATS_OVERLAY_POINTER_INSIDE.swap(inside, Ordering::Relaxed) == inside {
+        return;
+    }
+    if let Some(tx) = INPUT_EVENT_TX.get() {
+        let _ = tx.send(if inside {
+            "StatsOverlayMiniHoverEnter"
+        } else {
+            "StatsOverlayMiniHoverLeave"
+        });
+    }
+}
+
+fn is_inside_stats_overlay_mini_region(x: i32, y: i32) -> bool {
+    let left = STATS_OVERLAY_MINI_LEFT.load(Ordering::Relaxed);
+    let top = STATS_OVERLAY_MINI_TOP.load(Ordering::Relaxed);
+    let right = STATS_OVERLAY_MINI_RIGHT.load(Ordering::Relaxed);
+    let bottom = STATS_OVERLAY_MINI_BOTTOM.load(Ordering::Relaxed);
+    x >= left && x < right && y >= top && y < bottom
+}
+
+#[allow(clippy::too_many_arguments)]
+fn is_stats_overlay_double_click(
+    previous_time: u32,
+    current_time: u32,
+    previous_x: i32,
+    previous_y: i32,
+    current_x: i32,
+    current_y: i32,
+    max_delay: u32,
+    max_delta_x: i32,
+    max_delta_y: i32,
+) -> bool {
+    previous_time != 0
+        && current_time.wrapping_sub(previous_time) <= max_delay
+        && (current_x - previous_x).abs() <= max_delta_x
+        && (current_y - previous_y).abs() <= max_delta_y
 }
 
 /// 将虚拟键码转换为可读键名
@@ -221,10 +639,16 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
         if let Some(app) = &*guard {
             if let Some(state) = app.try_state::<SharedState>() {
                 let combo_lower = combo.to_lowercase();
-                let shortcut_map = state.shortcut_map.read();
-                if let Some(&pos) = shortcut_map.get(&combo_lower) {
-                    let config = state.config.read();
-                    if let Some(cfg) = config.as_ref() {
+                // Do not hold the shortcut-map lock while reading the
+                // configuration snapshot. Configuration updates rebuild the
+                // shortcut map, so overlapping both locks would invert that
+                // writer's lock order.
+                let position = {
+                    let shortcut_map = state.shortcut_map.read();
+                    shortcut_map.get(&combo_lower).copied()
+                };
+                if let Some(pos) = position {
+                    if let Some(cfg) = state.configuration().snapshot() {
                         let accounts_dir = cfg.accounts_dir.clone();
                         let app_clone = app.clone();
                         let combo_clone = combo.clone();
@@ -234,6 +658,13 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
                         return true; // 已处理，吞掉按键
                     }
                 }
+                // Multi-instance account focus is a core action and therefore
+                // always wins if a legacy or concurrently edited optional
+                // module happens to claim the same key. Module configuration
+                // validation still prevents new conflicts at rest.
+                if dispatch_capability_shortcut(&combo_lower) {
+                    return true;
+                }
             }
         }
     }
@@ -241,7 +672,7 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
 }
 
 /// 加载账号列表，找到指定位置的账号，聚焦其游戏窗口
-/// 优先通过 PID 查找（active_games），降级使用窗口标题精确匹配
+/// 优先通过实例注册表中的 PID 查找，降级使用兼容窗口标题匹配。
 fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usize, _combo: &str) {
     let ids = AccountManager::list_ids(accounts_dir);
     let mut accounts: Vec<AccountMeta> = Vec::new();
@@ -261,33 +692,41 @@ fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usiz
             &account.display_name
         };
 
-        // 1) 优先按 PID 查找（active_games 中有记录）
+        let windows = system::SystemGameWindowPort;
+        // 1) 优先按实例注册表中的 PID 查找；保留旧标题降级行为。
         if let Some(state) = app.try_state::<SharedState>() {
-            let active = state.active_games.read();
-            if let Some(&pid) = active.get(&account.id) {
-                if let Some(hwnd) = system::find_game_hwnd(pid) {
-                    crate::logger::log_msg(
-                        "INFO",
-                        "Shortcut",
-                        &format!(
-                            "快捷键触发(pid): 位置{} → 账号「{}」, pid={}",
-                            position, title, pid
-                        ),
-                    );
-                    system::bring_window_to_foreground_raw(hwnd);
-                    return;
+            let facade = state.multi_instance().facade();
+            if let Some(matched_by) = facade.focus_account_window(&windows, &account.id, title) {
+                match matched_by {
+                    WindowMatch::ProcessId => {
+                        let pid = facade.instance(&account.id).map(|instance| instance.pid);
+                        crate::logger::log_msg(
+                            "INFO",
+                            "Shortcut",
+                            &format!(
+                                "快捷键触发(pid): 位置{} → 账号「{}」, pid={}",
+                                position,
+                                title,
+                                pid.map(|value| value.to_string())
+                                    .unwrap_or_else(|| "unknown".to_string())
+                            ),
+                        );
+                    }
+                    WindowMatch::CompatibilityTitle => {
+                        crate::logger::log_msg(
+                            "INFO",
+                            "Shortcut",
+                            &format!("快捷键触发(title): 位置{} → 账号「{}」", position, title),
+                        );
+                    }
                 }
             }
-        }
-
-        // 2) 降级：按窗口标题精确匹配
-        if let Some(hwnd) = system::find_game_hwnd_by_title(title) {
+        } else if windows.focus_by_title_compat(title) {
             crate::logger::log_msg(
                 "INFO",
                 "Shortcut",
                 &format!("快捷键触发(title): 位置{} → 账号「{}」", position, title),
             );
-            system::bring_window_to_foreground_raw(hwnd);
         }
     }
 }
@@ -297,11 +736,28 @@ unsafe extern "system" fn keyboard_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
-    if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
+    if code >= 0 && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
+        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        if active_handled_shortcut_keys().lock().remove(&kbd.vk_code) {
+            // The matching key-down was a global shortcut and was swallowed.
+            // Swallow its key-up as well so D2R never receives an orphan event.
+            return 1;
+        }
+    } else if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
         // ── 快捷键检测 ──
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        if active_handled_shortcut_keys()
+            .lock()
+            .contains(&kbd.vk_code)
+        {
+            // Windows emits repeated key-down messages while a key is held.
+            // The first event already dispatched this shortcut; consume repeats
+            // without enqueueing duplicate room workflows.
+            return 1;
+        }
         // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
         if (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
+            active_handled_shortcut_keys().lock().insert(kbd.vk_code);
             // 快捷键已处理，吞掉该按键，不传递给其他应用
             return 1;
         }
@@ -322,6 +778,17 @@ unsafe extern "system" fn mouse_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    if code >= 0 && (wparam == WM_MOUSEMOVE || wparam == WM_LBUTTONDOWN) {
+        let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
+        if wparam == WM_MOUSEMOVE {
+            handle_stats_overlay_mini_pointer_move(mouse);
+        } else if handle_stats_overlay_mini_double_click(mouse) {
+            // The first click remains click-through. Swallow the confirming
+            // second press so the foreground game cannot also interpret the
+            // gesture as a double-click action.
+            return 1;
+        }
+    }
     if code >= 0
         && (wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN)
         && BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
@@ -340,16 +807,6 @@ unsafe extern "system" fn mouse_hook_proc(
 }
 
 pub fn start_input_listener(app_handle: AppHandle) {
-    if let Some(state) = app_handle.try_state::<SharedState>() {
-        let enabled = state
-            .config
-            .read()
-            .as_ref()
-            .map(|c| c.enable_bongo_cat)
-            .unwrap_or(false);
-        set_bongo_cat_input_enabled(enabled);
-    }
-
     if let Ok(mut guard) = APP_HANDLE.lock() {
         *guard = Some(app_handle.clone());
     }
@@ -407,4 +864,130 @@ pub fn start_input_listener(app_handle: AppHandle) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        dispatch_capability_shortcut, is_stats_overlay_double_click, register_capability_shortcuts,
+        replace_capability_shortcuts, replace_core_shortcut_reservations,
+        validate_core_shortcut_reservations, with_shortcut_routing_transaction,
+    };
+
+    static SHORTCUT_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn stats_overlay_click_through_double_click_keeps_time_and_position_limits() {
+        assert!(is_stats_overlay_double_click(
+            1_000, 1_240, 300, 200, 302, 201, 500, 2, 2,
+        ));
+        assert!(!is_stats_overlay_double_click(
+            1_000, 1_501, 300, 200, 302, 201, 500, 2, 2,
+        ));
+        assert!(!is_stats_overlay_double_click(
+            1_000, 1_240, 300, 200, 303, 201, 500, 2, 2,
+        ));
+    }
+
+    #[test]
+    fn capability_shortcuts_are_bounded_unique_and_owned_by_a_guard() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = register_capability_shortcuts(
+            "shortcut-router-test",
+            [(" Ctrl+Alt+R ".to_string(), "start-primary")],
+            sender.clone(),
+        )
+        .unwrap();
+
+        assert!(register_capability_shortcuts(
+            "shortcut-router-test",
+            [("Ctrl+Alt+J".to_string(), "start-followers")],
+            sender.clone(),
+        )
+        .is_err());
+        assert!(register_capability_shortcuts(
+            "shortcut-router-conflict-test",
+            [("ctrl+alt+r".to_string(), "conflict")],
+            sender,
+        )
+        .is_err());
+
+        assert!(dispatch_capability_shortcut("ctrl+alt+r"));
+        assert!(dispatch_capability_shortcut("ctrl+alt+r"));
+        assert_eq!(receiver.try_recv().unwrap(), "start-primary");
+        assert!(receiver.try_recv().is_err());
+
+        drop(registration);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+r"));
+    }
+
+    #[test]
+    fn capability_shortcut_replacement_is_atomic_and_old_guard_is_inert() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (old_sender, old_receiver) = std::sync::mpsc::sync_channel(1);
+        let old = register_capability_shortcuts(
+            "shortcut-replace-test",
+            [("Ctrl+Alt+R".to_string(), "old")],
+            old_sender,
+        )
+        .unwrap();
+        let (new_sender, new_receiver) = std::sync::mpsc::sync_channel(1);
+        let replacement = replace_capability_shortcuts(
+            "shortcut-replace-test",
+            [("Ctrl+Alt+J".to_string(), "new")],
+            new_sender,
+        )
+        .unwrap();
+
+        drop(old);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+r"));
+        assert!(dispatch_capability_shortcut("ctrl+alt+j"));
+        assert_eq!(new_receiver.recv().unwrap(), "new");
+        assert!(old_receiver.recv().is_err());
+
+        drop(replacement);
+        assert!(!dispatch_capability_shortcut("ctrl+alt+j"));
+    }
+
+    #[test]
+    fn active_capability_reservation_rejects_a_later_core_shortcut() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+        let registration = register_capability_shortcuts(
+            "shortcut-core-collision-test",
+            [("Ctrl+Alt+R".to_string(), "start-primary")],
+            sender,
+        )
+        .unwrap();
+
+        let error = validate_core_shortcut_reservations([" ctrl+ALT+r "]).unwrap_err();
+        assert!(error.contains("shortcut-core-collision-test"));
+        assert!(validate_core_shortcut_reservations(["Ctrl+1"]).is_ok());
+
+        drop(registration);
+        assert!(validate_core_shortcut_reservations(["Ctrl+Alt+R"]).is_ok());
+    }
+
+    #[test]
+    fn committed_core_shortcut_rejects_a_later_capability_route() {
+        let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
+        with_shortcut_routing_transaction(|| {
+            replace_core_shortcut_reservations([("Ctrl+F23".to_string(), 2)]);
+        });
+        let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
+
+        let error = register_capability_shortcuts(
+            "shortcut-after-core-test",
+            [("ctrl+f23".to_string(), "optional")],
+            sender,
+        )
+        .err()
+        .expect("core collision must reject the optional route");
+        assert!(error.contains("多开核心账号位置 2"));
+
+        with_shortcut_routing_transaction(|| {
+            replace_core_shortcut_reservations(std::iter::empty());
+        });
+    }
 }

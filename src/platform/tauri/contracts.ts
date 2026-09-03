@@ -1,0 +1,142 @@
+/**
+ * Rust commands consumed by the frontend.
+ *
+ * Keeping the names in one contract makes command renames deliberate and lets
+ * TypeScript reject accidental calls to an unregistered command. Result and
+ * payload shapes remain owned by the feature that consumes them.
+ */
+export const TAURI_COMMANDS = [
+  "activate_application_runtime",
+  "add_mod_capsule",
+  "apply_audio_mod_to_account",
+  "assign_mod_capsule_to_account",
+  "bring_self_to_foreground",
+  "bring_window_by_title_to_front",
+  "cancel_launch",
+  "cancel_task",
+  "retry_task",
+  "check_cloud_version",
+  "check_path_exists",
+  "check_saved_games_settings",
+  "create_account",
+  "delete_account",
+  "delete_mod_capsule",
+  "detect_app_data_roaming_bnet_path",
+  "detect_browser_path",
+  "detect_browser_path_by_type",
+  "detect_global_saved_games_path",
+  "detect_program_data_agent_path",
+  "detect_saved_games_path",
+  "export_accounts",
+  "export_diagnostic_bundle",
+  "get_account_settings",
+  "get_app_version",
+  "get_audio_mod_setup_state",
+  "get_mod_capsule_pool",
+  "get_capability_statuses",
+  "get_capability_descriptors",
+  "get_task",
+  "get_task_retry_descriptor",
+  "get_task_timeline",
+  "get_tasks",
+  "get_d2r_window_titles",
+  "get_foreground_window_title",
+  "get_global_config",
+  "get_rune_audio_status",
+  "get_scene_stats",
+  "get_stats_data",
+  "get_stats_page_preferences",
+  "get_terror_zone_snapshot",
+  "import_accounts",
+  "initialize_bnet_account",
+  "kill_all_d2r_processes",
+  "kill_browser_processes",
+  "launch_accounts",
+  "launch_battle_net_only",
+  "list_accounts",
+  "load_overlay_geometry",
+  "load_stats_overlay_geometry",
+  "mark_settings_customized",
+  "move_game_window",
+  "open_account_dir",
+  "open_logs_dir",
+  "open_stats_page",
+  "open_url_in_browser",
+  "open_user_guide",
+  "patch_desktop_pet_settings",
+  "patch_global_config",
+  "prepare_audio_mod",
+  "recover_auxiliary_windows",
+  "refresh_account_running_state",
+  "reinitialize_account",
+  "rename_account",
+  "reorder_accounts",
+  "restart_rune_audio_monitor",
+  "room_automation_cancel",
+  "room_automation_get_chat_binding",
+  "room_automation_get_config",
+  "room_automation_get_status",
+  "room_automation_install_chat_binding",
+  "room_automation_restore_chat_binding",
+  "room_automation_retry",
+  "room_automation_save_config",
+  "room_automation_start_followers",
+  "room_automation_start_primary",
+  "restore_window_placement",
+  "save_account_settings",
+  "save_global_config",
+  "save_overlay_geometry",
+  "save_scene_record",
+  "save_stats_overlay_geometry",
+  "save_theme",
+  "save_window_geometry",
+  "save_window_placement",
+  "scan_mod_capsule_pool",
+  "set_mod_auto_exit_on_death_enabled",
+  "set_account_window_position",
+  "set_auxiliary_window_visible",
+  "set_stats_overlay_mini_input_region",
+  "set_settings_customized",
+  "snapshot_system_settings_to_account",
+  "start_rune_audio_diagnostic_recording",
+  "start_rune_audio_monitor",
+  "stop_rune_audio_diagnostic_recording",
+  "stop_rune_audio_monitor",
+  "update_account_meta",
+  "update_account_positions",
+  "update_account_region",
+  "update_mod_capsule",
+  "upgrade_audio_mod",
+] as const;
+
+export type TauriCommandName = (typeof TAURI_COMMANDS)[number];
+
+export const TAURI_EVENTS = [
+  "account-settings-updated",
+  "audio-mod-compatibility-warning",
+  "audio-mod-prepare-progress",
+  "audio-tracking-state",
+  "capability-status-updated",
+  "global-config-updated",
+  "global-input-event",
+  "item-audio-detected",
+  "launch-ended",
+  "launch-progress",
+  "rune-audio-detected",
+  "room-automation://config-committed",
+  "room-automation://status-changed",
+  "task-status-updated",
+] as const;
+
+export type TauriEventName = (typeof TAURI_EVENTS)[number];
+
+const commandNames = new Set<string>(TAURI_COMMANDS);
+const eventNames = new Set<string>(TAURI_EVENTS);
+
+export function isTauriCommandName(value: string): value is TauriCommandName {
+  return commandNames.has(value);
+}
+
+export function isTauriEventName(value: string): value is TauriEventName {
+  return eventNames.has(value);
+}

@@ -5,17 +5,24 @@ use std::sync::atomic::Ordering;
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 
+use crate::application::multi_instance::{
+    launch_queue_can_continue, CancellationTicket, GameWindowIdentity, GameWindowPort,
+    LaunchAccountEntry, LaunchBatchPlan, LaunchGraphicsOverride, WindowPosition,
+};
+use crate::application::task_runtime::{TaskHandle, TaskRequest, TaskState};
 use crate::battle_net_config::update_mod_args;
 use crate::commands::account::{
     copy_account_settings_to_system, recover_interrupted_replacement, remove_path_if_exists,
     replace_path_with_backup, resolve_account_runtime_snapshot, sibling_with_suffix,
     AccountManager, AccountMeta, RegistrySnapshotPath,
 };
-use crate::commands::system::LaunchProgress;
 use crate::commands::utils::silent_cmd;
+use crate::domain::account::{AuthMode, ClientEdition};
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
+use crate::infrastructure::system::{LaunchProgress, SystemGameWindowPort};
 use crate::launch_context::{
-    account_game_executable_identity, AuthMode, ContextPurpose, HostRuntimeLease, LaunchContext,
+    account_game_executable_identity, ContextPurpose, HostRuntimeLease, LaunchContext,
 };
 use crate::state::{AccountLifecycleLease, SharedState};
 use crate::token_registry_trace::{WebTokenReadMonitor, WEB_TOKEN_VALUE_NAME};
@@ -30,29 +37,16 @@ pub struct LaunchResult {
     pub mutex_killed: bool,
 }
 
-/// 一次启动的账号级覆盖配置。它只存在于本次启动上下文，不会写回 account.json。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LaunchAccountOverrides {
-    pub mod_args: String,
-    #[serde(default)]
-    pub position_preset_id: Option<String>,
-    /// 旧方案缺失时继续继承账号当前画质；新版方案会同时提供这两个字段。
-    #[serde(default)]
-    pub resolution: Option<String>,
-    #[serde(default)]
-    pub fps: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LaunchAccountEntry {
-    pub account_id: String,
-    pub overrides: LaunchAccountOverrides,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct LaunchGraphicsOverride {
-    resolution: String,
-    fps: u32,
+#[serde(tag = "operation", rename_all = "kebab-case")]
+pub(crate) enum LaunchTaskRetryPayload {
+    BattleNetOnly {
+        account_ids: Vec<String>,
+    },
+    Accounts {
+        account_ids: Option<Vec<String>>,
+        entries: Option<Vec<LaunchAccountEntry>>,
+    },
 }
 
 #[derive(Default)]
@@ -66,6 +60,14 @@ struct LaunchExecutionOptions {
     persist_position_changes: bool,
     preserved_default_mod_args: Option<String>,
     graphics_override: Option<LaunchGraphicsOverride>,
+}
+
+struct TokenLaunchRequest<'a> {
+    cancellation_ticket: CancellationTicket,
+    account_id: &'a str,
+    meta: &'a AccountMeta,
+    context: &'a LaunchContext,
+    graphics_override: Option<&'a LaunchGraphicsOverride>,
 }
 
 struct TemporarySettingsOverride {
@@ -159,10 +161,6 @@ fn stop_optional_web_token_monitor(monitor: &mut Option<WebTokenReadMonitor>, ac
     }
 }
 
-fn launch_queue_can_continue(success: bool, mutex_closed: bool) -> bool {
-    success && mutex_closed
-}
-
 #[derive(Default)]
 struct MutexRemovalState {
     closed: std::sync::atomic::AtomicBool,
@@ -205,65 +203,8 @@ impl MutexRemovalState {
     }
 }
 
-fn validate_launch_account_ids(account_ids: &[String]) -> Result<(), AppError> {
-    let mut canonical_ids: Vec<String> = account_ids
-        .iter()
-        .map(|account_id| account_id.to_ascii_lowercase())
-        .collect();
-    canonical_ids.sort();
-    canonical_ids.dedup();
-    if canonical_ids.len() != account_ids.len() {
-        return Err(AppError::ConfigReadError(
-            "启动列表包含重复账号，已拒绝执行".to_string(),
-        ));
-    }
-    for account_id in account_ids {
-        AccountManager::validate_account_id(account_id)?;
-    }
-    Ok(())
-}
-
-fn launch_graphics_override(
-    overrides: &LaunchAccountOverrides,
-) -> Result<Option<LaunchGraphicsOverride>, AppError> {
-    match (overrides.resolution.as_deref(), overrides.fps) {
-        (None, None) => Ok(None),
-        (Some(resolution), Some(fps)) => {
-            let resolution = resolution.trim();
-            let Some((width, height)) = resolution.split_once('x') else {
-                return Err(AppError::ConfigReadError(
-                    "方案分辨率格式无效，应为 宽x高".to_string(),
-                ));
-            };
-            let width = width.parse::<u32>().map_err(|_| {
-                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
-            })?;
-            let height = height.parse::<u32>().map_err(|_| {
-                AppError::ConfigReadError("方案分辨率格式无效，应为 宽x高".to_string())
-            })?;
-            if !(640..=7680).contains(&width) || !(480..=4320).contains(&height) {
-                return Err(AppError::ConfigReadError(
-                    "方案分辨率超出支持范围".to_string(),
-                ));
-            }
-            if fps > 500 {
-                return Err(AppError::ConfigReadError(
-                    "方案 FPS 必须在 0 到 500 之间".to_string(),
-                ));
-            }
-            Ok(Some(LaunchGraphicsOverride {
-                resolution: resolution.to_string(),
-                fps,
-            }))
-        }
-        _ => Err(AppError::ConfigReadError(
-            "方案分辨率与 FPS 必须同时配置".to_string(),
-        )),
-    }
-}
-
 fn graphics_settings_path(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
 ) -> Result<PathBuf, AppError> {
@@ -280,7 +221,7 @@ fn graphics_settings_path(
 }
 
 fn preflight_launch_graphics(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
     graphics: Option<&LaunchGraphicsOverride>,
@@ -351,15 +292,16 @@ fn apply_temporary_graphics_override_at_path(
         "Screen Resolution (Windowed)".to_string(),
         serde_json::Value::String(graphics.resolution.clone()),
     );
-    let fps_key = if settings.contains_key("Framerate Target") {
-        "Framerate Target"
-    } else {
-        "Framerate Cap"
-    };
     settings.insert(
-        fps_key.to_string(),
+        "Framerate Cap".to_string(),
         serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
     );
+    if settings.contains_key("Framerate Target") {
+        settings.insert(
+            "Framerate Target".to_string(),
+            serde_json::Value::Number(serde_json::Number::from(graphics.fps)),
+        );
+    }
     let content = serde_json::to_vec_pretty(&settings)?;
     std::fs::write(&path, content).map_err(|error| {
         AppError::FileError(format!(
@@ -368,53 +310,6 @@ fn apply_temporary_graphics_override_at_path(
         ))
     })?;
     Ok(TemporarySettingsOverride { path, original })
-}
-
-fn apply_launch_overrides(
-    mut meta: AccountMeta,
-    overrides: &LaunchAccountOverrides,
-) -> Result<AccountMeta, AppError> {
-    launch_graphics_override(overrides)?;
-    let mod_args = overrides.mod_args.trim().to_string();
-    if !mod_args.is_empty()
-        && !meta
-            .mod_list
-            .iter()
-            .any(|configuration| configuration.trim() == mod_args)
-    {
-        return Err(AppError::ConfigReadError(format!(
-            "账号 {} 的方案 Mod 已从胶囊库删除，请先修复启动方案",
-            meta.id
-        )));
-    }
-    meta.mod_args = mod_args;
-
-    let position_id = overrides
-        .position_preset_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|id| !id.is_empty());
-    if let Some(position_id) = position_id {
-        let preset = meta
-            .position_presets
-            .iter()
-            .find(|preset| preset.id == position_id)
-            .ok_or_else(|| {
-                AppError::ConfigReadError(format!(
-                    "账号 {} 的方案位置已从胶囊库删除，请先修复启动方案",
-                    meta.id
-                ))
-            })?;
-        meta.window_x = Some(preset.x);
-        meta.window_y = Some(preset.y);
-        meta.active_position_id = Some(preset.id.clone());
-    } else {
-        meta.window_x = None;
-        meta.window_y = None;
-        meta.active_position_id = None;
-    }
-
-    Ok(meta)
 }
 
 fn persist_window_position(
@@ -449,14 +344,51 @@ fn persist_window_position(
 /// 前端点「停止」时调用，后端在下一个检查点中止所有未完成的账号
 #[tauri::command]
 pub fn cancel_launch(state: tauri::State<'_, SharedState>) -> Result<(), AppError> {
-    state.cancel_launch.store(true, Ordering::SeqCst);
-    state.cancel_generation.fetch_add(1, Ordering::SeqCst);
+    for task in state.tasks().snapshots().into_iter().filter(|task| {
+        task.state == TaskState::Running
+            && matches!(
+                task.kind.as_str(),
+                "account-launch"
+                    | "battle-net-launch"
+                    | "account-initialize"
+                    | "account-reinitialize"
+            )
+    }) {
+        let _ = state.tasks().request_cancel(task.task_id);
+    }
+    state.multi_instance().facade().cancel_current_operation();
     Ok(())
 }
 
-/// 取消标志是否已置位
-fn is_cancelled(state: &SharedState) -> bool {
-    state.cancel_launch.load(Ordering::SeqCst)
+fn finish_launch_task(task: TaskHandle, result: &Result<Vec<LaunchResult>, AppError>) {
+    let cancellation_requested = task.cancellation_requested();
+    match result {
+        Ok(_) if cancellation_requested => {
+            let _ = task.cancelled("启动已取消");
+        }
+        Ok(results) => {
+            let failures = results.iter().filter(|result| !result.success).count();
+            if failures == 0 {
+                let _ = task.succeed("启动任务完成");
+            } else {
+                let _ = task.fail(
+                    "account-launch-partial-failure",
+                    &format!("启动任务完成，其中 {failures} 个账号未成功"),
+                );
+            }
+        }
+        Err(error) if cancellation_requested => {
+            let _ = task.cancelled(&error.to_string());
+        }
+        Err(error) => {
+            let _ = task.fail("account-launch-failed", &error.to_string());
+        }
+    }
+}
+
+/// 当前操作票据是否已被后续取消请求作废。
+fn is_cancelled(state: &SharedState, ticket: CancellationTicket) -> bool {
+    state.multi_instance().facade().is_cancelled(ticket)
 }
 
 fn account_path_error(account_id: &str, err: AppError) -> LaunchResult {
@@ -478,7 +410,7 @@ fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String 
 }
 
 fn unique_account_window_executable(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &crate::commands::account::AccountMeta,
 ) -> Option<PathBuf> {
     let title = account_window_title(meta);
@@ -493,7 +425,7 @@ fn unique_account_window_executable(
         })
         .filter(|(candidate_title, executable)| {
             candidate_title.eq_ignore_ascii_case(&title)
-                && crate::commands::system::executable_paths_match(executable, &expected)
+                && crate::infrastructure::system::executable_paths_match(executable, &expected)
         })
         .count();
     (matching_accounts == 1).then_some(expected)
@@ -513,9 +445,9 @@ fn already_running_result(
         &format!("[Account {account_id}] {message}"),
     );
     state
-        .active_games
-        .write()
-        .insert(account_id.to_string(), pid);
+        .multi_instance()
+        .instances()
+        .record_discovered(account_id, pid);
     let _ = app.emit(
         "launch-progress",
         LaunchProgress::new(account_id, "done", "warning", &message),
@@ -534,20 +466,20 @@ fn already_running_result(
 fn skip_existing_account_window(
     app: &tauri::AppHandle,
     state: &SharedState,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_id: &str,
     meta: &crate::commands::account::AccountMeta,
 ) -> Option<LaunchResult> {
     let window_title = account_window_title(meta);
     let expected_executable = unique_account_window_executable(config, meta)?;
-    let pid = crate::commands::system::find_unique_d2r_pid_by_window_identity(
-        &window_title,
-        &expected_executable,
-    )?;
+    let windows = SystemGameWindowPort;
+    let pid = windows.find_unique_process(&GameWindowIdentity {
+        title: window_title.clone(),
+        executable: expected_executable,
+    })?;
     if config.separate_game_taskbar_icons {
         let app_id = format!("D2RHub.Account.{account_id}");
-        if let Err(error) = crate::commands::system::set_game_window_app_user_model_id(pid, &app_id)
-        {
+        if let Err(error) = windows.set_taskbar_identity(pid, &app_id) {
             crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
             let _ = app.emit(
                 "launch-progress",
@@ -565,7 +497,7 @@ fn skip_existing_account_window(
 }
 
 fn checked_account_dir(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_id: &str,
 ) -> Result<std::path::PathBuf, LaunchResult> {
     AccountManager::account_dir_checked(&config.accounts_dir, account_id)
@@ -641,9 +573,9 @@ fn replace_bnet_roaming_snapshot(source: &Path, target: &Path) -> Result<(), App
 }
 
 fn validate_bnet_snapshot(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &crate::commands::account::AccountMeta,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<(), AppError> {
     let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, &meta.id)?;
     let snapshot = resolve_account_runtime_snapshot(&account_dir, meta, expected_edition)?;
@@ -666,7 +598,7 @@ fn validate_bnet_snapshot(
 }
 
 fn preflight_accounts(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     account_ids: &[String],
     purpose: ContextPurpose,
 ) -> Result<(), AppError> {
@@ -679,7 +611,7 @@ fn preflight_accounts(
 }
 
 fn preflight_account_meta(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     meta: &AccountMeta,
     purpose: ContextPurpose,
 ) -> Result<(), AppError> {
@@ -727,13 +659,6 @@ fn preflight_account_meta(
         }
         AuthMode::BattleNet => {
             validate_bnet_snapshot(config, meta, context.installation.edition)?;
-            if purpose == ContextPurpose::LaunchGame
-                && crate::commands::account::is_token_expired(&meta.last_reset_at)
-            {
-                return Err(AppError::ConfigReadError(format!(
-                    "账号 {account_id} 的认证已超过 30 天，请重新初始化账号"
-                )));
-            }
         }
     }
     Ok(())
@@ -760,7 +685,7 @@ fn kill_battle_net_for_context(context: &LaunchContext, flush_before_kill: bool)
                 .to_string_lossy()
                 .eq_ignore_ascii_case("Battle.net.exe")
                 && process.exe().is_some_and(|actual| {
-                    crate::commands::system::executable_paths_match(actual, expected_path)
+                    crate::infrastructure::system::executable_paths_match(actual, expected_path)
                 })
         })
         .map(|process| process.pid().as_u32())
@@ -776,7 +701,7 @@ fn kill_battle_net_for_context(context: &LaunchContext, flush_before_kill: bool)
 /// - 已登录（进程≥7）：先优雅关闭战网让其 flush 注册表，再回写备份
 /// - 运行中但未登录：直接强杀，不回写（注册表中是刚恢复的旧数据，无保存价值）
 async fn cancel_with_cleanup(
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     context: &LaunchContext,
     account_id: &str,
     preserved_default_mod_args: Option<&str>,
@@ -785,7 +710,9 @@ async fn cancel_with_cleanup(
     let bnet_count = context
         .battle_net_executable()
         .ok()
-        .map(|path| crate::commands::system::count_bnet_processes_for_path(&path.to_string_lossy()))
+        .map(|path| {
+            crate::infrastructure::system::count_bnet_processes_for_path(&path.to_string_lossy())
+        })
         .unwrap_or(0);
     let bnet_logged_in = bnet_count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD;
 
@@ -884,23 +811,71 @@ pub async fn launch_battle_net_only(
     state: tauri::State<'_, SharedState>,
     account_ids: Vec<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    if account_ids.is_empty() {
+    launch_battle_net_only_task(app, state, account_ids, None).await
+}
+
+async fn launch_battle_net_only_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Vec<String>,
+    retry_of: Option<u64>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    let cancel_state = state.inner().clone();
+    let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::BattleNetOnly {
+        account_ids: account_ids.clone(),
+    })
+    .map_err(|error| AppError::Unknown(format!("创建任务重试数据失败: {error}")))?;
+    let mut request = TaskRequest::new("battle-net-launch")
+        .with_conflict_key("host-runtime-launch")
+        .with_retry_payload(retry_payload)
+        .with_cancel_hook(move || {
+            cancel_state
+                .multi_instance()
+                .facade()
+                .cancel(cancellation_ticket);
+        })
+        .with_initial_status("preflight", "正在检查 Battle.net 启动请求");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
+    let task = state
+        .tasks()
+        .begin(request)
+        .map_err(|error| AppError::Unknown(error.to_string()))?;
+    let completion_state = state.inner().clone();
+    let result = launch_battle_net_only_impl(app, state, account_ids, cancellation_ticket).await;
+    completion_state
+        .multi_instance()
+        .facade()
+        .complete(cancellation_ticket);
+    finish_launch_task(task, &result);
+    result
+}
+
+async fn launch_battle_net_only_impl(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Vec<String>,
+    cancellation_ticket: CancellationTicket,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let plan = LaunchBatchPlan::from_request(Some(account_ids), None)?;
+    if plan.is_empty() {
         return Ok(Vec::new());
     }
-    validate_launch_account_ids(&account_ids)?;
-    let config = {
-        let cfg = state.config.read();
-        cfg.clone()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    let account_ids = plan.account_ids();
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let mut results = Vec::new();
     let total = account_ids.len();
     let mut host_runtime_lease: Option<HostRuntimeLease> = None;
 
     for (i, account_id) in account_ids.iter().enumerate() {
-        // 宿主租约已建立后，取消标记才属于当前批次。首次有效账号取得租约时会清除
-        // 上一批遗留的标记，避免新请求一进入循环就被旧状态误取消。
-        if host_runtime_lease.is_some() && is_cancelled(&state) {
+        // 批次创建时已取得取消票据；只有之后发生的取消请求会使其失效。
+        // 新批次不会继承旧取消状态，也不能清除另一个仍在运行批次的取消结果。
+        if host_runtime_lease.is_some() && is_cancelled(&state, cancellation_ticket) {
             emit_cancelled(&app, account_id);
             results.push(LaunchResult {
                 account_id: account_id.to_string(),
@@ -952,7 +927,6 @@ pub async fn launch_battle_net_only(
             match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
-                    state.cancel_launch.store(false, Ordering::SeqCst);
                 }
                 Err(error) => {
                     let message = error.to_string();
@@ -966,7 +940,7 @@ pub async fn launch_battle_net_only(
             }
         }
 
-        if is_cancelled(&state) {
+        if is_cancelled(&state, cancellation_ticket) {
             emit_cancelled(&app, account_id);
             results.push(LaunchResult {
                 account_id: account_id.to_string(),
@@ -999,7 +973,8 @@ pub async fn launch_battle_net_only(
             LaunchProgress::new(account_id, "queue", "running", &msg),
         );
 
-        let result = launch_single_bnet_only(&app, &config, &state, account_id).await;
+        let result =
+            launch_single_bnet_only(&app, &config, &state, cancellation_ticket, account_id).await;
         crate::logger::log_msg(
             if result.success { "INFO" } else { "ERROR" },
             "Launch",
@@ -1010,7 +985,7 @@ pub async fn launch_battle_net_only(
         );
         results.push(result);
 
-        if i + 1 < total && !is_cancelled(&state) {
+        if i + 1 < total && !is_cancelled(&state, cancellation_ticket) {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
@@ -1020,8 +995,9 @@ pub async fn launch_battle_net_only(
 
 async fn prepare_bnet_environment(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
+    cancellation_ticket: CancellationTicket,
     account_id: &str,
     wait_login: bool,
     options: BnetPreparationOptions<'_>,
@@ -1038,7 +1014,7 @@ async fn prepare_bnet_environment(
             .map_err(|error| account_path_error(account_id, error))?,
     };
     let auth_mode = AuthMode::parse(meta.auth_mode.as_deref())
-        .map_err(|error| account_path_error(account_id, error))?;
+        .map_err(|error| account_path_error(account_id, error.into()))?;
     if auth_mode != AuthMode::BattleNet {
         return Err(account_path_error(
             account_id,
@@ -1120,7 +1096,7 @@ async fn prepare_bnet_environment(
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     emit("clean", "ok", "环境已清理");
 
-    if is_cancelled(state) {
+    if is_cancelled(state, cancellation_ticket) {
         emit("done", "error", "已取消");
         return Err(cancelled());
     }
@@ -1273,7 +1249,7 @@ async fn prepare_bnet_environment(
         }
     }
 
-    if is_cancelled(state) {
+    if is_cancelled(state, cancellation_ticket) {
         emit("done", "error", "已取消");
         return Err(cancelled());
     }
@@ -1329,7 +1305,7 @@ async fn prepare_bnet_environment(
     } else {
         let mut bnet_ready = false;
         for i in 1..=60 {
-            if is_cancelled(state) {
+            if is_cancelled(state, cancellation_ticket) {
                 emit("done", "error", "已取消，正在保存状态...");
                 return Err(cancel_with_cleanup(
                     config,
@@ -1340,7 +1316,8 @@ async fn prepare_bnet_environment(
                 .await);
             }
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let count = crate::commands::system::count_bnet_processes_for_path(&battle_net_path);
+            let count =
+                crate::infrastructure::system::count_bnet_processes_for_path(&battle_net_path);
             if count >= BNET_LOGIN_PROCESS_COUNT_THRESHOLD {
                 bnet_ready = true;
                 emit(
@@ -1389,7 +1366,7 @@ async fn prepare_bnet_environment(
         }
     }
 
-    if is_cancelled(state) {
+    if is_cancelled(state, cancellation_ticket) {
         emit("done", "error", "已取消，正在保存状态...");
         return Err(
             cancel_with_cleanup(config, &context, account_id, preserved_default_mod_args).await,
@@ -1401,8 +1378,9 @@ async fn prepare_bnet_environment(
 
 async fn launch_single_bnet_only(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
+    cancellation_ticket: CancellationTicket,
     account_id: &str,
 ) -> LaunchResult {
     let emit = |step: &str, status: &str, msg: &str| {
@@ -1421,6 +1399,7 @@ async fn launch_single_bnet_only(
         app,
         config,
         state,
+        cancellation_ticket,
         account_id,
         true,
         BnetPreparationOptions::default(),
@@ -1477,50 +1456,92 @@ pub async fn launch_accounts(
     account_ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    let (account_ids, overrides_by_account) = match (account_ids, entries) {
-        (Some(_), Some(_)) => {
-            return Err(AppError::ConfigReadError(
-                "启动请求不能同时包含默认账号列表和方案配置".to_string(),
-            ));
+    launch_accounts_task(app, state, account_ids, entries, None).await
+}
+
+async fn launch_accounts_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
+    retry_of: Option<u64>,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    let cancel_state = state.inner().clone();
+    let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::Accounts {
+        account_ids: account_ids.clone(),
+        entries: entries.clone(),
+    })
+    .map_err(|error| AppError::Unknown(format!("创建任务重试数据失败: {error}")))?;
+    let mut request = TaskRequest::new("account-launch")
+        .with_conflict_key("host-runtime-launch")
+        .with_retry_payload(retry_payload)
+        .with_cancel_hook(move || {
+            cancel_state
+                .multi_instance()
+                .facade()
+                .cancel(cancellation_ticket);
+        })
+        .with_initial_status("preflight", "正在检查账号启动请求");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
+    let task = state
+        .tasks()
+        .begin(request)
+        .map_err(|error| AppError::Unknown(error.to_string()))?;
+    let completion_state = state.inner().clone();
+    let result = launch_accounts_impl(app, state, account_ids, entries, cancellation_ticket).await;
+    completion_state
+        .multi_instance()
+        .facade()
+        .complete(cancellation_ticket);
+    finish_launch_task(task, &result);
+    result
+}
+
+pub(crate) async fn retry_launch_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    retry_of: u64,
+    payload: LaunchTaskRetryPayload,
+) -> Result<Vec<LaunchResult>, AppError> {
+    match payload {
+        LaunchTaskRetryPayload::BattleNetOnly { account_ids } => {
+            launch_battle_net_only_task(app, state, account_ids, Some(retry_of)).await
         }
-        (Some(account_ids), None) => (account_ids, std::collections::HashMap::new()),
-        (None, Some(entries)) => {
-            let account_ids = entries
-                .iter()
-                .map(|entry| entry.account_id.clone())
-                .collect::<Vec<_>>();
-            let overrides = entries
-                .into_iter()
-                .map(|entry| (entry.account_id, entry.overrides))
-                .collect::<std::collections::HashMap<_, _>>();
-            (account_ids, overrides)
-        }
-        (None, None) => (Vec::new(), std::collections::HashMap::new()),
-    };
-    if account_ids.is_empty() {
+        LaunchTaskRetryPayload::Accounts {
+            account_ids,
+            entries,
+        } => launch_accounts_task(app, state, account_ids, entries, Some(retry_of)).await,
+    }
+}
+
+async fn launch_accounts_impl(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_ids: Option<Vec<String>>,
+    entries: Option<Vec<LaunchAccountEntry>>,
+    cancellation_ticket: CancellationTicket,
+) -> Result<Vec<LaunchResult>, AppError> {
+    let plan = LaunchBatchPlan::from_request(account_ids, entries)?;
+    if plan.is_empty() {
         return Ok(Vec::new());
     }
-    // 此处只校验批次，不提前占用账号租约。每个账号会在同名窗口检查之后单独
-    // 获取租约；提前持有再逐项获取会让启动流程被自己的租约误判为并发操作。
-    validate_launch_account_ids(&account_ids)?;
-    let config = {
-        let cfg = state.config.read();
-        cfg.clone()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    let account_ids = plan.account_ids();
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
-    if !overrides_by_account.is_empty() {
-        for account_id in &account_ids {
+    if plan.has_overrides() {
+        for account_id in account_ids {
             let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
-            let overrides = overrides_by_account.get(account_id).ok_or_else(|| {
-                AppError::ConfigReadError(format!("账号 {account_id} 缺少方案启动配置"))
-            })?;
-            let effective_meta = apply_launch_overrides(meta, overrides)?;
+            let (effective_meta, graphics) = plan.apply_for(account_id, meta)?;
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
             let context =
                 LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
-            let graphics = launch_graphics_override(overrides)?;
             preflight_launch_graphics(&config, &effective_meta, &context, graphics.as_ref())?;
         }
     }
@@ -1578,28 +1599,14 @@ pub async fn launch_accounts(
                 continue;
             }
         };
-        let preserved_default_mod_args = overrides_by_account
-            .get(account_id)
-            .map(|_| meta.mod_args.clone());
-        let graphics_override = match overrides_by_account.get(account_id) {
-            Some(overrides) => match launch_graphics_override(overrides) {
-                Ok(graphics) => graphics,
-                Err(error) => {
-                    results.push(account_path_error(account_id, error));
-                    continue;
-                }
-            },
-            None => None,
-        };
-        let meta = match overrides_by_account.get(account_id) {
-            Some(overrides) => match apply_launch_overrides(meta, overrides) {
-                Ok(meta) => meta,
-                Err(error) => {
-                    results.push(account_path_error(account_id, error));
-                    continue;
-                }
-            },
-            None => meta,
+        let preserved_default_mod_args =
+            plan.override_for(account_id).map(|_| meta.mod_args.clone());
+        let (meta, graphics_override) = match plan.apply_for(account_id, meta) {
+            Ok(effective) => effective,
+            Err(error) => {
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
         };
         if let Some(result) =
             skip_existing_account_window(&app, state.inner(), &config, account_id, &meta)
@@ -1642,8 +1649,6 @@ pub async fn launch_accounts(
             match HostRuntimeLease::try_acquire(state.inner().as_ref()) {
                 Ok(lease) => {
                     host_runtime_lease = Some(lease);
-                    // 只有成功持有租约的请求才能清除上一批次遗留的取消标记。
-                    state.cancel_launch.store(false, Ordering::SeqCst);
                 }
                 Err(error) => {
                     let message = error.to_string();
@@ -1659,7 +1664,7 @@ pub async fn launch_accounts(
 
         // 每个真正需要启动的账号开始前检查取消标志；已存在的同名窗口仍按上方
         // 逻辑直接跳过并提示，不会被取消状态误报为失败。
-        if is_cancelled(&state) {
+        if is_cancelled(&state, cancellation_ticket) {
             emit_cancelled(&app, account_id);
             results.push(LaunchResult {
                 account_id: account_id.to_string(),
@@ -1695,12 +1700,12 @@ pub async fn launch_accounts(
 
         // 当前账号的生命周期租约保证本次启动期间元数据稳定。
         // 只有默认启动且明确选择了位置胶囊时，才把用户后续拖动写回该胶囊。
-        let persist_position_changes =
-            !overrides_by_account.contains_key(account_id) && meta.active_position_id.is_some();
+        let persist_position_changes = plan.should_persist_position_changes_for(account_id, &meta);
         let result = launch_single(
             &app,
             &config,
             &state,
+            cancellation_ticket,
             account_id,
             meta,
             LaunchExecutionOptions {
@@ -1753,7 +1758,7 @@ pub async fn launch_accounts(
         }
 
         // 如果还有下一个账号，等 2 秒让系统稳定
-        if i + 1 < total && !is_cancelled(&state) {
+        if i + 1 < total && !is_cancelled(&state, cancellation_ticket) {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
@@ -1775,8 +1780,9 @@ fn emit_cancelled(app: &tauri::AppHandle, account_id: &str) {
 
 async fn launch_single(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
+    cancellation_ticket: CancellationTicket,
     account_id: &str,
     meta: AccountMeta,
     options: LaunchExecutionOptions,
@@ -1804,28 +1810,18 @@ async fn launch_single(
             Err(error) => return account_path_error(account_id, error),
         };
 
-    // ── Token 过期检查（仅战网模式）──
-    if preflight_context.auth_mode == AuthMode::BattleNet
-        && crate::commands::account::is_token_expired(&meta.last_reset_at)
-    {
-        return LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
-            error: Some("Token 已过期（超过30天），请重新初始化账号".to_string()),
-            mutex_killed: false,
-        };
-    }
-
     if preflight_context.auth_mode == AuthMode::Token {
         return launch_single_token(
             app,
             config,
             state,
-            account_id,
-            &meta,
-            &preflight_context,
-            graphics_override.as_ref(),
+            TokenLaunchRequest {
+                cancellation_ticket,
+                account_id,
+                meta: &meta,
+                context: &preflight_context,
+                graphics_override: graphics_override.as_ref(),
+            },
         )
         .await;
     }
@@ -1834,6 +1830,7 @@ async fn launch_single(
         app,
         config,
         state,
+        cancellation_ticket,
         account_id,
         false,
         BnetPreparationOptions {
@@ -1879,7 +1876,7 @@ async fn launch_single(
     };
 
     // ── Step 4: 记录当前 D2R 进程快照 ──
-    let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
+    let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
 
     // ── Step 5 & 6: 发送游戏启动指令并等待新 D2R 进程 ──
     emit("game", "running", "正在启动游戏进程...");
@@ -1898,7 +1895,7 @@ async fn launch_single(
     let timeout_secs = 60;
 
     while wait_start.elapsed().as_secs() < timeout_secs {
-        if is_cancelled(state) {
+        if is_cancelled(state, cancellation_ticket) {
             emit("done", "error", "已取消，正在保存状态...");
             return cancel_with_cleanup(
                 config,
@@ -1930,7 +1927,7 @@ async fn launch_single(
                     agent_pids.push(pid.as_u32());
                 } else if name.eq_ignore_ascii_case("Battle.net.exe") {
                     if proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             Path::new(&monitored_bnet_path),
                         )
@@ -1939,7 +1936,7 @@ async fn launch_single(
                     }
                 } else if name.eq_ignore_ascii_case("D2R.exe")
                     && proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             &monitored_game_path,
                         )
@@ -2130,7 +2127,10 @@ async fn launch_single(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            state.record_active_game(account_id, pid, &meta.mod_args);
+            state
+                .multi_instance()
+                .instances()
+                .record_launched(account_id, pid, &meta.mod_args);
             crate::audio_mod::emit_runtime_compatibility_warning(
                 app,
                 state,
@@ -2165,18 +2165,16 @@ async fn launch_single(
                     let mut taskbar_error = None;
                     for _ in 0..10 {
                         std::thread::sleep(std::time::Duration::from_millis(800));
-                        crate::commands::system::rename_game_window(pid_copy, &title_copy);
+                        let windows = SystemGameWindowPort;
+                        windows.rename(pid_copy, &title_copy);
                         if !taskbar_configured {
-                            match crate::commands::system::set_game_window_app_user_model_id(
-                                pid_copy,
-                                &app_user_model_id,
-                            ) {
+                            match windows.set_taskbar_identity(pid_copy, &app_user_model_id) {
                                 Ok(()) => taskbar_configured = true,
                                 Err(error) => taskbar_error = Some(error),
                             }
                         }
                         if let (Some(x), Some(y)) = (win_x, win_y) {
-                            crate::commands::system::set_game_window_position(pid_copy, x, y);
+                            windows.move_to(pid_copy, WindowPosition { x, y });
                         }
                     }
                     if !taskbar_configured {
@@ -2214,20 +2212,20 @@ async fn launch_single(
                         if !alive {
                             break;
                         }
-                        if let Some(hwnd) = crate::commands::system::find_game_hwnd(pid_copy) {
-                            if let Some(pos) = crate::commands::system::get_window_rect(hwnd) {
-                                // 过滤最小化时的异常坐标（Windows 对最小化窗口返回 ~-32000）
-                                if pos.0 > -10000 && pos.1 > -10000 && last_pos != Some(pos) {
-                                    // 只有真正落盘后才更新 last_pos；租约忙时保留旧值，
-                                    // 下一轮会在启动事务释放账号租约后自动重试。
-                                    if persist_window_position(
-                                        &state_for_position,
-                                        &accounts_dir,
-                                        &account_id_owned,
-                                        pos,
-                                    ) {
-                                        last_pos = Some(pos);
-                                    }
+                        let windows = SystemGameWindowPort;
+                        if let Some(position) = windows.position(pid_copy) {
+                            let pos = (position.x, position.y);
+                            // 过滤最小化时的异常坐标（Windows 对最小化窗口返回 ~-32000）
+                            if pos.0 > -10000 && pos.1 > -10000 && last_pos != Some(pos) {
+                                // 只有真正落盘后才更新 last_pos；租约忙时保留旧值，
+                                // 下一轮会在启动事务释放账号租约后自动重试。
+                                if persist_window_position(
+                                    &state_for_position,
+                                    &accounts_dir,
+                                    &account_id_owned,
+                                    pos,
+                                ) {
+                                    last_pos = Some(pos);
                                 }
                             }
                         }
@@ -2249,7 +2247,7 @@ async fn launch_single(
         }
     };
 
-    if is_cancelled(state) {
+    if is_cancelled(state, cancellation_ticket) {
         emit("done", "error", "已取消，正在保存状态...");
         return cancel_with_cleanup(
             config,
@@ -2269,16 +2267,16 @@ async fn launch_single(
         let state_clone = state.clone();
         tokio::spawn(async move {
             loop {
-                if is_cancelled(&state_clone) {
+                if is_cancelled(&state_clone, cancellation_ticket) {
                     break;
                 }
                 if let Ok(Some(hid)) =
-                    crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                    crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
                 {
                     found.store(true, std::sync::atomic::Ordering::SeqCst);
-                    let _ = crate::commands::system::close_handle(d2r_pid, &hid);
+                    let _ = crate::infrastructure::system::close_handle(d2r_pid, &hid);
                     if let Ok(None) =
-                        crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
+                        crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME)
                     {
                         killed.store(true, std::sync::atomic::Ordering::SeqCst);
                         break;
@@ -2309,7 +2307,7 @@ async fn launch_single(
     let mut next_key_send = std::time::Instant::now();
     let mut next_tcp_sample = std::time::Instant::now();
     while readiness_source.is_none() && start.elapsed() < timeout {
-        if is_cancelled(state) {
+        if is_cancelled(state, cancellation_ticket) {
             emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
             stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
@@ -2332,7 +2330,7 @@ async fn launch_single(
         if !web_token_read && now >= next_tcp_sample {
             stable_tcp_connection = record_network_readiness_sample(
                 &mut network_ready_samples,
-                crate::commands::system::check_game_connected(d2r_pid),
+                crate::infrastructure::system::check_game_connected(d2r_pid),
             );
             next_tcp_sample = now + std::time::Duration::from_secs(1);
         }
@@ -2355,7 +2353,7 @@ async fn launch_single(
         }
 
         if now >= next_key_send {
-            let _ = crate::commands::system::send_keys_to_window(d2r_pid);
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             if !keys_logged {
                 emit("connect", "running", "正在发送按键跳过动画...");
                 keys_logged = true;
@@ -2392,7 +2390,7 @@ async fn launch_single(
         emit("mutex", "running", "等待互斥句柄确认...");
         let mutex_deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
         while std::time::Instant::now() < mutex_deadline {
-            if is_cancelled(state) {
+            if is_cancelled(state, cancellation_ticket) {
                 emit("done", "error", "已取消，正在保存状态...");
                 mutex_task.abort();
                 return cancel_with_cleanup(
@@ -2424,7 +2422,7 @@ async fn launch_single(
 
     // ── Step 9: 优雅关闭战网 → 等待退出 → 回写最新状态 ──
     tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    let graceful = crate::commands::system::graceful_kill_bnet(30);
+    let graceful = crate::infrastructure::system::graceful_kill_bnet(30);
     if !graceful {
         emit("cleanup", "warning", "战网未能优雅关闭，已回退强制关闭");
     }
@@ -2489,13 +2487,17 @@ async fn launch_single(
 
 async fn launch_single_token(
     app: &tauri::AppHandle,
-    config: &crate::commands::global_config::GlobalConfig,
+    config: &GlobalConfig,
     state: &SharedState,
-    account_id: &str,
-    meta: &crate::commands::account::AccountMeta,
-    context: &LaunchContext,
-    graphics_override: Option<&LaunchGraphicsOverride>,
+    request: TokenLaunchRequest<'_>,
 ) -> LaunchResult {
+    let TokenLaunchRequest {
+        cancellation_ticket,
+        account_id,
+        meta,
+        context,
+        graphics_override,
+    } = request;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
             "INFO",
@@ -2519,7 +2521,7 @@ async fn launch_single_token(
     };
 
     emit("clean", "running", "正在清理环境变量...");
-    if is_cancelled(state) {
+    if is_cancelled(state, cancellation_ticket) {
         emit("done", "error", "已取消");
         return cancelled();
     }
@@ -2651,7 +2653,7 @@ async fn launch_single_token(
     };
 
     // 3. 记录之前存在的 D2R 进程
-    let before_pids = crate::commands::system::snapshot_processes("D2R.exe".to_string());
+    let before_pids = crate::infrastructure::system::snapshot_processes("D2R.exe".to_string());
 
     emit("game", "running", "正在直接启动 D2R.exe...");
     // 4. 启动 D2R.exe
@@ -2696,7 +2698,7 @@ async fn launch_single_token(
     let timeout_secs = 60;
 
     while wait_start.elapsed().as_secs() < timeout_secs {
-        if is_cancelled(state) {
+        if is_cancelled(state, cancellation_ticket) {
             return cancelled();
         }
 
@@ -2710,7 +2712,7 @@ async fn launch_single_token(
                     .to_string_lossy()
                     .eq_ignore_ascii_case("D2R.exe")
                     && proc.exe().is_some_and(|actual| {
-                        crate::commands::system::executable_paths_match(
+                        crate::infrastructure::system::executable_paths_match(
                             actual,
                             &monitored_game_path,
                         )
@@ -2751,7 +2753,10 @@ async fn launch_single_token(
     let d2r_pid = match d2r_pid_opt {
         Some(pid) => {
             emit("game", "ok", &format!("游戏进程已启动 (PID: {})", pid));
-            state.record_active_game(account_id, pid, &meta.mod_args);
+            state
+                .multi_instance()
+                .instances()
+                .record_launched(account_id, pid, &meta.mod_args);
             crate::audio_mod::emit_runtime_compatibility_warning(
                 app,
                 state,
@@ -2778,18 +2783,16 @@ async fn launch_single_token(
                 let mut taskbar_error = None;
                 for _ in 0..10 {
                     std::thread::sleep(std::time::Duration::from_millis(800));
-                    crate::commands::system::rename_game_window(pid_copy, &win_title);
+                    let windows = SystemGameWindowPort;
+                    windows.rename(pid_copy, &win_title);
                     if !taskbar_configured {
-                        match crate::commands::system::set_game_window_app_user_model_id(
-                            pid_copy,
-                            &app_user_model_id,
-                        ) {
+                        match windows.set_taskbar_identity(pid_copy, &app_user_model_id) {
                             Ok(()) => taskbar_configured = true,
                             Err(error) => taskbar_error = Some(error),
                         }
                     }
                     if let (Some(x), Some(y)) = (win_x, win_y) {
-                        crate::commands::system::set_game_window_position(pid_copy, x, y);
+                        windows.move_to(pid_copy, WindowPosition { x, y });
                     }
                 }
                 if !taskbar_configured {
@@ -2827,13 +2830,13 @@ async fn launch_single_token(
         tokio::spawn(async move {
             let mut closed_at_least_once = false;
             for _ in 0..120 {
-                match crate::commands::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
+                match crate::infrastructure::system::find_mutex_handle(d2r_pid, MUTEX_NAME) {
                     Ok(Some(hid)) => {
                         mutex_state.record_found();
-                        match crate::commands::system::close_handle(d2r_pid, &hid) {
+                        match crate::infrastructure::system::close_handle(d2r_pid, &hid) {
                             Ok(()) => {
                                 closed_at_least_once = true;
-                                match crate::commands::system::find_mutex_handle(
+                                match crate::infrastructure::system::find_mutex_handle(
                                     d2r_pid, MUTEX_NAME,
                                 ) {
                                     Ok(None) => {
@@ -2872,7 +2875,7 @@ async fn launch_single_token(
     // 消费事件驱动，避免用固定次数或固定时长猜测游戏初始化进度。
     let intro_skip_task = tokio::spawn(async move {
         loop {
-            let _ = crate::commands::system::send_keys_to_window(d2r_pid);
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
     });
@@ -2890,7 +2893,7 @@ async fn launch_single_token(
     let mut mutex_closed_logged = false;
 
     loop {
-        if is_cancelled(state) {
+        if is_cancelled(state, cancellation_ticket) {
             mutex_task.abort();
             intro_skip_task.abort();
             return cancelled();
@@ -3059,16 +3062,14 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_launch_overrides, apply_temporary_graphics_override_at_path,
-        battle_net_launch_argument, battle_net_readiness_source, launch_graphics_override,
-        launch_queue_can_continue, parse_windows_command_line, persist_window_position,
-        preflight_accounts, record_network_readiness_sample, replace_bnet_roaming_snapshot,
-        token_launch_is_ready, unique_account_window_executable, validate_launch_account_ids,
-        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchAccountOverrides,
-        LaunchGraphicsOverride,
+        apply_temporary_graphics_override_at_path, battle_net_launch_argument,
+        battle_net_readiness_source, launch_queue_can_continue, parse_windows_command_line,
+        persist_window_position, preflight_accounts, record_network_readiness_sample,
+        replace_bnet_roaming_snapshot, token_launch_is_ready, unique_account_window_executable,
+        validate_legacy_reg_sections, BattleNetReadinessSource, LaunchGraphicsOverride,
     };
-    use crate::commands::account::{AccountManager, AccountMeta, WindowPositionPreset};
-    use crate::commands::global_config::GlobalConfig;
+    use crate::commands::account::{AccountManager, AccountMeta};
+    use crate::domain::config::GlobalConfig;
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
 
@@ -3117,93 +3118,6 @@ mod tests {
     }
 
     #[test]
-    fn scheme_overrides_create_an_effective_copy_without_changing_account_defaults() {
-        let mut defaults = AccountMeta::new("acount1");
-        defaults.mod_args = "-mod default".to_string();
-        defaults.mod_list = vec!["-mod default".to_string(), "-mod scheme".to_string()];
-        defaults.window_x = Some(10);
-        defaults.window_y = Some(20);
-        defaults.position_presets = vec![WindowPositionPreset {
-            id: "scheme-position".to_string(),
-            name: "右侧".to_string(),
-            x: 800,
-            y: 120,
-        }];
-
-        let effective = apply_launch_overrides(
-            defaults.clone(),
-            &LaunchAccountOverrides {
-                mod_args: "-mod scheme".to_string(),
-                position_preset_id: Some("scheme-position".to_string()),
-                resolution: Some("1920x1080".to_string()),
-                fps: Some(144),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(effective.mod_args, "-mod scheme");
-        assert_eq!(
-            (effective.window_x, effective.window_y),
-            (Some(800), Some(120))
-        );
-        assert_eq!(defaults.mod_args, "-mod default");
-        assert_eq!((defaults.window_x, defaults.window_y), (Some(10), Some(20)));
-    }
-
-    #[test]
-    fn scheme_overrides_fail_closed_when_a_capsule_was_deleted() {
-        let mut defaults = AccountMeta::new("acount1");
-        defaults.mod_list = vec!["-mod available".to_string()];
-
-        let missing_mod = apply_launch_overrides(
-            defaults.clone(),
-            &LaunchAccountOverrides {
-                mod_args: "-mod deleted".to_string(),
-                position_preset_id: None,
-                resolution: None,
-                fps: None,
-            },
-        )
-        .unwrap_err();
-        assert!(missing_mod.to_string().contains("方案 Mod 已从胶囊库删除"));
-
-        let missing_position = apply_launch_overrides(
-            defaults,
-            &LaunchAccountOverrides {
-                mod_args: String::new(),
-                position_preset_id: Some("deleted-position".to_string()),
-                resolution: None,
-                fps: None,
-            },
-        )
-        .unwrap_err();
-        assert!(missing_position
-            .to_string()
-            .contains("方案位置已从胶囊库删除"));
-    }
-
-    #[test]
-    fn scheme_graphics_are_validated_as_an_atomic_pair() {
-        let partial = launch_graphics_override(&LaunchAccountOverrides {
-            mod_args: String::new(),
-            position_preset_id: None,
-            resolution: Some("1920x1080".to_string()),
-            fps: None,
-        })
-        .unwrap_err();
-        assert!(partial.to_string().contains("必须同时配置"));
-
-        let invalid = launch_graphics_override(&LaunchAccountOverrides {
-            mod_args: String::new(),
-            position_preset_id: None,
-            resolution: Some("not-a-resolution".to_string()),
-            fps: Some(60),
-        })
-        .unwrap_err();
-        assert!(invalid.to_string().contains("分辨率格式无效"));
-    }
-
-    #[test]
     fn temporary_scheme_graphics_restore_the_exact_system_settings() {
         let root = std::env::temp_dir().join(format!(
             "d2rhub_scheme_settings_{}_{}",
@@ -3214,6 +3128,7 @@ mod tests {
         let path = root.join("Settings.json");
         let original = br#"{
   "Screen Resolution (Windowed)": "1280x720",
+  "Framerate Cap": 60,
   "Framerate Target": 30,
   "VSync": true
 }"#;
@@ -3231,6 +3146,7 @@ mod tests {
             let temporary: serde_json::Value =
                 serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
             assert_eq!(temporary["Screen Resolution (Windowed)"], "2560x1440");
+            assert_eq!(temporary["Framerate Cap"], 144);
             assert_eq!(temporary["Framerate Target"], 144);
             assert_eq!(temporary["VSync"], true);
         }
@@ -3242,37 +3158,6 @@ mod tests {
     #[test]
     fn battle_net_launch_argument_quotes_only_the_exec_value() {
         assert_eq!(battle_net_launch_argument("OSI"), r#"--exec="launch OSI""#);
-    }
-
-    #[test]
-    fn launch_batch_rejects_uuid_case_aliases() {
-        let state = std::sync::Arc::new(AppState::new());
-        let account_ids = vec![
-            "ABCDEF01-2345-6789-ABCD-EF0123456789".to_string(),
-            "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
-        ];
-
-        assert!(validate_launch_account_ids(&account_ids).is_err());
-        assert!(state.account_operations.lock().is_empty());
-    }
-
-    #[test]
-    fn launch_batch_validation_does_not_reserve_account_lifecycle() {
-        let state = std::sync::Arc::new(AppState::new());
-        let account_ids = vec!["acount1".to_string(), "acount2".to_string()];
-
-        validate_launch_account_ids(&account_ids).unwrap();
-        assert!(state.account_operations.lock().is_empty());
-
-        for account_id in account_ids {
-            let lease = AccountLifecycleLease::try_acquire(&state, &account_id).unwrap();
-            assert!(state
-                .account_operations
-                .lock()
-                .contains(&account_id.to_ascii_lowercase()));
-            drop(lease);
-        }
-        assert!(state.account_operations.lock().is_empty());
     }
 
     #[test]

@@ -1,15 +1,29 @@
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use tauri::Emitter;
 
+use crate::application::configuration::ConfigurationMutation;
+use crate::application::multi_instance::{
+    AccountCatalog, AccountCreationRepository, AccountCreationService, AccountDeletionCleanupPort,
+    AccountDeletionService, AccountDeletionTransaction, AccountInitializationKind,
+    AccountInitializationService, AccountInitializationTransaction, AccountModRepository,
+    AccountModService, AccountNameRepository, AccountNamingService, AccountOrderingService,
+    AccountPositionService, AccountProfilePatch, AccountProfilePolicy, AccountProfileService,
+    AccountQueryService, AccountRepository, AccountRuntimePort,
+    AccountSettingsPreferenceRepository, AccountSettingsPreferenceService, CancellationTicket,
+    CreateAccountRequest, ResolvedAccountProfile, TimestampProvider, TokenProtector,
+    WindowPosition,
+};
+use crate::application::task_runtime::{TaskRequest, TaskRuntimeError};
 use crate::battle_net_config::{try_read_mod_args, update_mod_args};
 use crate::commands::utils::{kill_processes_by_name, shared_system};
+use crate::domain::account::{normalize_account_display_name, AuthMode, ClientEdition, GameRegion};
+pub use crate::domain::account::{AccountMeta, WindowPositionPreset};
+use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
-use crate::launch_context::{
-    AuthMode, ClientEdition, ContextPurpose, EditionConventions, GameRegion, HostRuntimeLease,
-    LaunchContext,
-};
-use crate::state::{AccountLifecycleLease, SharedState};
+use crate::launch_context::{ContextPurpose, EditionConventions, HostRuntimeLease, LaunchContext};
+use crate::state::SharedState;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RegistryValueBackup {
@@ -203,138 +217,293 @@ fn write_registry_snapshot_values(backups: &[RegistryValueBackup]) -> Result<(),
     Ok(())
 }
 
-/// 账号级窗口位置胶囊。`window_x/window_y` 仍作为兼容旧版本的默认位置镜像保留。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WindowPositionPreset {
-    pub id: String,
-    pub name: String,
-    pub x: i32,
-    pub y: i32,
-}
-
-/// 账号元信息（存储在 accounts/{id}/account.json）
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AccountMeta {
-    pub id: String,
-    #[serde(default)]
-    pub display_name: String,
-    #[serde(default)]
-    pub mod_args: String,
-    #[serde(default)]
-    pub mod_list: Vec<String>,
-    #[serde(default)]
-    pub created_at: String,
-    #[serde(default)]
-    pub last_launched_at: Option<String>,
-    #[serde(default)]
-    pub initialized: bool,
-    /// 最后一次初始化/重置的时间（用于 token 有效期计算）
-    #[serde(default)]
-    pub last_reset_at: Option<String>,
-    #[serde(default)]
-    pub order: u32,
-    #[serde(default)]
-    pub is_running: bool,
-    /// 当前运行中的 D2R 进程 PID（None = 未运行）
-    #[serde(default)]
-    pub running_pid: Option<u32>,
-    /// 游戏窗口目标 X 坐标（None = 不调整位置）
-    #[serde(default)]
-    pub window_x: Option<i32>,
-    /// 游戏窗口目标 Y 坐标（None = 不调整位置）
-    #[serde(default)]
-    pub window_y: Option<i32>,
-    /// 账号级窗口位置胶囊库。旧配置缺少该字段时，会由 window_x/window_y 补全。
-    #[serde(default)]
-    pub position_presets: Vec<WindowPositionPreset>,
-    /// 主界面默认选择的位置胶囊；None 表示不指定窗口位置。
-    #[serde(default)]
-    pub active_position_id: Option<String>,
-    /// 认证模式 ("bnet" 或 "token")
-    #[serde(default)]
-    pub auth_mode: Option<String>,
-    /// Token 认证的区服 ("CN" 或 "Global")
-    #[serde(default)]
-    pub region: Option<String>,
-    /// DPAPI 加密后的 Token 密文十六进制；任何前端 IPC 响应都会移除此字段。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub token: Option<String>,
-    /// 最近一次 Battle.net/UnifiedAuth 快照所属客户端版本（CN / Global）。
-    #[serde(default)]
-    pub snapshot_edition: Option<String>,
-
-    /// 是否已自定义过设置。
-    #[serde(default)]
-    pub has_customized_settings: bool,
-    /// 界面语言 ("zhCN" / "zhTW" / "enUS"，默认取决于区服)
-    #[serde(default)]
-    pub language: Option<String>,
-    /// 配音语言 ("zhCN" / "zhTW" / "enUS"，默认取决于区服)
-    #[serde(default)]
-    pub voicelanguage: Option<String>,
-}
-
-impl AccountMeta {
-    pub fn new(id: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            display_name: String::new(),
-            mod_args: String::new(),
-            mod_list: Vec::new(),
-            created_at: chrono::Utc::now().to_rfc3339(),
-            last_launched_at: None,
-            initialized: false,
-            last_reset_at: None,
-            order: 0,
-            is_running: false,
-            running_pid: None,
-            window_x: None,
-            window_y: None,
-            position_presets: Vec::new(),
-            active_position_id: None,
-            auth_mode: None,
-            region: None,
-            token: None,
-            has_customized_settings: false,
-            snapshot_edition: None,
-            language: None,
-            voicelanguage: None,
-        }
-    }
-
-    fn redacted_for_frontend(mut self) -> Self {
-        self.token = None;
-        self
-    }
-}
-
 pub struct AccountManager;
+
+pub(crate) struct AccountManagerCatalog<'a> {
+    config: &'a GlobalConfig,
+}
+
+impl<'a> AccountManagerCatalog<'a> {
+    pub(crate) fn new(config: &'a GlobalConfig) -> Self {
+        Self { config }
+    }
+
+    fn synchronize_listing_mod_arguments(&self, account: &mut AccountMeta) -> Result<(), AppError> {
+        if !account.initialized {
+            return Ok(());
+        }
+
+        let battle_net_config =
+            AccountManager::account_dir_checked(&self.config.accounts_dir, &account.id)?
+                .join("Battle.net")
+                .join("Battle.net.config");
+        if !battle_net_config.exists() {
+            return Ok(());
+        }
+
+        let Ok(context) =
+            LaunchContext::for_account(self.config, account, ContextPurpose::Settings)
+        else {
+            return Ok(());
+        };
+        let game_key = context.edition.battle_net_config_game_key;
+        if let Some(arguments) = try_read_mod_args(&battle_net_config, game_key) {
+            account.mod_args = arguments;
+        } else if !account.mod_args.is_empty() {
+            account.mod_args.clear();
+        }
+        Ok(())
+    }
+}
+
+impl AccountCatalog for AccountManagerCatalog<'_> {
+    fn list_account_ids(&self) -> Result<Vec<String>, AppError> {
+        Ok(AccountManager::list_ids(&self.config.accounts_dir))
+    }
+
+    fn list(&self) -> Result<Vec<AccountMeta>, AppError> {
+        let mut accounts = Vec::new();
+        for account_id in AccountManager::list_ids(&self.config.accounts_dir) {
+            // Historical behavior intentionally keeps one damaged account from hiding every
+            // healthy account in the dashboard.
+            let Ok(mut account) = AccountManager::load_meta(&self.config.accounts_dir, &account_id)
+            else {
+                continue;
+            };
+            self.synchronize_listing_mod_arguments(&mut account)?;
+            accounts.push(account);
+        }
+        Ok(accounts)
+    }
+
+    fn get(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+}
+
+impl AccountRepository for AccountManagerCatalog<'_> {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
+        AccountManager::save_meta(&self.config.accounts_dir, account)
+    }
+}
+
+impl AccountSettingsPreferenceRepository for AccountManagerCatalog<'_> {
+    fn ensure_complete_snapshot(&self, account_id: &str) -> Result<(), AppError> {
+        let account_dir =
+            AccountManager::account_dir_checked(&self.config.accounts_dir, account_id)?;
+        let path = account_dir.join("Settings.json");
+        if !path.is_file() {
+            return Err(AppError::FileError(format!(
+                "账号 Settings.json 不存在: {}",
+                path.display()
+            )));
+        }
+        let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+        if settings.as_object().is_none_or(|object| object.is_empty()) {
+            return Err(AppError::ConfigReadError(format!(
+                "账号 Settings.json 为空或根节点不是对象: {}",
+                path.display()
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl AccountModRepository for AccountManagerCatalog<'_> {
+    fn save_mod_configuration(&self, account: AccountMeta) -> Result<AccountMeta, AppError> {
+        persist_account_mod_configuration(self.config, account)
+    }
+}
+
+impl AccountNameRepository for AccountManagerCatalog<'_> {
+    fn ensure_display_name_available(
+        &self,
+        requested_name: &str,
+        excluded_account_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        ensure_account_display_name_available(
+            &self.config.accounts_dir,
+            requested_name,
+            excluded_account_id,
+        )
+    }
+}
+
+struct LaunchContextAccountProfilePolicy<'a> {
+    config: &'a GlobalConfig,
+}
+
+impl AccountProfilePolicy for LaunchContextAccountProfilePolicy<'_> {
+    fn resolve(&self, account: &AccountMeta) -> Result<ResolvedAccountProfile, AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::LaunchGame)?;
+        Ok(ResolvedAccountProfile {
+            auth_mode: context.auth_mode,
+            game_region: context.game_region,
+            client_edition: context.installation.edition,
+            default_locale: context.region.default_locale,
+        })
+    }
+}
+
+struct CurrentUserTokenProtector;
+
+impl TokenProtector for CurrentUserTokenProtector {
+    fn protect(&self, plaintext: &str) -> Result<String, AppError> {
+        let encrypted = crate::commands::crypto::protect_token(plaintext)
+            .map_err(|error| AppError::Unknown(format!("Token 加密失败: {error}")))?;
+        Ok(crate::commands::crypto::hex_encode(&encrypted))
+    }
+}
+
+struct SystemTimestampProvider;
+
+impl TimestampProvider for SystemTimestampProvider {
+    fn now_rfc3339(&self) -> String {
+        chrono::Utc::now().to_rfc3339()
+    }
+}
+
+struct AccountCreationAdapter<'a> {
+    config: &'a GlobalConfig,
+    state: &'a SharedState,
+}
+
+impl AccountRepository for AccountCreationAdapter<'_> {
+    fn load(&self, account_id: &str) -> Result<AccountMeta, AppError> {
+        AccountManager::load_meta(&self.config.accounts_dir, account_id)
+    }
+
+    fn save(&self, account: &AccountMeta) -> Result<(), AppError> {
+        AccountManager::save_meta(&self.config.accounts_dir, account)
+    }
+}
+
+impl AccountNameRepository for AccountCreationAdapter<'_> {
+    fn ensure_display_name_available(
+        &self,
+        requested_name: &str,
+        excluded_account_id: Option<&str>,
+    ) -> Result<(), AppError> {
+        ensure_account_display_name_available(
+            &self.config.accounts_dir,
+            requested_name,
+            excluded_account_id,
+        )
+    }
+}
+
+impl AccountCreationRepository for AccountCreationAdapter<'_> {
+    fn next_account_id(&self) -> String {
+        AccountManager::next_id(&self.config.accounts_dir)
+    }
+
+    fn create(&self, account: &AccountMeta) -> Result<(), AppError> {
+        let context = LaunchContext::for_account(self.config, account, ContextPurpose::LaunchGame)?;
+        let dir = AccountManager::account_dir_checked(&self.config.accounts_dir, &account.id)?;
+        if path_exists(&dir)? {
+            return Err(AppError::FileError(format!(
+                "账号目录已存在: {}",
+                dir.display()
+            )));
+        }
+        let _host_runtime_lease = if context.auth_mode == AuthMode::Token {
+            None
+        } else {
+            Some(HostRuntimeLease::try_acquire(self.state)?)
+        };
+        let staged = sibling_with_suffix(&dir, ".tmp")?;
+        let backup = sibling_with_suffix(&dir, ".bak")?;
+        remove_path_if_exists(&staged)?;
+        std::fs::create_dir_all(&staged)?;
+        if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
+            if let Err(error) =
+                copy_system_settings_to_account_if_available(saved_games_directory, &staged)
+            {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Account",
+                    &format!("创建账号时跳过可选 Settings.json 快照: {error}"),
+                );
+            }
+        } else {
+            crate::logger::log_msg(
+                "WARN",
+                "Account",
+                &format!(
+                    "创建账号 {} 时未配置可用的存档目录；核心账号已创建，画质快照暂不可用",
+                    account.id
+                ),
+            );
+        }
+        if let Err(error) = write_account_meta_to_directory(&staged, account) {
+            let _ = remove_path_if_exists(&staged);
+            return Err(error);
+        }
+        replace_path_with_backup(&staged, &dir, &backup)
+    }
+}
+
+struct AccountManagerRuntime<'a> {
+    state: &'a SharedState,
+}
+
+impl<'a> AccountManagerRuntime<'a> {
+    fn new(state: &'a SharedState) -> Self {
+        Self { state }
+    }
+}
+
+impl AccountRuntimePort for AccountManagerRuntime<'_> {
+    fn registered_pid(&self, account_id: &str) -> Option<u32> {
+        self.state.multi_instance().instances().pid_for(account_id)
+    }
+
+    fn is_expected_game_process(
+        &self,
+        config: &GlobalConfig,
+        account: &AccountMeta,
+        pid: u32,
+    ) -> bool {
+        let Some(expected_game_path) =
+            LaunchContext::for_account(config, account, ContextPurpose::Settings)
+                .ok()
+                .map(|context| context.installation.game_executable)
+        else {
+            return false;
+        };
+
+        let mut system = shared_system()
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let system_pid = sysinfo::Pid::from(pid as usize);
+        system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
+        let Some(process) = system.process(system_pid) else {
+            return false;
+        };
+        process
+            .name()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("D2R.exe")
+            && process.exe().is_some_and(|actual| {
+                crate::infrastructure::system::executable_paths_match(actual, &expected_game_path)
+            })
+    }
+
+    fn remove_if_pid(&self, account_id: &str, pid: u32) -> bool {
+        self.state
+            .multi_instance()
+            .instances()
+            .remove_if_pid(account_id, pid)
+    }
+}
 
 impl AccountManager {
     pub fn is_valid_account_id(id: &str) -> bool {
-        if id.is_empty()
-            || id == "."
-            || id == ".."
-            || id.contains('\\')
-            || id.contains('/')
-            || id.contains(':')
-        {
-            return false;
-        }
-
-        if let Some(rest) = id.strip_prefix("acount") {
-            return !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit());
-        }
-
-        let parts: Vec<&str> = id.split('-').collect();
-        if parts.len() == 5 {
-            let expected = [8, 4, 4, 4, 12];
-            return parts.iter().zip(expected).all(|(part, len)| {
-                part.len() == len && part.chars().all(|c| c.is_ascii_hexdigit())
-            });
-        }
-
-        false
+        crate::domain::account::is_valid_account_id(id)
     }
 
     pub fn validate_account_id(id: &str) -> Result<(), AppError> {
@@ -389,7 +558,7 @@ impl AccountManager {
             }
         }
 
-        normalize_legacy_window_position(&mut meta);
+        meta.normalize_legacy_window_position();
 
         if let Some(account_dir) = path.parent() {
             hydrate_meta_from_runtime_snapshot(account_dir, &mut meta);
@@ -444,91 +613,8 @@ impl AccountManager {
     }
 }
 
-fn next_legacy_position_id(presets: &[WindowPositionPreset]) -> String {
-    let base = "legacy-window-position";
-    if !presets.iter().any(|preset| preset.id == base) {
-        return base.to_string();
-    }
-    let mut suffix = 2;
-    loop {
-        let candidate = format!("{base}-{suffix}");
-        if !presets.iter().any(|preset| preset.id == candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
-fn next_legacy_position_name(presets: &[WindowPositionPreset]) -> String {
-    let base = "原位置";
-    if !presets.iter().any(|preset| preset.name == base) {
-        return base.to_string();
-    }
-    let mut suffix = 2;
-    loop {
-        let candidate = format!("{base} {suffix}");
-        if !presets.iter().any(|preset| preset.name == candidate) {
-            return candidate;
-        }
-        suffix += 1;
-    }
-}
-
-/// 旧版本只有 window_x/window_y。它们继续作为跨版本兼容的权威镜像：
-/// 旧版修改坐标或清空坐标后，新版重新读取时也会得到相同默认位置。
-fn normalize_legacy_window_position(meta: &mut AccountMeta) {
-    let mut seen_ids = std::collections::HashSet::new();
-    meta.position_presets.retain_mut(|preset| {
-        preset.id = preset.id.trim().to_string();
-        preset.name = preset.name.trim().to_string();
-        !preset.id.is_empty() && !preset.name.is_empty() && seen_ids.insert(preset.id.clone())
-    });
-
-    let Some((x, y)) = meta.window_x.zip(meta.window_y) else {
-        meta.active_position_id = None;
-        return;
-    };
-
-    if let Some(active_id) = meta.active_position_id.as_deref() {
-        if meta
-            .position_presets
-            .iter()
-            .any(|preset| preset.id == active_id && preset.x == x && preset.y == y)
-        {
-            return;
-        }
-    }
-
-    if let Some(existing) = meta
-        .position_presets
-        .iter()
-        .find(|preset| preset.x == x && preset.y == y)
-    {
-        meta.active_position_id = Some(existing.id.clone());
-        return;
-    }
-
-    let id = next_legacy_position_id(&meta.position_presets);
-    let name = next_legacy_position_name(&meta.position_presets);
-    meta.position_presets.push(WindowPositionPreset {
-        id: id.clone(),
-        name,
-        x,
-        y,
-    });
-    meta.active_position_id = Some(id);
-}
-
 pub(crate) fn normalized_account_display_name(name: &str) -> String {
-    name.trim().to_lowercase()
-}
-
-fn validated_account_display_name(name: &str) -> Result<String, AppError> {
-    let name = name.trim();
-    if name.is_empty() {
-        return Err(AppError::ConfigReadError("账号名称不能为空".to_string()));
-    }
-    Ok(name.to_string())
+    normalize_account_display_name(name)
 }
 
 fn ensure_account_display_name_available(
@@ -599,152 +685,151 @@ pub(crate) fn copy_account_settings_to_system(
     Ok(())
 }
 
+struct AccountDeletionTransactionAdapter<'a> {
+    app: &'a tauri::AppHandle,
+    state: &'a SharedState,
+}
+
+impl AccountDeletionTransaction for AccountDeletionTransactionAdapter<'_> {
+    fn delete(&self, requested_account_id: &str) -> Result<String, AppError> {
+        let staged_deletion = RefCell::new(None);
+        let post_commit_outcome = RefCell::new(None);
+        let deleted_account_id = RefCell::new(None);
+        let mutation_result =
+            crate::commands::global_config::mutate_loaded_global_config_with_post_commit(
+                self.state,
+                self.app,
+                |cfg| {
+                    let stored_account_id = AccountManager::list_ids(&cfg.accounts_dir)
+                        .into_iter()
+                        .find(|stored_id| stored_id.eq_ignore_ascii_case(requested_account_id))
+                        .ok_or_else(|| {
+                            AppError::AccountNotFound(requested_account_id.to_string())
+                        })?;
+                    let dir =
+                        AccountManager::account_dir_checked(&cfg.accounts_dir, &stored_account_id)?;
+                    let had_configuration_references =
+                        config_references_account(cfg, &stored_account_id);
+                    *staged_deletion.borrow_mut() = Some(stage_account_directory_for_deletion(
+                        &dir,
+                        &stored_account_id,
+                        had_configuration_references,
+                    )?);
+                    *deleted_account_id.borrow_mut() = Some(stored_account_id.clone());
+                    let cleared_audio_target = cfg
+                        .rune_audio_target_account
+                        .trim()
+                        .eq_ignore_ascii_case(&stored_account_id);
+                    if cleared_audio_target {
+                        cfg.rune_audio_enabled = false;
+                        cfg.rune_audio_target_account.clear();
+                    }
+                    let removed_from_launch_group =
+                        cfg.remove_account_from_launch_groups(&stored_account_id);
+                    Ok(cleared_audio_target || removed_from_launch_group)
+                },
+                |_| {
+                    let mut staged_deletion = staged_deletion.borrow_mut();
+                    let outcome = match staged_deletion.as_mut() {
+                        None => Err(AppError::FileError(
+                            "账号删除事务未能创建目录暂存记录".to_string(),
+                        )),
+                        Some(staged_deletion) => {
+                            let completion = complete_staged_account_deletion_after_config_commit(
+                                staged_deletion,
+                            );
+                            if completion.should_retire_account_id {
+                                if let Some(account_id) = deleted_account_id.borrow().as_deref() {
+                                    self.state.retire_account_id(account_id);
+                                }
+                            }
+                            completion.result
+                        }
+                    };
+                    *post_commit_outcome.borrow_mut() = Some(outcome);
+                },
+            );
+        let staged_deletion = staged_deletion.into_inner();
+        let mutation = match mutation_result {
+            Ok(mutation) => mutation,
+            Err(error) => {
+                return Err(match staged_deletion.as_ref() {
+                    Some(staged_deletion) => {
+                        rollback_staged_account_deletion(staged_deletion, error)
+                    }
+                    None => error,
+                });
+            }
+        };
+        match mutation {
+            ConfigurationMutation::Missing => {
+                return Err(AppError::ConfigReadError("尚未完成首次配置".to_string()));
+            }
+            ConfigurationMutation::Unchanged | ConfigurationMutation::Updated => {}
+        }
+        let deleted_account_id = deleted_account_id
+            .into_inner()
+            .ok_or_else(|| AppError::FileError("账号删除事务未记录实际账号 ID".to_string()))?;
+
+        post_commit_outcome
+            .into_inner()
+            .ok_or_else(|| AppError::FileError("账号删除事务未执行提交后目录处理".to_string()))??;
+        Ok(deleted_account_id)
+    }
+}
+
+struct AccountDeletionCleanupAdapter<'a> {
+    state: &'a SharedState,
+}
+
+impl AccountDeletionCleanupPort for AccountDeletionCleanupAdapter<'_> {
+    fn remove_browser_profiles(&self, account_id: &str) -> Result<(), String> {
+        crate::commands::browser::remove_browser_profiles_for_account(account_id)
+            .map_err(|error| error.to_string())
+    }
+
+    fn remove_runtime_instance(&self, account_id: &str) {
+        self.state.multi_instance().instances().remove(account_id);
+    }
+
+    fn notify_account_removed(&self, account_id: &str) -> Vec<(String, String)> {
+        self.state
+            .capabilities()
+            .notify_account_removed(account_id)
+            .into_iter()
+            .map(|(capability_id, failure)| (capability_id.to_string(), failure.message))
+            .collect()
+    }
+}
+
 // ── Tauri Commands ──
 
 /// 获取所有账号列表
 #[tauri::command]
 pub fn list_accounts(state: tauri::State<'_, SharedState>) -> Result<Vec<AccountMeta>, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let ids = AccountManager::list_ids(&cfg.accounts_dir);
-    let mut accounts = Vec::new();
-
-    let mut sys = shared_system().lock().unwrap_or_else(|e| e.into_inner());
-
-    for id in &ids {
-        if let Ok(mut meta) = AccountManager::load_meta(&cfg.accounts_dir, id) {
-            // 从 Battle.net.config 同步 Mod 启动参数（内存中更新，不写回磁盘）
-            if meta.initialized {
-                let bnet_config = AccountManager::account_dir_checked(&cfg.accounts_dir, id)?
-                    .join("Battle.net")
-                    .join("Battle.net.config");
-                if bnet_config.exists() {
-                    if let Ok(context) =
-                        LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
-                    {
-                        let game_key = context.edition.battle_net_config_game_key;
-                        if let Some(args) = try_read_mod_args(&bnet_config, game_key) {
-                            if meta.mod_args != args {
-                                meta.mod_args = args;
-                            }
-                        } else if !meta.mod_args.is_empty() {
-                            meta.mod_args = String::new();
-                        }
-                    }
-                }
-            }
-            let pid = {
-                let active = state.active_games.read();
-                active.get(id).copied()
-            };
-            let mut running = false;
-            if let Some(pid) = pid {
-                let expected_game_path =
-                    LaunchContext::for_account(cfg, &meta, ContextPurpose::Settings)
-                        .ok()
-                        .map(|context| context.installation.game_executable);
-                let sys_pid = sysinfo::Pid::from(pid as usize);
-                sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[sys_pid]));
-                if let (Some(proc), Some(expected_game_path)) =
-                    (sys.process(sys_pid), expected_game_path.as_ref())
-                {
-                    let name = proc.name().to_string_lossy();
-                    if name.eq_ignore_ascii_case("D2R.exe")
-                        && proc.exe().is_some_and(|actual| {
-                            crate::commands::system::executable_paths_match(
-                                actual,
-                                expected_game_path,
-                            )
-                        })
-                    {
-                        running = true;
-                    }
-                }
-            }
-            if !running && pid.is_some() {
-                state.remove_active_game(id);
-            }
-            meta.is_running = running;
-            meta.running_pid = if running { pid } else { None };
-            accounts.push(meta.redacted_for_frontend());
-        }
-    }
-    Ok(accounts)
+    let account_catalog = AccountManagerCatalog::new(&cfg);
+    let account_runtime = AccountManagerRuntime::new(state.inner());
+    AccountQueryService::new(&account_catalog, &account_runtime).list(&cfg)
 }
 
-/// 重新排序账号（更新 order 字段）
-fn ensure_unique_account_ids(account_ids: &[String]) -> Result<(), AppError> {
-    let mut canonical_ids: Vec<String> = account_ids
-        .iter()
-        .map(|account_id| account_id.to_ascii_lowercase())
-        .collect();
-    canonical_ids.sort();
-    canonical_ids.dedup();
-    if canonical_ids.len() != account_ids.len() {
-        return Err(AppError::ConfigWriteError(
-            "账号排序列表包含重复账号，已拒绝写入".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn apply_account_order(accounts_dir: &str, ordered_ids: &[String]) -> Result<(), AppError> {
-    // 所有账号必须先成功读取，避免“前几个已写入、后一个不存在”的输入型部分提交。
-    let originals = ordered_ids
-        .iter()
-        .map(|id| AccountManager::load_meta(accounts_dir, id))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut updated = originals.clone();
-    for (index, meta) in updated.iter_mut().enumerate() {
-        meta.order = index as u32;
-    }
-
-    for (index, meta) in updated.iter().enumerate() {
-        if let Err(write_error) = AccountManager::save_meta(accounts_dir, meta) {
-            let mut rollback_errors = Vec::new();
-            for original in &originals[..index] {
-                if let Err(error) = AccountManager::save_meta(accounts_dir, original) {
-                    rollback_errors.push(format!("{}: {error}", original.id));
-                }
-            }
-            if rollback_errors.is_empty() {
-                return Err(write_error);
-            }
-            return Err(AppError::FileError(format!(
-                "账号排序写入失败且部分回滚失败。写入错误: {write_error}；回滚错误: {}",
-                rollback_errors.join("；")
-            )));
-        }
-    }
-    Ok(())
-}
-
+/// 重新排序账号（更新 order 字段）。校验、冲突控制与回滚由核心应用用例负责。
 #[tauri::command]
 pub fn reorder_accounts(
     state: tauri::State<'_, SharedState>,
     ordered_ids: Vec<String>,
 ) -> Result<(), AppError> {
-    for id in &ordered_ids {
-        AccountManager::validate_account_id(id)?;
-    }
-    ensure_unique_account_ids(&ordered_ids)?;
-    let mut lock_ids = ordered_ids.clone();
-    lock_ids.sort_by_key(|account_id| account_id.to_ascii_lowercase());
-    let _account_leases: Vec<AccountLifecycleLease> = lock_ids
-        .iter()
-        .map(|id| AccountLifecycleLease::try_acquire(state.inner(), id))
-        .collect::<Result<_, _>>()?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    apply_account_order(&cfg.accounts_dir, &ordered_ids)
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountOrderingService::new(&repository, state.multi_instance().account_leases())
+        .reorder(&ordered_ids)
 }
 
 /// 打开账号配置目录（直接用 Explorer 打开）
@@ -753,9 +838,9 @@ pub fn open_account_dir(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
 
@@ -786,9 +871,9 @@ pub fn get_account_dir_path(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<String, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
     let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
     Ok(dir.to_string_lossy().to_string())
@@ -800,12 +885,13 @@ pub fn get_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<AccountMeta, AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    Ok(meta.redacted_for_frontend())
+    let account_catalog = AccountManagerCatalog::new(&cfg);
+    let account_runtime = AccountManagerRuntime::new(state.inner());
+    AccountQueryService::new(&account_catalog, &account_runtime).get(&account_id)
 }
 
 /// 创建新账号目录并返回 ID
@@ -820,94 +906,31 @@ pub fn create_account(
     voicelanguage: Option<String>,
 ) -> Result<String, AppError> {
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let nickname = validated_account_display_name(&nickname)?;
-    // 锁序固定为 Catalog -> Account。名称检查与目录提交必须处于同一临界区，
-    // 防止两个并发创建请求同时通过判重。
-    let _catalog_guard = state.account_catalog.lock();
-    ensure_account_display_name_available(&cfg.accounts_dir, &nickname, None)?;
-    let id = AccountManager::next_id(&cfg.accounts_dir);
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &id)?;
-    let mut meta = AccountMeta::new(&id);
-    meta.display_name = nickname;
-    meta.auth_mode = auth_mode;
-    meta.region = region;
-
-    let context = LaunchContext::for_draft(
-        &cfg,
-        meta.region.as_deref(),
-        meta.auth_mode.as_deref(),
-        ContextPurpose::LaunchGame,
-    )?;
-    meta.region = Some(context.game_region.canonical().to_string());
-
-    let is_token_auth = context.auth_mode == AuthMode::Token;
-    if is_token_auth {
-        meta.language = language.or(Some(context.region.default_locale.to_string()));
-        meta.voicelanguage = voicelanguage.or(Some(context.region.default_locale.to_string()));
-        meta.initialized = true;
-    }
-
-    // Token 使用 DPAPI 加密后存储，防止明文落盘
-    meta.token = if let Some(ref t) = token {
-        let encrypted = crate::commands::crypto::protect_token(t)
-            .map_err(|e| AppError::Unknown(format!("Token 加密失败: {}", e)))?;
-        Some(crate::commands::crypto::hex_encode(&encrypted))
-    } else {
-        None
+    let repository = AccountCreationAdapter {
+        config: &cfg,
+        state: state.inner(),
     };
-    meta.last_reset_at = Some(chrono::Utc::now().to_rfc3339());
-
-    let dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &id)?;
-    if path_exists(&dir)? {
-        return Err(AppError::FileError(format!(
-            "账号目录已存在: {}",
-            dir.display()
-        )));
-    }
-    // Token-only 创建只写账号私有元数据，并且读取 Settings.json 不会修改宿主状态。
-    // Battle.net 账号仍沿用宿主租约，避免其初始化前快照与认证流程交错。
-    let _host_runtime_lease = if is_token_auth {
-        None
-    } else {
-        Some(HostRuntimeLease::try_acquire(state.inner().as_ref())?)
-    };
-    let staged = sibling_with_suffix(&dir, ".tmp")?;
-    let backup = sibling_with_suffix(&dir, ".bak")?;
-    remove_path_if_exists(&staged)?;
-    std::fs::create_dir_all(&staged)?;
-    if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
-        if let Err(error) =
-            copy_system_settings_to_account_if_available(saved_games_directory, &staged)
-        {
-            crate::logger::log_msg(
-                "WARN",
-                "Account",
-                &format!("创建账号时跳过可选 Settings.json 快照: {}", error),
-            );
-        }
-    } else {
-        crate::logger::log_msg(
-            "WARN",
-            "Account",
-            &format!(
-                "创建账号 {} 时未配置可用的存档目录；核心账号已创建，画质快照暂不可用",
-                id
-            ),
-        );
-    }
-    if let Err(error) = write_account_meta_to_directory(&staged, &meta) {
-        let _ = remove_path_if_exists(&staged);
-        return Err(error);
-    }
-    replace_path_with_backup(&staged, &dir, &backup)?;
-
-    Ok(id)
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountCreationService::new(
+        &repository,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+        &SystemTimestampProvider,
+    )
+    .create(CreateAccountRequest {
+        display_name: nickname,
+        auth_mode,
+        token,
+        region,
+        language,
+        voice_language: voicelanguage,
+    })
 }
 
 /// 更新已创建的账号的 Token / 语言 / 区服等字段
@@ -921,114 +944,28 @@ pub fn update_account_meta(
     language: Option<String>,
     voicelanguage: Option<String>,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let previous_auth_mode = AuthMode::parse(meta.auth_mode.as_deref())?;
-    let old_edition = meta
-        .region
-        .as_deref()
-        .and_then(|value| GameRegion::parse(value).ok())
-        .map(GameRegion::edition);
-    let region_updated = region.is_some();
-    let auth_mode_updated = auth_mode.is_some();
-
-    if let Some(value) = auth_mode {
-        meta.auth_mode = Some(value);
-    }
-    if let Some(value) = region {
-        meta.region = Some(value);
-    }
-
-    let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::LaunchGame)?;
-    meta.region = Some(context.game_region.canonical().to_string());
-    if context.auth_mode == AuthMode::Token
-        && meta.token.is_none()
-        && token.as_deref().is_none_or(|value| value.trim().is_empty())
-    {
-        return Err(AppError::ConfigReadError(
-            "迁移为 Token 认证时必须提供 Token".to_string(),
-        ));
-    }
-
-    if region_updated {
-        let edition_changed = old_edition
-            .map(|edition| edition != context.installation.edition)
-            .unwrap_or(true);
-        if edition_changed {
-            meta.has_customized_settings = false;
-            meta.snapshot_edition = None;
-            if context.auth_mode == AuthMode::BattleNet {
-                meta.initialized = false;
-            }
-        }
-        if context.auth_mode == AuthMode::Token {
-            if meta.language.is_none() {
-                meta.language = Some(context.region.default_locale.to_string());
-            }
-            if meta.voicelanguage.is_none() {
-                meta.voicelanguage = Some(context.region.default_locale.to_string());
-            }
-        }
-    }
-
-    if context.auth_mode == AuthMode::Token {
-        meta.initialized = true;
-        if auth_mode_updated && previous_auth_mode != AuthMode::Token {
-            meta.snapshot_edition = None;
-        }
-        if let Some(value) = language {
-            meta.language = Some(value);
-        }
-        if let Some(value) = voicelanguage {
-            meta.voicelanguage = Some(value);
-        }
-    }
-    if let Some(ref value) = token {
-        let encrypted = crate::commands::crypto::protect_token(value)
-            .map_err(|e| AppError::Unknown(format!("Token 加密失败: {}", e)))?;
-        meta.token = Some(crate::commands::crypto::hex_encode(&encrypted));
-    }
-
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(())
-}
-
-fn switch_international_account_region(
-    meta: &mut AccountMeta,
-    requested_region: &str,
-) -> Result<(), AppError> {
-    if AuthMode::parse(meta.auth_mode.as_deref())? != AuthMode::Token {
-        return Err(AppError::ConfigReadError(
-            "只有 Token 直启账号可以切换国际服服务器".to_string(),
-        ));
-    }
-
-    let current_region = meta
-        .region
-        .as_deref()
-        .ok_or_else(|| AppError::ConfigReadError("账号缺少区服，无法切换服务器".to_string()))?;
-    if GameRegion::parse(current_region)?.edition() != ClientEdition::Global {
-        return Err(AppError::ConfigReadError(
-            "只有国际服账号可以在亚服、美服和欧服之间切换".to_string(),
-        ));
-    }
-
-    let requested_region = requested_region.trim().to_ascii_uppercase();
-    if !matches!(requested_region.as_str(), "KR" | "NA" | "EU") {
-        return Err(AppError::ConfigReadError(format!(
-            "不支持的国际服服务器: {requested_region}"
-        )));
-    }
-    let next_region = GameRegion::parse(&requested_region)?;
-    meta.region = Some(next_region.canonical().to_string());
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountProfileService::new(
+        &repository,
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+    )
+    .update(
+        &account_id,
+        AccountProfilePatch {
+            auth_mode,
+            token,
+            region,
+            language,
+            voice_language: voicelanguage,
+        },
+    )
 }
 
 /// 在共用同一套客户端与 Token 的国际服服务器之间切换。
@@ -1038,17 +975,19 @@ pub fn update_account_region(
     account_id: String,
     region: String,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let accounts_dir = state
-        .config
-        .read()
-        .as_ref()
-        .map(|config| config.accounts_dir.clone())
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&accounts_dir, &account_id)?;
-    switch_international_account_region(&mut meta, &region)?;
-    AccountManager::save_meta(&accounts_dir, &meta)
+    let repository = AccountManagerCatalog::new(&cfg);
+    let policy = LaunchContextAccountProfilePolicy { config: &cfg };
+    AccountProfileService::new(
+        &repository,
+        state.multi_instance().account_leases(),
+        &policy,
+        &CurrentUserTokenProtector,
+    )
+    .switch_international_region(&account_id, &region)
 }
 
 /// 删除账号
@@ -1058,57 +997,28 @@ pub fn delete_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let accounts_dir = {
-        let config = state.config.read();
-        config
-            .as_ref()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-            .accounts_dir
-            .clone()
+    let transaction = AccountDeletionTransactionAdapter {
+        app: &app,
+        state: state.inner(),
     };
-
-    let dir = AccountManager::account_dir_checked(&accounts_dir, &account_id)?;
-    if !dir.exists() {
-        return Err(AppError::AccountNotFound(account_id));
-    }
-    remove_account_directory_without_resurrection(&dir)?;
-    if let Err(error) = crate::commands::browser::remove_browser_profiles_for_account(&account_id) {
+    let cleanup = AccountDeletionCleanupAdapter {
+        state: state.inner(),
+    };
+    let outcome = AccountDeletionService::new(
+        &transaction,
+        &cleanup,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+    )
+    .delete(&account_id)?;
+    for warning in outcome.warnings {
         log::warn!(
-            "账号 {} 已删除，但浏览器 Profile 清理失败（可能仍被浏览器占用）: {}",
-            account_id,
-            error
+            "账号 {} 已删除，但 {} 的提交后清理失败: {}",
+            outcome.account_id,
+            warning.component,
+            warning.message
         );
     }
-    state.remove_active_game(&account_id);
-
-    let updated_config = {
-        let _config_io = state.config_io.lock();
-        let mut config = state.config.write();
-        let cfg = config
-            .as_mut()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-        let cleared_audio_target = cfg.rune_audio_target_account.trim() == account_id;
-        if cleared_audio_target {
-            cfg.rune_audio_enabled = false;
-            cfg.rune_audio_target_account.clear();
-        }
-        let removed_from_launch_group = cfg.remove_account_from_launch_groups(&account_id);
-        if cleared_audio_target || removed_from_launch_group {
-            cfg.save(&state.app_data_dir)?;
-            Some(cfg.clone())
-        } else {
-            None
-        }
-    };
-
-    if let Some(config) = updated_config {
-        if config.rune_audio_target_account.is_empty() {
-            crate::rune_audio::monitor::stop_rune_audio_monitor();
-        }
-        let _ = app.emit("global-config-updated", config);
-    }
-
     Ok(())
 }
 
@@ -1120,56 +1030,24 @@ pub fn rename_account(
     new_name: String,
 ) -> Result<AccountMeta, AppError> {
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
-    let new_name = validated_account_display_name(&new_name)?;
-    let _catalog_guard = state.account_catalog.lock();
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    ensure_account_display_name_available(&cfg.accounts_dir, &new_name, Some(&account_id))?;
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-
-    meta.display_name = new_name;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
-}
-
-/// 将非空且尚不存在的 Mod 配置追加到列表；首尾空白不参与重复判断。
-fn append_unique_mod_configuration(mod_list: &mut Vec<String>, candidate: &str) -> bool {
-    let candidate = candidate.trim();
-    if candidate.is_empty() || mod_list.iter().any(|existing| existing.trim() == candidate) {
-        return false;
-    }
-
-    mod_list.push(candidate.to_string());
-    true
-}
-
-fn normalize_mod_configuration(active_mod: String, mod_list: Vec<String>) -> (String, Vec<String>) {
-    let active_mod = active_mod.trim().to_string();
-    let mut normalized = Vec::with_capacity(mod_list.len() + usize::from(!active_mod.is_empty()));
-    for configuration in mod_list {
-        append_unique_mod_configuration(&mut normalized, &configuration);
-    }
-    if !active_mod.is_empty() {
-        append_unique_mod_configuration(&mut normalized, &active_mod);
-    }
-    (active_mod, normalized)
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountNamingService::new(
+        &repository,
+        state.multi_instance().catalog_leases(),
+        state.multi_instance().account_leases(),
+    )
+    .rename(&account_id, &new_name)
 }
 
 fn persist_account_mod_configuration(
-    cfg: &crate::commands::global_config::GlobalConfig,
-    mut meta: AccountMeta,
-    active_mod: String,
-    mod_list: Vec<String>,
+    cfg: &GlobalConfig,
+    meta: AccountMeta,
 ) -> Result<AccountMeta, AppError> {
     let context = LaunchContext::for_account(cfg, &meta, ContextPurpose::LaunchGame)?;
-    let (active_mod, mod_list) = normalize_mod_configuration(active_mod, mod_list);
-    meta.mod_args = active_mod;
-    meta.mod_list = mod_list;
 
     let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &meta.id)?;
     let pending = stage_account_directory(&account_dir)?;
@@ -1198,78 +1076,37 @@ fn persist_account_mod_configuration(
 }
 
 /// 新增一条 Mod 胶囊配置。完全相同的配置会被安全跳过，而不是作为错误返回。
-#[tauri::command]
-pub fn add_account_mod(
-    state: tauri::State<'_, SharedState>,
-    account_id: String,
-    mod_configuration: String,
-) -> Result<bool, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
-        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let mut mod_list = meta.mod_list.clone();
-    if !append_unique_mod_configuration(&mut mod_list, &mod_configuration) {
-        return Ok(false);
-    }
-
-    let active_mod = mod_configuration.trim().to_string();
-    persist_account_mod_configuration(&cfg, meta, active_mod, mod_list)?;
-    Ok(true)
-}
-
-/// 设置账号的当前 Mod 及完整胶囊列表；传入的重复项会按首次出现顺序静默合并。
-#[tauri::command]
-pub fn update_account_mods(
-    state: tauri::State<'_, SharedState>,
-    account_id: String,
-    active_mod: String,
-    mod_list: Vec<String>,
-) -> Result<AccountMeta, AppError> {
-    update_account_mods_inner(state.inner(), account_id, active_mod, mod_list)
-}
-
 pub(crate) fn update_account_mods_inner(
     state: &SharedState,
     account_id: String,
     active_mod: String,
     mod_list: Vec<String>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state, &account_id)?;
     let cfg = state
-        .config
-        .read()
-        .as_ref()
-        .cloned()
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    persist_account_mod_configuration(&cfg, meta, active_mod, mod_list)
-        .map(AccountMeta::redacted_for_frontend)
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountModService::new(&repository, state.multi_instance().account_leases()).replace(
+        &account_id,
+        active_mod,
+        mod_list,
+    )
 }
 
-/// 确认账号独立画质开关指向一份真实、非空的配置快照。
-fn ensure_account_settings_snapshot(account_dir: &Path) -> Result<(), AppError> {
-    let path = account_dir.join("Settings.json");
-    if !path.is_file() {
-        return Err(AppError::FileError(format!(
-            "账号 Settings.json 不存在: {}",
-            path.display()
-        )));
-    }
-    let settings: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
-    if settings.as_object().is_none_or(|object| object.is_empty()) {
-        return Err(AppError::ConfigReadError(format!(
-            "账号 Settings.json 为空或根节点不是对象: {}",
-            path.display()
-        )));
-    }
-    Ok(())
+/// Persists a Mod selection while the caller owns the account operation lease.
+/// Cross-account transactions use this entry point so they can reserve the
+/// complete account set before changing the first profile.
+pub(crate) fn update_account_mods_with_lease_held(
+    config: &GlobalConfig,
+    mut account: AccountMeta,
+    active_mod: String,
+    mod_list: Vec<String>,
+) -> Result<AccountMeta, AppError> {
+    account.replace_mod_configurations(active_mod, mod_list);
+    let mut account = persist_account_mod_configuration(config, account)?;
+    account.token = None;
+    Ok(account)
 }
 
 /// 标记账号已自定义过设置（用于前端引导提示）
@@ -1278,19 +1115,13 @@ pub fn mark_settings_customized(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
-    ensure_account_settings_snapshot(&account_dir)?;
-    meta.has_customized_settings = true;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountSettingsPreferenceService::new(&repository, state.multi_instance().account_leases())
+        .set_customized(&account_id, true)
 }
 
 /// 设置账号是否使用独立 Settings.json 覆盖系统游戏配置
@@ -1300,21 +1131,13 @@ pub fn set_settings_customized(
     account_id: String,
     customized: bool,
 ) -> Result<(), AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    if customized {
-        let account_dir = AccountManager::account_dir_checked(&cfg.accounts_dir, &account_id)?;
-        ensure_account_settings_snapshot(&account_dir)?;
-    }
-    meta.has_customized_settings = customized;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-
-    Ok(())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountSettingsPreferenceService::new(&repository, state.multi_instance().account_leases())
+        .set_customized(&account_id, customized)
 }
 
 /// 设置账号的窗口位置（持久化到 account.json）
@@ -1325,53 +1148,13 @@ pub fn set_account_window_position(
     window_x: Option<i32>,
     window_y: Option<i32>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    meta.window_x = window_x;
-    meta.window_y = window_y;
-    match window_x.zip(window_y) {
-        Some((x, y)) => {
-            if let Some(active_id) = meta.active_position_id.clone() {
-                if let Some(active) = meta
-                    .position_presets
-                    .iter_mut()
-                    .find(|preset| preset.id == active_id)
-                {
-                    active.x = x;
-                    active.y = y;
-                } else {
-                    meta.active_position_id = None;
-                }
-            }
-            if meta.active_position_id.is_none() {
-                if let Some(existing) = meta
-                    .position_presets
-                    .iter()
-                    .find(|preset| preset.x == x && preset.y == y)
-                {
-                    meta.active_position_id = Some(existing.id.clone());
-                } else {
-                    let id = next_legacy_position_id(&meta.position_presets);
-                    let name = next_legacy_position_name(&meta.position_presets);
-                    meta.position_presets.push(WindowPositionPreset {
-                        id: id.clone(),
-                        name,
-                        x,
-                        y,
-                    });
-                    meta.active_position_id = Some(id);
-                }
-            }
-        }
-        None => meta.active_position_id = None,
-    }
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountPositionService::new(&repository, state.multi_instance().account_leases())
+        .set_window_position(&account_id, window_x, window_y)
 }
 
 /// 保存账号的位置胶囊库与主界面默认选择，并同步旧版 window_x/window_y 字段。
@@ -1382,58 +1165,13 @@ pub fn update_account_positions(
     active_position_id: Option<String>,
     position_presets: Vec<WindowPositionPreset>,
 ) -> Result<AccountMeta, AppError> {
-    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
-
-    let mut normalized = Vec::with_capacity(position_presets.len());
-    let mut ids = std::collections::HashSet::new();
-    let mut names = std::collections::HashSet::new();
-    for mut preset in position_presets {
-        preset.id = preset.id.trim().to_string();
-        preset.name = preset.name.trim().to_string();
-        if preset.id.is_empty() || preset.name.is_empty() {
-            return Err(AppError::ConfigWriteError(
-                "位置名称和唯一标识不能为空".to_string(),
-            ));
-        }
-        if !ids.insert(preset.id.clone()) {
-            return Err(AppError::ConfigWriteError(format!(
-                "位置唯一标识重复: {}",
-                preset.id
-            )));
-        }
-        if !names.insert(preset.name.to_lowercase()) {
-            return Err(AppError::ConfigWriteError(format!(
-                "位置名称重复: {}",
-                preset.name
-            )));
-        }
-        normalized.push(preset);
-    }
-
-    let mut meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
-    let active_position_id = active_position_id
-        .map(|id| id.trim().to_string())
-        .filter(|id| !id.is_empty());
-    let selected = active_position_id
-        .as_deref()
-        .map(|id| {
-            normalized
-                .iter()
-                .find(|preset| preset.id == id)
-                .ok_or_else(|| AppError::ConfigWriteError(format!("所选位置不存在: {id}")))
-        })
-        .transpose()?;
-
-    meta.window_x = selected.map(|preset| preset.x);
-    meta.window_y = selected.map(|preset| preset.y);
-    meta.position_presets = normalized;
-    meta.active_position_id = active_position_id;
-    AccountManager::save_meta(&cfg.accounts_dir, &meta)?;
-    Ok(meta.redacted_for_frontend())
+    let repository = AccountManagerCatalog::new(&cfg);
+    AccountPositionService::new(&repository, state.multi_instance().account_leases())
+        .replace_positions(&account_id, active_position_id, position_presets)
 }
 
 /// 初始化/重新初始化完成后：杀战网、清空 UnifiedAuth 注册表
@@ -1454,19 +1192,21 @@ fn cleanup_after_snapshot() -> Result<(), AppError> {
 #[cfg(test)]
 mod settings_json_tests {
     use super::{
-        append_unique_mod_configuration, apply_account_order, commit_account_settings_transaction,
-        copy_account_settings_to_system, copy_system_settings_to_account_if_available,
-        ensure_account_display_name_available, ensure_unique_account_ids,
-        hydrate_meta_from_runtime_snapshot, normalize_mod_configuration,
+        commit_account_settings_transaction, complete_staged_account_deletion_after_config_commit,
+        config_references_account, copy_account_settings_to_system,
+        copy_system_settings_to_account_if_available, ensure_account_display_name_available,
+        hydrate_meta_from_runtime_snapshot, mark_account_deletion_committed,
         normalized_account_display_name, prepare_battle_net_runtime_directory,
         recover_account_transactions, remove_account_directory_without_resurrection,
         replace_battle_net_snapshot, replace_path_with_backup, replace_registry_snapshot_with,
-        resolve_account_runtime_snapshot, stage_account_directory,
-        switch_international_account_region, validate_runtime_snapshot_root, AccountManager,
-        AccountMeta, BnetInitializationKind, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
+        resolve_account_runtime_snapshot, restore_staged_account_deletion, sibling_with_suffix,
+        stage_account_directory, stage_account_directory_for_deletion,
+        validate_runtime_snapshot_root, AccountDeletionPhase, AccountInitializationKind,
+        AccountManager, AccountMeta, RegistryValueBackup, ACCOUNT_RUNTIME_SNAPSHOT_SCHEMA,
     };
+    use crate::domain::account::ClientEdition;
+    use crate::domain::config::GlobalConfig;
     use crate::error::AppError;
-    use crate::launch_context::ClientEdition;
     use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
@@ -1574,92 +1314,6 @@ mod settings_json_tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn identical_mod_configuration_is_skipped_without_mutating_the_list() {
-        let mut configurations = vec!["-mod highres -txt".to_string()];
-
-        assert!(!append_unique_mod_configuration(
-            &mut configurations,
-            "  -mod highres -txt  "
-        ));
-        assert_eq!(configurations, ["-mod highres -txt"]);
-
-        assert!(append_unique_mod_configuration(
-            &mut configurations,
-            "-mod HighRes -txt"
-        ));
-        assert_eq!(configurations.len(), 2);
-    }
-
-    #[test]
-    fn mod_configuration_normalization_silently_merges_exact_duplicates() {
-        let (active, configurations) = normalize_mod_configuration(
-            " -mod highres -txt ".to_string(),
-            vec![
-                "-mod highres -txt".to_string(),
-                " -mod highres -txt ".to_string(),
-                "-direct -txt".to_string(),
-            ],
-        );
-
-        assert_eq!(active, "-mod highres -txt");
-        assert_eq!(configurations, ["-mod highres -txt", "-direct -txt"]);
-    }
-
-    #[test]
-    fn international_region_switch_preserves_account_configuration() {
-        let mut meta = AccountMeta::new("account1");
-        meta.auth_mode = Some("token".to_string());
-        meta.region = Some("KR".to_string());
-        meta.token = Some("encrypted-token".to_string());
-        meta.language = Some("zhTW".to_string());
-        meta.voicelanguage = Some("enUS".to_string());
-        meta.has_customized_settings = true;
-        meta.snapshot_edition = Some("Global".to_string());
-        meta.initialized = true;
-
-        switch_international_account_region(&mut meta, "EU").unwrap();
-
-        assert_eq!(meta.region.as_deref(), Some("EU"));
-        assert_eq!(meta.token.as_deref(), Some("encrypted-token"));
-        assert_eq!(meta.language.as_deref(), Some("zhTW"));
-        assert_eq!(meta.voicelanguage.as_deref(), Some("enUS"));
-        assert!(meta.has_customized_settings);
-        assert_eq!(meta.snapshot_edition.as_deref(), Some("Global"));
-        assert!(meta.initialized);
-    }
-
-    #[test]
-    fn international_region_switch_accepts_legacy_global_region_aliases() {
-        for legacy_region in ["Global", "Asia", "Americas", "US", "Europe"] {
-            let mut meta = AccountMeta::new("account1");
-            meta.auth_mode = Some("token".to_string());
-            meta.region = Some(legacy_region.to_string());
-
-            switch_international_account_region(&mut meta, "NA").unwrap();
-
-            assert_eq!(meta.region.as_deref(), Some("NA"));
-        }
-    }
-
-    #[test]
-    fn international_region_switch_rejects_cn_and_battle_net_accounts() {
-        let mut cn = AccountMeta::new("cn");
-        cn.auth_mode = Some("token".to_string());
-        cn.region = Some("CN".to_string());
-        assert!(switch_international_account_region(&mut cn, "EU").is_err());
-
-        let mut battle_net = AccountMeta::new("bnet");
-        battle_net.auth_mode = Some("bnet".to_string());
-        battle_net.region = Some("EU".to_string());
-        assert!(switch_international_account_region(&mut battle_net, "NA").is_err());
-
-        let mut invalid_target = AccountMeta::new("invalid");
-        invalid_target.auth_mode = Some("token".to_string());
-        invalid_target.region = Some("KR".to_string());
-        assert!(switch_international_account_region(&mut invalid_target, "CN").is_err());
     }
 
     fn write_valid_runtime_snapshot(root: &std::path::Path, edition: &str) {
@@ -2011,7 +1665,7 @@ mod settings_json_tests {
         std::fs::write(backup.join("account.json"), "old").unwrap();
         std::fs::write(staged.join("account.json"), "new").unwrap();
 
-        recover_account_transactions(accounts.to_str().unwrap());
+        recover_account_transactions(accounts.to_str().unwrap(), None);
 
         assert_eq!(
             std::fs::read_to_string(accounts.join("acount1").join("account.json")).unwrap(),
@@ -2035,40 +1689,6 @@ mod settings_json_tests {
     }
 
     #[test]
-    fn account_reorder_rejects_case_aliases() {
-        let ids = vec![
-            "ABCDEF01-2345-6789-ABCD-EF0123456789".to_string(),
-            "abcdef01-2345-6789-abcd-ef0123456789".to_string(),
-        ];
-
-        assert!(ensure_unique_account_ids(&ids).is_err());
-    }
-
-    #[test]
-    fn account_reorder_preflights_every_id_before_writing() {
-        let accounts = temp_dir("reorder_preflight");
-        let account_dir = accounts.join("acount1");
-        std::fs::create_dir_all(&account_dir).unwrap();
-        let mut meta = AccountMeta::new("acount1");
-        meta.order = 41;
-        AccountManager::save_meta(accounts.to_str().unwrap(), &meta).unwrap();
-
-        let result = apply_account_order(
-            accounts.to_str().unwrap(),
-            &["acount1".to_string(), "acount2".to_string()],
-        );
-
-        assert!(result.is_err());
-        assert_eq!(
-            AccountManager::load_meta(accounts.to_str().unwrap(), "acount1")
-                .unwrap()
-                .order,
-            41
-        );
-        let _ = std::fs::remove_dir_all(accounts);
-    }
-
-    #[test]
     fn permanent_delete_cannot_be_undone_by_startup_recovery() {
         let accounts = temp_dir("delete_no_backup_resurrection");
         let account = accounts.join("acount1");
@@ -2079,13 +1699,312 @@ mod settings_json_tests {
             std::fs::write(directory.join("account.json"), "{}").unwrap();
         }
 
-        remove_account_directory_without_resurrection(&account).unwrap();
-        recover_account_transactions(accounts.to_str().unwrap());
+        remove_account_directory_without_resurrection(&account, "acount1").unwrap();
+        recover_account_transactions(accounts.to_str().unwrap(), None);
 
         assert!(!account.exists());
         assert!(!staged.exists());
         assert!(!backup.exists());
         assert!(AccountManager::list_ids(accounts.to_str().unwrap()).is_empty());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn staged_account_deletion_can_be_rolled_back_before_commit() {
+        let accounts = temp_dir("delete_transaction_rollback");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        assert!(!account.exists());
+        assert!(staged.staged_dir.is_dir());
+
+        restore_staged_account_deletion(&staged).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.staged_dir.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn deletion_rollback_preserves_conflicting_directories_and_journal() {
+        let accounts = temp_dir("delete_transaction_conflict");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "original").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "conflict").unwrap();
+
+        let error = restore_staged_account_deletion(&staged).unwrap_err();
+
+        assert!(error.to_string().contains("恢复冲突"));
+        assert!(account.is_dir());
+        assert!(staged.staged_dir.is_dir());
+        assert!(staged.journal_path.is_file());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn deletion_reference_matching_accepts_uuid_case_aliases() {
+        let stored_id = "550e8400-e29b-41d4-a716-446655440000";
+        let requested_id = stored_id.to_ascii_uppercase();
+        let audio_config = GlobalConfig {
+            rune_audio_target_account: stored_id.to_string(),
+            ..GlobalConfig::default()
+        };
+        assert!(config_references_account(&audio_config, &requested_id));
+
+        let group_config = GlobalConfig {
+            launch_groups: vec![crate::commands::global_config::LaunchGroup {
+                id: "group".to_string(),
+                name: "Group".to_string(),
+                account_ids: Vec::new(),
+                members: vec![crate::commands::global_config::LaunchGroupMember {
+                    account_id: stored_id.to_string(),
+                    ..crate::commands::global_config::LaunchGroupMember::default()
+                }],
+            }],
+            ..GlobalConfig::default()
+        };
+        assert!(config_references_account(&group_config, &requested_id));
+    }
+
+    #[test]
+    fn startup_recovers_an_interrupted_account_deletion() {
+        let accounts = temp_dir("delete_transaction_startup_recovery");
+        let staged = accounts.join("acount1.deleting");
+        std::fs::create_dir_all(&staged).unwrap();
+        std::fs::write(staged.join("account.json"), "recoverable").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(accounts.join("acount1").join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn startup_cleans_orphaned_deletion_journal_artifacts() {
+        let accounts = temp_dir("delete_transaction_orphan_journal");
+        let temporary = accounts.join("acount1.delete.json.tmp");
+        let backup = accounts.join("acount1.delete.json.bak");
+        std::fs::write(&temporary, "prepared").unwrap();
+        std::fs::write(&backup, "older").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_deletion_journal_finishes_cleanup_after_restart() {
+        let accounts = temp_dir("delete_transaction_committed_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn uninstalled_committed_temporary_journal_does_not_cross_commit_point() {
+        let accounts = temp_dir("delete_transaction_uninstalled_commit");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let mut committed = staged.journal.clone();
+        committed.phase = AccountDeletionPhase::Committed;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&committed).unwrap()).unwrap();
+
+        // The durable linearization point is installing `.tmp` as the primary
+        // journal. While the old Prepared primary still exists, recovery must
+        // roll back even if a fully written Committed temporary is present.
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "recoverable"
+        );
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!temporary.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_temporary_journal_wins_after_primary_rotation() {
+        let accounts = temp_dir("delete_transaction_rotated_primary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        let mut committed = staged.journal.clone();
+        committed.phase = AccountDeletionPhase::Committed;
+        std::fs::write(&temporary, serde_json::to_vec_pretty(&committed).unwrap()).unwrap();
+        std::fs::rename(&staged.journal_path, &backup).unwrap();
+
+        // Once the Prepared primary has been rotated away, the committed
+        // temporary is the leading valid candidate and deletion must finish.
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn committed_config_with_marker_failure_preserves_staged_account_evidence() {
+        let accounts = temp_dir("delete_transaction_marker_failure");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "preserved").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let original_journal = staged.journal_path.clone();
+        staged.journal_path = accounts.join("missing-parent").join("acount1.delete.json");
+
+        let completion = complete_staged_account_deletion_after_config_commit(&mut staged);
+        let error = completion.result.unwrap_err();
+
+        assert!(completion.should_retire_account_id);
+        assert!(error.to_string().contains("已保留完整账号目录"));
+        assert!(!account.exists());
+        assert!(staged.staged_dir.is_dir());
+        assert!(original_journal.is_file());
+        assert_eq!(
+            std::fs::read_to_string(staged.staged_dir.join("account.json")).unwrap(),
+            "preserved"
+        );
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn startup_recovery_preserves_conflicting_account_directories_and_journal() {
+        let accounts = temp_dir("delete_transaction_startup_conflict");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "original").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "conflict").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert_eq!(
+            std::fs::read_to_string(account.join("account.json")).unwrap(),
+            "conflict"
+        );
+        assert_eq!(
+            std::fs::read_to_string(staged.staged_dir.join("account.json")).unwrap(),
+            "original"
+        );
+        assert!(staged.journal_path.is_file());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn valid_committed_backup_survives_a_corrupt_primary_journal() {
+        let accounts = temp_dir("delete_transaction_corrupt_primary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        std::fs::copy(&staged.journal_path, &backup).unwrap();
+        std::fs::write(&staged.journal_path, "corrupt").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn valid_committed_backup_survives_a_corrupt_temporary_journal() {
+        let accounts = temp_dir("delete_transaction_corrupt_temporary");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let mut staged = stage_account_directory_for_deletion(&account, "acount1", false).unwrap();
+        mark_account_deletion_committed(&mut staged).unwrap();
+        let temporary = sibling_with_suffix(&staged.journal_path, ".tmp").unwrap();
+        let backup = sibling_with_suffix(&staged.journal_path, ".bak").unwrap();
+        std::fs::copy(&staged.journal_path, &backup).unwrap();
+        std::fs::remove_file(&staged.journal_path).unwrap();
+        std::fs::write(&temporary, "corrupt").unwrap();
+
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+        recover_account_transactions(accounts.to_str().unwrap(), None);
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!temporary.exists());
+        assert!(!backup.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn prepared_deletion_restores_when_config_still_references_account() {
+        let accounts = temp_dir("delete_transaction_precommit_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "recoverable").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let config = GlobalConfig {
+            rune_audio_target_account: "acount1".to_string(),
+            ..GlobalConfig::default()
+        };
+
+        recover_account_transactions(accounts.to_str().unwrap(), Some(&config));
+
+        assert!(account.is_dir());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
+        let _ = std::fs::remove_dir_all(accounts);
+    }
+
+    #[test]
+    fn prepared_deletion_finishes_when_config_commit_removed_references() {
+        let accounts = temp_dir("delete_transaction_postcommit_recovery");
+        let account = accounts.join("acount1");
+        std::fs::create_dir_all(&account).unwrap();
+        std::fs::write(account.join("account.json"), "delete-me").unwrap();
+        let staged = stage_account_directory_for_deletion(&account, "acount1", true).unwrap();
+        let committed_config = GlobalConfig::default();
+
+        recover_account_transactions(accounts.to_str().unwrap(), Some(&committed_config));
+
+        assert!(!account.exists());
+        assert!(!staged.staged_dir.exists());
+        assert!(!staged.journal_path.exists());
         let _ = std::fs::remove_dir_all(accounts);
     }
 
@@ -2140,7 +2059,7 @@ mod settings_json_tests {
         std::fs::create_dir_all(&system).unwrap();
         std::fs::write(system.join("previous-account.txt"), "old").unwrap();
 
-        prepare_battle_net_runtime_directory(&snapshot, &system, BnetInitializationKind::New)
+        prepare_battle_net_runtime_directory(&snapshot, &system, AccountInitializationKind::New)
             .unwrap();
 
         assert!(
@@ -2161,7 +2080,7 @@ mod settings_json_tests {
         std::fs::write(snapshot.join("wrong-edition.txt"), "old").unwrap();
         std::fs::write(system.join("previous-account.txt"), "old").unwrap();
 
-        prepare_battle_net_runtime_directory(&snapshot, &system, BnetInitializationKind::New)
+        prepare_battle_net_runtime_directory(&snapshot, &system, AccountInitializationKind::New)
             .unwrap();
 
         assert!(!system.exists());
@@ -2183,7 +2102,7 @@ mod settings_json_tests {
         prepare_battle_net_runtime_directory(
             &snapshot,
             &system,
-            BnetInitializationKind::Reinitialize,
+            AccountInitializationKind::Reinitialize,
         )
         .unwrap();
 
@@ -2417,18 +2336,12 @@ fn clear_auth_registry_unlocked() -> Result<(), AppError> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BnetInitializationKind {
-    New,
-    Reinitialize,
-}
-
 fn prepare_battle_net_runtime_directory(
     snapshot: &Path,
     system: &Path,
-    kind: BnetInitializationKind,
+    kind: AccountInitializationKind,
 ) -> Result<(), AppError> {
-    if kind == BnetInitializationKind::New {
+    if kind == AccountInitializationKind::New {
         let staged = sibling_with_suffix(system, ".tmp")?;
         let backup = sibling_with_suffix(system, ".bak")?;
         remove_path_if_exists(&staged)?;
@@ -2451,12 +2364,12 @@ fn prepare_battle_net_runtime_directory(
 /// 新账号必须从干净状态开始；重新初始化必须从该账号自己的快照精确替换。
 fn restore_account_to_system(
     account_dir: &Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     meta: &AccountMeta,
     context: &LaunchContext,
-    kind: BnetInitializationKind,
+    kind: AccountInitializationKind,
 ) -> Result<(), AppError> {
-    let snapshot = if kind == BnetInitializationKind::Reinitialize {
+    let snapshot = if kind == AccountInitializationKind::Reinitialize {
         resolve_account_runtime_snapshot(account_dir, meta, context.installation.edition)?
             .bnet_directory
     } else {
@@ -2467,6 +2380,105 @@ fn restore_account_to_system(
     prepare_battle_net_runtime_directory(&snapshot, system, kind)
 }
 
+struct BnetInitializationTransactionAdapter<'a> {
+    app: &'a tauri::AppHandle,
+    state: &'a SharedState,
+}
+
+impl AccountInitializationTransaction for BnetInitializationTransactionAdapter<'_> {
+    fn execute(
+        &self,
+        account_id: &str,
+        kind: AccountInitializationKind,
+        cancellation_ticket: CancellationTicket,
+    ) -> Result<(), AppError> {
+        run_bnet_initialization_transaction(
+            self.app,
+            self.state,
+            account_id,
+            kind,
+            cancellation_ticket,
+        )
+    }
+}
+
+fn map_task_runtime_error(error: TaskRuntimeError) -> AppError {
+    AppError::Unknown(error.to_string())
+}
+
+async fn execute_initialization_task(
+    app: tauri::AppHandle,
+    state: SharedState,
+    account_id: String,
+    kind: AccountInitializationKind,
+    cancellation_ticket: CancellationTicket,
+    retry_of: Option<u64>,
+) -> Result<(), AppError> {
+    let task_kind = match kind {
+        AccountInitializationKind::New => "account-initialize",
+        AccountInitializationKind::Reinitialize => "account-reinitialize",
+    };
+    let mut request = TaskRequest::new(task_kind)
+        .for_subject(&account_id)
+        .with_conflict_key(format!("account:{account_id}"))
+        .with_cancel_hook({
+            let cancel_state = state.clone();
+            move || {
+                cancel_state
+                    .multi_instance()
+                    .facade()
+                    .cancel(cancellation_ticket);
+            }
+        })
+        .with_initial_status("queued", "账号初始化任务已排队");
+    if let Some(retry_of) = retry_of {
+        request = request.with_retry_of(retry_of);
+    }
+    let task = state
+        .tasks()
+        .begin(request)
+        .map_err(map_task_runtime_error)?;
+    crate::logger::log_msg(
+        "INFO",
+        "Task",
+        &format!("账号初始化已登记为统一任务 {}", task.task_id()),
+    );
+    let _ = task.update(5, "preflight", "正在检查账号与客户端环境");
+
+    let completion_state = state.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let transaction = BnetInitializationTransactionAdapter {
+            app: &app,
+            state: &state,
+        };
+        let result = AccountInitializationService::new(
+            &transaction,
+            state.multi_instance().account_leases(),
+        )
+        .execute(&account_id, kind, cancellation_ticket);
+        let cancellation_requested = task.cancellation_requested();
+        match &result {
+            Ok(()) => {
+                let _ = task.succeed("账号初始化完成");
+            }
+            Err(error) if cancellation_requested => {
+                let _ = task.cancelled(&error.to_string());
+            }
+            Err(error) => {
+                let _ = task.fail("account-initialization-failed", &error.to_string());
+            }
+        }
+        result
+    })
+    .await
+    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?;
+    completion_state
+        .multi_instance()
+        .facade()
+        .complete(cancellation_ticket);
+    result
+}
+
 /// 首次初始化 Battle.net 账号。
 #[tauri::command]
 pub async fn initialize_bnet_account(
@@ -2474,21 +2486,16 @@ pub async fn initialize_bnet_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let cancel_generation = state
-        .cancel_generation
-        .load(std::sync::atomic::Ordering::SeqCst);
-    let state_arc = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        run_bnet_initialization_transaction(
-            &app,
-            &state_arc,
-            &account_id,
-            BnetInitializationKind::New,
-            cancel_generation,
-        )
-    })
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        AccountInitializationKind::New,
+        cancellation_ticket,
+        None,
+    )
     .await
-    .map_err(|error| AppError::Unknown(format!("账号初始化任务异常退出: {error}")))?
 }
 
 /// 重新初始化账号；Battle.net 账号复用与首次初始化完全相同的宿主事务。
@@ -2498,50 +2505,62 @@ pub async fn reinitialize_account(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let cancel_generation = state
-        .cancel_generation
-        .load(std::sync::atomic::Ordering::SeqCst);
-    let state_arc = state.inner().clone();
-    tokio::task::spawn_blocking(move || {
-        run_bnet_initialization_transaction(
-            &app,
-            &state_arc,
-            &account_id,
-            BnetInitializationKind::Reinitialize,
-            cancel_generation,
-        )
-    })
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        AccountInitializationKind::Reinitialize,
+        cancellation_ticket,
+        None,
+    )
     .await
-    .map_err(|error| AppError::Unknown(format!("账号重新初始化任务异常退出: {error}")))?
+}
+
+pub(crate) async fn retry_account_initialization(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+    retry_of: u64,
+    reinitialize: bool,
+) -> Result<(), AppError> {
+    let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
+    execute_initialization_task(
+        app,
+        state.inner().clone(),
+        account_id,
+        if reinitialize {
+            AccountInitializationKind::Reinitialize
+        } else {
+            AccountInitializationKind::New
+        },
+        cancellation_ticket,
+        Some(retry_of),
+    )
+    .await
 }
 
 fn run_bnet_initialization_transaction(
     app: &tauri::AppHandle,
     state: &SharedState,
     account_id: &str,
-    kind: BnetInitializationKind,
-    cancel_generation: u64,
+    kind: AccountInitializationKind,
+    cancellation_ticket: CancellationTicket,
 ) -> Result<(), AppError> {
-    // 锁序固定为 Account -> Config snapshot -> Host，禁止反向取得。
-    let _account_lease = AccountLifecycleLease::try_acquire(state, account_id)?;
-
-    // 只在复制配置时持读锁，不能让最长 120 秒的登录等待阻塞设置写入。
-    let cfg = {
-        let config = state.config.read();
-        config
-            .as_ref()
-            .cloned()
-            .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?
-    };
+    // 只取得不可变配置快照，不能让最长 120 秒的登录等待阻塞设置写入。
+    let cfg = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     // Initialization owns only its generation snapshot. It must never clear the
     // shared launch flag before acquiring the host lease, otherwise a rejected
     // concurrent initialization can resurrect a launch the user just cancelled.
     let is_cancelled = || {
         state
-            .cancel_generation
-            .load(std::sync::atomic::Ordering::SeqCst)
-            != cancel_generation
+            .multi_instance()
+            .facade()
+            .is_cancelled(cancellation_ticket)
     };
     if is_cancelled() {
         return Err(AppError::Unknown("账号初始化已取消".to_string()));
@@ -2559,12 +2578,12 @@ fn run_bnet_initialization_transaction(
         );
         let _ = app.emit(
             "launch-progress",
-            crate::commands::system::LaunchProgress::new(account_id, step, status, message),
+            crate::infrastructure::system::LaunchProgress::new(account_id, step, status, message),
         );
     };
 
     if auth_mode == AuthMode::Token {
-        if kind == BnetInitializationKind::New {
+        if kind == AccountInitializationKind::New {
             return Err(AppError::ConfigReadError(
                 "Token 账号不能调用 Battle.net 初始化事务".to_string(),
             ));
@@ -2580,7 +2599,7 @@ fn run_bnet_initialization_transaction(
     // 在取得主机租约前完成路径与客户端版本预检，避免错误配置长期占用共享环境。
     LaunchContext::for_account(&cfg, &meta, ContextPurpose::BattleNetOnly)?;
 
-    if kind == BnetInitializationKind::New && meta.initialized {
+    if kind == AccountInitializationKind::New && meta.initialized {
         return Err(AppError::ConfigReadError(format!(
             "账号 {account_id} 已初始化，拒绝重复执行首次初始化"
         )));
@@ -2596,8 +2615,8 @@ fn run_bnet_initialization_transaction(
         ));
     }
     let context = LaunchContext::for_account(&cfg, &meta, ContextPurpose::BattleNetOnly)?;
-    let effective_kind = if kind == BnetInitializationKind::Reinitialize && !meta.initialized {
-        BnetInitializationKind::New
+    let effective_kind = if kind == AccountInitializationKind::Reinitialize && !meta.initialized {
+        AccountInitializationKind::New
     } else {
         kind
     };
@@ -2613,7 +2632,7 @@ fn run_bnet_initialization_transaction(
         if !cfg.browser_path.is_empty() && !cfg.browser_type.is_empty() {
             emit("browser", "running", "正在启动该账号的独立浏览器配置");
             #[cfg(target_os = "windows")]
-            let before_hwnds = crate::commands::system::collect_chrome_windows();
+            let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
             match crate::commands::browser::launch_browser_for_account_impl(
                 &cfg,
@@ -2622,7 +2641,7 @@ fn run_bnet_initialization_transaction(
             ) {
                 Ok(()) => {
                     #[cfg(target_os = "windows")]
-                    crate::commands::system::bring_browser_login_to_foreground(before_hwnds);
+                    crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
                     std::thread::sleep(std::time::Duration::from_millis(1500));
                     emit("browser", "ok", "浏览器已启动");
                 }
@@ -2667,7 +2686,7 @@ fn run_bnet_initialization_transaction(
                     battle_net_path.display()
                 ))
             })?;
-        crate::commands::system::bring_bnet_to_foreground();
+        crate::infrastructure::system::bring_bnet_to_foreground();
         emit("launch", "ok", "Battle.net 已启动，请完成登录");
 
         emit("login", "running", "正在等待 Battle.net 登录完成");
@@ -2679,7 +2698,9 @@ fn run_bnet_initialization_transaction(
                 return Err(AppError::Unknown("账号初始化已取消".to_string()));
             }
 
-            if crate::commands::system::count_bnet_processes_for_path(&battle_net_identity) >= 7 {
+            if crate::infrastructure::system::count_bnet_processes_for_path(&battle_net_identity)
+                >= 7
+            {
                 logged_in = true;
                 break;
             }
@@ -2742,7 +2763,7 @@ fn run_bnet_initialization_transaction(
 
 /// 在账号目录副本中组装并校验完整状态，真实账号目录保持不变。
 fn stage_account_snapshot(
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     account_id: &str,
     context: &LaunchContext,
 ) -> Result<PendingAccountSnapshot, AppError> {
@@ -2826,14 +2847,232 @@ pub(crate) fn sibling_with_suffix(path: &Path, suffix: &str) -> Result<PathBuf, 
     Ok(path.with_file_name(file_name))
 }
 
-/// 永久删除账号时，先清理所有可被启动恢复逻辑识别的事务目录，最后再删除真实账号。
-/// 若清理中途失败，真实账号仍保留；一旦真实账号被删除，就不再有 `.bak` 可将其复活。
-fn remove_account_directory_without_resurrection(account_dir: &Path) -> Result<(), AppError> {
-    let staged = sibling_with_suffix(account_dir, ".tmp")?;
+const ACCOUNT_DELETION_JOURNAL_SCHEMA: u32 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AccountDeletionPhase {
+    Prepared,
+    Committed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AccountDeletionJournal {
+    schema_version: u32,
+    account_id: String,
+    phase: AccountDeletionPhase,
+    had_configuration_references: bool,
+}
+
+struct StagedAccountDeletion {
+    account_dir: PathBuf,
+    staged_dir: PathBuf,
+    journal_path: PathBuf,
+    journal: AccountDeletionJournal,
+}
+
+fn config_references_account(config: &GlobalConfig, account_id: &str) -> bool {
+    config
+        .rune_audio_target_account
+        .trim()
+        .eq_ignore_ascii_case(account_id)
+        || config.launch_groups.iter().any(|group| {
+            group
+                .account_ids
+                .iter()
+                .any(|member_id| member_id.eq_ignore_ascii_case(account_id))
+                || group
+                    .members
+                    .iter()
+                    .any(|member| member.account_id.eq_ignore_ascii_case(account_id))
+        })
+}
+
+fn account_deletion_journal_path(account_dir: &Path) -> Result<PathBuf, AppError> {
+    sibling_with_suffix(account_dir, ".delete.json")
+}
+
+fn write_account_deletion_journal(
+    journal_path: &Path,
+    journal: &AccountDeletionJournal,
+) -> Result<(), AppError> {
+    let temporary = sibling_with_suffix(journal_path, ".tmp")?;
+    let backup = sibling_with_suffix(journal_path, ".bak")?;
+    remove_path_if_exists(&temporary)?;
+    let bytes = serde_json::to_vec_pretty(journal)?;
+    std::fs::write(&temporary, bytes).map_err(|error| {
+        AppError::FileError(format!(
+            "写入账号删除事务 {} 失败: {}",
+            temporary.display(),
+            error
+        ))
+    })?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&temporary)
+        .and_then(|file| file.sync_all())
+        .map_err(|error| {
+            AppError::FileError(format!(
+                "同步账号删除事务 {} 失败: {}",
+                temporary.display(),
+                error
+            ))
+        })?;
+    replace_path_with_backup(&temporary, journal_path, &backup)
+}
+
+fn cleanup_account_deletion_journal(journal_path: &Path) -> Result<(), AppError> {
+    remove_path_if_exists(journal_path)?;
+    remove_path_if_exists(&sibling_with_suffix(journal_path, ".tmp")?)?;
+    remove_path_if_exists(&sibling_with_suffix(journal_path, ".bak")?)
+}
+
+/// Prepares a recoverable account deletion while the configuration transaction
+/// is held. The journal lets startup distinguish rollback from committed cleanup.
+fn stage_account_directory_for_deletion(
+    account_dir: &Path,
+    account_id: &str,
+    had_configuration_references: bool,
+) -> Result<StagedAccountDeletion, AppError> {
+    let temporary = sibling_with_suffix(account_dir, ".tmp")?;
     let backup = sibling_with_suffix(account_dir, ".bak")?;
-    remove_path_if_exists(&staged)?;
+    let staged_deletion = sibling_with_suffix(account_dir, ".deleting")?;
+    let journal_path = account_deletion_journal_path(account_dir)?;
+    remove_path_if_exists(&temporary)?;
     remove_path_if_exists(&backup)?;
-    remove_path_if_exists(account_dir)
+    if path_exists(&staged_deletion)? {
+        return Err(AppError::FileError(format!(
+            "账号存在未完成的删除事务，请重启 D2RHub 自动恢复后重试: {}",
+            staged_deletion.display()
+        )));
+    }
+    if path_exists(&journal_path)? {
+        cleanup_account_deletion_journal(&journal_path)?;
+    }
+    let journal = AccountDeletionJournal {
+        schema_version: ACCOUNT_DELETION_JOURNAL_SCHEMA,
+        account_id: account_id.to_string(),
+        phase: AccountDeletionPhase::Prepared,
+        had_configuration_references,
+    };
+    write_account_deletion_journal(&journal_path, &journal)?;
+    if let Err(error) = std::fs::rename(account_dir, &staged_deletion) {
+        let _ = cleanup_account_deletion_journal(&journal_path);
+        return Err(AppError::FileError(format!(
+            "暂存待删除账号 {} 失败: {}",
+            account_dir.display(),
+            error
+        )));
+    }
+    Ok(StagedAccountDeletion {
+        account_dir: account_dir.to_path_buf(),
+        staged_dir: staged_deletion,
+        journal_path,
+        journal,
+    })
+}
+
+fn mark_account_deletion_committed(
+    staged_deletion: &mut StagedAccountDeletion,
+) -> Result<(), AppError> {
+    staged_deletion.journal.phase = AccountDeletionPhase::Committed;
+    write_account_deletion_journal(&staged_deletion.journal_path, &staged_deletion.journal)
+}
+
+struct AccountDeletionCompletion {
+    should_retire_account_id: bool,
+    result: Result<(), AppError>,
+}
+
+fn complete_staged_account_deletion_after_config_commit(
+    staged_deletion: &mut StagedAccountDeletion,
+) -> AccountDeletionCompletion {
+    match mark_account_deletion_committed(staged_deletion) {
+        Ok(()) => AccountDeletionCompletion {
+            should_retire_account_id: true,
+            result: finalize_staged_account_deletion(staged_deletion).map_err(|error| {
+                AppError::FileError(format!(
+                    "账号配置已提交，但目录清理尚未完成；数据保留在删除事务中，重启 D2RHub 将自动继续: {error}"
+                ))
+            }),
+        },
+        Err(error) if !staged_deletion.journal.had_configuration_references => {
+            AccountDeletionCompletion {
+                should_retire_account_id: false,
+                result: Err(rollback_staged_account_deletion(staged_deletion, error)),
+            }
+        }
+        Err(error) => AccountDeletionCompletion {
+            should_retire_account_id: true,
+            result: Err(AppError::FileError(format!(
+                "账号配置已提交，但删除事务标记写入失败；已保留完整账号目录，重启 D2RHub 将根据配置自动恢复: {error}"
+            ))),
+        },
+    }
+}
+
+fn finalize_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+) -> Result<(), AppError> {
+    remove_path_if_exists(&staged_deletion.staged_dir)?;
+    if let Err(error) = cleanup_account_deletion_journal(&staged_deletion.journal_path) {
+        crate::logger::log_msg(
+            "WARN",
+            "AccountDelete",
+            &format!("账号目录已删除，但事务日志清理失败，将在下次启动重试: {error}"),
+        );
+    }
+    Ok(())
+}
+
+fn restore_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+) -> Result<(), AppError> {
+    if path_exists(&staged_deletion.account_dir)? {
+        return Err(AppError::FileError(format!(
+            "账号删除恢复冲突：正式目录 {} 与暂存目录 {} 同时存在，已保留两者和事务日志等待人工检查",
+            staged_deletion.account_dir.display(),
+            staged_deletion.staged_dir.display()
+        )));
+    }
+    if !path_exists(&staged_deletion.staged_dir)? {
+        return Err(AppError::FileError(format!(
+            "待恢复的账号删除暂存目录不存在: {}",
+            staged_deletion.staged_dir.display()
+        )));
+    }
+    std::fs::rename(&staged_deletion.staged_dir, &staged_deletion.account_dir).map_err(
+        |error| {
+            AppError::FileError(format!(
+                "恢复待删除账号 {} 失败: {}",
+                staged_deletion.account_dir.display(),
+                error
+            ))
+        },
+    )?;
+    cleanup_account_deletion_journal(&staged_deletion.journal_path)
+}
+
+fn rollback_staged_account_deletion(
+    staged_deletion: &StagedAccountDeletion,
+    original_error: AppError,
+) -> AppError {
+    match restore_staged_account_deletion(staged_deletion) {
+        Ok(()) => original_error,
+        Err(rollback_error) => AppError::FileError(format!(
+            "账号删除事务失败: {original_error}；恢复账号目录也失败: {rollback_error}"
+        )),
+    }
+}
+
+#[cfg(test)]
+fn remove_account_directory_without_resurrection(
+    account_dir: &Path,
+    account_id: &str,
+) -> Result<(), AppError> {
+    let mut staged_deletion = stage_account_directory_for_deletion(account_dir, account_id, false)?;
+    mark_account_deletion_committed(&mut staged_deletion)?;
+    finalize_staged_account_deletion(&staged_deletion)
 }
 
 pub(crate) fn recover_interrupted_replacement(target: &Path) -> Result<(), AppError> {
@@ -2883,9 +3122,143 @@ fn recover_interrupted_account_directories(accounts_dir: &Path) {
     }
 }
 
-/// 仅在应用启动、尚无账号事务运行时调用；优先回滚到 `.bak`，丢弃未提交 `.tmp`。
-pub(crate) fn recover_account_transactions(accounts_dir: &str) {
+fn load_account_deletion_journal(
+    journal_path: &Path,
+    expected_account_id: &str,
+) -> Result<AccountDeletionJournal, AppError> {
+    let candidates = [
+        journal_path.to_path_buf(),
+        sibling_with_suffix(journal_path, ".tmp")?,
+        sibling_with_suffix(journal_path, ".bak")?,
+    ];
+    let mut failures = Vec::new();
+    for candidate in candidates {
+        if !path_exists(&candidate)? {
+            continue;
+        }
+        let parsed = std::fs::read(&candidate)
+            .map_err(|error| error.to_string())
+            .and_then(|bytes| {
+                serde_json::from_slice::<AccountDeletionJournal>(&bytes)
+                    .map_err(|error| error.to_string())
+            });
+        match parsed {
+            Ok(journal)
+                if journal.schema_version == ACCOUNT_DELETION_JOURNAL_SCHEMA
+                    && journal.account_id == expected_account_id =>
+            {
+                return Ok(journal);
+            }
+            Ok(_) => failures.push(format!("{}: schema 或账号 ID 不匹配", candidate.display())),
+            Err(error) => failures.push(format!("{}: {error}", candidate.display())),
+        }
+    }
+    Err(AppError::ConfigReadError(format!(
+        "账号删除事务没有可用日志候选: {}",
+        if failures.is_empty() {
+            journal_path.display().to_string()
+        } else {
+            failures.join("；")
+        }
+    )))
+}
+
+fn recover_interrupted_account_deletions(root: &Path, config: Option<&GlobalConfig>) {
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let Some(account_id) = name.strip_suffix(".deleting") else {
+            continue;
+        };
+        if !AccountManager::is_valid_account_id(account_id) || !entry.path().is_dir() {
+            continue;
+        }
+        let account_dir = root.join(account_id);
+        if account_dir.exists() {
+            crate::logger::log_msg(
+                "WARN",
+                "AccountDelete",
+                &format!(
+                    "账号 {} 同时存在正式目录和删除暂存目录，已保留两者等待人工检查",
+                    account_id
+                ),
+            );
+            continue;
+        }
+        let Ok(journal_path) = account_deletion_journal_path(&account_dir) else {
+            continue;
+        };
+        let loaded_journal = match load_account_deletion_journal(&journal_path, account_id) {
+            Ok(journal) => Some(journal),
+            Err(error) => {
+                crate::logger::log_msg(
+                    "WARN",
+                    "AccountDelete",
+                    &format!("账号删除事务 {account_id} 的日志不可用，将优先恢复账号目录: {error}"),
+                );
+                None
+            }
+        };
+        let should_finalize = loaded_journal.as_ref().is_some_and(|journal| {
+            journal.phase == AccountDeletionPhase::Committed
+                || (journal.had_configuration_references
+                    && config.is_some_and(|config| !config_references_account(config, account_id)))
+        });
+        let journal = loaded_journal.unwrap_or(AccountDeletionJournal {
+            schema_version: ACCOUNT_DELETION_JOURNAL_SCHEMA,
+            account_id: account_id.to_string(),
+            phase: AccountDeletionPhase::Prepared,
+            had_configuration_references: false,
+        });
+        let staged_deletion = StagedAccountDeletion {
+            account_dir,
+            staged_dir: entry.path(),
+            journal_path,
+            journal,
+        };
+        let result = if should_finalize {
+            finalize_staged_account_deletion(&staged_deletion)
+        } else {
+            restore_staged_account_deletion(&staged_deletion)
+        };
+        if let Err(error) = result {
+            crate::logger::log_msg(
+                "WARN",
+                "AccountDelete",
+                &format!("恢复账号删除事务 {account_id} 失败: {error}"),
+            );
+        }
+    }
+
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        let account_id = name
+            .strip_suffix(".delete.json")
+            .or_else(|| name.strip_suffix(".delete.json.tmp"))
+            .or_else(|| name.strip_suffix(".delete.json.bak"));
+        let Some(account_id) = account_id else {
+            continue;
+        };
+        if !AccountManager::is_valid_account_id(account_id)
+            || root.join(format!("{account_id}.deleting")).exists()
+        {
+            continue;
+        }
+        let _ = cleanup_account_deletion_journal(&root.join(format!("{account_id}.delete.json")));
+    }
+}
+
+/// 仅在应用启动、尚无账号事务运行时调用；先恢复或完成删除日志，再回滚
+/// 账号快照的 `.bak` 并丢弃未提交的 `.tmp`。
+pub(crate) fn recover_account_transactions(accounts_dir: &str, config: Option<&GlobalConfig>) {
     let root = Path::new(accounts_dir);
+    recover_interrupted_account_deletions(root, config);
+
     let Ok(entries) = std::fs::read_dir(root) else {
         return;
     };
@@ -2956,7 +3329,7 @@ pub(crate) struct AccountRuntimeSnapshotPaths {
 
 fn validate_runtime_snapshot_root(
     root: &Path,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let manifest_path = root.join("snapshot.json");
     if !manifest_path.is_file() {
@@ -3048,14 +3421,37 @@ fn validate_battle_net_config_for_edition(
 fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta) {
     let runtime_root = account_dir.join("runtime");
     if !runtime_root.exists() {
+        if meta.snapshot_edition.is_some() {
+            meta.initialized = false;
+            crate::logger::log_msg(
+                "WARN",
+                "AccountSnapshot",
+                "新版 runtime 快照缺失，拒绝回退可能过期的旧版认证数据",
+            );
+        }
         return;
     }
 
-    let validation = (|| -> Result<AccountRuntimeSnapshotManifest, AppError> {
+    let expected_edition = (|| -> Result<ClientEdition, AppError> {
         let region = meta.region.as_deref().ok_or_else(|| {
             AppError::ConfigReadError("账号缺少区服，无法校验 runtime 快照".to_string())
         })?;
-        let expected_edition = GameRegion::parse(region)?.edition();
+        Ok(GameRegion::parse(region)?.edition())
+    })();
+    let expected_edition = match expected_edition {
+        Ok(edition) => edition,
+        Err(error) => {
+            meta.initialized = false;
+            crate::logger::log_msg(
+                "WARN",
+                "AccountSnapshot",
+                &format!("忽略无效 runtime 快照: {error}"),
+            );
+            return;
+        }
+    };
+
+    let validation = (|| -> Result<AccountRuntimeSnapshotManifest, AppError> {
         validate_runtime_snapshot_root(&runtime_root, expected_edition)?;
         let manifest: AccountRuntimeSnapshotManifest = serde_json::from_str(
             &std::fs::read_to_string(runtime_root.join("snapshot.json"))?,
@@ -3070,14 +3466,47 @@ fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta
             meta.last_reset_at = Some(manifest.created_at);
             meta.snapshot_edition = Some(manifest.edition);
         }
-        Err(error) => {
-            meta.initialized = false;
-            meta.snapshot_edition = None;
-            crate::logger::log_msg(
-                "WARN",
-                "AccountSnapshot",
-                &format!("忽略无效 runtime 快照: {error}"),
-            );
+        Err(runtime_error) => {
+            let legacy_fallback = can_use_legacy_snapshot_as_runtime_fallback(meta);
+            match legacy_fallback.then(|| {
+                resolve_legacy_account_runtime_snapshot(account_dir, meta, expected_edition)
+            }) {
+                Some(Ok(_)) => {
+                    // 没有新版来源标记说明该账号仍以旧布局为权威；继续保留 None，
+                    // 让每次使用旧快照时都重新按产品键证明版区。
+                    meta.initialized = true;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "runtime 快照无效，已回退到通过校验的纯旧版快照: {runtime_error}"
+                        ),
+                    );
+                }
+                Some(Err(legacy_error)) => {
+                    meta.initialized = false;
+                    meta.snapshot_edition = None;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "忽略无效 runtime 快照，旧版快照也不可用: {runtime_error}; {legacy_error}"
+                        ),
+                    );
+                }
+                None => {
+                    // 有 snapshot_edition 表示新版 runtime 曾成功提交；顶层旧快照可能已经
+                    // 过期，不能为了绕过损坏而恢复错误的认证数据。
+                    meta.initialized = false;
+                    crate::logger::log_msg(
+                        "WARN",
+                        "AccountSnapshot",
+                        &format!(
+                            "忽略无效 runtime 快照且拒绝回退可能过期的旧版快照: {runtime_error}"
+                        ),
+                    );
+                }
+            }
         }
     }
 }
@@ -3085,13 +3514,61 @@ fn hydrate_meta_from_runtime_snapshot(account_dir: &Path, meta: &mut AccountMeta
 pub(crate) fn resolve_account_runtime_snapshot(
     account_dir: &Path,
     meta: &AccountMeta,
-    expected_edition: crate::launch_context::ClientEdition,
+    expected_edition: ClientEdition,
 ) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let runtime_root = account_dir.join("runtime");
     if runtime_root.exists() {
-        return validate_runtime_snapshot_root(&runtime_root, expected_edition);
+        match validate_runtime_snapshot_root(&runtime_root, expected_edition) {
+            Ok(snapshot) => return Ok(snapshot),
+            Err(runtime_error) => {
+                if !can_use_legacy_snapshot_as_runtime_fallback(meta) {
+                    return Err(AppError::ConfigReadError(format!(
+                        "runtime 快照无效，且旧版快照不是可证明的当前权威来源，拒绝回退: {runtime_error}"
+                    )));
+                }
+                return match resolve_legacy_account_runtime_snapshot(
+                    account_dir,
+                    meta,
+                    expected_edition,
+                ) {
+                    Ok(snapshot) => {
+                        crate::logger::log_msg(
+                            "WARN",
+                            "AccountSnapshot",
+                            &format!(
+                                "runtime 快照无效，恢复时回退到通过校验的纯旧版快照: {runtime_error}"
+                            ),
+                        );
+                        Ok(snapshot)
+                    }
+                    Err(legacy_error) => Err(AppError::ConfigReadError(format!(
+                        "runtime 快照无效: {runtime_error}; 旧版快照也不可用: {legacy_error}"
+                    ))),
+                };
+            }
+        }
     }
 
+    if meta.snapshot_edition.is_some() {
+        return Err(AppError::ConfigReadError(
+            "新版 runtime 快照不存在，拒绝回退可能过期的旧版认证数据；请重新初始化账号"
+                .to_string(),
+        ));
+    }
+    resolve_legacy_account_runtime_snapshot(account_dir, meta, expected_edition)
+}
+
+fn can_use_legacy_snapshot_as_runtime_fallback(meta: &AccountMeta) -> bool {
+    // snapshot_edition 与新版 runtime 布局在同一迁移中引入。只有已初始化且没有该
+    // 来源标记的账号才能证明仍以纯旧布局为权威；否则顶层旧文件可能已经过期。
+    meta.initialized && meta.snapshot_edition.is_none()
+}
+
+fn resolve_legacy_account_runtime_snapshot(
+    account_dir: &Path,
+    meta: &AccountMeta,
+    expected_edition: ClientEdition,
+) -> Result<AccountRuntimeSnapshotPaths, AppError> {
     let bnet_directory = account_dir.join("Battle.net");
     if !bnet_directory.join("Battle.net.config").is_file() {
         return Err(AppError::FileError(format!(
@@ -3271,8 +3748,8 @@ fn write_account_meta_to_directory(account_dir: &Path, meta: &AccountMeta) -> Re
 
 fn stage_runtime_snapshot(
     account_dir: &Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
-    edition: crate::launch_context::ClientEdition,
+    cfg: &GlobalConfig,
+    edition: ClientEdition,
 ) -> Result<PendingRuntimeSnapshot, AppError> {
     let source_bnet = Path::new(&cfg.app_data_roaming_bnet_path);
     let source_config = source_bnet.join("Battle.net.config");
@@ -3462,7 +3939,7 @@ fn replace_battle_net_snapshot(source: &Path, target: &Path) -> Result<PathBuf, 
 /// runtime、来源清单和 account.json 在账号目录副本中构建，最后一次交换生效。
 pub fn sync_back_to_account(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
 ) -> Result<(), AppError> {
     sync_back_to_account_inner(account_dir, cfg, None)
 }
@@ -3470,7 +3947,7 @@ pub fn sync_back_to_account(
 /// 方案启动回写认证快照时，显式保留账号默认 Mod，避免临时启动参数进入账号库。
 pub fn sync_back_to_account_preserving_mod(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     default_mod_args: &str,
 ) -> Result<(), AppError> {
     sync_back_to_account_inner(account_dir, cfg, Some(default_mod_args))
@@ -3478,7 +3955,7 @@ pub fn sync_back_to_account_preserving_mod(
 
 fn sync_back_to_account_inner(
     account_dir: &std::path::Path,
-    cfg: &crate::commands::global_config::GlobalConfig,
+    cfg: &GlobalConfig,
     preserved_mod_args: Option<&str>,
 ) -> Result<(), AppError> {
     let meta_path = account_dir.join("account.json");
@@ -3525,18 +4002,6 @@ fn sync_back_to_account_inner(
         return Err(error);
     }
     pending.commit()
-}
-
-/// 检查 token 是否已过期（720小时/30天有效期）
-/// 返回 true 表示已过期，需要重新初始化
-pub fn is_token_expired(last_reset_at: &Option<String>) -> bool {
-    if let Some(ts) = last_reset_at {
-        if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
-            let elapsed = chrono::Utc::now().signed_duration_since(dt);
-            return elapsed.num_hours() > 720;
-        }
-    }
-    false
 }
 
 /// 强制确保 Battle.net.config 中 SingleInstance 为 "true"
@@ -3641,9 +4106,9 @@ pub fn move_game_window(
     state: tauri::State<'_, SharedState>,
     account_id: String,
 ) -> Result<(), AppError> {
-    let config = state.config.read();
-    let cfg = config
-        .as_ref()
+    let cfg = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
@@ -3654,20 +4119,13 @@ pub fn move_game_window(
     let x = meta.window_x.unwrap_or(0);
     let y = meta.window_y.unwrap_or(0);
 
-    let pid = {
-        let active = state.active_games.read();
-        active.get(&account_id).copied()
-    };
-
-    if let Some(pid) = pid {
-        crate::commands::system::set_game_window_position(pid, x, y);
+    let display = if meta.display_name.is_empty() {
+        &meta.id
     } else {
-        let display = if meta.display_name.is_empty() {
-            &meta.id
-        } else {
-            &meta.display_name
-        };
-        crate::commands::system::set_game_window_position_by_title(display, x, y);
-    }
+        &meta.display_name
+    };
+    let windows = crate::infrastructure::system::SystemGameWindowPort;
+    let facade = state.multi_instance().facade();
+    facade.move_account_window(&windows, &account_id, display, WindowPosition { x, y });
     Ok(())
 }

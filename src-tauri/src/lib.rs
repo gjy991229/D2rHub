@@ -1,10 +1,17 @@
+mod application;
 mod audio_mod;
+mod auxiliary_windows;
 mod battle_net_config;
+mod capabilities;
 mod commands;
+mod domain;
 mod error;
+#[doc(hidden)]
+pub mod infrastructure;
 mod input_listener;
 mod launch_context;
 pub mod logger;
+mod mod_catalog;
 mod rune_audio;
 mod rune_data;
 mod state;
@@ -15,10 +22,34 @@ mod token_registry_trace;
 mod tray;
 mod window_placement;
 
-use crate::commands::global_config::GlobalConfig;
+use crate::domain::config::GlobalConfig;
 use state::AppState;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use tauri::Manager;
+
+pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<bool, String> {
+    let state = app.state::<state::SharedState>();
+    let _activation_guard = state.runtime_activation_lock.lock();
+    if state.runtime_activated.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "全局配置尚未安全加载，拒绝激活运行服务".to_string())?;
+    capabilities::start(app).map_err(|error| {
+        logger::log_msg("ERROR", "Capabilities", &error);
+        error
+    })?;
+    auxiliary_windows::create_configured_windows(app, &config);
+    input_listener::start_input_listener(app.clone());
+    mod_catalog::refresh_on_startup(state.inner().clone(), app.clone());
+    state.runtime_activated.store(true, Ordering::Release);
+    logger::log_msg("INFO", "System", "用户确认披露后，应用运行服务已激活");
+    Ok(true)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -85,13 +116,10 @@ pub fn run() {
 
     let app_state = Arc::new(AppState::new());
 
-    // Load global config on startup to populate state and shortcut map cache early
-    match GlobalConfig::load(&app_state.app_data_dir) {
-        Ok(cfg) => {
-            commands::global_config::update_shortcut_map(&app_state, &cfg);
-            let mut config_guard = app_state.config.write();
-            *config_guard = Some(cfg);
-        }
+    // Load global config through the application transaction runtime so startup,
+    // commands and background consumers all observe the same committed snapshot.
+    match commands::global_config::load_global_config_into_state(&app_state) {
+        Ok(_) => {}
         Err(error) => logger::log_msg(
             "ERROR",
             "Config",
@@ -107,6 +135,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .manage(app_state.clone())
+        .manage(auxiliary_windows::AuxiliaryWindowLifecycle::default())
         .setup(move |app| {
             let mut apply_default = true;
             if let Some(g) = &geo {
@@ -126,8 +155,8 @@ pub fn run() {
                         let scale_factor = monitor.scale_factor();
                         let size = monitor.size();
                         let logical_width = (size.width as f64) / scale_factor;
-                        let default_width = logical_width * 0.625;
-                        let default_height = default_width * 0.656;
+                        let default_width = logical_width * 0.618;
+                        let default_height = default_width * 0.618;
                         use tauri::LogicalSize;
                         let _ = win.set_size(LogicalSize::new(default_width, default_height));
                         let _ = win.center();
@@ -136,194 +165,39 @@ pub fn run() {
             }
             window_placement::ensure_main_window_visible(app.handle());
 
-            // 拦截主窗口关闭事件
-            if let Some(main_win) = app.get_webview_window("main") {
-                let main_win_clone = main_win.clone();
-                main_win.on_window_event(move |event| {
-                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        let _ = main_win_clone.hide();
-
-                        // 两个悬浮窗分别遵循自己的开关。
-                        let overlay_config = commands::global_config::get_global_config_ext(
-                            main_win_clone.app_handle(),
-                        );
-
-                        if overlay_config
-                            .as_ref()
-                            .map(|config| config.enable_tz_overlay)
-                            .unwrap_or(true)
-                        {
-                            let _ = window_placement::set_auxiliary_window_visible_for_app(
-                                main_win_clone.app_handle(),
-                                "overlay",
-                                true,
-                                Some("preserve"),
-                            );
-                        }
-                        if overlay_config
-                            .as_ref()
-                            .map(|config| config.enable_stats_overlay)
-                            .unwrap_or(true)
-                        {
-                            let _ = window_placement::set_auxiliary_window_visible_for_app(
-                                main_win_clone.app_handle(),
-                                "stats-overlay",
-                                true,
-                                Some("preserve"),
-                            );
-                        }
-                    }
-                });
-            }
+            capabilities::install(app);
+            commands::task::install_observer(app.handle(), &app_state);
 
             // 初始化托盘
             let _ = tray::create_tray(app.handle());
-
-            // 启动全局输入监听
-            input_listener::start_input_listener(app.handle().clone());
-
-            // 启动猫咪悬浮窗鼠标穿透检测轮询
-            if let Some(bongo_cat_win) = app.get_webview_window("bongo-cat") {
-                struct CatWindowCache {
-                    pos: Option<tauri::PhysicalPosition<i32>>,
-                    size: Option<tauri::PhysicalSize<u32>>,
-                    scale_factor: f64,
-                }
-
-                let cache = Arc::new(Mutex::new(CatWindowCache {
-                    pos: bongo_cat_win.outer_position().ok(),
-                    size: bongo_cat_win.outer_size().ok(),
-                    scale_factor: bongo_cat_win.scale_factor().unwrap_or(1.0),
-                }));
-
-                let cache_clone = cache.clone();
-                bongo_cat_win.on_window_event(move |event| match event {
-                    tauri::WindowEvent::Moved(pos) => {
-                        if let Ok(mut c) = cache_clone.lock() {
-                            c.pos = Some(*pos);
-                        }
-                    }
-                    tauri::WindowEvent::Resized(size) => {
-                        if let Ok(mut c) = cache_clone.lock() {
-                            c.size = Some(*size);
-                        }
-                    }
-                    tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                        if let Ok(mut c) = cache_clone.lock() {
-                            c.scale_factor = *scale_factor;
-                        }
-                    }
-                    _ => {}
-                });
-
-                let bongo_cat_win_clone = bongo_cat_win.clone();
-                std::thread::spawn(move || {
-                    #[repr(C)]
-                    struct POINT_WIN32 {
-                        x: i32,
-                        y: i32,
-                    }
-                    extern "system" {
-                        fn GetCursorPos(lpPoint: *mut POINT_WIN32) -> i32;
-                    }
-
-                    let mut is_ignoring = false;
-                    loop {
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-
-                        // Check visibility directly via Tauri (very fast Win32 call)
-                        let visible = bongo_cat_win_clone.is_visible().unwrap_or(false);
-                        if !visible {
-                            continue;
-                        }
-
-                        let (win_pos, win_size, scale_factor) = {
-                            if let Ok(c) = cache.lock() {
-                                (c.pos, c.size, c.scale_factor)
-                            } else {
-                                (None, None, 1.0)
-                            }
-                        };
-
-                        let win_pos = match win_pos {
-                            Some(pos) => pos,
-                            None => continue,
-                        };
-                        let win_size = match win_size {
-                            Some(size) => size,
-                            None => continue,
-                        };
-
-                        let mut point = POINT_WIN32 { x: 0, y: 0 };
-                        unsafe {
-                            if GetCursorPos(&mut point) == 0 {
-                                continue;
-                            }
-                        }
-
-                        // 依据当前窗口物理尺寸逆推缩放比例 scale
-                        let logical_w = win_size.width as f64 / scale_factor;
-                        let scale = logical_w / 240.0;
-
-                        // 计算鼠标相对于窗口左上角的逻辑像素位置
-                        let lx = (point.x as f64 - win_pos.x as f64) / scale_factor;
-                        let ly = (point.y as f64 - win_pos.y as f64) / scale_factor;
-
-                        // 归一化至 1.0 缩放比例下的坐标空间进行检测，避免多处乘 scale 导致的硬编码与繁琐计算
-                        let rx = lx / scale;
-                        let ry = ly / scale;
-
-                        // 定义猫咪在原始 240x400 分辨率下的两阶段非透明判定区域（排除周边透明光晕）
-                        struct HitBox {
-                            y_min: f64,
-                            y_max: f64,
-                            x_min: f64,
-                            x_max: f64,
-                        }
-                        const CAT_HIT_BOXES: [HitBox; 2] = [
-                            HitBox {
-                                y_min: 280.0,
-                                y_max: 330.0,
-                                x_min: 60.0,
-                                x_max: 195.0,
-                            }, // 上部区域
-                            HitBox {
-                                y_min: 330.0,
-                                y_max: 400.0,
-                                x_min: 35.0,
-                                x_max: 205.0,
-                            }, // 下部区域
-                        ];
-
-                        let is_inside = CAT_HIT_BOXES.iter().any(|box_| {
-                            ry >= box_.y_min
-                                && ry < box_.y_max
-                                && rx >= box_.x_min
-                                && rx <= box_.x_max
-                        });
-
-                        if is_inside {
-                            if is_ignoring {
-                                let _ = bongo_cat_win_clone.set_ignore_cursor_events(false);
-                                is_ignoring = false;
-                            }
-                        } else {
-                            if !is_ignoring {
-                                let _ = bongo_cat_win_clone.set_ignore_cursor_events(true);
-                                is_ignoring = true;
-                            }
-                        }
-                    }
-                });
-            }
 
             Ok(())
         })
         // ── 全局配置 ──
         .invoke_handler(tauri::generate_handler![
             commands::global_config::get_global_config,
+            commands::capability::get_capability_statuses,
+            commands::capability::get_capability_descriptors,
+            commands::task::get_tasks,
+            commands::task::get_task,
+            commands::task::get_task_timeline,
+            commands::task::get_task_retry_descriptor,
+            commands::task::cancel_task,
+            commands::task::retry_task,
+            commands::diagnostics::export_diagnostic_bundle,
+            commands::room_automation::room_automation_get_config,
+            commands::room_automation::room_automation_save_config,
+            commands::room_automation::room_automation_get_status,
+            commands::room_automation::room_automation_start_primary,
+            commands::room_automation::room_automation_start_followers,
+            commands::room_automation::room_automation_retry,
+            commands::room_automation::room_automation_cancel,
+            commands::room_automation::room_automation_get_chat_binding,
+            commands::room_automation::room_automation_install_chat_binding,
+            commands::room_automation::room_automation_restore_chat_binding,
             commands::global_config::save_global_config,
+            commands::global_config::patch_global_config,
+            commands::global_config::patch_desktop_pet_settings,
             commands::global_config::save_window_geometry,
             commands::global_config::load_window_geometry,
             commands::global_config::save_overlay_geometry,
@@ -335,13 +209,13 @@ pub fn run() {
             window_placement::set_auxiliary_window_visible,
             window_placement::recover_auxiliary_windows,
             commands::global_config::save_theme,
-            commands::global_config::detect_saved_games_path,
-            commands::global_config::detect_global_saved_games_path,
+            commands::global_config::detection::detect_saved_games_path,
+            commands::global_config::detection::detect_global_saved_games_path,
             commands::global_config::check_saved_games_settings,
-            commands::global_config::detect_program_data_agent_path,
-            commands::global_config::detect_app_data_roaming_bnet_path,
-            commands::global_config::detect_browser_path,
-            commands::global_config::detect_browser_path_by_type,
+            commands::global_config::detection::detect_program_data_agent_path,
+            commands::global_config::detection::detect_app_data_roaming_bnet_path,
+            commands::global_config::detection::detect_browser_path,
+            commands::global_config::detection::detect_browser_path_by_type,
             // ── 账号管理 ──
             commands::account::list_accounts,
             commands::account::get_account,
@@ -350,8 +224,6 @@ pub fn run() {
             commands::account::update_account_region,
             commands::account::delete_account,
             commands::account::rename_account,
-            commands::account::add_account_mod,
-            commands::account::update_account_mods,
             commands::account::mark_settings_customized,
             commands::account::set_settings_customized,
             commands::account::set_account_window_position,
@@ -395,10 +267,19 @@ pub fn run() {
             commands::system::exit_app,
             commands::system::open_logs_dir,
             commands::system::open_user_guide,
+            commands::system::activate_application_runtime,
             commands::terror_zone::get_terror_zone_snapshot,
             commands::terror_zone::get_next_terror_zone,
             // ── 声纹 Mod 一键准备 ──
             audio_mod::get_audio_mod_setup_state,
+            mod_catalog::get_mod_capsule_pool,
+            mod_catalog::scan_mod_capsule_pool,
+            mod_catalog::open_mods_directory,
+            mod_catalog::set_mod_auto_exit_on_death_enabled,
+            mod_catalog::add_mod_capsule,
+            mod_catalog::update_mod_capsule,
+            mod_catalog::delete_mod_capsule,
+            mod_catalog::assign_mod_capsule_to_account,
             audio_mod::prepare_audio_mod,
             audio_mod::upgrade_audio_mod,
             audio_mod::apply_audio_mod_to_account,
@@ -425,6 +306,7 @@ pub fn run() {
             commands::system::check_path_exists,
             logger::write_log,
             input_listener::set_bongo_cat_input_visible,
+            input_listener::set_stats_overlay_mini_input_region,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

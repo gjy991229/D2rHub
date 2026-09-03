@@ -1,10 +1,14 @@
 pub mod account;
 pub mod account_transfer;
 pub mod browser;
+pub mod capability;
 pub mod crypto;
+pub mod diagnostics;
 pub mod global_config;
 pub mod launch;
+pub mod room_automation;
 pub mod settings;
 pub mod system;
+pub mod task;
 pub mod terror_zone;
 pub mod utils;

@@ -1,69 +1,15 @@
 import { useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invokeCommand, listenEvent } from "../platform/tauri";
 import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
 import { useAccounts } from "../store/accounts";
-import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { AudioModRuntimeWarning, GlobalConfig, LaunchProgress } from "../store/types";
+import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
 import { validateTrackingTarget } from "../utils/trackingTarget";
-import { setAuxiliaryWindowVisible } from "../utils/windowPlacement";
-
-async function retryWindowAction(
-  action: () => Promise<boolean>,
-  isCancelled: () => boolean,
-  initialDelayMs: number,
-) {
-  const wait = (delayMs: number) =>
-    new Promise<void>((resolve) => window.setTimeout(resolve, delayMs));
-
-  await wait(initialDelayMs);
-  const deadline = Date.now() + 4_000;
-  while (!isCancelled() && Date.now() < deadline) {
-    if (await action()) return;
-    await wait(200);
-  }
-}
 
 export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null) {
-  const prevEnabledRef = useRef(config?.enable_bongo_cat);
   const prevScaleRef = useRef(config?.bongo_cat_scale);
-
-  useEffect(() => {
-    if (loading || !config) return;
-
-    let cancelled = false;
-
-    const showCat = async () => {
-      try {
-        if (cancelled) return true;
-        await setAuxiliaryWindowVisible("bongo-cat", true);
-        return true;
-      } catch {}
-      return false;
-    };
-
-    const hideCat = async () => {
-      try {
-        if (cancelled) return;
-        await setAuxiliaryWindowVisible("bongo-cat", false);
-      } catch {}
-    };
-
-    if (config.enable_bongo_cat) {
-      void retryWindowAction(showCat, () => cancelled, 300);
-    } else if (prevEnabledRef.current) {
-      // 配置变更：从开启变为关闭 → 隐藏猫咪窗口
-      void hideCat();
-    }
-
-    prevEnabledRef.current = config.enable_bongo_cat;
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, config?.enable_bongo_cat]);
 
   // 缩放变更即时生效（无需重启）
   useEffect(() => {
@@ -90,39 +36,6 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
 }
 
-export function useOverlayWindow(loading: boolean, config: GlobalConfig | null) {
-  useEffect(() => {
-    if (loading || !config) return;
-
-    let cancelled = false;
-
-    const manageOverlay = async () => {
-      try {
-        if (cancelled) return true;
-        const windows = [
-          { label: "overlay" as const, enabled: config.enable_tz_overlay },
-          {
-            label: "stats-overlay" as const,
-            enabled: config.enable_stats_overlay,
-          },
-        ];
-        for (const entry of windows) {
-          if (cancelled) continue;
-          await setAuxiliaryWindowVisible(entry.label, entry.enabled);
-        }
-        return true;
-      } catch {}
-      return false;
-    };
-
-    void retryWindowAction(manageOverlay, () => cancelled, 600);
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loading, config?.enable_tz_overlay, config?.enable_stats_overlay]);
-}
-
 export function useLaunchEvents(config: GlobalConfig | null) {
   const { launching, results, reset: resetLaunch } = useLaunch();
   const { accounts } = useAccounts();
@@ -133,7 +46,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
     let unlisten: (() => void) | undefined;
     (async () => {
       try {
-        const stopListening = await listen<LaunchProgress>("launch-progress", (event) => {
+        const stopListening = await listenEvent<LaunchProgress>("launch-progress", (event) => {
           useLaunch.getState().addProgressAndLog(event.payload);
         });
         if (cancelled) {
@@ -154,7 +67,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    void listen<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
+    void listenEvent<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
       showToast("warning", event.payload.message);
     }).then((stopListening) => {
       if (cancelled) stopListening();
@@ -187,7 +100,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
 
     const timer = setTimeout(async () => {
       try {
-        await invoke("start_rune_audio_monitor");
+        await invokeCommand("start_rune_audio_monitor");
         showToast("success", "符文声纹监控已自动启动");
       } catch (e) {
         showToast("error", `符文声纹监控启动失败: ${e}`);
@@ -217,11 +130,11 @@ export function useAutoUpdate(
           version: string;
           download_url: string;
         }
-        const info = await invoke<CloudVersionInfo>("check_cloud_version");
+        const info = await invokeCommand<CloudVersionInfo>("check_cloud_version");
         const cloudVersion = info.version;
         const downloadUrl = info.download_url;
 
-        const currentVer = await invoke<string>("get_app_version");
+        const currentVer = await invokeCommand<string>("get_app_version");
         const cleanLocal = currentVer.replace(/^v/, "").trim();
         const cleanCloud = cloudVersion.replace(/^v/, "").trim();
 
@@ -244,7 +157,7 @@ export function useAutoUpdate(
 export function useFirstLaunch(
   loading: boolean,
   config: GlobalConfig | null,
-  saveConfig: (cfg: GlobalConfig) => Promise<void>
+  patchConfig: (patch: GlobalConfigPatch) => Promise<GlobalConfig>
 ) {
   const firstLaunchOpenedRef = useRef(false);
 
@@ -257,19 +170,15 @@ export function useFirstLaunch(
 
     const timer = setTimeout(async () => {
       try {
-        await invoke("open_user_guide");
+        await invokeCommand("open_user_guide");
       } catch {}
       try {
-        // 从 store 取最新 config，避免闭包过期覆盖其他字段
-        const latestCfg = useGlobalConfig.getState().config;
-        if (latestCfg) {
-          await saveConfig({ ...latestCfg, first_launch: false });
-        }
+        await patchConfig({ first_launch: false });
       } catch {}
     }, 800);
 
     return () => clearTimeout(timer);
-  }, [loading, config?.first_launch, config?.first_run_complete, saveConfig]);
+  }, [loading, config?.first_launch, config?.first_run_complete, patchConfig]);
 }
 
 export function usePreventDragRegionDoubleClick() {

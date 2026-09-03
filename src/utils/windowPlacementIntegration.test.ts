@@ -14,22 +14,44 @@ function source(...segments: string[]) {
 
 export function runTests() {
   const effects = source("src", "hooks", "useAppEffects.ts");
-  const settings = source("src", "components", "config", "SettingsCenter.tsx");
+  const settings = [
+    source("src", "components", "config", "SettingsCenter.tsx"),
+    source("src", "features", "settings", "panels", "OverlayPanel.tsx"),
+    source("src", "features", "settings", "panels", "PetPanel.tsx"),
+    source("src", "features", "settings", "useAuxiliaryWindowActions.ts"),
+  ].join("\n");
   const overlay = source("src", "pages", "Overlay.tsx");
   const cat = source("src", "pages", "BongoCatWindow.tsx");
   const native = source("src-tauri", "src", "lib.rs");
+  const auxiliaryWindows = source("src-tauri", "src", "auxiliary_windows.rs");
+  const overlayCapability = source("src-tauri", "src", "capabilities", "overlay_windows.rs");
+  const petCapability = source("src-tauri", "src", "capabilities", "bongo_cat.rs");
   const tray = source("src-tauri", "src", "tray.rs");
   const i18n = source("src", "i18n.tsx");
 
   assert(
-    effects.includes("setAuxiliaryWindowVisible(entry.label, entry.enabled)")
+    !effects.includes("setAuxiliaryWindowVisible(entry.label, entry.enabled)")
       && !effects.includes("await overlayWin.show()")
       && !effects.includes("await catWin.show()"),
-    "automatic overlay visibility is routed through the native safe-show service",
+    "configuration-driven overlay visibility is owned by capability lifecycle",
+  );
+  assert(
+    auxiliaryWindows.includes("WebviewWindowBuilder::from_config")
+      && auxiliaryWindows.includes("create_configured_windows")
+      && auxiliaryWindows.includes("ensure_window")
+      && native.includes("AuxiliaryWindowLifecycle::default()"),
+    "auxiliary WebViews are created from their native config on startup demand and first use",
+  );
+  assert(
+    auxiliaryWindows.includes("pub(crate) fn destroy_window")
+      && auxiliaryWindows.includes(".destroy()")
+      && overlayCapability.includes("destroy_window(&self.app, self.label)")
+      && petCapability.includes("destroy_window(&self.app, WINDOW_LABEL)"),
+    "disabled overlay capabilities destroy their WebViews instead of retaining hidden renderers",
   );
   assert(
     overlay.includes('await restoreWindowPlacement("overlay", saved);')
-      && overlay.includes('invoke("save_window_placement"')
+      && overlay.includes('invokeCommand("save_window_placement"')
       && overlay.includes("userWindowMovePendingRef"),
     "overlay restore and explicit user moves use the versioned physical placement service",
   );

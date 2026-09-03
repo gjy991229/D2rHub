@@ -1,12 +1,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Save, Monitor, Volume2, Gamepad2, Map, Image, X } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emitEvent, invokeCommand } from "../platform/tauri";
 import { Button } from "../components/ui/Button";
+import { RangeSlider } from "../components/ui/RangeSlider";
 import { Toggle } from "../components/ui/Toggle";
 import { showToast } from "../components/ui/Toast";
 import type { AccountMeta } from "../store/types";
 import { useAccounts } from "../store/accounts";
+import { FRAMERATE_CAP_KEY, writeFramerateCap } from "../utils/gameSettings";
 
 interface Props {
   account: AccountMeta;
@@ -210,7 +211,7 @@ const settingsSections: ConfigSection[] = [
         ],
       },
       { key: "Dynamic Resolution Scaling", label: "分辨率动态调整", type: "toggle", defaultValue: 0 },
-      { key: "Framerate Target", label: "帧数目标值", type: "number", defaultValue: 0, min: 0, max: 300 },
+      { key: FRAMERATE_CAP_KEY, label: "帧数上限", type: "number", defaultValue: 0, min: 0, max: 500 },
       { key: "Vfx Quality", label: "Vfx质量", type: "select", defaultValue: 2, options: qualityLowUltra },
       {
         key: "Vfx Lighting Quality",
@@ -401,7 +402,7 @@ export function SettingsEditor({ account, onClose }: Props) {
   const loadSettings = async () => {
     setLoading(true);
     try {
-      const data = await invoke<SettingsMap>("get_account_settings", {
+      const data = await invokeCommand<SettingsMap>("get_account_settings", {
         accountId: account.id,
       });
       setSettings(data);
@@ -413,21 +414,23 @@ export function SettingsEditor({ account, onClose }: Props) {
   };
 
   const update = (key: string, value: unknown) => {
-    setSettings((prev) => ({ ...prev, [key]: value }));
+    setSettings((prev) => key === FRAMERATE_CAP_KEY
+      ? writeFramerateCap(prev, Number(value))
+      : ({ ...prev, [key]: value }));
     setHasChanges(true);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      await invoke("save_account_settings", {
+      await invokeCommand("save_account_settings", {
         accountId: account.id,
         settings,
       });
       await markSettingsCustomized(account.id);
       setHasChanges(false);
       showToast("success", "设置已保存");
-      await emit("account-settings-updated", { accountId: account.id });
+      await emitEvent("account-settings-updated", { accountId: account.id });
     } catch (e) {
       showToast("error", `保存失败: ${e}`);
     } finally {
@@ -437,13 +440,13 @@ export function SettingsEditor({ account, onClose }: Props) {
 
   const snapshotSystemSettings = async () => {
     try {
-      const data = await invoke<SettingsMap>("snapshot_system_settings_to_account", {
+      const data = await invokeCommand<SettingsMap>("snapshot_system_settings_to_account", {
         accountId: account.id,
       });
       setSettings(data);
       setHasChanges(false);
       showToast("success", "已快照系统配置");
-      await emit("account-settings-updated", { accountId: account.id });
+      await emitEvent("account-settings-updated", { accountId: account.id });
     } catch (e) {
       showToast("error", `快照系统配置失败: ${e}`);
     }
@@ -585,23 +588,15 @@ export function SliderInput({
   step?: number;
   onChange: (v: number) => void;
 }) {
-  const pct = ((value - min) / (max - min)) * 100;
   return (
     <div className="flex items-center gap-2 w-48">
-      <input
-        type="range"
+      <RangeSlider
         min={min}
         max={max}
         step={step}
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="flex-1 h-1.5 rounded-full appearance-none bg-surface-hover cursor-pointer
-          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3.5
-          [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:rounded-full
-          [&::-webkit-slider-thumb]:bg-accent [&::-webkit-slider-thumb]:cursor-pointer"
-        style={{
-          background: `linear-gradient(to right, var(--accent) ${pct}%, var(--surface-hover) ${pct}%)`,
-        }}
+        className="min-w-0 flex-1"
       />
       <span className="text-xs text-text-primary tabular-nums w-10 text-right">{value}</span>
     </div>

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "../platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useGlobalConfig } from "./globalConfig";
 
@@ -7,6 +7,7 @@ export type ThemeKey = "onyx" | "light";
 
 interface ThemeState {
   theme: ThemeKey;
+  previewTheme: (t: ThemeKey) => void;
   setTheme: (t: ThemeKey) => void;
 }
 
@@ -54,10 +55,14 @@ export function syncThemeFromConfig(configTheme: string | undefined) {
 
 export const useTheme = create<ThemeState>((set) => ({
   theme: loadTheme(),
+  previewTheme: (t) => {
+    applyTheme(t);
+    set({ theme: t });
+  },
   setTheme: (t) => {
     applyTheme(t);
     set({ theme: t });
-    invoke("save_theme", { theme: t }).catch(() => {});
+    invokeCommand("save_theme", { theme: t }).catch(() => {});
 
     // 同步到 useGlobalConfig 以防状态重置循环
     const configState = useGlobalConfig.getState();

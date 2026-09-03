@@ -34,7 +34,8 @@
   --z-toast: 100;
 
   /* Font size scale — all driven by --font-scale for user-adjustable sizing */
-  --font-scale: 1;
+  /* Match the persisted default before React hydrates to avoid a tiny first paint. */
+  --font-scale: 1.45;
   --text-2xs: calc(8.5px * var(--font-scale));
   --text-xs:  calc(10px  * var(--font-scale));
   --text-sm:  calc(11px  * var(--font-scale));
@@ -44,9 +45,9 @@
 }
 
 /* Font scale presets — applied via data-font-scale on <html> */
-[data-font-scale="small"]   { --font-scale: 1.15; }
-[data-font-scale="default"] { --font-scale: 1.3; }
-[data-font-scale="large"]   { --font-scale: 1.45; }
+[data-font-scale="small"]   { --font-scale: 1.3; }
+[data-font-scale="default"] { --font-scale: 1.45; }
+[data-font-scale="large"]   { --font-scale: 1.6; }
 
 /* ── Onyx (default, restrained dark) ── */
 [data-theme="onyx"] {
@@ -126,8 +127,8 @@
   --border-strong: rgba(24, 30, 42, 0.14);
   --border-focus: #1a1a1c;
   --text-primary: #1a1a1c;
-  --text-secondary: rgba(26,26,28,0.62);
-  --text-muted: rgba(26,26,28,0.45);
+  --text-secondary: rgba(26,26,28,0.74);
+  --text-muted: rgba(26,26,28,0.62);
   --input-text: #1d1d1f;
   --input-bg: rgba(255, 255, 255, 0.72);
   --accent: #1a1a1c;
@@ -136,10 +137,10 @@
   --accent-glow: rgba(26, 26, 28, 0.08);
   --cta-bg: #1a1a1c;
   --cta-text: #ffffff;
-  --success: #34c759;
-  --warning: #ff9f0a;
-  --error: #ff3b30;
-  --info: #5ac8fa;
+  --success: #18743b;
+  --warning: #8a4b00;
+  --error: #b42318;
+  --info: #1665a8;
   --tz-accent: #7e22ce;
 
   /* Toast notification variables */

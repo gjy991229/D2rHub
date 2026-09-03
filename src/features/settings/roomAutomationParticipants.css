@@ -1,0 +1,76 @@
+.room-automation-capsules {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-default);
+}
+
+.room-automation-capsules-heading {
+  padding: 7px 0 6px;
+}
+
+.room-automation-capsules-heading strong,
+.room-automation-capsules-heading span {
+  display: block;
+}
+
+.room-automation-capsules-heading strong {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.room-automation-capsules-heading span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.room-automation-capsule-row {
+  display: grid;
+  grid-template-columns: minmax(88px, 0.55fr) minmax(130px, 1fr);
+  align-items: center;
+  gap: 6px 8px;
+  min-height: 46px;
+  padding: 7px 0;
+  border-top: 1px solid color-mix(in srgb, var(--border-default) 72%, transparent);
+}
+
+.room-automation-capsule-row .settings-input {
+  min-width: 0;
+  height: 32px;
+  font-size: var(--text-xs);
+}
+
+.room-automation-capsule-account {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-automation-capsule-state {
+  grid-column: 2;
+  color: var(--warning);
+  font-size: var(--text-2xs);
+  line-height: 1.35;
+  text-align: left;
+}
+
+.room-automation-capsule-state[data-ready="true"] {
+  color: var(--success);
+}
+
+@media (max-width: 620px) {
+  .room-automation-capsule-row {
+    grid-template-columns: minmax(74px, 0.65fr) minmax(110px, 1fr);
+  }
+
+  .room-automation-capsule-state {
+    grid-column: 2;
+    text-align: left;
+  }
+}

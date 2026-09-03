@@ -41,6 +41,7 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             "quit" => {
+                crate::capabilities::shutdown(app);
                 app.exit(0);
             }
             _ => {}

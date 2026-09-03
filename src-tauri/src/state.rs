@@ -1,48 +1,43 @@
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use crate::commands::global_config::GlobalConfig;
+use crate::application::capability::CapabilityRegistry;
+use crate::application::configuration::ConfigurationRuntime;
+use crate::application::multi_instance::{AccountOperationLease, MultiInstanceRuntime};
+use crate::application::task_runtime::TaskRuntime;
 use crate::error::AppError;
-
-#[derive(Debug, Clone)]
-pub struct ActiveGameLaunch {
-    pub pid: u32,
-    pub mod_args: String,
-}
 
 /// 应用全局运行时状态
 pub struct AppState {
-    /// 全局配置（线程安全读写）
-    pub config: RwLock<Option<GlobalConfig>>,
+    /// 全局配置事务运行时。所有读取都取得不可变快照，写入只能经仓储与策略端口提交。
+    configuration: ConfigurationRuntime,
+    /// 可选模块生命周期的纯应用层控制面。
+    capabilities: Arc<CapabilityRegistry>,
     /// 应用数据目录路径
     pub app_data_dir: String,
-    /// 启动取消标志（前端点停止时置 true，启动循环检测到后中止）
-    pub cancel_launch: AtomicBool,
-    /// 每次取消递增；长事务通过启动代次识别属于自己的取消请求。
-    pub cancel_generation: AtomicU64,
+    /// 多开核心运行时。账号实例与操作取消只能通过其公开接口访问，避免模块直接操作锁。
+    multi_instance: MultiInstanceRuntime,
+    /// Unified status, cancellation and timeline registry for long-running work.
+    tasks: TaskRuntime,
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
-    /// 账号目录及 account.json 的生命周期写操作；同一账号同一时刻只能有一个事务。
-    pub account_operations: Mutex<HashSet<String>>,
-    /// 账号目录清单级写操作；用于原子维护跨账号唯一约束（如展示名）。
-    pub account_catalog: Mutex<()>,
-    /// 正在运行的账号游戏 PID 映射：account_id -> d2r_pid
-    pub active_games: RwLock<HashMap<String, u32>>,
-    /// 由 D2RHub 启动的实际会话参数快照。账号配置之后发生变化时，不能拿新配置冒充
-    /// 已运行进程的真实参数。
-    pub active_game_launches: RwLock<HashMap<String, ActiveGameLaunch>>,
+    /// 首次披露确认后的运行服务启动锁，确保并发 IPC 也只会激活一次。
+    pub(crate) runtime_activation_lock: Mutex<()>,
+    /// 高风险运行服务是否已经完成激活。
+    pub(crate) runtime_activated: AtomicBool,
+    /// 本进程内已经逻辑删除的稳定账号 ID。配置策略用它阻止排队中的陈旧
+    /// 全量保存重新引入已删除账号；不扫描目录，避免与账号目录替换窗口竞争。
+    retired_account_ids: RwLock<HashSet<String>>,
     /// 同一时间只允许一个 Mod 加工任务，避免两个生成器写入同一个 mods 目录。
     pub audio_mod_build_busy: AtomicBool,
     /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
     pub shortcut_map: RwLock<HashMap<String, usize>>,
     /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
     pub window_placement_io: Mutex<()>,
-    /// 串行化全局配置的加载迁移与原子写入，避免多个窗口争用同一暂存文件。
-    pub config_io: Mutex<()>,
 }
 
 impl AppState {
@@ -59,38 +54,45 @@ impl AppState {
 
     fn with_app_data_dir(app_data: PathBuf) -> Self {
         Self {
-            config: RwLock::new(None),
+            configuration: ConfigurationRuntime::new(),
+            capabilities: Arc::new(CapabilityRegistry::new()),
             app_data_dir: app_data.to_string_lossy().to_string(),
-            cancel_launch: AtomicBool::new(false),
-            cancel_generation: AtomicU64::new(0),
+            multi_instance: MultiInstanceRuntime::default(),
+            tasks: TaskRuntime::default(),
             host_runtime_busy: AtomicBool::new(false),
-            account_operations: Mutex::new(HashSet::new()),
-            account_catalog: Mutex::new(()),
-            active_games: RwLock::new(HashMap::new()),
-            active_game_launches: RwLock::new(HashMap::new()),
+            runtime_activation_lock: Mutex::new(()),
+            runtime_activated: AtomicBool::new(false),
+            retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
             window_placement_io: Mutex::new(()),
-            config_io: Mutex::new(()),
         }
     }
 
-    pub fn record_active_game(&self, account_id: &str, pid: u32, mod_args: &str) {
-        self.active_games
-            .write()
-            .insert(account_id.to_string(), pid);
-        self.active_game_launches.write().insert(
-            account_id.to_string(),
-            ActiveGameLaunch {
-                pid,
-                mod_args: mod_args.to_string(),
-            },
-        );
+    pub fn configuration(&self) -> &ConfigurationRuntime {
+        &self.configuration
     }
 
-    pub fn remove_active_game(&self, account_id: &str) {
-        self.active_games.write().remove(account_id);
-        self.active_game_launches.write().remove(account_id);
+    pub fn capabilities(&self) -> &Arc<CapabilityRegistry> {
+        &self.capabilities
+    }
+
+    pub fn multi_instance(&self) -> &MultiInstanceRuntime {
+        &self.multi_instance
+    }
+
+    pub fn tasks(&self) -> &TaskRuntime {
+        &self.tasks
+    }
+
+    pub fn retire_account_id(&self, account_id: &str) {
+        self.retired_account_ids
+            .write()
+            .insert(account_id.to_ascii_lowercase());
+    }
+
+    pub fn retired_account_ids_snapshot(&self) -> Vec<String> {
+        self.retired_account_ids.read().iter().cloned().collect()
     }
 }
 
@@ -206,8 +208,17 @@ fn directory_global_config_has_user_data(path: &Path) -> bool {
     .any(|name| config_file_has_user_data(&path.join(name)))
 }
 
+fn directory_has_statistics_data(path: &Path) -> bool {
+    // `data.db` is the pre-stateData layout and remains a supported migration
+    // source. Any entry below stateData can include the database, screenshots,
+    // or exported statistics and must therefore be treated as user data.
+    path.join("data.db").is_file() || directory_has_entries(&path.join("stateData"))
+}
+
 fn directory_has_user_config(path: &Path) -> bool {
-    directory_global_config_has_user_data(path) || directory_has_account_data(path)
+    directory_global_config_has_user_data(path)
+        || directory_has_account_data(path)
+        || directory_has_statistics_data(path)
 }
 
 fn unique_migration_backup_path(target: &Path) -> Result<PathBuf, String> {
@@ -421,34 +432,16 @@ fn resolve_app_data_dir() -> PathBuf {
 }
 
 pub struct AccountLifecycleLease {
-    state: Arc<AppState>,
-    account_id: String,
+    _lease: AccountOperationLease,
 }
 
 impl AccountLifecycleLease {
     pub fn try_acquire(state: &Arc<AppState>, account_id: &str) -> Result<Self, AppError> {
-        // Windows 文件系统通常大小写不敏感；UUID 大小写别名必须映射到同一把租约。
-        let operation_key = account_id.to_ascii_lowercase();
-        let mut active = state.account_operations.lock();
-        if !active.insert(operation_key.clone()) {
-            return Err(AppError::Unknown(format!(
-                "账号 {account_id} 正在执行另一项操作，请稍后重试"
-            )));
-        }
-        drop(active);
-        Ok(Self {
-            state: Arc::clone(state),
-            account_id: operation_key,
-        })
-    }
-}
-
-impl Drop for AccountLifecycleLease {
-    fn drop(&mut self) {
-        self.state
-            .account_operations
-            .lock()
-            .remove(&self.account_id);
+        state
+            .multi_instance()
+            .account_leases()
+            .try_acquire(account_id)
+            .map(|lease| Self { _lease: lease })
     }
 }
 
@@ -547,6 +540,32 @@ mod tests {
             r#"{"version":6,"first_run_complete":true,"cn_game_path":"C:\\CurrentD2R"}"#
         );
         assert!(source.join("global_config.json").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn portable_statistics_are_user_data_when_system_config_already_exists() {
+        let root = temp_dir("portable_statistics_conflict");
+        let source = root.join("portable").join("config");
+        let target = root.join("AppData").join("D2RHub");
+        std::fs::create_dir_all(source.join("stateData")).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(source.join("stateData").join("data.db"), "portable stats").unwrap();
+        std::fs::write(
+            target.join("global_config.json"),
+            r#"{"version":9,"first_run_complete":true,"cn_game_path":"C:\\CurrentD2R"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            migrate_legacy_config_dir(&source, &target).unwrap(),
+            LegacyConfigMigrationOutcome::Conflict
+        );
+        assert_eq!(
+            std::fs::read_to_string(source.join("stateData").join("data.db")).unwrap(),
+            "portable stats"
+        );
+        assert!(target.join("global_config.json").is_file());
         let _ = std::fs::remove_dir_all(root);
     }
 

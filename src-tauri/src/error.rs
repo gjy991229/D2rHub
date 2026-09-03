@@ -73,6 +73,12 @@ impl From<serde_json::Error> for AppError {
     }
 }
 
+impl From<crate::domain::account::AccountConfigurationError> for AppError {
+    fn from(error: crate::domain::account::AccountConfigurationError) -> Self {
+        AppError::ConfigReadError(error.to_string())
+    }
+}
+
 impl serde::Serialize for AppError {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where

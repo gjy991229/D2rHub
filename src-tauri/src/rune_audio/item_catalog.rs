@@ -1,5 +1,8 @@
 use super::catalog::MAX_ITEM_ID;
 use super::protocol::PROTOCOL_VERSION;
+use crate::domain::config::{
+    DEFAULT_RUNE_AUDIO_TRACKED_CATEGORIES, DEFAULT_RUNE_AUDIO_TRACKED_CHARM_CODES,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -14,17 +17,9 @@ pub const CATEGORY_KEYS: &str = "keys";
 pub const CATEGORY_ORGANS: &str = "organs";
 pub const CATEGORY_ESSENCES: &str = "essences";
 
-pub const SUPPORTED_TRACKING_CATEGORIES: [&str; 7] = [
-    CATEGORY_RUNES,
-    CATEGORY_GEMS,
-    CATEGORY_CHARMS,
-    CATEGORY_JEWELS,
-    CATEGORY_KEYS,
-    CATEGORY_ORGANS,
-    CATEGORY_ESSENCES,
-];
+pub const SUPPORTED_TRACKING_CATEGORIES: [&str; 7] = DEFAULT_RUNE_AUDIO_TRACKED_CATEGORIES;
 
-pub const SUPPORTED_CHARM_CODES: [&str; 3] = ["cm1", "cm2", "cm3"];
+pub const SUPPORTED_CHARM_CODES: [&str; 3] = DEFAULT_RUNE_AUDIO_TRACKED_CHARM_CODES;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SupportedItemDefinition {

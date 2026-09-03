@@ -16,12 +16,13 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Condvar, Mutex, OnceLock};
 use tauri::{Emitter, Manager};
 
 const CAPTURE_SAMPLE_RATE: u32 = 48_000;
 const CAPTURE_CHANNELS: usize = 2;
 const SCAN_INTERVAL_FRAMES: usize = 4_800;
+const MAX_DIAGNOSTIC_RECORDING_FRAMES: u32 = CAPTURE_SAMPLE_RATE * 5 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuneAudioEvent {
@@ -159,6 +160,30 @@ static WORKER_ACTIVE: AtomicBool = AtomicBool::new(false);
 static GENERATION: AtomicU64 = AtomicU64::new(0);
 static STATUS: OnceLock<Mutex<RuneAudioStatus>> = OnceLock::new();
 static DIAGNOSTIC_RECORDING: OnceLock<Mutex<Option<DiagnosticRecording>>> = OnceLock::new();
+static WORKER_EXITED: OnceLock<(Mutex<()>, Condvar)> = OnceLock::new();
+
+fn worker_exit_signal() -> &'static (Mutex<()>, Condvar) {
+    WORKER_EXITED.get_or_init(|| (Mutex::new(()), Condvar::new()))
+}
+
+fn mark_worker_inactive() {
+    let (lock, changed) = worker_exit_signal();
+    let _guard = lock.lock().unwrap_or_else(|error| error.into_inner());
+    WORKER_ACTIVE.store(false, Ordering::SeqCst);
+    changed.notify_all();
+}
+
+fn wait_for_worker_exit(timeout: std::time::Duration) -> bool {
+    if !WORKER_ACTIVE.load(Ordering::SeqCst) {
+        return true;
+    }
+    let (lock, changed) = worker_exit_signal();
+    let guard = lock.lock().unwrap_or_else(|error| error.into_inner());
+    let (_guard, _) = changed
+        .wait_timeout_while(guard, timeout, |_| WORKER_ACTIVE.load(Ordering::SeqCst))
+        .unwrap_or_else(|error| error.into_inner());
+    !WORKER_ACTIVE.load(Ordering::SeqCst)
+}
 
 fn diagnostic_recording() -> &'static Mutex<Option<DiagnosticRecording>> {
     DIAGNOSTIC_RECORDING.get_or_init(|| Mutex::new(None))
@@ -190,21 +215,41 @@ fn set_status(next: RuneAudioStatus) {
     *status().lock().unwrap_or_else(|error| error.into_inner()) = next;
 }
 
+fn monitor_generation_active(generation: u64) -> bool {
+    RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation
+}
+
 fn write_diagnostic_samples(samples: &[f32]) {
+    let active_target = {
+        let current = status().lock().unwrap_or_else(|error| error.into_inner());
+        (current.account_id.clone(), current.target_pid)
+    };
     let mut guard = diagnostic_recording()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     let Some(recording) = guard.as_mut() else {
         return;
     };
-    if recording.write_error.is_some() {
-        return;
+    let target_changed = active_target.0.as_deref() != Some(recording.account_id.as_str())
+        || active_target.1 != Some(recording.target_pid);
+    let mut should_finish = target_changed || recording.write_error.is_some();
+    if !should_finish {
+        let remaining =
+            MAX_DIAGNOSTIC_RECORDING_FRAMES.saturating_sub(recording.writer.duration()) as usize;
+        for sample in samples.iter().take(remaining) {
+            let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
+            if let Err(error) = recording.writer.write_sample(pcm) {
+                recording.write_error = Some(format!("写入诊断 WAV 失败: {error}"));
+                should_finish = true;
+                break;
+            }
+        }
+        should_finish |= recording.writer.duration() >= MAX_DIAGNOSTIC_RECORDING_FRAMES;
     }
-    for sample in samples {
-        let pcm = (sample.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16;
-        if let Err(error) = recording.writer.write_sample(pcm) {
-            recording.write_error = Some(format!("写入诊断 WAV 失败: {error}"));
-            break;
+    drop(guard);
+    if should_finish {
+        if let Err(error) = finish_diagnostic_recording() {
+            crate::logger::log_msg("ERROR", "RuneAudio", &error);
         }
     }
 }
@@ -291,29 +336,28 @@ fn finish_diagnostic_recording() -> Result<Option<String>, String> {
 fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, String> {
     let state = app.state::<crate::state::SharedState>();
     let (config, account) = {
-        let guard = state.config.read();
-        let config = guard
-            .as_ref()
+        let config = state
+            .configuration()
+            .snapshot()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
+        if !config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION) {
+            return Err("识别与统计模块尚未安装".to_string());
+        }
         let account = config
             .resolve_rune_audio_target_account()
             .map_err(|error| error.to_string())?
             .ok_or_else(|| "符文声纹识别尚未启用".to_string())?;
-        (config.clone(), account)
+        (config, account)
     };
-    let target_pid = state
-        .active_games
-        .read()
-        .get(&account.id)
-        .copied()
+    let instance = state.multi_instance().instances().get(&account.id);
+    let target_pid = instance
+        .as_ref()
+        .map(|instance| instance.pid)
         .or(account.running_pid)
         .ok_or_else(|| format!("目标账号“{}”的 D2R 尚未运行", account.display_name))?;
-    let launch_arguments = state
-        .active_game_launches
-        .read()
-        .get(&account.id)
-        .filter(|snapshot| snapshot.pid == target_pid)
-        .map(|snapshot| snapshot.mod_args.clone())
+    let launch_arguments = instance
+        .and_then(|instance| instance.launch)
+        .map(|snapshot| snapshot.mod_args)
         .unwrap_or_else(|| account.mod_args.clone());
     let catalog_directory = Some(crate::audio_mod::validate_runtime_audio_mod(
         &config,
@@ -586,6 +630,7 @@ fn handle_location_detection(
     tracker: &mut SegmentTracker,
     catalog: &LocationCatalog,
     marker: TelemetryMarker,
+    terror_zone_active: bool,
     observed_at_frame: u64,
     confidence: f32,
 ) {
@@ -593,8 +638,9 @@ fn handle_location_detection(
         return;
     };
     let now = chrono::Local::now();
-    let outcome = match tracker.observe_location(
+    let outcome = match tracker.observe_location_with_terror_state(
         marker,
+        terror_zone_active,
         observed_at_frame,
         now.timestamp_millis(),
         now.format("%Y/%m/%d/%H:%M:%S").to_string(),
@@ -628,10 +674,14 @@ fn handle_location_detection(
             | TelemetryMarker::Item { .. }
             | TelemetryMarker::Frontend => None,
         },
-        scene_key: location.scene_key,
-        scene_name: location.scene_name,
-        scene_name_en: location.scene_name_en,
-        tz: false,
+        scene_key: if outcome.snapshot.tz {
+            format!("terror_zone:{}", location.scene_name)
+        } else {
+            location.scene_key
+        },
+        scene_name: outcome.snapshot.current_scene.clone(),
+        scene_name_en: outcome.snapshot.current_scene_en.clone(),
+        tz: outcome.snapshot.tz,
         location_kind: location.kind,
         is_town: location.kind == LocationKind::Town,
         is_frontend: location.kind == LocationKind::Frontend,
@@ -656,6 +706,20 @@ fn handle_terror_zone_detection(
     confidence: f32,
 ) {
     let current_zone = crate::commands::terror_zone::cached_current_terror_zone();
+    if tracker.current_area_id().is_some()
+        && tracker
+            .current_terror_zone_scene()
+            .is_some_and(|scene_name| {
+                current_zone
+                    .as_ref()
+                    .is_none_or(|zone| terror_zone_contains_scene(zone, scene_name))
+            })
+    {
+        // A repeated 1023 heartbeat must not discard a previously validated
+        // exact Area. A conflicting forecast is a new activation and is
+        // allowed to replace it below.
+        return;
+    }
     let (scene_name, scene_name_en) = current_zone
         .map(|zone| (zone.location_name, "Terror Zone".to_string()))
         .unwrap_or_else(|| {
@@ -697,7 +761,7 @@ fn emit_terror_zone_tracking_update(
     let event = LocationAudioEvent {
         source: "terror_zone_audio".to_string(),
         account_id: config.account_id.clone(),
-        area_id: None,
+        area_id: snapshot.current_area_id,
         scene_key: snapshot
             .current_run_key
             .clone()
@@ -705,9 +769,9 @@ fn emit_terror_zone_tracking_update(
         scene_name: snapshot.current_scene.clone(),
         scene_name_en: snapshot.current_scene_en.clone(),
         tz: true,
-        location_kind: LocationKind::Wilderness,
-        is_town: false,
-        is_frontend: false,
+        location_kind: snapshot.location_kind.unwrap_or(LocationKind::Wilderness),
+        is_town: snapshot.is_town,
+        is_frontend: snapshot.is_frontend,
         confidence,
         timestamp: chrono::Local::now().to_rfc3339(),
     };
@@ -719,6 +783,48 @@ fn emit_terror_zone_tracking_update(
         );
     }
     emit_tracking_snapshot(app, snapshot);
+}
+
+fn comparable_scene_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn terror_zone_contains_scene(
+    zone: &crate::commands::terror_zone::TerrorZoneForecast,
+    scene_name: &str,
+) -> bool {
+    let expected = comparable_scene_name(scene_name);
+    !expected.is_empty()
+        && std::iter::once(zone.location_name.as_str())
+            .chain(zone.location_detail.split('/'))
+            .any(|candidate| comparable_scene_name(candidate) == expected)
+}
+
+fn area_in_current_terror_zone(
+    tracker: &SegmentTracker,
+    location: &crate::rune_audio::catalog::ResolvedLocation,
+    scene_changed: bool,
+) -> bool {
+    if !tracker.current_is_terror_zone() {
+        return false;
+    }
+    if let Some(zone) = crate::commands::terror_zone::cached_current_terror_zone() {
+        return terror_zone_contains_scene(&zone, &location.scene_name);
+    }
+    let Some(current_scene) = tracker.current_terror_zone_scene() else {
+        return false;
+    };
+    if current_scene == GENERIC_TERROR_ZONE_NAME {
+        // With no forecast cache, only a genuinely different Area may refine
+        // the generic TZ. Reusing the previous Area would reattach a stale
+        // ambience heartbeat to the new TZ activation.
+        return scene_changed;
+    }
+    comparable_scene_name(current_scene) == comparable_scene_name(&location.scene_name)
 }
 
 fn upgrade_cached_terror_zone_name(
@@ -785,6 +891,27 @@ fn capture_loop(
         .start_stream()
         .map_err(|error| format!("启动 D2R 音频流失败: {error}"))?;
 
+    struct CaptureSession {
+        client: AudioClient,
+    }
+    impl Drop for CaptureSession {
+        fn drop(&mut self) {
+            if let Err(error) = self.client.stop_stream() {
+                crate::logger::log_msg(
+                    "WARN",
+                    "RuneAudio",
+                    &format!("停止 D2R 音频流失败: {error}"),
+                );
+            }
+            if let Err(error) = finish_diagnostic_recording() {
+                crate::logger::log_msg("ERROR", "RuneAudio", &error);
+            }
+        }
+    }
+    let _capture_session = CaptureSession {
+        client: audio_client,
+    };
+
     let _ = ready.send(Ok(()));
     let mut bytes = VecDeque::new();
     let mut pending_mono = Vec::<f32>::with_capacity(SCAN_INTERVAL_FRAMES * 2);
@@ -822,7 +949,11 @@ fn capture_loop(
     let tz_refresh_generation = generation;
     tauri::async_runtime::spawn(async move {
         loop {
-            if let Err(error) = crate::commands::terror_zone::get_terror_zone_snapshot().await {
+            let refresh = crate::commands::terror_zone::get_terror_zone_snapshot().await;
+            if !monitor_generation_active(tz_refresh_generation) {
+                break;
+            }
+            if let Err(error) = refresh {
                 crate::logger::log_msg(
                     "WARN",
                     "RuneAudio",
@@ -830,9 +961,7 @@ fn capture_loop(
                 );
             }
             tokio::time::sleep(std::time::Duration::from_secs(5 * 60)).await;
-            if !RUNNING.load(Ordering::SeqCst)
-                || GENERATION.load(Ordering::SeqCst) != tz_refresh_generation
-            {
+            if !monitor_generation_active(tz_refresh_generation) {
                 break;
             }
         }
@@ -916,7 +1045,6 @@ fn capture_loop(
                 );
                 if logical_event {
                     drop_gate.clear();
-                    scene_gate.clear();
                     handle_terror_zone_detection(
                         &app,
                         &config,
@@ -937,7 +1065,12 @@ fn capture_loop(
             match detection.marker {
                 marker @ TelemetryMarker::Rune { rune_number } => {
                     let tracked = should_record_rune(&config, &tracker, rune_number);
-                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
+                    let logical_event = tracked
+                        && drop_gate.observe_with_confidence(
+                            marker,
+                            detection.start_frame,
+                            detection.confidence,
+                        );
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -960,7 +1093,12 @@ fn capture_loop(
                     let tracked = item_catalog
                         .resolve(item_id)
                         .is_some_and(|item| should_record_item(&config, &tracker, item));
-                    let logical_event = tracked && drop_gate.observe(marker, detection.start_frame);
+                    let logical_event = tracked
+                        && drop_gate.observe_with_confidence(
+                            marker,
+                            detection.start_frame,
+                            detection.confidence,
+                        );
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -981,7 +1119,21 @@ fn capture_loop(
                     }
                 }
                 marker @ (TelemetryMarker::Area { .. } | TelemetryMarker::Frontend) => {
-                    let logical_event = scene_gate.observe(marker, detection.start_frame);
+                    let scene_changed = scene_gate.observe(marker, detection.start_frame);
+                    let location = catalog.resolve(marker);
+                    let terror_zone_active = location.as_ref().is_some_and(|location| {
+                        matches!(marker, TelemetryMarker::Area { .. })
+                            && area_in_current_terror_zone(&tracker, location, scene_changed)
+                    });
+                    let exact_terror_zone_upgrade = match marker {
+                        TelemetryMarker::Area { area_id } => {
+                            terror_zone_active && tracker.current_area_id() != Some(area_id)
+                        }
+                        TelemetryMarker::Rune { .. }
+                        | TelemetryMarker::Item { .. }
+                        | TelemetryMarker::Frontend => false,
+                    };
+                    let logical_event = scene_changed || exact_terror_zone_upgrade;
                     record_decoded_packet(
                         detection.marker,
                         detection.confidence,
@@ -998,6 +1150,7 @@ fn capture_loop(
                             &mut tracker,
                             &catalog,
                             marker,
+                            terror_zone_active,
                             detection.start_frame,
                             detection.confidence,
                         );
@@ -1007,10 +1160,6 @@ fn capture_loop(
         }
     }
 
-    let _ = audio_client.stop_stream();
-    if let Err(error) = finish_diagnostic_recording() {
-        crate::logger::log_msg("ERROR", "RuneAudio", &error);
-    }
     Ok(())
 }
 
@@ -1026,7 +1175,7 @@ fn capture_loop(
     Err(error)
 }
 
-fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
+pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
     let config = resolve_monitor_config(&app)?;
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Ok(());
@@ -1037,6 +1186,13 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
     {
         RUNNING.store(false, Ordering::SeqCst);
         return Err("上一个符文声纹工作线程仍在退出".to_string());
+    }
+    if let Err(error) = finish_diagnostic_recording() {
+        crate::logger::log_msg(
+            "WARN",
+            "RuneAudio",
+            &format!("清理上一会话遗留的诊断录音失败: {error}"),
+        );
     }
 
     let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
@@ -1064,7 +1220,7 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         .spawn(move || {
             let result = capture_loop(app, config.clone(), generation, ready_tx);
             RUNNING.store(false, Ordering::SeqCst);
-            WORKER_ACTIVE.store(false, Ordering::SeqCst);
+            mark_worker_inactive();
             if GENERATION.load(Ordering::SeqCst) == generation {
                 let previous = status()
                     .lock()
@@ -1094,7 +1250,7 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         })
         .map_err(|error| {
             RUNNING.store(false, Ordering::SeqCst);
-            WORKER_ACTIVE.store(false, Ordering::SeqCst);
+            mark_worker_inactive();
             format!("创建符文声纹工作线程失败: {error}")
         })?;
 
@@ -1111,33 +1267,91 @@ fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn start_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || start_blocking(app))
+    let app_for_start = app.clone();
+    tauri::async_runtime::spawn_blocking(move || start_blocking(app_for_start))
         .await
-        .map_err(|error| format!("等待符文声纹监控器启动失败: {error}"))?
+        .map_err(|error| format!("等待符文声纹监控器启动失败: {error}"))??;
+    crate::capabilities::schedule_reconcile(&app);
+    Ok(())
 }
 
 #[tauri::command]
-pub fn stop_rune_audio_monitor() {
+pub fn stop_rune_audio_monitor() -> Result<(), String> {
+    stop_blocking()
+}
+
+fn request_stop() {
     GENERATION.fetch_add(1, Ordering::SeqCst);
     RUNNING.store(false, Ordering::SeqCst);
     let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
     current.running = false;
 }
 
+pub(crate) fn stop_blocking() -> Result<(), String> {
+    request_stop();
+    if wait_for_worker_exit(std::time::Duration::from_secs(3)) {
+        Ok(())
+    } else {
+        Err("符文声纹工作线程未能在 3 秒内退出".to_string())
+    }
+}
+
+pub(crate) fn lifecycle_health() -> Result<(), String> {
+    if RUNNING.load(Ordering::SeqCst) && WORKER_ACTIVE.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        let current = status().lock().unwrap_or_else(|error| error.into_inner());
+        Err(current
+            .last_error
+            .clone()
+            .unwrap_or_else(|| "符文声纹工作线程未运行".to_string()))
+    }
+}
+
+fn is_expected_capability_idle(error: &str) -> bool {
+    error.contains("D2R 尚未运行")
+}
+
+/// Activates the optional recognition capability without treating an absent
+/// game process as a module crash. Capture starts when a verified target
+/// session exists; the capability itself remains healthy while waiting.
+pub(crate) fn start_capability(app: tauri::AppHandle) -> Result<(), String> {
+    match start_blocking(app) {
+        Ok(()) => Ok(()),
+        Err(error) if is_expected_capability_idle(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn capability_health(app: &tauri::AppHandle) -> Result<(), String> {
+    if RUNNING.load(Ordering::SeqCst) && WORKER_ACTIVE.load(Ordering::SeqCst) {
+        return Ok(());
+    }
+    if !RUNNING.load(Ordering::SeqCst) && !WORKER_ACTIVE.load(Ordering::SeqCst) {
+        match resolve_monitor_config(app) {
+            Err(error) if is_expected_capability_idle(&error) => return Ok(()),
+            Err(error) => return Err(error),
+            Ok(_) => return start_blocking(app.clone()),
+        }
+    }
+    lifecycle_health()
+}
+
 #[tauri::command]
 pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
-    stop_rune_audio_monitor();
+    request_stop();
+    let app_for_start = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        for _ in 0..60 {
-            if !WORKER_ACTIVE.load(Ordering::SeqCst) {
-                return start_blocking(app);
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
+        if wait_for_worker_exit(std::time::Duration::from_secs(3)) {
+            start_blocking(app_for_start)
+        } else {
+            Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
         }
-        Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
     })
     .await
-    .map_err(|error| format!("等待符文声纹监控器重启失败: {error}"))?
+    .map_err(|error| format!("等待符文声纹监控器重启失败: {error}"))??;
+    crate::capabilities::schedule_reconcile(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1208,6 +1422,12 @@ pub fn get_rune_audio_status() -> RuneAudioStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_enabled_module_waiting_for_its_game_process_is_not_a_failure() {
+        assert!(is_expected_capability_idle("目标账号“山鬼”的 D2R 尚未运行"));
+        assert!(!is_expected_capability_idle("WASAPI 初始化失败"));
+    }
 
     fn test_monitor_config(min_rune_number: u32) -> MonitorConfig {
         MonitorConfig {

@@ -1,0 +1,160 @@
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{Emitter, Manager};
+
+use crate::application::task_runtime::{
+    TaskObserver, TaskRuntimeError, TaskSnapshot, TaskTimelineEntry,
+};
+use crate::error::AppError;
+use crate::state::SharedState;
+
+pub const TASK_UPDATED_EVENT: &str = "task-status-updated";
+
+struct TauriTaskObserver {
+    app: tauri::AppHandle,
+}
+
+impl TaskObserver for TauriTaskObserver {
+    fn task_updated(&self, snapshot: &TaskSnapshot) {
+        if let Err(error) = self.app.emit(TASK_UPDATED_EVENT, snapshot) {
+            log::warn!(
+                "发布任务 {} 状态 revision={} 失败: {}",
+                snapshot.task_id,
+                snapshot.revision,
+                error
+            );
+        }
+    }
+}
+
+pub fn install_observer(app: &tauri::AppHandle, state: &SharedState) {
+    state
+        .tasks()
+        .set_observer(Some(Arc::new(TauriTaskObserver { app: app.clone() })));
+}
+
+fn map_task_error(error: TaskRuntimeError) -> AppError {
+    AppError::Unknown(error.to_string())
+}
+
+#[tauri::command]
+pub fn get_tasks(state: tauri::State<'_, SharedState>) -> Vec<TaskSnapshot> {
+    state.tasks().snapshots()
+}
+
+#[tauri::command]
+pub fn get_task(
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<TaskSnapshot, AppError> {
+    state
+        .tasks()
+        .snapshot(task_id)
+        .ok_or_else(|| map_task_error(TaskRuntimeError::NotFound(task_id)))
+}
+
+#[tauri::command]
+pub fn get_task_timeline(
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<Vec<TaskTimelineEntry>, AppError> {
+    state.tasks().timeline(task_id).map_err(map_task_error)
+}
+
+#[tauri::command]
+pub fn cancel_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<TaskSnapshot, AppError> {
+    let snapshot = state
+        .tasks()
+        .request_cancel(task_id)
+        .map_err(map_task_error)?;
+    if snapshot.kind == "room-automation" {
+        if let Some(command_state) = app.try_state::<
+            crate::capabilities::room_automation_runtime::RoomAutomationCommandState,
+        >() {
+            command_state
+                .manager()
+                .map_err(AppError::Unknown)?
+                .cancel()
+                .map_err(AppError::Unknown)?;
+        }
+    }
+    Ok(snapshot)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TaskRetryDescriptor {
+    pub kind: String,
+    pub subject: Option<String>,
+    pub retry_of: u64,
+}
+
+#[tauri::command]
+pub fn get_task_retry_descriptor(
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<TaskRetryDescriptor, AppError> {
+    let request = state
+        .tasks()
+        .retry_request(task_id)
+        .map_err(map_task_error)?;
+    Ok(TaskRetryDescriptor {
+        kind: request.kind,
+        subject: request.subject,
+        retry_of: request.retry_of.unwrap_or(task_id),
+    })
+}
+
+#[tauri::command]
+pub async fn retry_task(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    task_id: u64,
+) -> Result<(), AppError> {
+    let request = state
+        .tasks()
+        .retry_request(task_id)
+        .map_err(map_task_error)?;
+    match request.kind.as_str() {
+        "account-initialize" | "account-reinitialize" => {
+            let account_id = request.subject.ok_or_else(|| {
+                AppError::Unknown("账号初始化任务缺少可重试的账号标识".to_string())
+            })?;
+            crate::commands::account::retry_account_initialization(
+                app,
+                state,
+                account_id,
+                task_id,
+                request.kind == "account-reinitialize",
+            )
+            .await
+        }
+        "account-launch" | "battle-net-launch" => {
+            let payload = request
+                .retry_payload
+                .ok_or_else(|| AppError::Unknown("启动任务缺少内部重试数据".to_string()))?;
+            let payload =
+                serde_json::from_str::<crate::commands::launch::LaunchTaskRetryPayload>(&payload)
+                    .map_err(|error| AppError::Unknown(format!("启动任务重试数据损坏: {error}")))?;
+            crate::commands::launch::retry_launch_task(app, state, task_id, payload)
+                .await
+                .map(|_| ())
+        }
+        "audio-mod-prepare" | "audio-mod-upgrade" => {
+            let payload = request
+                .retry_payload
+                .ok_or_else(|| AppError::Unknown("Mod 任务缺少内部重试数据".to_string()))?;
+            let payload =
+                serde_json::from_str::<crate::audio_mod::AudioModTaskRetryPayload>(&payload)
+                    .map_err(|error| AppError::Unknown(format!("Mod 任务重试数据损坏: {error}")))?;
+            crate::audio_mod::retry_audio_mod_task(app, state, task_id, payload)
+                .await
+                .map_err(AppError::Unknown)
+        }
+        kind => Err(AppError::Unknown(format!("任务类型 {kind} 没有重试执行器"))),
+    }
+}

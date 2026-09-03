@@ -2,12 +2,10 @@
   "identifier": "default",
   "description": "Default capabilities for D2RHub",
   "windows": [
-    "main",
-    "overlay",
-    "stats-overlay",
-    "bongo-cat"
+    "main"
   ],
   "permissions": [
+    "main-window-commands",
     "core:default",
     "core:event:default",
     "core:window:default",
@@ -20,6 +18,7 @@
     "core:window:allow-set-resizable",
     "core:window:allow-set-position",
     "core:window:allow-set-focus",
+    "core:window:allow-set-ignore-cursor-events",
     "core:window:allow-start-dragging",
     "shell:allow-open",
     "dialog:default",

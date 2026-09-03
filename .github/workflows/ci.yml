@@ -31,6 +31,8 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
 
       - name: Rust Cache
         uses: swatinem/rust-cache@v2
@@ -52,6 +54,14 @@ jobs:
         run: npm run build
         shell: cmd
 
-      - name: Rust library tests
+      - name: Rust format
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo fmt -- --check
+
+      - name: Rust lint
+        working-directory: src-tauri
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test

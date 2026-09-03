@@ -6,6 +6,10 @@
 export function normalizeShortcut(combo: string): string {
   if (!combo) return "";
   const parts = combo.split("+");
+  if (parts[parts.length - 1]?.trim() === ""
+    && parts[parts.length - 2]?.trim().toLowerCase() === "num") {
+    parts.splice(-2, 2, "Num+");
+  }
   const modifiers = new Set<string>();
   let key = "";
 

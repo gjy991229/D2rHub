@@ -29,12 +29,14 @@ D2RHub 当前主程序请求管理员权限。下表列出程序使用的主要�
 
 ## 本地数据和联网范围
 
-默认运行数据保存在程序同级目录：
+默认运行数据保存在当前 Windows 用户的 `%APPDATA%\D2RHub` 目录；日志仍在程序同级目录：
 
-- `config/global_config.json`：全局设置；
-- `config/accounts/`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照和账号设置；
-- `config/stateData/data.db`：场次、历史记录和声纹观测数据库；
+- `%APPDATA%\D2RHub\global_config.json`：全局设置；
+- `%APPDATA%\D2RHub\accounts\`：账号元数据、DPAPI 加密 Token、Battle.net / UnifiedAuth 快照和账号设置；
+- `%APPDATA%\D2RHub\stateData\data.db`：场次、历史记录和声纹观测数据库；
 - `logs/`：运行日志，最多自动保留 16 个。
+
+旧版程序同级 `config/` 会在启动时自动、安全地迁移；失败时本次继续使用旧目录，若新旧位置同时含有配置、账号或统计数据则保留两边并停止自动合并，避免覆盖账号、Token 和历史记录。日志报告冲突后，请在完成核对前同时备份两处目录。
 
 当前源码中的主动联网范围包括：
 

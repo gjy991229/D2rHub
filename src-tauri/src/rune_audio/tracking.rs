@@ -37,18 +37,13 @@ impl SceneTransitionGate {
         self.confirmed = Some(marker);
         true
     }
-
-    /// The generic TZ marker represents a new logical location. Clearing the
-    /// exact-area latch lets a concurrently playing exact marker win on its
-    /// next heartbeat without allowing TZ heartbeats to fight it afterwards.
-    pub fn clear(&mut self) {
-        self.confirmed = None;
-    }
 }
 
-/// Converts the continuously repeating generic TZ marker into one logical
-/// activation. A later exact area remains authoritative until the TZ marker
-/// has disappeared long enough to represent a genuinely new activation.
+/// Converts the repeating generic TZ marker into logical activations.
+///
+/// The absence window is only a packet de-duplication boundary. It must not be
+/// interpreted as proof that the player left the terror zone: the game does
+/// not emit the generic marker frequently enough to support that conclusion.
 #[derive(Debug, Clone)]
 pub struct TerrorZonePresenceGate {
     sample_rate: u32,
@@ -66,12 +61,16 @@ impl TerrorZonePresenceGate {
     }
 
     pub fn observe(&mut self, observed_at_frame: u64) -> bool {
-        let absence_frames = (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64;
+        let absence_frames = self.absence_frames();
         let is_new_activation = self
             .last_seen
             .is_none_or(|last| observed_at_frame.saturating_sub(last) >= absence_frames);
         self.last_seen = Some(observed_at_frame);
         is_new_activation
+    }
+
+    fn absence_frames(&self) -> u64 {
+        (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64
     }
 }
 
@@ -82,20 +81,39 @@ impl TerrorZonePresenceGate {
 pub struct DropPresenceGate {
     sample_rate: u32,
     last_seen: HashMap<TelemetryMarker, u64>,
+    pending_low_confidence: HashMap<TelemetryMarker, u64>,
 }
 
 impl DropPresenceGate {
     const ABSENCE_SECONDS: f32 = 6.0;
+    const IMMEDIATE_CONFIRMATION_CONFIDENCE: f32 = 0.66;
+    const CONFIRMATION_MIN_GAP_SECONDS: f32 = 0.25;
+    const CONFIRMATION_WINDOW_SECONDS: f32 = 1.5;
 
     pub fn new(sample_rate: u32) -> Self {
         Self {
             sample_rate,
             last_seen: HashMap::new(),
+            pending_low_confidence: HashMap::new(),
         }
     }
 
     /// Returns true only when this drop identity was not recently present on the ground.
+    #[cfg(test)]
     pub fn observe(&mut self, marker: TelemetryMarker, observed_at_frame: u64) -> bool {
+        self.observe_with_confidence(marker, observed_at_frame, 1.0)
+    }
+
+    /// High-confidence drops are accepted immediately. A lower-confidence packet must be
+    /// followed by the same identity on a separate ground heartbeat before it becomes a
+    /// logical drop. This keeps the detector's configured sensitivity without persisting a
+    /// one-off correlation sidelobe as a rare drop.
+    pub fn observe_with_confidence(
+        &mut self,
+        marker: TelemetryMarker,
+        observed_at_frame: u64,
+        confidence: f32,
+    ) -> bool {
         if !matches!(
             marker,
             TelemetryMarker::Rune { rune_number } if (1..=RUNE_COUNT).contains(&rune_number)
@@ -105,18 +123,55 @@ impl DropPresenceGate {
         ) {
             return false;
         }
+        if !confidence.is_finite() {
+            return false;
+        }
+
         let absence_frames = (self.sample_rate as f32 * Self::ABSENCE_SECONDS) as u64;
         let is_new_presence = self
             .last_seen
             .get(&marker)
             .is_none_or(|last| observed_at_frame.saturating_sub(*last) >= absence_frames);
-        self.last_seen.insert(marker, observed_at_frame);
-        is_new_presence
+        if !is_new_presence {
+            self.last_seen.insert(marker, observed_at_frame);
+            self.pending_low_confidence.remove(&marker);
+            return false;
+        }
+
+        if confidence >= Self::IMMEDIATE_CONFIRMATION_CONFIDENCE {
+            self.last_seen.insert(marker, observed_at_frame);
+            self.pending_low_confidence.remove(&marker);
+            return true;
+        }
+
+        let min_gap_frames = (self.sample_rate as f32 * Self::CONFIRMATION_MIN_GAP_SECONDS) as u64;
+        let confirmation_window_frames =
+            (self.sample_rate as f32 * Self::CONFIRMATION_WINDOW_SECONDS) as u64;
+        let Some(first_seen) = self.pending_low_confidence.get(&marker).copied() else {
+            self.pending_low_confidence
+                .insert(marker, observed_at_frame);
+            return false;
+        };
+        let elapsed_frames = observed_at_frame.saturating_sub(first_seen);
+        if observed_at_frame >= first_seen
+            && elapsed_frames >= min_gap_frames
+            && elapsed_frames <= confirmation_window_frames
+        {
+            self.pending_low_confidence.remove(&marker);
+            self.last_seen.insert(marker, observed_at_frame);
+            return true;
+        }
+        if observed_at_frame < first_seen || elapsed_frames > confirmation_window_frames {
+            self.pending_low_confidence
+                .insert(marker, observed_at_frame);
+        }
+        false
     }
 
     /// A confirmed scene transition removes every ground item from scope.
     pub fn clear(&mut self) {
         self.last_seen.clear();
+        self.pending_low_confidence.clear();
     }
 }
 
@@ -173,6 +228,10 @@ pub struct TrackingSnapshot {
     pub current_run_name: Option<String>,
     pub current_run_name_en: Option<String>,
     pub current_run_drops: Vec<TrackedDrop>,
+    #[serde(default)]
+    pub previous_run_drops: Vec<TrackedDrop>,
+    #[serde(default)]
+    pub session_drops: Vec<TrackedDrop>,
     pub session_runs: HashMap<String, u32>,
 }
 
@@ -209,21 +268,27 @@ struct TrackedLocation {
 }
 
 impl TrackedLocation {
-    fn exact(location: ResolvedLocation) -> Self {
+    fn exact(location: ResolvedLocation, terror_zone_active: bool) -> Self {
         let area_id = match location.marker {
             TelemetryMarker::Area { area_id } => Some(area_id),
             TelemetryMarker::Rune { .. }
             | TelemetryMarker::Item { .. }
             | TelemetryMarker::Frontend => None,
         };
+        let terror_zone_active = terror_zone_active && location.kind == LocationKind::Wilderness;
+        let scene_key = if terror_zone_active {
+            format!("terror_zone:{}", location.scene_name)
+        } else {
+            location.scene_key
+        };
         Self {
             marker: Some(location.marker),
             area_id,
-            scene_key: location.scene_key,
+            scene_key,
             scene_name: location.scene_name,
             scene_name_en: location.scene_name_en,
             kind: location.kind,
-            tz: false,
+            tz: terror_zone_active,
         }
     }
 
@@ -261,6 +326,8 @@ pub struct SegmentTracker {
     journey_id: Option<String>,
     next_segment_index: u32,
     session_runs: HashMap<String, u32>,
+    previous_run_drops: Vec<TrackedDrop>,
+    session_drops: Vec<TrackedDrop>,
     revision: u64,
     sample_rate: u32,
     catalog: LocationCatalog,
@@ -291,15 +358,35 @@ impl SegmentTracker {
             journey_id: None,
             next_segment_index: 0,
             session_runs: HashMap::new(),
+            previous_run_drops: Vec::new(),
+            session_drops: Vec::new(),
             revision: 0,
             sample_rate,
             catalog,
         }
     }
 
+    #[cfg(test)]
     pub fn observe_location(
         &mut self,
         marker: TelemetryMarker,
+        observed_at_frame: u64,
+        observed_at_ms: i64,
+        absolute_time: String,
+    ) -> Result<TrackingOutcome, String> {
+        self.observe_location_with_terror_state(
+            marker,
+            false,
+            observed_at_frame,
+            observed_at_ms,
+            absolute_time,
+        )
+    }
+
+    pub fn observe_location_with_terror_state(
+        &mut self,
+        marker: TelemetryMarker,
+        terror_zone_active: bool,
         observed_at_frame: u64,
         observed_at_ms: i64,
         absolute_time: String,
@@ -308,12 +395,28 @@ impl SegmentTracker {
             .catalog
             .resolve(marker)
             .ok_or_else(|| format!("{marker:?} 不是已登记的地点声纹"))?;
-        Ok(self.observe_tracked_location(
-            TrackedLocation::exact(location),
-            observed_at_frame,
-            observed_at_ms,
-            absolute_time,
-        ))
+        let exact = TrackedLocation::exact(location, terror_zone_active);
+        if exact.tz
+            && self
+                .current_location
+                .as_ref()
+                .is_some_and(|current| current.tz && current.area_id.is_none())
+        {
+            if let Some(active_segment) = &mut self.active_segment {
+                active_segment.scene_key = exact.scene_key.clone();
+                active_segment.scene_name = exact.scene_name.clone();
+                active_segment.scene_name_en = exact.scene_name_en.clone();
+                active_segment.tz = true;
+            }
+            self.current_location = Some(exact);
+            self.revision += 1;
+            return Ok(TrackingOutcome {
+                changed: true,
+                snapshot: self.snapshot(),
+                completed_segment: None,
+            });
+        }
+        Ok(self.observe_tracked_location(exact, observed_at_frame, observed_at_ms, absolute_time))
     }
 
     pub fn observe_terror_zone(
@@ -330,6 +433,25 @@ impl SegmentTracker {
             observed_at_ms,
             absolute_time,
         )
+    }
+
+    pub fn current_is_terror_zone(&self) -> bool {
+        self.current_location
+            .as_ref()
+            .is_some_and(|location| location.tz)
+    }
+
+    pub fn current_area_id(&self) -> Option<u32> {
+        self.current_location
+            .as_ref()
+            .and_then(|location| location.area_id)
+    }
+
+    pub fn current_terror_zone_scene(&self) -> Option<&str> {
+        self.current_location
+            .as_ref()
+            .filter(|location| location.tz)
+            .map(|location| location.scene_name.as_str())
     }
 
     /// Replaces the fallback TZ label after the forecast cache becomes ready.
@@ -411,7 +533,8 @@ impl SegmentTracker {
 
     pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
         if let Some(active_segment) = &mut self.active_segment {
-            active_segment.drops.push(drop);
+            active_segment.drops.push(drop.clone());
+            self.session_drops.push(drop);
             self.revision += 1;
         }
         self.snapshot()
@@ -467,6 +590,8 @@ impl SegmentTracker {
                 .as_ref()
                 .map(|segment| segment.drops.clone())
                 .unwrap_or_default(),
+            previous_run_drops: self.previous_run_drops.clone(),
+            session_drops: self.session_drops.clone(),
             session_runs: self.session_runs.clone(),
         }
     }
@@ -499,6 +624,7 @@ impl SegmentTracker {
         observed_at_ms: i64,
     ) -> Option<CompletedSegment> {
         let active = self.active_segment.take()?;
+        self.previous_run_drops = active.drops.clone();
         let elapsed_frames = observed_at_frame.checked_sub(active.started_at_frame);
         let timer_seconds = elapsed_frames
             .map(|frames| frames as f64 / self.sample_rate as f64)
@@ -716,6 +842,8 @@ mod tests {
         assert_eq!(completed.scene_name, "黑色沼泽");
         assert_eq!(completed.timer_seconds, 2.0);
         assert_eq!(completed.drops.len(), 1);
+        assert_eq!(town.snapshot.previous_run_drops.len(), 1);
+        assert_eq!(town.snapshot.session_drops.len(), 1);
     }
 
     #[test]

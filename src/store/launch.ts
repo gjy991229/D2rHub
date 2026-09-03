@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
+import { emitEvent, invokeCommand } from "../platform/tauri";
 import type { LaunchAccountEntry, LaunchProgress, LaunchResult } from "./types";
 import { showToast } from "../components/ui/Toast";
 
@@ -43,7 +42,7 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   startLaunch: async (accountIds: string[]) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await invoke<LaunchResult[]>("launch_accounts", {
+      const results = await invokeCommand<LaunchResult[]>("launch_accounts", {
         accountIds,
       });
       set({ results, launching: false });
@@ -52,52 +51,52 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
       results
         .filter((result) => result.success && result.error)
         .forEach((result) => showToast("warning", result.error as string));
-      emit("launch-ended", { success: !hasFailed });
+      emitEvent("launch-ended", { success: !hasFailed });
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动失败: ${e}`);
-      emit("launch-ended", { success: false });
+      emitEvent("launch-ended", { success: false });
     }
   },
 
   startSchemeLaunch: async (entries: LaunchAccountEntry[]) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await invoke<LaunchResult[]>("launch_accounts", { entries });
+      const results = await invokeCommand<LaunchResult[]>("launch_accounts", { entries });
       set({ results, launching: false });
 
       const hasFailed = results.some((result) => !result.success);
       results
         .filter((result) => result.success && result.error)
         .forEach((result) => showToast("warning", result.error as string));
-      emit("launch-ended", { success: !hasFailed });
+      emitEvent("launch-ended", { success: !hasFailed });
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动方案失败: ${e}`);
-      emit("launch-ended", { success: false });
+      emitEvent("launch-ended", { success: false });
     }
   },
 
   startBattleNetOnly: async (accountIds: string[]) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await invoke<LaunchResult[]>("launch_battle_net_only", {
+      const results = await invokeCommand<LaunchResult[]>("launch_battle_net_only", {
         accountIds,
       });
       set({ results, launching: false });
 
       const hasFailed = results.some((r) => !r.success);
-      emit("launch-ended", { success: !hasFailed });
+      emitEvent("launch-ended", { success: !hasFailed });
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动战网失败: ${e}`);
-      emit("launch-ended", { success: false });
+      emitEvent("launch-ended", { success: false });
     }
   },
 
   cancelLaunch: async () => {
     try {
-      await invoke("cancel_launch");
+      await invokeCommand("cancel_launch");
     } catch {}
   },
 
@@ -130,7 +129,7 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   },
 
   reset: () => {
-    invoke("cancel_launch").catch(() => {});
+    invokeCommand("cancel_launch").catch(() => {});
     set({ launching: false, progress: {}, results: [], error: null });
   },
 

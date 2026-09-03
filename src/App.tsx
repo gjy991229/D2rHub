@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand } from "./platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AlertTriangle, Check, ListChecks, Trash2, UserPlus } from "lucide-react";
-import { useGlobalConfig, initConfigListener } from "./store/globalConfig";
+import { AlertTriangle } from "lucide-react";
+import { useGlobalConfig, initConfigSync } from "./store/globalConfig";
 import { useAccounts } from "./store/accounts";
 import { syncThemeFromConfig } from "./store/theme";
 import { useWindowGeometrySave } from "./hooks/useWindowGeometrySave";
@@ -14,7 +14,6 @@ import { AppShell } from "./components/layout/AppShell";
 
 import {
   useBongoCatWindow,
-  useOverlayWindow,
   useLaunchEvents,
   useAutoUpdate,
   useFirstLaunch,
@@ -28,9 +27,8 @@ import {
   SortableAccountCard,
   AccountGridLoading,
   AccountGridEmpty,
-  ActionBar,
-  LaunchButton,
-  LaunchGroupMenu,
+  MainActionBar,
+  LaunchGroupPanel,
 } from "./components/dashboard";
 import { useLaunch } from "./store/launch";
 import { LaunchProgressView } from "./components/Launch/LaunchProgress";
@@ -42,8 +40,6 @@ import type {
   AudioModSetupState,
   GlobalConfig,
   AccountMeta,
-  LaunchGroup,
-  LaunchGroupMember,
 } from "./store/types";
 import { setAuxiliaryWindowVisible } from "./utils/windowPlacement";
 import { sortAccountsByCardOrder } from "./utils/accountOrder";
@@ -54,51 +50,23 @@ import {
   type BattleReportQuickRange,
   type StatsPagePreferences,
 } from "./utils/battleReport";
-import {
-  inspectLaunchGroup,
-  launchEntriesForGroup,
-  launchGroupNameExists,
-  materializeLaunchGroupMembers,
-  nextLaunchGroupName,
-} from "./utils/launchGroups";
+import { useLaunchGroupController } from "./hooks/useLaunchGroupController";
+import { useModCapsulePool } from "./features/modCapsules/useModCapsulePool";
+import { DisclosureDialog } from "./features/disclosures/DisclosureDialog";
+import { useApplicationDisclosure } from "./features/disclosures/useApplicationDisclosure";
 
 type View =
   | { type: "loading" }
   | { type: "setup"; existingConfig?: GlobalConfig }
   | { type: "main"; };
 
-interface LaunchGroupDraft {
-  id: string | null;
-  name: string;
-  members: LaunchGroupMember[];
-}
-
-function createLaunchGroupId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `launch-group-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
-
-function createLaunchGroupMember(account: AccountMeta): LaunchGroupMember {
-  return {
-    account_id: account.id,
-    mod_args: account.mod_args || "",
-    position_preset_id: account.active_position_id ?? null,
-    position_configured: true,
-    graphics_configured: false,
-    resolution: null,
-    fps: null,
-  };
-}
-
 function App() {
-  const { config, initialLoading, saving: configSaving, error: configError, load, save } = useGlobalConfig();
+  const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
+  const applicationDisclosure = useApplicationDisclosure(!initialLoading && config !== null);
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
     startLaunch,
-    startSchemeLaunch,
     startBattleNetOnly,
     cancelLaunch,
     logs,
@@ -114,15 +82,20 @@ function App() {
   const [settingsAccountId, setSettingsAccountId] = useState<string | null>(null);
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
+  const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);
+  const [exitingForDisclosure, setExitingForDisclosure] = useState(false);
 
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
   const [killing, setKilling] = useState(false);
+  const disclosureBlockingStartup = initialLoading
+    || applicationDisclosure.checking
+    || applicationDisclosure.required;
 
   const handleKillAllD2R = async () => {
     setKilling(true);
     try {
-      await invoke("kill_all_d2r_processes");
+      await invokeCommand("kill_all_d2r_processes");
       showToast("success", "清理完成，所有暗黑2进程已关闭。");
       setShowKillConfirm(false);
     } catch (e) {
@@ -132,17 +105,18 @@ function App() {
     }
   };
 
-  // Persistent launch groups
-  const [launchGroupDraft, setLaunchGroupDraft] = useState<LaunchGroupDraft | null>(null);
-  const [launchGroupPendingDelete, setLaunchGroupPendingDelete] = useState<LaunchGroup | null>(null);
   const [tokenUpdateAccount, setTokenUpdateAccount] = useState<AccountMeta | null>(null);
-
-  const createLaunchGroup = () => {
-    setLaunchGroupDraft({
-      id: null,
-      name: nextLaunchGroupName(config?.launch_groups ?? []),
-      members: [],
-    });
+  const launchGroups = useLaunchGroupController();
+  const launchGroupDraft = launchGroups.draft;
+  const launchGroupPendingDelete = launchGroups.pendingDelete;
+  const modCapsules = useModCapsulePool({
+    active: view.type === "main" && !disclosureBlockingStartup,
+    onAssigned: loadAccounts,
+  });
+  const openModManager = (action?: "add", edition?: string | null) => {
+    setSettingsTab(action === "add" ? `mod-processing:add:${edition ?? ""}` : "mod-processing");
+    setSettingsAccountId(null);
+    setShowSettings(true);
   };
 
   const handleShareBattleReport = async (range: BattleReportQuickRange) => {
@@ -150,8 +124,8 @@ function App() {
     setSharingReport(true);
     try {
       const [stats, preferences] = await Promise.all([
-        invoke<BattleReportStatsData>("get_stats_data"),
-        invoke<StatsPagePreferences | null>("get_stats_page_preferences"),
+        invokeCommand<BattleReportStatsData>("get_stats_data"),
+        invokeCommand<StatsPagePreferences | null>("get_stats_page_preferences"),
       ]);
       const syncedPreferences = preferences || {};
       const result = await copyBattleReportToClipboard(stats, {
@@ -164,127 +138,6 @@ function App() {
     } finally {
       setSharingReport(false);
     }
-  };
-
-  const editLaunchGroup = (group: LaunchGroup) => {
-    setLaunchGroupDraft({
-      id: group.id,
-      name: group.name,
-      members: materializeLaunchGroupMembers(group, accounts),
-    });
-  };
-
-  const selectAllLaunchGroupAccounts = () => {
-    const initializedAccounts = accounts
-      .filter(a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config))
-    setLaunchGroupDraft(draft => {
-      if (!draft) return draft;
-      const existing = new Map(draft.members.map(member => [member.account_id, member]));
-      return {
-        ...draft,
-        members: initializedAccounts.map(account => existing.get(account.id) ?? createLaunchGroupMember(account)),
-      };
-    });
-  };
-
-  const clearLaunchGroupSelection = () => {
-    setLaunchGroupDraft(draft => draft ? { ...draft, members: [] } : draft);
-  };
-
-  const toggleLaunchGroupAccount = (id: string) => {
-    setLaunchGroupDraft(draft => {
-      if (!draft) return draft;
-      if (draft.members.some(member => member.account_id === id)) {
-        return { ...draft, members: draft.members.filter(member => member.account_id !== id) };
-      }
-      const account = accounts.find(candidate => candidate.id === id);
-      if (!account?.initialized || requiresTokenMigration(account.auth_mode, account.region, config)) {
-        return draft;
-      }
-      return { ...draft, members: [...draft.members, createLaunchGroupMember(account)] };
-    });
-  };
-
-  const updateLaunchGroupMember = (accountId: string, patch: Partial<LaunchGroupMember>) => {
-    setLaunchGroupDraft(draft => draft ? {
-      ...draft,
-      members: draft.members.map(member => member.account_id === accountId
-        ? { ...member, ...patch, account_id: accountId }
-        : member),
-    } : draft);
-  };
-
-  const saveLaunchGroup = async () => {
-    if (!config || !launchGroupDraft || configSaving) return;
-    const name = launchGroupDraft.name.trim();
-    if (!name) {
-      showToast("warning", "请输入启动方案名称");
-      return;
-    }
-    if (launchGroupDraft.members.length === 0) {
-      showToast("warning", "启动方案至少需要选择一个账号");
-      return;
-    }
-    if (launchGroupDraft.members.some(member =>
-      !member.graphics_configured || !member.resolution || member.fps == null)) {
-      showToast("warning", "请等待所有已选账号的分辨率与 FPS 加载完成");
-      return;
-    }
-    if (launchGroupNameExists(config.launch_groups, name, launchGroupDraft.id)) {
-      showToast("warning", `启动方案名称“${name}”已存在`);
-      return;
-    }
-
-    const id = launchGroupDraft.id ?? createLaunchGroupId();
-    const savedGroup: LaunchGroup = {
-      id,
-      name,
-      account_ids: launchGroupDraft.members.map(member => member.account_id),
-      members: launchGroupDraft.members.map(member => ({
-        ...member,
-        mod_args: member.mod_args ?? "",
-        position_preset_id: member.position_preset_id ?? null,
-        position_configured: true,
-        graphics_configured: true,
-        resolution: member.resolution,
-        fps: member.fps,
-      })),
-    };
-    const nextGroups = launchGroupDraft.id
-      ? config.launch_groups.map(group => group.id === launchGroupDraft.id ? savedGroup : group)
-      : [...config.launch_groups, savedGroup];
-    try {
-      await save({ ...config, launch_groups: nextGroups });
-      setLaunchGroupDraft(null);
-      showToast("success", `启动方案“${name}”已保存`);
-    } catch (error) {
-      showToast("error", `保存启动方案失败: ${error}`);
-    }
-  };
-
-  const deleteLaunchGroup = async () => {
-    if (!config || !launchGroupPendingDelete || configSaving) return;
-    const group = launchGroupPendingDelete;
-    try {
-      await save({
-        ...config,
-        launch_groups: config.launch_groups.filter(candidate => candidate.id !== group.id),
-      });
-      if (launchGroupDraft?.id === group.id) setLaunchGroupDraft(null);
-      setLaunchGroupPendingDelete(null);
-      showToast("success", `启动方案“${group.name}”已删除`);
-    } catch (error) {
-      showToast("error", `删除启动方案失败: ${error}`);
-    }
-  };
-
-  const launchSavedGroup = (group: LaunchGroup) => {
-    const availability = inspectLaunchGroup(group, accounts, config);
-    if (!availability.can_launch) {
-      showToast("warning", `启动方案“${group.name}”配置不完整，请先修复后再启动`);
-      return;
-    }
-    void startSchemeLaunch(launchEntriesForGroup(group, accounts));
   };
 
   // Auto-update modal states
@@ -311,15 +164,19 @@ function App() {
     }
   }, []);
 
-  // Load configuration, accounts, and start config listener
+  // Subscribe before loading so no cross-window configuration commit is lost.
   useEffect(() => {
-    (async () => { await load(); await loadAccounts(); })();
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    initConfigListener().then(fn => {
-      if (cancelled) fn();
-      else unlisten = fn;
-    });
+    void (async () => {
+      const stopListening = await initConfigSync();
+      if (cancelled) {
+        stopListening();
+        return;
+      }
+      unlisten = stopListening;
+      await loadAccounts();
+    })();
     return () => {
       cancelled = true;
       unlisten?.();
@@ -347,18 +204,48 @@ function App() {
   }, [config?.font_scale]);
 
   // Execute App Side Effects
-  useBongoCatWindow(initialLoading, config);
-  useOverlayWindow(initialLoading, config);
+  useBongoCatWindow(disclosureBlockingStartup, config);
   useLaunchEvents(config);
-  useAutoUpdate(initialLoading, config, (version, url) => {
+  useAutoUpdate(disclosureBlockingStartup, config, (version, url) => {
     setAutoUpdateVersion(version);
     setAutoUpdateUrl(url);
     setShowAutoUpdateConfirm(true);
   });
-  useFirstLaunch(initialLoading, config, save);
+  useFirstLaunch(disclosureBlockingStartup, config, patch);
+
+  const handleDisclosureExit = async () => {
+    if (exitingForDisclosure) return;
+    setExitingForDisclosure(true);
+    try {
+      await invokeCommand("exit_app");
+    } catch (error) {
+      setExitingForDisclosure(false);
+      showToast("error", `退出 D2RHub 失败：${error}`);
+    }
+  };
+
+  const handleDisclosureAccept = async () => {
+    try {
+      await applicationDisclosure.accept();
+    } catch (error) {
+      showToast("error", `启动 D2RHub 运行服务失败：${error}`);
+    }
+  };
+
+  const applicationDisclosureDialog = (
+    <DisclosureDialog
+      open={applicationDisclosure.required}
+      language={config?.app_language === "en-US" ? "en-US" : "zh-CN"}
+      target={{ type: "application", version: applicationDisclosure.version }}
+      accepting={applicationDisclosure.accepting}
+      canceling={exitingForDisclosure}
+      onCancel={() => void handleDisclosureExit()}
+      onAccept={handleDisclosureAccept}
+    />
+  );
 
   useEffect(() => {
-    if (initialLoading || !config?.rune_audio_enabled) {
+    if (disclosureBlockingStartup || !config?.rune_audio_enabled) {
       setAudioModUpdate(null);
       return;
     }
@@ -369,7 +256,7 @@ function App() {
     }
 
     let cancelled = false;
-    void invoke<AudioModSetupState>("get_audio_mod_setup_state", { accountId: target.account.id })
+    void invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId: target.account.id })
       .then((state) => {
         if (!cancelled) setAudioModUpdate(state.update_required ? state : null);
       })
@@ -379,7 +266,7 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [initialLoading, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
+  }, [disclosureBlockingStartup, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
 
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
@@ -399,7 +286,7 @@ function App() {
                 为避免默认值覆盖现有数据，D2RHub 已停止配置初始化。原文件仍保留；如果存在可用备份，程序会在启动时自动恢复。
               </p>
               <p className="text-xs font-mono text-error mt-3 break-all leading-relaxed">{configError}</p>
-              <button type="button" onClick={() => void invoke("open_logs_dir")}
+              <button type="button" onClick={() => void invokeCommand("open_logs_dir")}
                 className="control-btn h-9 mt-4">
                 打开日志目录
               </button>
@@ -411,7 +298,7 @@ function App() {
   );
 
   // ── loading ──
-  if (view.type === "loading") return (
+  if (view.type === "loading" || applicationDisclosure.checking) return (
     <AppShell>
       <div className="flex-1 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -422,24 +309,40 @@ function App() {
     </AppShell>
   );
 
+  // Do not mount setup or dashboard children until the application-level
+  // disclosure has been accepted; several children perform detection work on mount.
+  if (applicationDisclosure.required) return (
+    <>
+      <AppShell>
+        <div className="flex-1" />
+      </AppShell>
+      <ToastContainer />
+      {applicationDisclosureDialog}
+    </>
+  );
+
   // ── setup ──
   if (view.type === "setup") return (
-    <AppShell>
-      <div className="flex-1 flex flex-col">
-        <SetupWizard
-          initialConfig={view.existingConfig}
-          onComplete={() => setView({ type: "main" })}
-        />
-      </div>
-      <ToastContainer />
-    </AppShell>
+    <>
+      <AppShell>
+        <div className="flex-1 flex flex-col">
+          <SetupWizard
+            initialConfig={view.existingConfig}
+            onComplete={() => setView({ type: "main" })}
+          />
+        </div>
+        <ToastContainer />
+      </AppShell>
+      {applicationDisclosureDialog}
+    </>
   );
 
   // ── main ──
-  const initialized = accounts.filter(
-    a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config),
-  );
   const sortedAccounts = sortAccountsByCardOrder(accounts);
+  const launchableAccountIds = sortedAccounts.filter(
+    account => account.initialized
+      && !requiresTokenMigration(account.auth_mode, account.region, config),
+  ).map(account => account.id);
 
   return (
     <>
@@ -459,145 +362,39 @@ function App() {
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}
           onStats={async () => {
             try {
-              await invoke("open_stats_page");
+              await invokeCommand("open_stats_page");
             } catch (e) {
               showToast("error", `打开统计失败: ${e}`);
             }
           }}
+          statsModuleInstalled={config?.installed_optional_modules?.includes("automation") === true}
           onShareReport={handleShareBattleReport}
           sharingReport={sharingReport}
           onHelp={async () => {
             try {
-              await invoke("open_user_guide");
+              await invokeCommand("open_user_guide");
             } catch (e) {
               showToast("error", `打开帮助文档失败: ${e}`);
             }
           }}
         >
-          <ActionBar>
-            {launching ? (
-              <button
-                onClick={cancelLaunch}
-                className="danger-cta"
-              >
-                取消操作
-              </button>
-            ) : launchGroupDraft ? (
-              <>
-                <div className="launch-group-editor flex min-w-0 items-center gap-2">
-                  <span className="launch-group-editor-label">
-                    <ListChecks size={13} strokeWidth={1.9} aria-hidden="true" />
-                    {launchGroupDraft.id ? "编辑启动方案" : "新建启动方案"}
-                  </span>
-                  <input
-                    type="text"
-                    className="line-input launch-group-name-input px-2.5"
-                    value={launchGroupDraft.name}
-                    maxLength={32}
-                    aria-label="启动方案名称"
-                    placeholder="启动方案名称"
-                    autoFocus
-                    disabled={configSaving}
-                    onChange={event => setLaunchGroupDraft(draft => draft
-                      ? { ...draft, name: event.target.value }
-                      : draft)}
-                    onKeyDown={event => {
-                      if (event.key === "Enter") void saveLaunchGroup();
-                      if (event.key === "Escape") setLaunchGroupDraft(null);
-                    }}
-                  />
-                  <button
-                    disabled={configSaving
-                      || launchGroupDraft.members.length === 0
-                      || !launchGroupDraft.name.trim()
-                      || launchGroupDraft.members.some(member =>
-                        !member.graphics_configured || !member.resolution || member.fps == null)}
-                    onClick={() => void saveLaunchGroup()}
-                    className="primary-cta"
-                  >
-                    <Check size={13} strokeWidth={2} />
-                    保存方案 ({launchGroupDraft.members.length})
-                  </button>
-                  <button
-                    onClick={selectAllLaunchGroupAccounts}
-                    disabled={configSaving}
-                    className="control-btn"
-                  >
-                    全选
-                  </button>
-                  <button
-                    onClick={clearLaunchGroupSelection}
-                    disabled={configSaving || launchGroupDraft.members.length === 0}
-                    className="control-btn"
-                  >
-                    清空已选
-                  </button>
-                  <button
-                    onClick={() => setLaunchGroupDraft(null)}
-                    disabled={configSaving}
-                    className="control-btn"
-                  >
-                    取消
-                  </button>
-                </div>
-                <div className="flex-1" />
-                {launchGroupDraft.id && (
-                  <button
-                    type="button"
-                    className="control-btn danger-control"
-                    disabled={configSaving}
-                    onClick={() => {
-                      const group = config?.launch_groups.find(candidate => candidate.id === launchGroupDraft.id);
-                      if (group) setLaunchGroupPendingDelete(group);
-                    }}
-                  >
-                    <Trash2 size={12} strokeWidth={1.8} aria-hidden="true" />
-                    删除方案
-                  </button>
-                )}
-              </>
-            ) : (
-              <div className="flex items-center gap-2">
-                <LaunchButton
-                  count={initialized.length}
-                  loading={launching}
-                  onClick={() => startLaunch(sortedAccounts
-                    .filter(a => a.initialized && !requiresTokenMigration(a.auth_mode, a.region, config))
-                    .map(a => a.id))}
-                />
-                <LaunchGroupMenu
-                  groups={config?.launch_groups ?? []}
-                  accounts={accounts}
-                  config={config}
-                  disabled={launching || configSaving}
-                  onLaunch={launchSavedGroup}
-                  onCreate={createLaunchGroup}
-                  onEdit={editLaunchGroup}
-                />
-                <button
-                  onClick={() => setShowKillConfirm(true)}
-                  title="一键关闭所有暗黑2进程"
-                  className="control-btn danger-control min-w-[72px]"
-                >
-                  一键关闭
-                </button>
-              </div>
-            )}
-            {!launchGroupDraft && (
-              <>
-                <div className="flex-1" />
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setShowInit(true)}
-                    className="control-btn add-account-cta"
-                  >
-                    <UserPlus size={13} strokeWidth={1.9} />
-                    添加账号
-                  </button>
-                </div>
-              </>
-            )}
-          </ActionBar>
+          <MainActionBar
+            launching={launching}
+            launchableAccountIds={launchableAccountIds}
+            launchGroups={launchGroups}
+            onCancelLaunch={cancelLaunch}
+            onStartLaunch={startLaunch}
+            onAddAccount={() => setShowInit(true)}
+            onRequestKillAll={() => setShowKillConfirm(true)}
+            launchGroupPanelOpen={launchGroupPanelOpen}
+            onToggleLaunchGroupPanel={() => setLaunchGroupPanelOpen((open) => !open)}
+            onOpenModManager={openModManager}
+            onOpenRoomAutomation={() => {
+              setSettingsTab("room-automation");
+              setSettingsAccountId(null);
+              setShowSettings(true);
+            }}
+          />
 
           {audioModUpdate && (
             <div className="shrink-0 px-5 pb-2.5">
@@ -619,7 +416,7 @@ function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setSettingsTab("automation");
+                    setSettingsTab("mod-processing");
                     setSettingsAccountId(null);
                     setShowSettings(true);
                   }}
@@ -631,13 +428,17 @@ function App() {
             </div>
           )}
 
-          {initialLoading ? (
-            <AccountGridLoading />
-          ) : accounts.length === 0 ? (
-            <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
-          ) : (
-            <>
-              <AccountGrid accounts={sortedAccounts} onReorder={reorderAccounts} isSelectionMode={!!launchGroupDraft}>
+          <div className="dashboard-workspace">
+            {initialLoading ? (
+              <AccountGridLoading />
+            ) : accounts.length === 0 ? (
+              <AccountGridEmpty onAddAccount={() => setShowInit(true)} />
+            ) : (
+              <AccountGrid
+                accounts={sortedAccounts}
+                isSelectionMode={!!launchGroupDraft}
+                onReorder={reorderAccounts}
+              >
                 {sortedAccounts.map(a => {
                   const schemeMember = launchGroupDraft?.members.find(member => member.account_id === a.id);
                   return <SortableAccountCard
@@ -650,14 +451,13 @@ function App() {
                     onBattleNetOnly={id => startBattleNetOnly([id])}
                     isSelectionMode={!!launchGroupDraft}
                     selected={!!schemeMember}
-                    onToggleSelect={toggleLaunchGroupAccount}
+                    onToggleSelect={launchGroups.toggleAccount}
                     schemeMember={schemeMember}
-                    onSchemeMemberChange={updateLaunchGroupMember}
-                    getModSchemeUsage={(accountId, modArgs) => (config?.launch_groups ?? [])
-                      .filter(group => group.id !== launchGroupDraft?.id)
-                      .filter(group => group.members?.some(member =>
-                        member.account_id === accountId && member.mod_args === modArgs))
-                      .map(group => group.name)}
+                    onSchemeMemberChange={launchGroups.updateMember}
+                    modCapsulePool={modCapsules.pool}
+                    modCapsuleAssigningAccountId={modCapsules.assigningAccountId}
+                    onAssignModCapsule={modCapsules.assign}
+                    onOpenModManager={openModManager}
                     getPositionSchemeUsage={(accountId, positionId) => (config?.launch_groups ?? [])
                       .filter(group => group.id !== launchGroupDraft?.id)
                       .filter(group => group.members?.some(member =>
@@ -670,13 +470,39 @@ function App() {
                   />;
                 })}
               </AccountGrid>
+            )}
 
-              <LaunchProgressView
+            {launchGroupPanelOpen && !launchGroupDraft && (
+              <LaunchGroupPanel
+                groups={config?.launch_groups ?? []}
                 accounts={accounts}
-                logs={logs}
-                onClear={clearLogs}
+                config={config}
+                favoriteGroupIds={config?.favorite_launch_group_ids}
+                disabled={launching || configSaving}
+                onClose={() => setLaunchGroupPanelOpen(false)}
+                onLaunch={group => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.launch(group);
+                }}
+                onCreate={() => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.create();
+                }}
+                onEdit={group => {
+                  setLaunchGroupPanelOpen(false);
+                  launchGroups.edit(group);
+                }}
+                onToggleFavorite={group => void launchGroups.toggleFavorite(group)}
               />
-            </>
+            )}
+          </div>
+
+          {accounts.length > 0 && (
+            <LaunchProgressView
+              accounts={accounts}
+              logs={logs}
+              onClear={clearLogs}
+            />
           )}
         </Dashboard>
       </AppShell>
@@ -710,7 +536,7 @@ function App() {
       <Modal
         open={!!launchGroupPendingDelete}
         onClose={() => {
-          if (!configSaving) setLaunchGroupPendingDelete(null);
+          if (!configSaving) launchGroups.closeDelete();
         }}
         title="删除启动方案"
         footer={
@@ -718,18 +544,18 @@ function App() {
             <Button
               variant="ghost"
               disabled={configSaving}
-              onClick={() => setLaunchGroupPendingDelete(null)}
+              onClick={launchGroups.closeDelete}
             >
               取消
             </Button>
-            <Button variant="danger" loading={configSaving} onClick={() => void deleteLaunchGroup()}>
+            <Button variant="danger" loading={configSaving} onClick={() => void launchGroups.removePending()}>
               删除启动方案
             </Button>
           </div>
         }
       >
         <div className="py-2 text-sm leading-relaxed text-text-secondary">
-          确定删除启动方案“{launchGroupPendingDelete?.name}”吗？账号及账号胶囊库不会被删除。
+          确定删除启动方案“{launchGroupPendingDelete?.name}”吗？账号及其配置不会被删除。
         </div>
       </Modal>
       <SettingsCenter
@@ -749,6 +575,7 @@ function App() {
       />
 
       <ToastContainer />
+      {applicationDisclosureDialog}
     </>
   );
 }
