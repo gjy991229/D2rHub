@@ -52,6 +52,8 @@ import {
 } from "./utils/battleReport";
 import { useLaunchGroupController } from "./hooks/useLaunchGroupController";
 import { useModCapsulePool } from "./features/modCapsules/useModCapsulePool";
+import { DisclosureDialog } from "./features/disclosures/DisclosureDialog";
+import { useApplicationDisclosure } from "./features/disclosures/useApplicationDisclosure";
 
 type View =
   | { type: "loading" }
@@ -60,6 +62,7 @@ type View =
 
 function App() {
   const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
+  const applicationDisclosure = useApplicationDisclosure(!initialLoading);
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
@@ -80,6 +83,7 @@ function App() {
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
   const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);
+  const [exitingForDisclosure, setExitingForDisclosure] = useState(false);
 
   // Kill confirm modal states
   const [showKillConfirm, setShowKillConfirm] = useState(false);
@@ -194,14 +198,40 @@ function App() {
   }, [config?.font_scale]);
 
   // Execute App Side Effects
-  useBongoCatWindow(initialLoading, config);
+  const disclosureBlockingStartup = initialLoading
+    || applicationDisclosure.checking
+    || applicationDisclosure.required;
+
+  useBongoCatWindow(disclosureBlockingStartup, config);
   useLaunchEvents(config);
-  useAutoUpdate(initialLoading, config, (version, url) => {
+  useAutoUpdate(disclosureBlockingStartup, config, (version, url) => {
     setAutoUpdateVersion(version);
     setAutoUpdateUrl(url);
     setShowAutoUpdateConfirm(true);
   });
-  useFirstLaunch(initialLoading, config, patch);
+  useFirstLaunch(disclosureBlockingStartup, config, patch);
+
+  const handleDisclosureExit = async () => {
+    if (exitingForDisclosure) return;
+    setExitingForDisclosure(true);
+    try {
+      await invokeCommand("exit_app");
+    } catch (error) {
+      setExitingForDisclosure(false);
+      showToast("error", `退出 D2RHub 失败：${error}`);
+    }
+  };
+
+  const applicationDisclosureDialog = (
+    <DisclosureDialog
+      open={applicationDisclosure.required}
+      language={config?.app_language === "en-US" ? "en-US" : "zh-CN"}
+      target={{ type: "application", version: applicationDisclosure.version }}
+      canceling={exitingForDisclosure}
+      onCancel={() => void handleDisclosureExit()}
+      onAccept={applicationDisclosure.accept}
+    />
+  );
 
   useEffect(() => {
     if (initialLoading || !config?.rune_audio_enabled) {
@@ -257,7 +287,7 @@ function App() {
   );
 
   // ── loading ──
-  if (view.type === "loading") return (
+  if (view.type === "loading" || applicationDisclosure.checking) return (
     <AppShell>
       <div className="flex-1 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
@@ -270,15 +300,18 @@ function App() {
 
   // ── setup ──
   if (view.type === "setup") return (
-    <AppShell>
-      <div className="flex-1 flex flex-col">
-        <SetupWizard
-          initialConfig={view.existingConfig}
-          onComplete={() => setView({ type: "main" })}
-        />
-      </div>
-      <ToastContainer />
-    </AppShell>
+    <>
+      <AppShell>
+        <div className="flex-1 flex flex-col">
+          <SetupWizard
+            initialConfig={view.existingConfig}
+            onComplete={() => setView({ type: "main" })}
+          />
+        </div>
+        <ToastContainer />
+      </AppShell>
+      {applicationDisclosureDialog}
+    </>
   );
 
   // ── main ──
@@ -519,6 +552,7 @@ function App() {
       />
 
       <ToastContainer />
+      {applicationDisclosureDialog}
     </>
   );
 }

@@ -44,6 +44,11 @@ import {
 } from "../../features/settings/settingsRegistry";
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import type { RoomAutomationConfig } from "../../features/roomAutomation/types";
+import { DisclosureDialog } from "../../features/disclosures/DisclosureDialog";
+import {
+  acceptModuleDisclosure,
+  hasAcceptedModuleDisclosure,
+} from "../../features/disclosures/disclosureStorage";
 import "../../features/settings/settings.css";
 
 interface Props {
@@ -153,6 +158,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [navigationSaving, setNavigationSaving] = useState(false);
   const [appearanceDraft, setAppearanceDraft] = useState<AppearanceSettingsDraft | null>(null);
   const [appearanceApplying, setAppearanceApplying] = useState(false);
+  const [pendingDisclosureModule, setPendingDisclosureModule] = useState<OptionalModuleTabId | null>(null);
+  const [disclosureInstallBusy, setDisclosureInstallBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -229,6 +236,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (!open) {
       setExportPickerOpen(false);
       setExportPlaintextRiskAcknowledged(false);
+      setPendingDisclosureModule(null);
+      setDisclosureInstallBusy(false);
       navigationSaveRef.current = false;
     }
   }, [open]);
@@ -311,7 +320,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  const handleInstallModule = async (module: OptionalModuleTabId) => {
+  const handleInstallModule = async (module: OptionalModuleTabId): Promise<boolean> => {
     try {
       const current = useGlobalConfig.getState().config;
       if (!current) throw new Error("全局配置尚未加载");
@@ -328,10 +337,35 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
           : current.enable_overlay,
       };
       const saved = await persistGlobalDraft(candidate, true);
-      if (!saved) return;
+      if (!saved) return false;
       showToast("success", moduleInstallSuccessMessage(settingsLanguage, module));
+      return true;
     } catch (error) {
       showToast("error", moduleActionFailureMessage(settingsLanguage, "install", error));
+      return false;
+    }
+  };
+
+  const requestInstallModule = async (module: OptionalModuleTabId) => {
+    if (hasAcceptedModuleDisclosure(module)) {
+      await handleInstallModule(module);
+      return;
+    }
+    setPendingDisclosureModule(module);
+  };
+
+  const acceptAndInstallModule = async () => {
+    if (!pendingDisclosureModule || disclosureInstallBusy) return;
+    const module = pendingDisclosureModule;
+    setDisclosureInstallBusy(true);
+    try {
+      const installed = await handleInstallModule(module);
+      if (installed) {
+        acceptModuleDisclosure(module);
+        setPendingDisclosureModule(null);
+      }
+    } finally {
+      setDisclosureInstallBusy(false);
     }
   };
 
@@ -682,7 +716,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   };
 
   return (
-    <SettingsShell
+    <>
+      <SettingsShell
       open={open}
       title={`设置中心 · ${saveStatusText}`}
       activeTab={activeTab}
@@ -695,7 +730,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               <ModuleManagementPanel
                 config={config}
                 installedModules={installedModules}
-                onInstall={handleInstallModule}
+                onInstall={requestInstallModule}
                 onUninstall={handleUninstallModule}
                 onOpen={(module) => { void handleTabChange(module); }}
               />
@@ -940,6 +975,19 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 }}
               />
             )}
-    </SettingsShell>
+      </SettingsShell>
+      {pendingDisclosureModule && (
+        <DisclosureDialog
+          open={open}
+          language={settingsLanguage}
+          target={{ type: "module", module: pendingDisclosureModule }}
+          accepting={disclosureInstallBusy}
+          onCancel={() => {
+            if (!disclosureInstallBusy) setPendingDisclosureModule(null);
+          }}
+          onAccept={acceptAndInstallModule}
+        />
+      )}
+    </>
   );
 }

@@ -1,0 +1,129 @@
+.disclosure-dialog {
+  display: grid;
+  gap: 12px;
+  color: var(--text-primary);
+}
+
+.disclosure-intro {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.disclosure-intro-icon {
+  display: inline-flex;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.disclosure-context {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-weight: 700;
+}
+
+.disclosure-intro p {
+  max-width: 68ch;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.6;
+}
+
+.disclosure-scroll {
+  max-height: min(54vh, 500px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+  border-radius: var(--radius-xs);
+  outline: none;
+}
+
+.disclosure-scroll:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 3px;
+}
+
+.disclosure-section {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-default);
+}
+
+.disclosure-section h3 {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 760;
+  line-height: 1.55;
+}
+
+.disclosure-section p {
+  max-width: 72ch;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.72;
+  text-wrap: pretty;
+}
+
+.disclosure-section[data-tone="warning"] {
+  margin: 4px 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border-default));
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 7%, var(--surface-card));
+}
+
+.disclosure-section[data-tone="warning"] h3 {
+  color: var(--warning);
+}
+
+.disclosure-countdown {
+  min-height: 18px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.5;
+  text-align: right;
+}
+
+.disclosure-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 620px) {
+  .disclosure-section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .disclosure-actions {
+    width: 100%;
+  }
+
+  .disclosure-actions > button {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modal-backdrop:has(.disclosure-dialog),
+  .modal-backdrop-exit:has(.disclosure-dialog),
+  .modal-content:has(.disclosure-dialog),
+  .modal-content-exit:has(.disclosure-dialog) {
+    animation: none;
+  }
+}

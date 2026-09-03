@@ -9,9 +9,19 @@ interface ModalProps {
   footer?: ReactNode;
   width?: string;
   closeOnContextMenu?: boolean;
+  dismissible?: boolean;
 }
 
-export function Modal({ open, onClose, title, children, footer, width = "max-w-md", closeOnContextMenu = false }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  width = "max-w-md",
+  closeOnContextMenu = false,
+  dismissible = true,
+}: ModalProps) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [mounted, setMounted] = useState(open);
@@ -36,7 +46,7 @@ export function Modal({ open, onClose, title, children, footer, width = "max-w-m
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
+      if (e.key === "Escape" && dismissible) {
         onClose();
         return;
       }
@@ -65,7 +75,7 @@ export function Modal({ open, onClose, title, children, footer, width = "max-w-m
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [open, onClose]);
+  }, [dismissible, open, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -95,9 +105,11 @@ export function Modal({ open, onClose, title, children, footer, width = "max-w-m
       aria-label={title || "对话框"}
       className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? "modal-backdrop-exit" : "modal-backdrop"}`}
       style={{ background: "rgba(18,24,34,0.08)" }}
-      onClick={(e) => { if (open && e.target === backdropRef.current) onClose(); }}
+      onClick={(e) => {
+        if (dismissible && open && e.target === backdropRef.current) onClose();
+      }}
       onContextMenu={(e) => {
-        if (!closeOnContextMenu) return;
+        if (!dismissible || !closeOnContextMenu) return;
         e.preventDefault();
         if (open) onClose();
       }}
@@ -117,13 +129,15 @@ export function Modal({ open, onClose, title, children, footer, width = "max-w-m
         {title && (
           <div className="flex items-center justify-between px-5 pt-5 pb-3">
             <h2 className="text-sm font-semibold text-text-primary tracking-normal">{title}</h2>
-            <button
-              onClick={onClose}
-              aria-label="关闭对话框"
-              className="icon-btn h-[28px] w-[28px] hover:!bg-surface-hover"
-            >
-              <X size={14} />
-            </button>
+            {dismissible && (
+              <button
+                onClick={onClose}
+                aria-label="关闭对话框"
+                className="icon-btn h-[28px] w-[28px] hover:!bg-surface-hover"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
         )}
 
