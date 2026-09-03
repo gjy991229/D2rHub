@@ -8,27 +8,6 @@ let mutationQueue: Promise<unknown> = Promise.resolve();
 let pendingMutations = 0;
 
 const LEGACY_OPTIONAL_MODULE_STORAGE_KEY = "d2rhub-installed-optional-modules-v1";
-const OPTIONAL_MODULE_IDS = ["overlays", "pet", "automation", "room-automation"] as const;
-
-interface LegacyOptionalModuleState {
-  present: boolean;
-  modules: string[];
-}
-
-function readLegacyInstalledOptionalModules(): LegacyOptionalModuleState {
-  try {
-    const serialized = localStorage.getItem(LEGACY_OPTIONAL_MODULE_STORAGE_KEY);
-    if (serialized === null) return { present: false, modules: [] };
-    const parsed: unknown = JSON.parse(serialized);
-    if (!Array.isArray(parsed)) return { present: false, modules: [] };
-    return {
-      present: true,
-      modules: OPTIONAL_MODULE_IDS.filter((moduleId) => parsed.includes(moduleId)),
-    };
-  } catch {
-    return { present: false, modules: [] };
-  }
-}
 
 function clearLegacyInstalledOptionalModules(): void {
   try {
@@ -70,29 +49,10 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     set({ initialLoading: true, error: null });
     const snapshotBeforeRequest = get().config;
     try {
-      let config = await invokeCommand<GlobalConfig>("get_global_config");
-      const legacyModuleState = readLegacyInstalledOptionalModules();
-      const persistedModules = OPTIONAL_MODULE_IDS.filter((moduleId) =>
-        config.installed_optional_modules?.includes(moduleId),
-      );
-      const needsLegacyMigration = legacyModuleState.present && (
-        persistedModules.length !== legacyModuleState.modules.length
-        || persistedModules.some((moduleId) => !legacyModuleState.modules.includes(moduleId))
-      );
-      if (needsLegacyMigration) {
-        try {
-          config = await invokeCommand<GlobalConfig>("patch_global_config", {
-            patch: { installed_optional_modules: legacyModuleState.modules },
-          });
-          clearLegacyInstalledOptionalModules();
-        } catch (error) {
-          // Loading the application is more important than an optional one-time
-          // migration. Keep the legacy key so a later launch can retry safely.
-          console.warn("Failed to migrate legacy optional modules:", error);
-        }
-      } else {
-        clearLegacyInstalledOptionalModules();
-      }
+      const config = await invokeCommand<GlobalConfig>("get_global_config");
+      // Optional-module installation state is durable backend data. A stale
+      // webview key must never overwrite a newer committed configuration.
+      clearLegacyInstalledOptionalModules();
       if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
         set({ config, initialLoading: false });
       } else {
