@@ -39,9 +39,8 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
         .configuration()
         .snapshot()
         .ok_or_else(|| "全局配置尚未安全加载，拒绝激活运行服务".to_string())?;
-    capabilities::start(app).map_err(|error| {
-        logger::log_msg("ERROR", "Capabilities", &error);
-        error
+    capabilities::start(app).inspect_err(|error| {
+        logger::log_msg("ERROR", "Capabilities", error);
     })?;
     auxiliary_windows::create_configured_windows(app, &config);
     input_listener::start_input_listener(app.clone());

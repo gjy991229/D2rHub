@@ -1,0 +1,15 @@
+{
+  "identifier": "application-main",
+  "description": "Application commands and plugins available only to the main D2RHub window",
+  "windows": ["main"],
+  "permissions": [
+    "main-window-commands",
+    "shell:allow-open",
+    "dialog:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-message",
+    "dialog:allow-ask",
+    "clipboard-manager:allow-write-image"
+  ]
+}

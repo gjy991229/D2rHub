@@ -3206,6 +3206,7 @@ fn replace_audio_mod_directory(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn prepare_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
@@ -3386,6 +3387,7 @@ async fn prepare_audio_mod_impl(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn upgrade_audio_mod(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
@@ -3453,12 +3455,14 @@ async fn upgrade_audio_mod_task(
     let result = upgrade_audio_mod_impl(
         app,
         state,
-        account_id,
-        mod_name,
-        source_mod_name,
-        include_audio_telemetry,
-        include_room_tools,
-        include_auto_exit_on_death,
+        UpgradeAudioModRequest {
+            account_id,
+            requested_mod_name: mod_name,
+            source_mod_name,
+            include_audio_telemetry,
+            include_room_tools,
+            include_auto_exit_on_death,
+        },
         &task,
     )
     .await;
@@ -3517,17 +3521,29 @@ pub(crate) async fn retry_audio_mod_task(
     }
 }
 
-async fn upgrade_audio_mod_impl(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, SharedState>,
+struct UpgradeAudioModRequest {
     account_id: String,
     requested_mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+}
+
+async fn upgrade_audio_mod_impl(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    request: UpgradeAudioModRequest,
     task: &TaskHandle,
 ) -> Result<AudioModSetupState, String> {
+    let UpgradeAudioModRequest {
+        account_id,
+        requested_mod_name,
+        source_mod_name,
+        include_audio_telemetry,
+        include_room_tools,
+        include_auto_exit_on_death,
+    } = request;
     let shared_state = state.inner().clone();
     let _lease = BuildLease::acquire(&shared_state)?;
     let (config, account, context) = configured_account(&shared_state, &account_id)?;
@@ -3910,12 +3926,14 @@ mod tests {
         validate_recoverable_audio_mod_directory, write_replace_journal,
         write_replace_journal_with_stage_sync, GeneratorFeatureGroup, GeneratorReport,
         RequestedFeatureGroups, SafeTreeNodeKind, AREA_CATALOG_FILE_NAME,
-        AUDIO_TELEMETRY_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID, AUTO_EXIT_ON_DEATH_FINGERPRINT,
+        AUDIO_TELEMETRY_FEATURE_ID, AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
+        AUTO_EXIT_ON_DEATH_FEATURE_ID, AUTO_EXIT_ON_DEATH_FINGERPRINT,
         AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT, IN_GAME_ROOM_TOOLS_FEATURE_ID,
-        ITEM_CATALOG_FILE_NAME, LEGACY_MANIFEST_FILE_NAME, NEXT_GAME_TOOLTIP_OFFSET_Y,
-        PROTOCOL_VERSION, REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_BUTTON_SCALE,
-        ROOM_TOOL_BUTTON_Y, ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X, ROOM_TOOL_JOIN_X,
-        ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
+        IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION, ITEM_CATALOG_FILE_NAME,
+        LEGACY_MANIFEST_FILE_NAME, NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION,
+        REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y,
+        ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X, ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY,
+        ROOM_TOOL_NEXT_X,
     };
 
     const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
@@ -3946,7 +3964,7 @@ mod tests {
 
     fn test_audio_fingerprint() -> String {
         format!(
-            "audio-v1;protocol={PROTOCOL_VERSION};areas=all_areas;track=charms,essences,gems,jewels,keys,organs,runes;gain_mdb=0"
+            "audio-v{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION};protocol={PROTOCOL_VERSION};areas=all_areas;track=charms,essences,gems,jewels,keys,organs,runes;gain_mdb=0"
         )
     }
 
@@ -3960,7 +3978,7 @@ mod tests {
             "mod_name": mod_name,
             "feature_groups": [{
                 "id": AUDIO_TELEMETRY_FEATURE_ID,
-                "recipe_version": 1,
+                "recipe_version": AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
                 "fingerprint": test_audio_fingerprint()
             }]
         })
@@ -3976,17 +3994,31 @@ mod tests {
             serde_json::json!({
                 "fields": {"defaultWidget": "D2RHubKeyboardGatewayHub"},
                 "children": [
-                    {"name": "D2RHubKeyboardGatewayHub", "fields": {"acceptsReturnKey": false}},
-                    {"name": "ReturnToGame", "fields": {"navigation": {
+                    {"type": "ButtonWidget", "name": "D2RHubKeyboardGatewayHub", "fields": {
+                        "acceptsReturnKey": false,
+                        "navigation": {
+                            "left": {"name": "D2RHubKeyboardCreateGateway"},
+                            "right": {"name": "D2RHubKeyboardJoinGateway"}
+                        }
+                    }},
+                    {"type": "ButtonWidget", "name": "ReturnToGame", "fields": {"navigation": {
                         "left": {"name": "D2RHubKeyboardCreateGateway"},
                         "right": {"name": "D2RHubKeyboardJoinGateway"}
                     }}},
-                    {"name": "D2RHubKeyboardCreateGateway", "fields": {
+                    {"type": "ButtonWidget", "name": "D2RHubKeyboardCreateGateway", "fields": {
                         "acceptsReturnKey": true,
+                        "navigation": {
+                            "left": {"name": "D2RHubKeyboardCreateGateway"},
+                            "right": {"name": "D2RHubKeyboardGatewayHub"}
+                        },
                         "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenCreate"
                     }},
-                    {"name": "D2RHubKeyboardJoinGateway", "fields": {
+                    {"type": "ButtonWidget", "name": "D2RHubKeyboardJoinGateway", "fields": {
                         "acceptsReturnKey": true,
+                        "navigation": {
+                            "left": {"name": "D2RHubKeyboardGatewayHub"},
+                            "right": {"name": "D2RHubKeyboardJoinGateway"}
+                        },
                         "onClickMessage": "PanelManager:OpenPanel:D2RHubKeyboardOpenJoin"
                     }}
                 ]
@@ -4214,7 +4246,7 @@ mod tests {
     fn audio_only_mod_can_be_upgraded_in_place_to_audio_and_room_tools() {
         let audio = GeneratorFeatureGroup {
             id: AUDIO_TELEMETRY_FEATURE_ID.to_string(),
-            recipe_version: 1,
+            recipe_version: AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
             fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
@@ -4226,8 +4258,8 @@ mod tests {
 
         let room = GeneratorFeatureGroup {
             id: IN_GAME_ROOM_TOOLS_FEATURE_ID.to_string(),
-            recipe_version: 19,
-            fingerprint: "room-tools-v19".to_string(),
+            recipe_version: IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+            fingerprint: format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}"),
             reused_from_source: false,
         };
         assert!(requested.all_present(&[audio, room]));
@@ -4516,8 +4548,8 @@ mod tests {
             .unwrap()
             .push(serde_json::json!({
                 "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
-                "recipe_version": 19,
-                "fingerprint": "room-tools-v19"
+                "recipe_version": IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+                "fingerprint": format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}")
             }));
         write_test_audio_mod(&staging, "preserve-me", candidate_manifest.clone());
         write_test_room_tool_layouts(&staging, "preserve-me");
@@ -4594,8 +4626,8 @@ mod tests {
             .unwrap()
             .push(serde_json::json!({
                 "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
-                "recipe_version": 19,
-                "fingerprint": "room-tools-v19"
+                "recipe_version": IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+                "fingerprint": format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}")
             }));
         write_test_audio_mod(&stage_parent, "preserve-me", incomplete_new);
         write_test_room_tool_layouts(&stage_parent, "preserve-me");
@@ -4696,7 +4728,7 @@ mod tests {
         write_test_audio_mod(&root, mod_name, current_audio_manifest(mod_name));
         let audio_group = GeneratorFeatureGroup {
             id: AUDIO_TELEMETRY_FEATURE_ID.to_string(),
-            recipe_version: 1,
+            recipe_version: AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
             fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
@@ -4758,8 +4790,8 @@ mod tests {
 
         report.feature_groups.push(GeneratorFeatureGroup {
             id: IN_GAME_ROOM_TOOLS_FEATURE_ID.to_string(),
-            recipe_version: 19,
-            fingerprint: "room-tools-v19".to_string(),
+            recipe_version: IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+            fingerprint: format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}"),
             reused_from_source: false,
         });
         assert!(validate_generator_output(
@@ -4785,8 +4817,8 @@ mod tests {
         let mut manifest = current_audio_manifest(name);
         manifest["feature_groups"] = serde_json::json!([{
             "id": IN_GAME_ROOM_TOOLS_FEATURE_ID,
-            "recipe_version": 19,
-            "fingerprint": "room-tools-v19"
+            "recipe_version": IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+            "fingerprint": format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}")
         }]);
         write_test_audio_mod(&root, name, manifest);
         write_test_room_tool_layouts(&root, name);
@@ -4825,7 +4857,12 @@ mod tests {
             })
         };
 
-        write_test_audio_mod(&root, name, room_manifest(19, "room-tools-v19"));
+        let room_fingerprint = format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}");
+        write_test_audio_mod(
+            &root,
+            name,
+            room_manifest(IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION, &room_fingerprint),
+        );
         let credential = validate_audio_mod_credential(&root, name).unwrap();
         assert_eq!(
             credential.feature_groups[0].id,
@@ -4838,11 +4875,23 @@ mod tests {
         let validated = validate_audio_mod(&root, name).unwrap();
         validate_in_game_room_tool_layouts(&validated.directory, name).unwrap();
 
-        write_test_audio_mod(&root, name, room_manifest(18, "room-tools-v18"));
+        let previous_recipe = IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION - 1;
+        write_test_audio_mod(
+            &root,
+            name,
+            room_manifest(previous_recipe, &format!("room-tools-v{previous_recipe}")),
+        );
         assert!(validate_audio_mod(&root, name)
             .unwrap_err()
-            .contains("配方 r18 不受支持"));
-        write_test_audio_mod(&root, name, room_manifest(19, "forged-room-tools"));
+            .contains(&format!("配方 r{previous_recipe} 不受支持")));
+        write_test_audio_mod(
+            &root,
+            name,
+            room_manifest(
+                IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+                "forged-room-tools",
+            ),
+        );
         assert!(validate_audio_mod(&root, name)
             .unwrap_err()
             .contains("指纹无效"));
@@ -4854,14 +4903,18 @@ mod tests {
         let root = test_mods_directory("known_and_unknown_groups");
         let name = "feature-metadata";
         let mut manifest = current_audio_manifest(name);
-        manifest["feature_groups"][0]["recipe_version"] = serde_json::json!(2);
+        let unsupported_recipe = AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION + 1;
+        manifest["feature_groups"][0]["recipe_version"] = serde_json::json!(unsupported_recipe);
         write_test_audio_mod(&root, name, manifest.clone());
         assert!(validate_audio_mod(&root, name)
             .unwrap_err()
-            .contains("配方 r2 不受支持"));
+            .contains(&format!("配方 r{unsupported_recipe} 不受支持")));
 
-        manifest["feature_groups"][0]["recipe_version"] = serde_json::json!(1);
-        manifest["feature_groups"][0]["fingerprint"] = serde_json::json!("audio-v1;fixture=forged");
+        manifest["feature_groups"][0]["recipe_version"] =
+            serde_json::json!(AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION);
+        manifest["feature_groups"][0]["fingerprint"] = serde_json::json!(format!(
+            "audio-v{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION};fixture=forged"
+        ));
         write_test_audio_mod(&root, name, manifest.clone());
         assert!(validate_audio_mod(&root, name)
             .unwrap_err()
@@ -5310,7 +5363,7 @@ mod tests {
                     "mod_name": name,
                     "feature_groups": [{
                         "id": AUDIO_TELEMETRY_FEATURE_ID,
-                        "recipe_version": 1,
+                        "recipe_version": AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
                         "fingerprint": test_audio_fingerprint()
                     }]
                 }),

@@ -74,18 +74,19 @@ impl OverlayVisibility {
         Self {
             terror_zone: config
                 .map(|config| {
-                    config.optional_module_installed(
-                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-                    ) && config.enable_tz_overlay
+                    config
+                        .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                        && config.enable_tz_overlay
                 })
                 .unwrap_or(false),
             stats: config
                 .map(|config| {
-                    config.optional_module_installed(
-                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-                    ) && config.optional_module_installed(
-                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                    ) && config.enable_stats_overlay
+                    config
+                        .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                        && config.optional_module_installed(
+                            crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                        )
+                        && config.enable_stats_overlay
                 })
                 .unwrap_or(false),
         }
@@ -132,12 +133,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_config_keeps_both_overlays_visible() {
+    fn missing_config_keeps_both_overlays_hidden() {
         assert_eq!(
             OverlayVisibility::from_config(None),
             OverlayVisibility {
-                terror_zone: true,
-                stats: true,
+                terror_zone: false,
+                stats: false,
             }
         );
     }
@@ -147,6 +148,10 @@ mod tests {
         let mut config = GlobalConfig {
             enable_tz_overlay: false,
             enable_stats_overlay: true,
+            installed_optional_modules: vec![
+                crate::domain::config::OPTIONAL_MODULE_OVERLAYS.to_string(),
+                crate::domain::config::OPTIONAL_MODULE_AUTOMATION.to_string(),
+            ],
             ..GlobalConfig::default()
         };
 

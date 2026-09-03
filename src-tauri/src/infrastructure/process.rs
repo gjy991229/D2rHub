@@ -59,9 +59,7 @@ fn matching_processes(names: &[&str]) -> Vec<(sysinfo::Pid, String)> {
         .collect()
 }
 
-pub(crate) fn kill_processes_by_name(
-    names: &[&str],
-) -> Result<(), crate::error::AppError> {
+pub(crate) fn kill_processes_by_name(names: &[&str]) -> Result<(), crate::error::AppError> {
     let ordered_names = ordered_process_names(names);
     if ordered_names.is_empty() {
         return Ok(());

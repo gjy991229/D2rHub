@@ -3046,8 +3046,10 @@ fn decode_reg_file(raw: &[u8]) -> Option<String> {
             return None;
         }
         let u16_words: Vec<u16> = u16_bytes
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| u16::from_le_bytes(*bytes))
             .collect();
         String::from_utf16(&u16_words).ok()
     } else if raw.len() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF {

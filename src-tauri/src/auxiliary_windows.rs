@@ -52,10 +52,7 @@ fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
 /// Creates the auxiliary WebViews requested by the persisted startup
 /// configuration. The windows remain hidden until their owning capability or
 /// the frontend visibility coordinator has restored placement and shown them.
-pub(crate) fn create_configured_windows(
-    app: &AppHandle,
-    config: &GlobalConfig,
-) {
+pub(crate) fn create_configured_windows(app: &AppHandle, config: &GlobalConfig) {
     for label in startup_window_labels(config) {
         if let Err(error) = ensure_window(app, label) {
             crate::logger::log_msg(
@@ -132,6 +129,10 @@ mod tests {
             enable_tz_overlay: true,
             enable_stats_overlay: false,
             enable_bongo_cat: true,
+            installed_optional_modules: vec![
+                crate::domain::config::OPTIONAL_MODULE_OVERLAYS.to_string(),
+                crate::domain::config::OPTIONAL_MODULE_PET.to_string(),
+            ],
             ..GlobalConfig::default()
         };
 

@@ -20,8 +20,8 @@ use crate::application::capability::{
     CapabilityHealth, CapabilityId, CapabilityRegistration, CapabilityRegistryError,
 };
 use crate::domain::config::{
-    GlobalConfig, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION,
-    OPTIONAL_MODULE_OVERLAYS, OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
+    GlobalConfig, CURRENT_CONFIG_VERSION, OPTIONAL_MODULE_AUTOMATION, OPTIONAL_MODULE_OVERLAYS,
+    OPTIONAL_MODULE_PET, OPTIONAL_MODULE_ROOM_AUTOMATION,
 };
 use crate::state::SharedState;
 use std::sync::Arc;
@@ -328,6 +328,10 @@ mod tests {
             rune_audio_enabled: false,
             enable_tz_overlay: true,
             enable_stats_overlay: false,
+            installed_optional_modules: vec![
+                OPTIONAL_MODULE_OVERLAYS.to_string(),
+                OPTIONAL_MODULE_PET.to_string(),
+            ],
             ..GlobalConfig::default()
         };
 

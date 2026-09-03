@@ -14,14 +14,9 @@ fn manager<'a>(
 }
 
 fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(), String> {
-    let installed = state
-        .configuration()
-        .snapshot()
-        .is_some_and(|config| {
-            config.optional_module_installed(
-                crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
-            )
-        });
+    let installed = state.configuration().snapshot().is_some_and(|config| {
+        config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+    });
     installed
         .then_some(())
         .ok_or_else(|| "自动跟房模块尚未安装".to_string())

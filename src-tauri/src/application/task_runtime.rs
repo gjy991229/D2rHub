@@ -103,10 +103,7 @@ impl TaskRequest {
         self
     }
 
-    pub fn with_cancel_hook(
-        mut self,
-        hook: impl Fn() + Send + Sync + 'static,
-    ) -> Self {
+    pub fn with_cancel_hook(mut self, hook: impl Fn() + Send + Sync + 'static) -> Self {
         self.cancel_hook = Some(Arc::new(hook));
         self
     }

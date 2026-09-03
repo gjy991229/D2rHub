@@ -640,15 +640,9 @@ impl RuntimeBridge for TauriRuntimeBridge {
     }
 
     fn apply_requested(&self, enabled: bool) -> Result<(), String> {
-        let installed = self
-            .state
-            .configuration()
-            .snapshot()
-            .is_some_and(|config| {
-                config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
-                )
-            });
+        let installed = self.state.configuration().snapshot().is_some_and(|config| {
+            config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+        });
         self.state
             .capabilities()
             .set_requested(ROOM_AUTOMATION_ID, installed && enabled)
@@ -769,9 +763,9 @@ impl RoomAutomationManager {
                 .map_err(config_failure)?;
             snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())
                 .map_err(config_failure)?;
-            if !global.optional_module_installed(
-                crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
-            ) && snapshot.config.enabled
+            if !global
+                .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+                && snapshot.config.enabled
             {
                 let mut disabled = snapshot.config.clone();
                 disabled.enabled = false;
@@ -903,9 +897,7 @@ impl RoomAutomationManager {
             } else {
                 None
             };
-        let binding_warning = if saved.config.enabled
-            && saved.config.chat_f13_auto_patch_enabled
-        {
+        let binding_warning = if saved.config.enabled && saved.config.chat_f13_auto_patch_enabled {
             match self.chat_binding.resume() {
                 Ok(_) => None,
                 Err(error) => Some(format!("F13 一次性扫描未完成：{error}")),
@@ -915,13 +907,15 @@ impl RoomAutomationManager {
         };
         drop(operation);
         join_shortcut(old_shortcut);
-        let lifecycle_warning = self
-            .bridge
-            .apply_requested(saved.config.enabled)
-            .err()
-            .map(|error| {
-                self.pause_after_committed_apply_failure(format!("配置生命周期应用失败：{error}"))
-            });
+        let lifecycle_warning =
+            self.bridge
+                .apply_requested(saved.config.enabled)
+                .err()
+                .map(|error| {
+                    self.pause_after_committed_apply_failure(format!(
+                        "配置生命周期应用失败：{error}"
+                    ))
+                });
         let apply_warning = [binding_warning, lifecycle_warning]
             .into_iter()
             .flatten()
@@ -1309,8 +1303,7 @@ impl RoomAutomationManager {
     ) -> Result<(PreparedWorkflow, AccountOperationLeases), String> {
         // 第一次解析筛掉当前没有可用窗口的跟随号，避免它们无意义地参与锁竞争；
         // 取得实际参与者租约后再解析一次，关闭窗口/账号状态变化的竞态。
-        let (candidate_config, _, _) =
-            self.prepare_workflow(config, require_primary_foreground)?;
+        let (candidate_config, _, _) = self.prepare_workflow(config, require_primary_foreground)?;
         let leases = self.acquire_participant_leases(&candidate_config)?;
         let prepared = self.prepare_workflow(candidate_config, require_primary_foreground)?;
         Ok((prepared, leases))
@@ -1899,6 +1892,7 @@ fn prune_missing_accounts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input_listener::register_capability_shortcuts;
     use std::sync::atomic::AtomicBool;
     use std::sync::mpsc::{Receiver, SyncSender};
     use std::time::Instant;
@@ -2274,7 +2268,7 @@ mod tests {
     }
 
     #[test]
-    fn manual_waiting_holds_all_leases_until_cancel_and_stop_owns_shortcuts() {
+    fn manual_waiting_releases_leases_until_followers_start_and_stop_owns_shortcuts() {
         let _serial = TEST_SERIAL.lock().unwrap();
         let (root, manager, leases, _host) = manager("manual", false, false);
         manager.start().unwrap();
@@ -2289,8 +2283,7 @@ mod tests {
 
         manager.start_primary().unwrap();
         wait_for_phase(&manager, WorkflowPhase::Waiting);
-        assert!(leases.contains("main"));
-        assert!(leases.contains("FOLLOWER"));
+        assert!(leases.is_empty());
         assert_eq!(manager.get_config().config.next_sequence, 2);
         let reloaded = RoomAutomationConfigController::new(&root.0)
             .unwrap()
@@ -2337,7 +2330,7 @@ mod tests {
     }
 
     #[test]
-    fn participant_leases_are_held_before_runtime_preflight() {
+    fn primary_lease_is_held_before_runtime_preflight() {
         let _serial = TEST_SERIAL.lock().unwrap();
         let (_root, manager, leases, host) = manager("leased_preflight", false, false);
         manager.start().unwrap();
@@ -2351,7 +2344,7 @@ mod tests {
             .unwrap();
 
         assert!(leases.try_acquire("main").is_err());
-        assert!(leases.try_acquire("FOLLOWER").is_err());
+        assert!(leases.try_acquire("FOLLOWER").is_ok());
 
         release_preflight_tx.send(()).unwrap();
         start.join().unwrap().unwrap();
@@ -2679,8 +2672,7 @@ mod tests {
             ]
         );
         assert_eq!(manager.get_config().config.next_sequence, 3);
-        assert!(leases.contains("main"));
-        assert!(leases.contains("follower"));
+        assert!(leases.is_empty());
         manager.cancel().unwrap();
         manager.stop().unwrap();
     }
@@ -2798,19 +2790,7 @@ mod tests {
         assert_eq!(failed.completed_follower_account_ids, ["follower-a"]);
         assert!(leases.is_empty());
 
-        let (preflight_started_tx, preflight_started_rx) = std::sync::mpsc::sync_channel(1);
-        let (release_preflight_tx, release_preflight_rx) = std::sync::mpsc::sync_channel(1);
-        *host.preflight_gate.lock() = Some((preflight_started_tx, release_preflight_rx));
-        let retry_manager = manager.clone();
-        let retry = std::thread::spawn(move || retry_manager.retry());
-        preflight_started_rx
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap();
-        assert!(leases.try_acquire("main").is_err());
-        assert!(leases.try_acquire("follower-a").is_err());
-        assert!(leases.try_acquire("follower-b").is_err());
-        release_preflight_tx.send(()).unwrap();
-        retry.join().unwrap().unwrap();
+        manager.retry().unwrap();
         wait_for_phase(&manager, WorkflowPhase::Complete);
         assert_eq!(manager.get_status().room_name.as_deref(), Some("run-007"));
         assert_eq!(manager.get_config().config.next_sequence, 8);

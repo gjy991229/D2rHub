@@ -48,7 +48,7 @@ describe("shared Mod feature coordination", () => {
 
     await act(() => result.current.toggleRecognition(true));
     expect(assign).toHaveBeenCalledWith("main", "scan:cn:rooms");
-    expect(openProcessing).toHaveBeenCalledWith("main", "recognition", true);
+    expect(openProcessing).toHaveBeenCalledWith("main", "recognition", true, "Rooms", "augment");
     expect(toggleAudio).not.toHaveBeenCalled();
   });
 

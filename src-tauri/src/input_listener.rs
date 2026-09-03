@@ -34,6 +34,7 @@ static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 enum CapabilityShortcutSender {
+    #[cfg(test)]
     Bounded(std::sync::mpsc::SyncSender<&'static str>),
     Unbounded(std::sync::mpsc::Sender<&'static str>),
 }
@@ -115,6 +116,7 @@ pub(crate) fn validate_core_shortcut_reservations<'a>(
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn register_capability_shortcuts(
     owner_id: &'static str,
     routes: impl IntoIterator<Item = (String, &'static str)>,
@@ -144,6 +146,7 @@ pub(crate) fn register_unbounded_capability_shortcuts(
 /// Atomically replaces one capability's routes while preserving every other
 /// owner's conflict checks. The previous guard becomes inert through its
 /// generation token, so dropping it cannot remove the replacement.
+#[cfg(test)]
 pub(crate) fn replace_capability_shortcuts(
     owner_id: &'static str,
     routes: impl IntoIterator<Item = (String, &'static str)>,
@@ -253,6 +256,7 @@ fn dispatch_capability_shortcut(shortcut: &str) -> bool {
         return false;
     };
     match sender {
+        #[cfg(test)]
         CapabilityShortcutSender::Bounded(sender) => match sender.try_send(action) {
             Ok(()) | Err(std::sync::mpsc::TrySendError::Full(_)) => true,
             Err(std::sync::mpsc::TrySendError::Disconnected(_)) => false,
@@ -331,11 +335,10 @@ pub fn set_stats_overlay_mini_input_region(
             .configuration()
             .snapshot()
             .is_some_and(|config| {
-                config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-                ) && config.optional_module_installed(
-                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                )
+                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                    && config.optional_module_installed(
+                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                    )
             });
         if !installed {
             return Err("识别与统计模块尚未安装".to_string());
@@ -746,10 +749,7 @@ unsafe extern "system" fn keyboard_hook_proc(
     } else if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
         // ── 快捷键检测 ──
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        if active_handled_shortcut_keys()
-            .lock()
-            .contains(&kbd.vk_code)
-        {
+        if active_handled_shortcut_keys().lock().contains(&kbd.vk_code) {
             // Windows emits repeated key-down messages while a key is held.
             // The first event already dispatched this shortcut; consume repeats
             // without enqueueing duplicate room workflows.

@@ -333,6 +333,7 @@ impl CapabilityRegistry {
     /// Samples already-running drivers without starting failed or stopped
     /// capabilities. Supervisors may call this periodically to detect worker
     /// exits even when configuration remains unchanged.
+    #[cfg(test)]
     pub fn refresh_running_health(
         &self,
     ) -> Result<CapabilityStatusSnapshot, CapabilityRegistryError> {
@@ -489,6 +490,7 @@ impl CapabilityRegistry {
         Ok(())
     }
 
+    #[cfg(test)]
     fn refresh_one_health(&self, id: CapabilityId) -> Result<(), CapabilityRegistryError> {
         let (operation, driver) = {
             let inner = self.inner.lock();

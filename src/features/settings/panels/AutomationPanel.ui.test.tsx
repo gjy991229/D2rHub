@@ -92,7 +92,7 @@ function baseProps(
 afterEach(cleanup);
 
 describe("ModProcessingPanel feature inheritance", () => {
-  it("opens the exact Mod selected from management instead of the target account's previous Mod", async () => {
+  it("opens the exact source Mod selected from management without assigning it before processing", async () => {
     const user = userEvent.setup();
     const catalogPool: ModCapsulePool = {
       generation: 1,
@@ -120,8 +120,8 @@ describe("ModProcessingPanel feature inheritance", () => {
       modCapsulePool: catalogPool, onTargetChange, setAudioSetupSource })} />);
 
     await user.click(screen.getByRole("button", { name: "加工" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("one", "scan:cn:mdk"));
-    expect(onTargetChange).toHaveBeenCalledWith("one");
+    await waitFor(() => expect(onTargetChange).toHaveBeenCalledWith("one"));
+    expect(assign).not.toHaveBeenCalled();
     expect(setAudioSetupSource).toHaveBeenCalledWith("MDK");
   });
 
@@ -172,12 +172,19 @@ describe("ModProcessingPanel feature inheritance", () => {
   it("preserves installed modules while allowing additive management", () => {
     render(<ModProcessingPanel {...baseProps({
       purpose: "manage",
-      audioModState: readyAudioOnlyMod,
       audioSetupMode: "original",
       audioSetupSource: "",
       isAudioModUpgrade: true,
       isAudioModFeatureManagement: true,
       includeRoomTools: true,
+      audioProcessingTarget: "D2rHubTools",
+      audioModState: {
+        ...readyAudioOnlyMod,
+        installed_mods: [{
+          name: "D2rHubTools", audio_ready: true, update_required: false, source_eligible: true,
+          feature_groups: ["audio_telemetry"], audio_reusable: true, auto_exit_on_death_enabled: false,
+        }],
+      },
     })} />);
 
     const installedAudio = screen.getByRole("checkbox", { name: /声纹识别/ }) as HTMLInputElement;
@@ -195,11 +202,17 @@ describe("ModProcessingPanel feature inheritance", () => {
         ...readyAudioOnlyMod,
         feature_groups: ["audio_telemetry", "auto_exit_on_death"],
         auto_exit_on_death_enabled: true,
+        installed_mods: [{
+          name: "D2rHubTools", audio_ready: true, update_required: false, source_eligible: true,
+          feature_groups: ["audio_telemetry", "auto_exit_on_death"], audio_reusable: true,
+          auto_exit_on_death_enabled: true,
+        }],
       },
       audioSetupMode: "original",
       audioSetupSource: "",
       isAudioModUpgrade: true,
       isAudioModFeatureManagement: true,
+      audioProcessingTarget: "D2rHubTools",
     })} />);
 
     const installed = screen.getByRole("checkbox", { name: /死亡后自动退房/ }) as HTMLInputElement;
