@@ -839,7 +839,10 @@ pub fn show_main_window_safely(app: &AppHandle) {
     let _ = window.set_focus();
 }
 
-#[tauri::command]
+// These commands query or mutate native windows and may need to marshal work
+// to the event loop. Tauri's async dispatch keeps that loop responsive while
+// WebView2 or third-party graphics hooks are slow.
+#[tauri::command(async)]
 pub fn restore_window_placement(
     app: AppHandle,
     label: String,
@@ -848,6 +851,8 @@ pub fn restore_window_placement(
     restore_impl(&app, &label, legacy_geometry, true)
 }
 
+// Geometry saves are serialized and kept on the ordered command path so rapid
+// move events cannot complete out of order and overwrite the newest position.
 #[tauri::command]
 pub fn save_window_placement(
     app: AppHandle,
@@ -865,7 +870,7 @@ pub fn save_window_placement(
     )
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_auxiliary_window_visible(
     app: AppHandle,
     label: String,
@@ -900,7 +905,7 @@ pub fn set_auxiliary_window_visible(
     set_auxiliary_window_visible_for_app(&app, &label, visible, target.as_deref())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn recover_auxiliary_windows(
     app: AppHandle,
     target: Option<String>,

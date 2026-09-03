@@ -45,7 +45,8 @@ identifier = "terror-zone-overlay-commands"
 description = "Allows the Terror Zone overlay to read configuration and forecast data and persist only its own placement."
 commands.allow = [
   "get_global_config", "list_accounts", "get_terror_zone_snapshot",
-  "load_overlay_geometry", "save_overlay_geometry", "restore_window_placement", "save_window_placement"
+  "load_overlay_geometry", "save_overlay_geometry", "restore_window_placement", "save_window_placement",
+  "write_log"
 ]
 
 [[permission]]
@@ -56,7 +57,7 @@ commands.allow = [
   "load_stats_overlay_geometry", "save_stats_overlay_geometry", "restore_window_placement", "save_window_placement",
   "bring_window_by_title_to_front", "get_foreground_window_title", "get_d2r_window_titles",
   "refresh_account_running_state", "get_rune_audio_status", "start_rune_audio_monitor",
-  "save_scene_record", "get_scene_stats", "set_stats_overlay_mini_input_region"
+  "save_scene_record", "get_scene_stats", "set_stats_overlay_mini_input_region", "write_log"
 ]
 
 [[permission]]

@@ -35,14 +35,17 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
         return Ok(false);
     }
 
-    let config = state
+    state
         .configuration()
         .snapshot()
         .ok_or_else(|| "全局配置尚未安全加载，拒绝激活运行服务".to_string())?;
     capabilities::start(app).inspect_err(|error| {
         logger::log_msg("ERROR", "Capabilities", error);
     })?;
-    auxiliary_windows::create_configured_windows(app, &config);
+    // Capability reconciliation is the single owner of auxiliary-window
+    // creation. Starting the same WebViews here as well races the supervisor
+    // and can leave one thread waiting for the Tauri event loop while another
+    // path is trying to acquire the same lifecycle state.
     input_listener::start_input_listener(app.clone());
     mod_catalog::refresh_on_startup(state.inner().clone(), app.clone());
     state.runtime_activated.store(true, Ordering::Release);

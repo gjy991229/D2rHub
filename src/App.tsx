@@ -352,11 +352,23 @@ function App() {
           onExit={async () => {
             const mainWin = getCurrentWindow();
             await mainWin.hide();
-            if (config?.enable_tz_overlay) {
-              await setAuxiliaryWindowVisible('overlay', true);
-            }
-            if (config?.enable_stats_overlay) {
-              await setAuxiliaryWindowVisible('stats-overlay', true);
+            const overlays = [
+              config?.enable_tz_overlay ? 'overlay' as const : null,
+              config?.enable_stats_overlay ? 'stats-overlay' as const : null,
+            ].filter((label): label is 'overlay' | 'stats-overlay' => label !== null);
+            const results = await Promise.allSettled(
+              overlays.map(label => setAuxiliaryWindowVisible(label, true)),
+            );
+            const failures = results.flatMap((result, index) =>
+              result.status === 'rejected'
+                ? [`${overlays[index]}: ${String(result.reason)}`]
+                : [],
+            );
+            if (failures.length > 0) {
+              void invokeCommand('write_log', {
+                level: 'WARN',
+                message: `主面板隐藏后显示悬浮窗部分失败: ${failures.join('; ')}`,
+              }).catch(() => {});
             }
           }}
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}

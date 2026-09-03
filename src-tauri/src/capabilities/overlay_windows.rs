@@ -24,6 +24,11 @@ impl OverlayWindowCapability {
 
 impl CapabilityDriver for OverlayWindowCapability {
     fn start(&self) -> Result<(), CapabilityFailure> {
+        crate::logger::log_msg(
+            "INFO",
+            "AuxiliaryWindow",
+            &format!("开始启动可选窗口 {}", self.label),
+        );
         crate::auxiliary_windows::ensure_window(&self.app, self.label)
             .map_err(|error| CapabilityFailure::new("window-create-failed", error.to_string()))?;
         window_placement::set_auxiliary_window_visible_for_app(
@@ -32,13 +37,33 @@ impl CapabilityDriver for OverlayWindowCapability {
             true,
             Some(PRESERVE_PLACEMENT_MODE),
         )
-        .map(|_| ())
+        .map(|_| {
+            crate::logger::log_msg(
+                "INFO",
+                "AuxiliaryWindow",
+                &format!("可选窗口 {} 已显示", self.label),
+            );
+        })
         .map_err(|error| CapabilityFailure::new("window-show-failed", error.to_string()))
     }
 
     fn stop(&self) -> Result<(), CapabilityFailure> {
         crate::auxiliary_windows::destroy_window(&self.app, self.label)
-            .map(|_| ())
+            .map(|destroyed| {
+                crate::logger::log_msg(
+                    "INFO",
+                    "AuxiliaryWindow",
+                    &format!(
+                        "可选窗口 {} 已{}",
+                        self.label,
+                        if destroyed {
+                            "销毁"
+                        } else {
+                            "处于关闭状态"
+                        }
+                    ),
+                );
+            })
             .map_err(|error| CapabilityFailure::new("window-destroy-failed", error.to_string()))
     }
 
@@ -60,6 +85,34 @@ impl CapabilityDriver for OverlayWindowCapability {
                 error.to_string(),
             )),
         }
+    }
+}
+
+fn show_overlay_without_blocking(app: tauri::AppHandle, label: &'static str) {
+    let thread_name = format!("show-{label}");
+    if let Err(error) = std::thread::Builder::new()
+        .name(thread_name)
+        .spawn(move || {
+            if let Err(error) = window_placement::set_auxiliary_window_visible_for_app(
+                &app,
+                label,
+                true,
+                Some(PRESERVE_PLACEMENT_MODE),
+            ) {
+                crate::logger::log_msg(
+                    "WARN",
+                    "AuxiliaryWindow",
+                    &format!("后台显示可选窗口 {label} 失败: {error}"),
+                );
+                crate::capabilities::schedule_reconcile(&app);
+            }
+        })
+    {
+        crate::logger::log_msg(
+            "WARN",
+            "AuxiliaryWindow",
+            &format!("无法启动可选窗口 {label} 显示任务: {error}"),
+        );
     }
 }
 
@@ -109,19 +162,15 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             let visibility = OverlayVisibility::from_config(config.as_ref());
 
             if visibility.terror_zone {
-                let _ = window_placement::set_auxiliary_window_visible_for_app(
-                    main_window_for_events.app_handle(),
+                show_overlay_without_blocking(
+                    main_window_for_events.app_handle().clone(),
                     TERROR_ZONE_OVERLAY_LABEL,
-                    true,
-                    Some(PRESERVE_PLACEMENT_MODE),
                 );
             }
             if visibility.stats {
-                let _ = window_placement::set_auxiliary_window_visible_for_app(
-                    main_window_for_events.app_handle(),
+                show_overlay_without_blocking(
+                    main_window_for_events.app_handle().clone(),
                     STATS_OVERLAY_LABEL,
-                    true,
-                    Some(PRESERVE_PLACEMENT_MODE),
                 );
             }
         }

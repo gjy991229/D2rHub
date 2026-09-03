@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicBool, Ordering};
 use sysinfo::{ProcessesToUpdate, System};
 use tauri::Manager;
 
@@ -1403,9 +1404,35 @@ pub fn is_admin() -> bool {
 }
 
 /// 退出程序
+static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
 pub fn exit_app(app: tauri::AppHandle) {
-    crate::capabilities::shutdown(&app);
-    app.exit(0);
+    if EXIT_REQUESTED.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
+    crate::logger::log_msg("INFO", "System", "已请求退出，后台回收运行服务");
+    let shutdown_app = app.clone();
+    match std::thread::Builder::new()
+        .name("application-shutdown".to_string())
+        .spawn(move || {
+            // Capability shutdown may wait for workers that themselves marshal
+            // window work back to Tauri's event loop. Never perform that wait
+            // inside an IPC or tray event callback: keeping the event loop free
+            // is what lets those workers finish.
+            crate::capabilities::shutdown(&shutdown_app);
+            shutdown_app.exit(0);
+        }) {
+        Ok(_) => {}
+        Err(error) => {
+            crate::logger::log_msg(
+                "ERROR",
+                "System",
+                &format!("无法启动后台退出线程，将直接退出: {error}"),
+            );
+            app.exit(0);
+        }
+    }
 }
 
 /// 打开日志文件夹目录
@@ -1507,7 +1534,16 @@ pub struct CloudVersionInfo {
 pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
     let url = "https://api.github.com/repos/gjy991229/D2RHub/releases/latest";
     let output = silent_cmd("curl")
-        .args(["-sL", "-H", "User-Agent: D2RHub-Updater", url])
+        .args([
+            "-sL",
+            "--connect-timeout",
+            "5",
+            "--max-time",
+            "15",
+            "-H",
+            "User-Agent: D2RHub-Updater",
+            url,
+        ])
         .output();
 
     let stdout = match output {
@@ -1518,7 +1554,7 @@ pub fn check_cloud_version() -> Result<CloudVersionInfo, String> {
                 .arg("-NoProfile")
                 .arg("-Command")
                 .arg(format!(
-                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (Invoke-WebRequest -UserAgent 'D2RHub-Updater' -Uri '{}' -UseBasicParsing).Content",
+                    "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; (Invoke-WebRequest -UserAgent 'D2RHub-Updater' -Uri '{}' -UseBasicParsing -TimeoutSec 15).Content",
                     url
                 ))
                 .output();

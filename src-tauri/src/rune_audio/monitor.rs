@@ -1266,14 +1266,20 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
             format!("创建符文声纹工作线程失败: {error}")
         })?;
 
-    match ready_rx.recv() {
+    match ready_rx.recv_timeout(std::time::Duration::from_secs(8)) {
         Ok(Ok(())) => {
             let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
             current.running = true;
             Ok(())
         }
         Ok(Err(error)) => Err(error),
-        Err(_) => Err("符文声纹工作线程在初始化期间异常退出".to_string()),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("符文声纹工作线程在初始化期间异常退出".to_string())
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            request_stop();
+            Err("符文声纹工作线程初始化超过 8 秒，已取消本次启动".to_string())
+        }
     }
 }
 
@@ -1287,7 +1293,7 @@ pub async fn start_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), Strin
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn stop_rune_audio_monitor() -> Result<(), String> {
     stop_blocking()
 }

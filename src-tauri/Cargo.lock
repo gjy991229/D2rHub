@@ -555,7 +555,7 @@ checksum = "52560adf09603e58c9a7ee1fe1dcb95a16927b17c127f0ac02d6e768a0e25bc1"
 
 [[package]]
 name = "d2rhub"
-version = "0.9.92"
+version = "0.9.93"
 dependencies = [
  "chrono",
  "dirs 5.0.1",

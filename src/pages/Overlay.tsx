@@ -46,6 +46,29 @@ import {
 } from "../utils/overlayDocking";
 import { restoreWindowPlacement } from "../utils/windowPlacement";
 
+function overlayLogDetail(value: unknown): string {
+  if (value instanceof Error) return value.stack || value.message;
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function reportOverlayIssue(
+  level: "WARN" | "ERROR",
+  message: string,
+  detail?: unknown,
+) {
+  const fullMessage = detail === undefined
+    ? `[Overlay] ${message}`
+    : `[Overlay] ${message}: ${overlayLogDetail(detail)}`;
+  if (level === "ERROR") console.error(fullMessage);
+  else console.warn(fullMessage);
+  void invokeCommand("write_log", { level, message: fullMessage }).catch(() => {});
+}
+
 interface TerrorZoneImmunity {
   code: string;
   label: string;
@@ -555,7 +578,7 @@ export function Overlay() {
         }),
       ]);
     } catch (err) {
-      console.warn("[Overlay] persist geometry failed:", err);
+      reportOverlayIssue("WARN", "persist geometry failed", err);
     }
   }
 
@@ -581,7 +604,7 @@ export function Overlay() {
       try {
         await win.setPosition(new PhysicalPosition(target.x, target.y));
       } catch (err) {
-        console.warn("[Overlay] reduced-motion dock move failed:", err);
+        reportOverlayIssue("WARN", "reduced-motion dock move failed", err);
         programmaticDockMoveRef.current = false;
         return;
       }
@@ -623,7 +646,7 @@ export function Overlay() {
             animationFailed = true;
             moveInFlight = false;
             pendingPosition = null;
-            console.warn("[Overlay] dock animation move failed:", err);
+            reportOverlayIssue("WARN", "dock animation move failed", err);
             finish();
           });
         };
@@ -752,7 +775,7 @@ export function Overlay() {
       await animateOverlayPosition(placement.visible, "shown");
       scheduleDockHide();
     } catch (err) {
-      console.warn("[Overlay] evaluate edge docking failed:", err);
+      reportOverlayIssue("WARN", "evaluate edge docking failed", err);
     }
   }
 
@@ -778,7 +801,7 @@ export function Overlay() {
       );
       await animateOverlayPosition(placement.visible, "shown");
     } catch (err) {
-      console.warn("[Overlay] refresh dock placement failed:", err);
+      reportOverlayIssue("WARN", "refresh dock placement failed", err);
     }
   }
 
@@ -851,7 +874,7 @@ export function Overlay() {
         await evaluateOverlayDocking();
       }
     } catch (err) {
-      console.warn("[Overlay] toggle information overlay mode failed:", err);
+      reportOverlayIssue("WARN", "toggle information overlay mode failed", err);
     } finally {
       modeTransitionRef.current = false;
     }
@@ -979,7 +1002,7 @@ export function Overlay() {
     userWindowMovePendingRef.current = true;
     void getCurrentWindow().startDragging().catch((err) => {
       userWindowMovePendingRef.current = false;
-      console.warn("[Overlay] start window dragging failed:", err);
+      reportOverlayIssue("WARN", "start window dragging failed", err);
     });
   }
 
@@ -1025,7 +1048,7 @@ export function Overlay() {
         }
         await Promise.all(operations);
       } catch (err) {
-        console.warn("[Overlay] custom mini resize failed:", err);
+        reportOverlayIssue("WARN", "custom mini resize failed", err);
       }
     })();
     session.flushPromise = operation;
@@ -1116,7 +1139,7 @@ export function Overlay() {
         flushPromise: null,
       };
     })().catch((err) => {
-      console.warn("[Overlay] initialize custom mini resize failed:", err);
+      reportOverlayIssue("WARN", "initialize custom mini resize failed", err);
     });
   }
 
@@ -1177,13 +1200,13 @@ export function Overlay() {
         windowTitle: displayName,
       });
       if (!ok) {
-        console.warn("[Overlay] bring_window_by_title_to_front returned false for", displayName);
+        reportOverlayIssue("WARN", "bring_window_by_title_to_front returned false", displayName);
       } else {
         // Optimistically reflect the requested focus so its pill becomes visible immediately.
         setForegroundTitle(displayName);
       }
     } catch (err) {
-      console.error("[Overlay] bring_window_by_title_to_front failed:", err);
+      reportOverlayIssue("ERROR", "bring_window_by_title_to_front failed", err);
     }
   }
 
@@ -1374,7 +1397,7 @@ export function Overlay() {
         setTerrorZoneStatus(snapshot.current || snapshot.next ? "ready" : "empty");
         queueNextLoad(snapshot, 60 * 1000);
       } catch (err) {
-        console.warn("[Overlay] get_terror_zone_snapshot failed:", err);
+        reportOverlayIssue("WARN", "get_terror_zone_snapshot failed", err);
         if (!cancelled) {
           setTerrorZones({ current: null, next: null });
           setTerrorZoneStatus("error");
@@ -1491,7 +1514,7 @@ export function Overlay() {
           if (!cancelled && supportsCompactMode) void evaluateOverlayDocking();
         }, OVERLAY_DOCK_SETTLE_DELAY_MS);
       } catch (err) {
-        console.warn("[Overlay] restore information overlay geometry failed:", err);
+        reportOverlayIssue("WARN", "restore information overlay geometry failed", err);
       }
     })();
 
@@ -1547,14 +1570,14 @@ export function Overlay() {
                 await persistOverlayGeometry(undefined, true);
               }
             } catch (err) {
-              console.warn(`[Overlay] persist ${resizedMode} size failed:`, err);
+              reportOverlayIssue("WARN", `persist ${resizedMode} size failed`, err);
             }
           }, 250);
         });
         if (cancelled) stopListening();
         else unlistenResize = stopListening;
       } catch (err) {
-        console.warn("[Overlay] listen for preferred size changes failed:", err);
+        reportOverlayIssue("WARN", "listen for preferred size changes failed", err);
       }
     })();
 
@@ -1603,7 +1626,7 @@ export function Overlay() {
         if (cancelled) stopListening();
         else unlistenMove = stopListening;
       } catch (err) {
-        console.warn("[Overlay] listen for edge docking failed:", err);
+        reportOverlayIssue("WARN", "listen for edge docking failed", err);
       }
     })();
 
@@ -1710,7 +1733,7 @@ export function Overlay() {
     }).then((stop) => {
       if (cancelled) stop();
       else unlisten = stop;
-    }).catch((error) => console.error("监听符文声纹事件失败", error));
+    }).catch((error) => reportOverlayIssue("ERROR", "监听符文声纹事件失败", error));
     return () => {
       cancelled = true;
       unlisten?.();
@@ -1727,7 +1750,7 @@ export function Overlay() {
     }).then((stop) => {
       if (cancelled) stop();
       else unlisten = stop;
-    }).catch((error) => console.error("监听物品声纹事件失败", error));
+    }).catch((error) => reportOverlayIssue("ERROR", "监听物品声纹事件失败", error));
     return () => {
       cancelled = true;
       unlisten?.();
@@ -1744,7 +1767,7 @@ export function Overlay() {
     }).then((stop) => {
       if (cancelled) stop();
       else unlisten = stop;
-    }).catch((error) => console.error("监听自动刷图统计状态失败", error));
+    }).catch((error) => reportOverlayIssue("ERROR", "监听自动刷图统计状态失败", error));
     return () => {
       cancelled = true;
       unlisten?.();
@@ -1758,7 +1781,7 @@ export function Overlay() {
     let cancelled = false;
     void invokeCommand<{ running: boolean }>("get_rune_audio_status").then((status) => {
       if (!cancelled && !status.running) return invokeCommand("start_rune_audio_monitor");
-    }).catch((error) => console.warn("启动符文声纹监控失败", error));
+    }).catch((error) => reportOverlayIssue("WARN", "启动符文声纹监控失败", error));
     return () => { cancelled = true; };
   }, [accounts, config?.rune_audio_target_account, isAudioTrackingActive]);
 

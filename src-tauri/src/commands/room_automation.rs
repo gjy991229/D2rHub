@@ -29,7 +29,7 @@ pub(crate) fn room_automation_get_config(
     Ok(manager(&state)?.get_config())
 }
 
-#[tauri::command(rename_all = "camelCase")]
+#[tauri::command(async, rename_all = "camelCase")]
 pub(crate) fn room_automation_save_config(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
@@ -49,7 +49,7 @@ pub(crate) fn room_automation_get_status(
     Ok(manager(&state)?.get_status())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_start_primary(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
@@ -58,7 +58,7 @@ pub(crate) fn room_automation_start_primary(
     manager(&state)?.start_primary()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_start_followers(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
@@ -67,7 +67,7 @@ pub(crate) fn room_automation_start_followers(
     manager(&state)?.start_followers()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_retry(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
@@ -76,21 +76,21 @@ pub(crate) fn room_automation_retry(
     manager(&state)?.retry()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_cancel(
     state: tauri::State<'_, RoomAutomationCommandState>,
 ) -> Result<WorkflowStatus, String> {
     manager(&state)?.cancel()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_get_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
 ) -> Result<ChatF13BindingStatus, String> {
     manager(&state)?.get_chat_binding()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_install_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
@@ -99,7 +99,7 @@ pub(crate) fn room_automation_install_chat_binding(
     manager(&state)?.install_chat_binding()
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_restore_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
 ) -> Result<ChatF13BindingStatus, String> {

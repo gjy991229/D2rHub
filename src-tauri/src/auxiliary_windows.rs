@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use parking_lot::Mutex;
@@ -28,6 +29,7 @@ fn validate_label(label: &str) -> Result<(), AppError> {
     }
 }
 
+#[cfg(test)]
 fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
     let mut labels = Vec::with_capacity(AUXILIARY_WINDOW_LABELS.len());
     if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
@@ -49,21 +51,6 @@ fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
     labels
 }
 
-/// Creates the auxiliary WebViews requested by the persisted startup
-/// configuration. The windows remain hidden until their owning capability or
-/// the frontend visibility coordinator has restored placement and shown them.
-pub(crate) fn create_configured_windows(app: &AppHandle, config: &GlobalConfig) {
-    for label in startup_window_labels(config) {
-        if let Err(error) = ensure_window(app, label) {
-            crate::logger::log_msg(
-                "WARN",
-                "AuxiliaryWindow",
-                &format!("可选窗口 {label} 创建失败，主窗口将继续启动: {error}"),
-            );
-        }
-    }
-}
-
 /// Returns an existing auxiliary WebView or creates it from the corresponding
 /// `create: false` entry in `tauri.conf.json`. Capability stop destroys the
 /// WebView; a later start recreates it from this same static configuration.
@@ -80,9 +67,10 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindo
     // lock. Never block that same main thread behind the worker: the current
     // owner will finish the creation, and capability reconciliation retries a
     // transient loser.
-    let _create_guard = lifecycle.create_lock.try_lock().ok_or_else(|| {
-        AppError::Unknown(format!("辅助窗口正在创建，请稍后重试: {label}"))
-    })?;
+    let _create_guard = lifecycle
+        .create_lock
+        .try_lock()
+        .ok_or_else(|| AppError::Unknown(format!("辅助窗口正在创建，请稍后重试: {label}")))?;
 
     // Another caller may have completed creation between the initial lookup
     // and this successful lock acquisition.
@@ -104,10 +92,25 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindo
         )));
     }
 
-    WebviewWindowBuilder::from_config(app, &config)
+    crate::logger::log_msg(
+        "INFO",
+        "AuxiliaryWindow",
+        &format!("正在创建可选窗口 {label}"),
+    );
+    let started_at = std::time::Instant::now();
+    let window = WebviewWindowBuilder::from_config(app, &config)
         .map_err(|error| AppError::Unknown(format!("读取辅助窗口配置失败 {label}: {error}")))?
         .build()
-        .map_err(|error| AppError::Unknown(format!("创建辅助窗口失败 {label}: {error}")))
+        .map_err(|error| AppError::Unknown(format!("创建辅助窗口失败 {label}: {error}")))?;
+    crate::logger::log_msg(
+        "INFO",
+        "AuxiliaryWindow",
+        &format!(
+            "可选窗口 {label} 创建完成，耗时 {} ms",
+            started_at.elapsed().as_millis()
+        ),
+    );
+    Ok(window)
 }
 
 /// Releases the renderer and native window owned by a disabled capability.
@@ -120,6 +123,11 @@ pub(crate) fn destroy_window(app: &AppHandle, label: &str) -> Result<bool, AppEr
     if label == STATS_OVERLAY_LABEL {
         crate::input_listener::set_stats_overlay_mini_input_region_state(false, 0, 0, 0, 0);
     }
+    crate::logger::log_msg(
+        "INFO",
+        "AuxiliaryWindow",
+        &format!("正在销毁可选窗口 {label}"),
+    );
     window
         .destroy()
         .map_err(|error| AppError::Unknown(format!("销毁辅助窗口失败 {label}: {error}")))?;

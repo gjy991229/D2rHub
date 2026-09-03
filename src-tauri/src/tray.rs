@@ -30,19 +30,33 @@ pub fn create_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 crate::window_placement::show_main_window_safely(app);
             }
             "recover-overlays" => {
-                if let Err(error) =
-                    crate::window_placement::recover_auxiliary_windows_for_app(app, "cursor")
+                let recover_app = app.clone();
+                if let Err(error) = std::thread::Builder::new()
+                    .name("recover-overlay-windows".to_string())
+                    .spawn(move || {
+                        if let Err(error) =
+                            crate::window_placement::recover_auxiliary_windows_for_app(
+                                &recover_app,
+                                "cursor",
+                            )
+                        {
+                            crate::logger::log_msg(
+                                "WARN",
+                                "WindowPlacement",
+                                &format!("从托盘找回悬浮窗失败: {error}"),
+                            );
+                        }
+                    })
                 {
                     crate::logger::log_msg(
                         "WARN",
                         "WindowPlacement",
-                        &format!("从托盘找回悬浮窗失败: {error}"),
+                        &format!("无法启动悬浮窗找回任务: {error}"),
                     );
                 }
             }
             "quit" => {
-                crate::capabilities::shutdown(app);
-                app.exit(0);
+                crate::infrastructure::system::exit_app(app.clone());
             }
             _ => {}
         })

@@ -1010,6 +1010,37 @@ fn stats_api_runtime() -> &'static std::sync::Mutex<Option<StatsApiRuntime>> {
     STATS_API_RUNTIME.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+fn reap_stats_api_worker(worker: std::thread::JoinHandle<()>, reason: &'static str) {
+    if worker.is_finished() {
+        if worker.join().is_err() {
+            crate::logger::log_msg("WARN", "Stats", "统计 API 线程停止时发生 panic");
+        }
+        return;
+    }
+
+    // Joining a request handler can wait for socket or database I/O. Reap it
+    // away from configuration transactions and the Tauri event loop so one
+    // slow client cannot freeze settings or application shutdown.
+    if let Err(error) = std::thread::Builder::new()
+        .name("stats-api-reaper".to_string())
+        .spawn(move || {
+            if worker.join().is_err() {
+                crate::logger::log_msg(
+                    "WARN",
+                    "Stats",
+                    &format!("统计 API 线程在{reason}时发生 panic"),
+                );
+            }
+        })
+    {
+        crate::logger::log_msg(
+            "WARN",
+            "Stats",
+            &format!("无法启动统计 API 回收线程，已分离旧工作线程: {error}"),
+        );
+    }
+}
+
 pub(crate) fn stop_stats_api() {
     STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1022,9 +1053,7 @@ pub(crate) fn stop_stats_api() {
     };
     // Wake `listener.incoming()` so the worker can observe the stop flag.
     let _ = std::net::TcpStream::connect(("127.0.0.1", runtime.port));
-    if runtime.worker.join().is_err() {
-        crate::logger::log_msg("WARN", "Stats", "统计 API 线程停止时发生 panic");
-    }
+    reap_stats_api_worker(runtime.worker, "后台回收");
 }
 
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
@@ -1038,11 +1067,12 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
             .ok_or_else(|| "统计 API 正在启动，请稍后重试".to_string())?;
         return Ok((running.port, running.token.clone()));
     }
-    if let Some(stale) = runtime.take() {
-        let _ = stale.worker.join();
-    }
-    STATS_API_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
     let generation = STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    STATS_API_RUNNING.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(stale) = runtime.take() {
+        let _ = std::net::TcpStream::connect(("127.0.0.1", stale.port));
+        reap_stats_api_worker(stale.worker, "重启回收");
+    }
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").map_err(|error| {
         STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -1520,7 +1550,7 @@ fn escape_json_for_html_script(json: &str) -> String {
 }
 
 /// 打开统计可视化页面。
-#[tauri::command]
+#[tauri::command(async)]
 pub fn open_stats_page(
     state: tauri::State<'_, SharedState>,
     app_handle: tauri::AppHandle,

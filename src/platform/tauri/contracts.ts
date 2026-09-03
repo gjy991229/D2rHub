@@ -109,6 +109,7 @@ export const TAURI_COMMANDS = [
   "update_account_region",
   "update_mod_capsule",
   "upgrade_audio_mod",
+  "write_log",
 ] as const;
 
 export type TauriCommandName = (typeof TAURI_COMMANDS)[number];

@@ -19,7 +19,9 @@ pub fn get_d2r_pids() -> Vec<u32> {
     adapter::get_d2r_pids()
 }
 
-#[tauri::command]
+// Process termination performs taskkill fallbacks and bounded sleeps while
+// Windows releases handles; never run that work on the UI event loop.
+#[tauri::command(async)]
 pub fn kill_all_d2r_processes() -> Result<(), AppError> {
     adapter::kill_all_d2r_processes()
 }
@@ -107,12 +109,16 @@ pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
     adapter::send_keys_to_window(pid)
 }
 
-#[tauri::command]
+// `net session` is an external process and can be delayed by Windows services.
+#[tauri::command(async)]
 pub fn is_admin() -> bool {
     adapter::is_admin()
 }
 
-#[tauri::command]
+// Shutdown performs bounded worker cleanup. Dispatch it away from the Tauri
+// event loop; the adapter itself also returns immediately and completes exit
+// from a dedicated thread for tray callers.
+#[tauri::command(async)]
 pub fn exit_app(app: tauri::AppHandle) {
     adapter::exit_app(app);
 }
@@ -137,7 +143,7 @@ pub async fn install_update(app: tauri::AppHandle, url: String) -> Result<(), St
     adapter::install_update(app, url).await
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn check_cloud_version() -> Result<adapter::CloudVersionInfo, String> {
     adapter::check_cloud_version()
 }
