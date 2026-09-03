@@ -198,7 +198,7 @@ export function ModProcessingPanel({
             return;
           }
           await onTargetChange(target.account_id);
-          if (capsule.processed) {
+          if (capsule.processed || capsule.update_required) {
             selectProcessedMod(capsule.name);
           } else {
             setAudioProcessingMode?.("create");

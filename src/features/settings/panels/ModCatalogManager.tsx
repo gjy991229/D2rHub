@@ -247,7 +247,9 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
               )}
               {!editing && (
                 <div className="mod-catalog-actions">
-                  {capsule.origin === "scanned" && capsule.source_eligible && (
+                  {capsule.origin === "scanned" && (
+                    capsule.source_eligible || capsule.update_required || capsule.processed
+                  ) && (
                     <Button size="sm" variant="ghost" onClick={() => void onProcess(capsule)}>{copy.process}</Button>
                   )}
                   <Button size="sm" variant="ghost" title={copy.editTitle} onClick={() => beginEdit(capsule)}>
