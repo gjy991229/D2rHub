@@ -387,6 +387,12 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Enables the activate_application_runtime command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-activate-application-runtime",
+          "markdownDescription": "Enables the activate_application_runtime command without any pre-configured scope."
+        },
+        {
           "description": "Enables the add_mod_capsule command without any pre-configured scope.",
           "type": "string",
           "const": "allow-add-mod-capsule",
@@ -1117,6 +1123,12 @@
           "type": "string",
           "const": "allow-write-log",
           "markdownDescription": "Enables the write_log command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the activate_application_runtime command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-activate-application-runtime",
+          "markdownDescription": "Denies the activate_application_runtime command without any pre-configured scope."
         },
         {
           "description": "Denies the add_mod_capsule command without any pre-configured scope.",

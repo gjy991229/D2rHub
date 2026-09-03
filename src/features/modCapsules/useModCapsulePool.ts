@@ -105,4 +105,6 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   };
 }
 
-export type ModCapsuleController = ReturnType<typeof useModCapsulePool>;
+export type ModCapsuleController = Omit<ReturnType<typeof useModCapsulePool>, "openDirectory"> & {
+  openDirectory?: ReturnType<typeof useModCapsulePool>["openDirectory"];
+};

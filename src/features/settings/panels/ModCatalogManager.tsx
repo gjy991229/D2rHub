@@ -115,7 +115,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             size="sm"
             variant="ghost"
             title={copy.openFolderTitle}
-            onClick={() => void catalog.openDirectory(edition).catch((error) => {
+            onClick={() => void catalog.openDirectory?.(edition).catch((error) => {
               showToast("error", String(error));
             })}
           >
