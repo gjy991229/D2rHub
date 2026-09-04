@@ -133,7 +133,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "功能与原理",
-          body: "本模块可让主账号自动创建或重开房间，并让跟随账号同时或按固定间隔派发进房指令。程序通过识别对应的 D2R 窗口并发送键盘消息，自动填写房间名和密码；为支持后台输入，可能在你同意后备份并修改角色键位文件，为聊天功能设置 F13 备用键。",
+          body: "本模块可让主账号自动创建或重开房间，并让跟随账号同时或按固定间隔派发进房指令。程序通过识别对应的 D2R 窗口并发送键盘消息，自动填写房间名和密码；为支持后台输入，在你同意后会先备份兼容角色原有的聊天第二快捷键，再将该槽位替换为 F13，恢复时还原原值。",
         },
         {
           title: "风险与免责",
@@ -207,7 +207,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "What it does",
-          body: "This module can create or recreate a room on the primary account and dispatch follower join commands together or at a fixed interval. It identifies each D2R window and sends keyboard messages to enter the room name and password. With your consent, it may back up and modify character key-binding files to assign F13 as a secondary Chat key for background entry.",
+          body: "This module can create or recreate a room on the primary account and dispatch follower join commands together or at a fixed interval. It identifies each D2R window and sends keyboard messages to enter the room name and password. With your consent, it first backs up each compatible character's existing secondary Chat key, then replaces that slot with F13 for background entry and restores the original value when requested.",
         },
         {
           title: "Risks and disclaimer",

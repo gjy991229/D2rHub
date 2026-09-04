@@ -21,11 +21,14 @@ const MANIFEST_FILE_NAME: &str = "d2rhub-mod-manifest.json";
 const LEGACY_MANIFEST_FILE_NAME: &str = "audio-telemetry-manifest.json";
 const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 const PRODUCER_NAME: &str = "d2r-audio-mod";
-const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 24;
+const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 25;
+const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
-const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 2;
+const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 20;
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 22;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 21;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FINGERPRINT: &str = "room-tools-v21";
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -45,6 +48,9 @@ const ROOM_TOOL_NEXT_X: i64 = -1_040;
 const ROOM_TOOL_CREATE_X: i64 = -760;
 const ROOM_TOOL_JOIN_X: i64 = -480;
 const ROOM_TOOL_CONFIRM_Y: i64 = 92;
+const QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS: f64 = 0.5;
+const ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS: f64 = 0.01;
+const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = 0.05;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
@@ -471,11 +477,11 @@ fn parse_feature_groups(
         Some(value) => serde_json::from_value::<Vec<GeneratorFeatureGroup>>(value.clone())
             .map_err(|_| "D2RHub Mod 清单的功能组信息无效，请重新加工".to_string())?,
     };
-    validate_feature_group_entries(&groups)?;
+    validate_feature_group_metadata(&groups)?;
     Ok(groups)
 }
 
-fn validate_feature_group_entries(groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
+fn validate_feature_group_metadata(groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
     let mut ids = HashSet::new();
     for group in groups {
         if group.id.is_empty()
@@ -495,7 +501,34 @@ fn validate_feature_group_entries(groups: &[GeneratorFeatureGroup]) -> Result<()
         {
             return Err(format!("D2RHub Mod 功能组元数据无效：{}", group.id));
         }
+    }
+    Ok(())
+}
+
+fn validate_feature_group_entries(groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
+    validate_feature_group_metadata(groups)?;
+    for group in groups {
         validate_supported_feature_group(group)?;
+    }
+    Ok(())
+}
+
+fn validate_upgrade_source_feature_group_entries(
+    groups: &[GeneratorFeatureGroup],
+) -> Result<(), String> {
+    validate_feature_group_metadata(groups)?;
+    for group in groups {
+        if group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
+            && group.recipe_version == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+        {
+            if group.fingerprint != PREVIOUS_IN_GAME_ROOM_TOOLS_FINGERPRINT {
+                return Err(
+                    "上一版局内房间工具指纹无效，不能作为原位升级来源".to_string(),
+                );
+            }
+        } else {
+            validate_supported_feature_group(group)?;
+        }
     }
     Ok(())
 }
@@ -680,30 +713,40 @@ fn validate_audio_mod_credential(
         ),
     };
     let parsed_feature_groups = parse_feature_groups(&manifest)?;
+    let has_feature_group_protocol = recipe_version
+        .is_some_and(|version| version >= FEATURE_GROUP_PROTOCOL_RECIPE_VERSION)
+        && !parsed_feature_groups.is_empty();
     let current_feature_protocol = recipe_version
         .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
-        && !parsed_feature_groups.is_empty();
+        && has_feature_group_protocol;
     let has_current_identity = manifest
         .get("manifest_format")
         .and_then(serde_json::Value::as_str)
         == Some(MANIFEST_FORMAT)
         && manifest.get("producer").and_then(serde_json::Value::as_str) == Some(PRODUCER_NAME)
         && manifest.get("mod_name").and_then(serde_json::Value::as_str) == Some(mod_name);
-    if current_feature_protocol && !has_current_identity {
-        return Err("当前功能组凭证缺少完整的生成器身份".to_string());
+    if has_feature_group_protocol && !has_current_identity {
+        return Err("功能组凭证缺少完整的生成器身份".to_string());
     }
-    let feature_groups = if current_feature_protocol {
+    if current_feature_protocol {
+        validate_feature_group_entries(&parsed_feature_groups)?;
+    }
+    let feature_groups = if has_feature_group_protocol {
         parsed_feature_groups
     } else {
         Vec::new()
     };
-    let has_audio_telemetry = feature_groups.is_empty()
-        || feature_groups
+    let has_audio_telemetry = if has_feature_group_protocol {
+        feature_groups
             .iter()
-            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
-    let auto_exit_on_death_active = if feature_groups
-        .iter()
-        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID)
+    } else {
+        true
+    };
+    let auto_exit_on_death_active = if current_feature_protocol
+        && feature_groups
+            .iter()
+            .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
     {
         auto_exit_on_death_layout_enabled(&mod_directory, mod_name)?
     } else {
@@ -768,6 +811,27 @@ fn layout_has_timed_child_message(
                         .and_then(serde_json::Value::as_f64)
                         .is_some_and(|time| (time - expected_time).abs() < f64::EPSILON)
             })
+        })
+}
+
+fn layout_field_value_count(document: &serde_json::Value, expected: &str) -> usize {
+    let own = document
+        .get("fields")
+        .and_then(serde_json::Value::as_object)
+        .map_or(0, |fields| {
+            fields
+                .values()
+                .filter(|value| value.as_str() == Some(expected))
+                .count()
+        });
+    own + document
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .map_or(0, |children| {
+            children
+                .iter()
+                .map(|child| layout_field_value_count(child, expected))
+                .sum()
         })
 }
 
@@ -909,7 +973,11 @@ fn validate_auto_exit_on_death_layouts(
     Ok(())
 }
 
-fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
+fn validate_in_game_room_tool_layouts_for_recipe(
+    mod_directory: &Path,
+    mod_name: &str,
+    require_room_submission_transition: bool,
+) -> Result<(), String> {
     let layout_directory = mod_directory
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
@@ -920,7 +988,7 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
 
     let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
     for action in [
-        "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm",
+        "PanelManager:OpenPanel:D2RHubQuickRecreateArm",
         "PanelManager:OpenPanel:D2RHubOpenCreateGame",
         "PanelManager:OpenPanel:D2RHubOpenJoinGame",
     ] {
@@ -965,51 +1033,133 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
         return Err("局内“下一局”第一层提示位置或文字无效".to_string());
     }
 
-    let confirmation =
-        read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateConfirmhd.json")?;
-    let confirm_next = find_layout_node(&confirmation, "D2RHubConfirmNextGame")
-        .ok_or_else(|| "局内“下一局”确认按钮不完整".to_string())?;
-    if confirmation
-        .pointer("/fields/isDismissable")
-        .and_then(serde_json::Value::as_bool)
-        != Some(true)
-        || confirmation
-            .pointer("/fields/acceptsEscKeyEverywhere")
-            .and_then(serde_json::Value::as_bool)
-            != Some(true)
+    let arm = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateArmhd.json")?;
+    let armed_next = find_layout_node(&arm, "D2RHubArmedNextGame")
+        .ok_or_else(|| "局内“下一局”双击接收按钮不完整".to_string())?;
+    if arm.get("type").and_then(serde_json::Value::as_str) != Some("TooltipsPanel")
         || !layout_has_child_message(
-            &confirmation,
+            &arm,
             "onClickMessage",
             "PanelManager:OpenPanel:D2RHubQuickRecreate",
         )
-        || !layout_has_child_message(
-            &confirmation,
-            "message",
-            "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm",
+        || !layout_has_timed_child_message(
+            &arm,
+            "PanelManager:ClosePanel:D2RHubQuickRecreateArm",
+            QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS,
         )
-        || confirm_next
+        || armed_next
             .pointer("/fields/rect/x")
             .and_then(serde_json::Value::as_i64)
             != Some(ROOM_TOOL_NEXT_X)
-        || confirm_next
+        || armed_next
             .pointer("/fields/rect/y")
             .and_then(serde_json::Value::as_i64)
-            != Some(ROOM_TOOL_CONFIRM_Y)
-        || confirm_next
+            != Some(ROOM_TOOL_BUTTON_Y)
+        || armed_next
             .pointer("/fields/rect/scale")
             .and_then(serde_json::Value::as_f64)
             .is_none_or(|value| (value - ROOM_TOOL_BUTTON_SCALE).abs() > f64::EPSILON)
     {
-        return Err("局内“下一局”确认条不完整".to_string());
+        return Err("局内“下一局”双击窗口不完整".to_string());
     }
 
     let quick_recreate = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreatehd.json")?;
-    if !layout_has_child_message(
+    if !layout_has_timed_child_message(
         &quick_recreate,
-        "message",
+        "PanelManager:OpenPanel:PauseLayoutGarden",
+        ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS,
+    ) || !layout_has_timed_child_message(
+        &quick_recreate,
+        "PausePanelMessage:ExitGame",
+        ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+    ) || !layout_has_timed_child_message(
+        &quick_recreate,
         "CharacterSelect:LoadCharacter:2",
+        ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
     ) {
         return Err("局内“下一局”动作无效".to_string());
+    }
+    let quick_messages = quick_recreate
+        .get("children")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "局内“下一局”消息链无效".to_string())?;
+    let exit_index = quick_messages
+        .iter()
+        .position(|child| {
+            child
+                .pointer("/fields/message")
+                .and_then(serde_json::Value::as_str)
+                == Some("PausePanelMessage:ExitGame")
+        })
+        .ok_or_else(|| "局内“下一局”缺少正常退出消息".to_string())?;
+    let load_index = quick_messages
+        .iter()
+        .position(|child| {
+            child
+                .pointer("/fields/message")
+                .and_then(serde_json::Value::as_str)
+                == Some("CharacterSelect:LoadCharacter:2")
+        })
+        .ok_or_else(|| "局内“下一局”缺少地狱加载消息".to_string())?;
+    if exit_index >= load_index {
+        return Err("局内“下一局”必须先正常退出再加载角色".to_string());
+    }
+    if [
+        "D2RHubQuickRecreateConfirmhd.json",
+        "D2RHubQuickRecreateConfirm.json",
+    ]
+    .iter()
+    .any(|name| layout_directory.join(name).exists())
+    {
+        return Err("局内“下一局”仍包含旧版二级确认布局".to_string());
+    }
+    if require_room_submission_transition {
+        for (name, native_message) in [
+            ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
+            ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
+        ] {
+            let commit = read_room_tool_layout(&layout_directory, name)?;
+            if !layout_has_timed_child_message(
+                &commit,
+                "PanelManager:OpenPanel:PauseLayoutGarden",
+                ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS,
+            ) || !layout_has_timed_child_message(
+                &commit,
+                "PausePanelMessage:ExitGame",
+                ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+            ) || !layout_has_timed_child_message(
+                &commit,
+                native_message,
+                ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+            ) {
+                return Err(format!("局内房间提交控制器无效：{name}"));
+            }
+            let messages = commit
+                .get("children")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| format!("局内房间提交控制器消息链无效：{name}"))?;
+            let exit_index = messages
+                .iter()
+                .position(|child| {
+                    child
+                        .pointer("/fields/message")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("PausePanelMessage:ExitGame")
+                })
+                .ok_or_else(|| format!("局内房间提交控制器缺少正常退出消息：{name}"))?;
+            let submit_index = messages
+                .iter()
+                .position(|child| {
+                    child
+                        .pointer("/fields/message")
+                        .and_then(serde_json::Value::as_str)
+                        == Some(native_message)
+                })
+                .ok_or_else(|| format!("局内房间提交控制器缺少原生提交消息：{name}"))?;
+            if exit_index >= submit_index {
+                return Err(format!("局内房间提交控制器必须先退出再提交：{name}"));
+            }
+        }
     }
     for (name, opener_name, native_target, opposite_target) in [
         (
@@ -1149,19 +1299,23 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
         }
     }
 
-    let form_specs: [(&str, &str, &[&str]); 2] = [
+    let form_specs: [(&str, &str, &[&str], &str, &str); 2] = [
         (
             "creategamepanelhd.json",
             "GameNameInput",
             &["GameNameInput", "PasswordInput", "DescriptionInput"],
+            "CreateGame:CreateGame",
+            "PanelManager:OpenPanel:D2RHubCommitCreateGame",
         ),
         (
             "joingamepanelhd.json",
             "NameInput",
             &["NameInput", "PasswordInput"],
+            "JoinGame:JoinGame",
+            "PanelManager:OpenPanel:D2RHubCommitJoinGame",
         ),
     ];
-    for (name, primary_input, input_names) in form_specs {
+    for (name, primary_input, input_names, native_submit, routed_submit) in form_specs {
         let form = read_room_tool_layout(&layout_directory, name)?;
         if form
             .pointer("/fields/defaultWidget")
@@ -1189,6 +1343,12 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
+        if require_room_submission_transition
+            && (layout_field_value_count(&form, native_submit) != 0
+                || layout_field_value_count(&form, routed_submit) == 0)
+        {
+            return Err(format!("局内房间表单没有完整接入主动退出提交链：{name}"));
+        }
         let close_action = if primary_input == "NameInput" {
             "PanelManager:ClosePanel:JoinGamePanel"
         } else {
@@ -1205,10 +1365,15 @@ fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> R
     Ok(())
 }
 
-fn validate_compatible_audio_mod_directory(
+fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
+    validate_in_game_room_tool_layouts_for_recipe(mod_directory, mod_name, true)
+}
+
+fn validate_compatible_audio_mod_directory_with_policy(
     mods_directory: &Path,
     mod_name: &str,
     mod_directory: PathBuf,
+    allow_previous_room_tools: bool,
 ) -> Result<ValidatedAudioMod, String> {
     let mod_name = plain_mod_name(mod_name)?;
     if !mod_directory.is_dir() {
@@ -1266,32 +1431,46 @@ fn validate_compatible_audio_mod_directory(
         ),
     };
     let parsed_feature_groups = parse_feature_groups(&manifest)?;
+    let has_feature_group_protocol = recipe_version
+        .is_some_and(|version| version >= FEATURE_GROUP_PROTOCOL_RECIPE_VERSION)
+        && !parsed_feature_groups.is_empty();
     let current_feature_protocol = recipe_version
         .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
-        && !parsed_feature_groups.is_empty();
+        && has_feature_group_protocol;
     let has_current_identity = manifest
         .get("manifest_format")
         .and_then(serde_json::Value::as_str)
         == Some(MANIFEST_FORMAT)
         && manifest.get("producer").and_then(serde_json::Value::as_str) == Some(PRODUCER_NAME)
         && manifest.get("mod_name").and_then(serde_json::Value::as_str) == Some(mod_name);
-    if current_feature_protocol && !has_current_identity {
-        return Err("当前功能组协议清单缺少完整的生成器身份信息，请重新加工".to_string());
+    if has_feature_group_protocol && !has_current_identity {
+        return Err("功能组协议清单缺少完整的生成器身份信息，请重新加工".to_string());
+    }
+    if current_feature_protocol {
+        if allow_previous_room_tools {
+            validate_upgrade_source_feature_group_entries(&parsed_feature_groups)?;
+        } else {
+            validate_feature_group_entries(&parsed_feature_groups)?;
+        }
     }
     // r21 and earlier manifests did not have independently verifiable feature groups. Keep their
     // published audio runtime working, but never expose their claims to additive generation.
-    let feature_groups = if current_feature_protocol {
+    let feature_groups = if has_feature_group_protocol {
         parsed_feature_groups
     } else {
         Vec::new()
     };
-    let has_audio_telemetry = feature_groups.is_empty()
-        || feature_groups
+    let has_audio_telemetry = if has_feature_group_protocol {
+        feature_groups
             .iter()
-            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID);
-    let auto_exit_on_death_active = if feature_groups
-        .iter()
-        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+            .any(|group| group.id == AUDIO_TELEMETRY_FEATURE_ID)
+    } else {
+        true
+    };
+    let auto_exit_on_death_active = if current_feature_protocol
+        && feature_groups
+            .iter()
+            .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
     {
         auto_exit_on_death_layout_enabled(&mod_directory, mod_name)?
     } else {
@@ -1312,15 +1491,27 @@ fn validate_compatible_audio_mod_directory(
             }
         }
     }
-    if feature_groups
-        .iter()
-        .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
+    if current_feature_protocol
+        && feature_groups
+            .iter()
+            .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
     {
-        validate_in_game_room_tool_layouts(&mod_directory, mod_name)?;
+        let uses_previous_room_tools = allow_previous_room_tools
+            && feature_groups.iter().any(|group| {
+                group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
+                    && group.recipe_version
+                        == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+            });
+        validate_in_game_room_tool_layouts_for_recipe(
+            &mod_directory,
+            mod_name,
+            !uses_previous_room_tools,
+        )?;
     }
-    if feature_groups
-        .iter()
-        .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
+    if current_feature_protocol
+        && feature_groups
+            .iter()
+            .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID)
     {
         validate_auto_exit_on_death_layouts(&mod_directory, mod_name, auto_exit_on_death_active)?;
     }
@@ -1334,6 +1525,32 @@ fn validate_compatible_audio_mod_directory(
         auto_exit_on_death_enabled: auto_exit_on_death_active,
         current_feature_protocol,
     })
+}
+
+fn validate_compatible_audio_mod_directory(
+    mods_directory: &Path,
+    mod_name: &str,
+    mod_directory: PathBuf,
+) -> Result<ValidatedAudioMod, String> {
+    validate_compatible_audio_mod_directory_with_policy(
+        mods_directory,
+        mod_name,
+        mod_directory,
+        false,
+    )
+}
+
+fn validate_upgradeable_audio_mod(
+    mods_directory: &Path,
+    mod_name: &str,
+) -> Result<ValidatedAudioMod, String> {
+    let mod_name = plain_mod_name(mod_name)?;
+    validate_compatible_audio_mod_directory_with_policy(
+        mods_directory,
+        mod_name,
+        mods_directory.join(mod_name),
+        true,
+    )
 }
 
 fn validate_audio_mod_directory(
@@ -1567,16 +1784,21 @@ fn compatibility_with(
     match validate(mods_directory, &name) {
         Ok(validated) => {
             if !validated.has_audio_telemetry {
+                let update_required = !validated.current_feature_protocol;
                 return Compatibility {
                     mod_name,
                     has_txt,
                     ready: false,
-                    update_required: false,
+                    update_required,
                     recipe_version: validated.recipe_version,
                     build_mode: validated.build_mode,
                     source_mod_name: validated.source_mod_name,
                     reason_code: "missing_audio_feature".to_string(),
-                    message: "当前 Mod 已经过 D2RHub 加工，但没有声纹识别功能组".to_string(),
+                    message: if update_required {
+                        "当前 Mod 没有声纹识别功能组，已有功能可原位更新".to_string()
+                    } else {
+                        "当前 Mod 已经过 D2RHub 加工，但没有声纹识别功能组".to_string()
+                    },
                 };
             }
             let update_required = !validated.current_feature_protocol;
@@ -1672,10 +1894,7 @@ pub(crate) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 .as_ref()
                 .is_ok_and(|validated| validated.has_audio_telemetry);
             let update_required = match validation.as_ref() {
-                Ok(validated) if validated.has_audio_telemetry => {
-                    !validated.current_feature_protocol
-                }
-                Ok(_) => false,
+                Ok(validated) => !validated.current_feature_protocol,
                 Err(_) => update_metadata.is_some(),
             };
             let feature_groups = validation
@@ -3569,26 +3788,52 @@ async fn upgrade_audio_mod_impl(
         include_room_tools,
         include_auto_exit_on_death,
     )?;
-    // Every pre-feature-group official release was an audio Mod. Preserve that known behavior even
-    // if a newer caller only asks to append room tools while performing the mandatory upgrade.
-    if current.update_required {
+    let current_validated = match validate_audio_mod(&mods_directory, mod_name) {
+        Ok(validated) => Some(validated),
+        Err(strict_error)
+            if current
+                .recipe_version
+                .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION) =>
+        {
+            Some(
+                validate_upgradeable_audio_mod(&mods_directory, mod_name).map_err(
+                    |upgrade_error| {
+                        format!(
+                            "当前功能组协议 Mod 无法作为安全升级来源：{upgrade_error}（当前版本校验：{strict_error}）"
+                        )
+                    },
+                )?,
+            )
+        }
+        Err(_) => None,
+    };
+    // Only manifests older than the r22 feature-group protocol need the legacy audio fallback.
+    // Newer outdated manifests explicitly describe whether audio was installed and must remain
+    // room-only when that is what their recorded feature list says.
+    if current.update_required
+        && current_validated
+            .as_ref()
+            .is_none_or(|validated| validated.feature_groups.is_empty())
+    {
         explicitly_requested.audio_telemetry = true;
     }
-    let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
-    if current
-        .recipe_version
-        .is_some_and(|version| version >= REQUIRED_AUDIO_MOD_RECIPE_VERSION)
-        && current_validated.is_none()
-    {
-        return Err(
-            "当前功能组协议 Mod 无法通过完整安全校验，不能在未知功能组状态下原位更新；请保留原目录并重新准备"
-                .to_string(),
-        );
-    }
-    let required_existing_groups = current_validated
+    let required_existing_groups: Vec<GeneratorFeatureGroup> = current_validated
         .as_ref()
         .filter(|validated| validated.current_feature_protocol)
-        .map(|validated| validated.feature_groups.clone())
+        .map(|validated| {
+            validated
+                .feature_groups
+                .iter()
+                // The generator intentionally replaces the known r21 room group with r22.
+                // Preserve every other known or opaque group byte-for-byte across replacement.
+                .filter(|group| {
+                    !(group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
+                        && group.recipe_version
+                            == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
         .unwrap_or_default();
     let requested_features = current_validated
         .as_ref()

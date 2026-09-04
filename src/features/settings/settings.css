@@ -1675,12 +1675,37 @@
   gap: 7px;
 }
 
-.mod-catalog-configuration > code {
+.mod-catalog-arguments {
+  display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   padding: 6px 8px;
+  border: 0;
   border-radius: 7px;
   background: var(--surface-hover);
   color: var(--text-secondary);
+  cursor: text;
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--duration-fast) var(--ease-out-expo), color var(--duration-fast) var(--ease-out-expo);
+}
+
+.mod-catalog-arguments:hover:not(:disabled) {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.mod-catalog-arguments:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.mod-catalog-arguments:disabled { cursor: default; opacity: 0.65; }
+.mod-catalog-arguments > code {
+  display: block;
+  overflow: hidden;
+  color: inherit;
   font-size: var(--text-2xs);
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1750,6 +1775,7 @@
 .mod-catalog-empty strong { color: var(--text-secondary); font-size: var(--text-sm); }
 .mod-catalog-empty p { margin: 0; font-size: var(--text-xs); }
 .mod-catalog-footnote { padding: 0 3px; color: var(--text-muted); font-size: var(--text-2xs); line-height: 1.5; }
+.mod-catalog-delete-description { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: 1.65; text-wrap: pretty; }
 
 .mod-processing-section {
   display: flex;

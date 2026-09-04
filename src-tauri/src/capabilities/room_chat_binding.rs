@@ -102,7 +102,7 @@ impl InspectedFile {
             (Some(Ok(bytes)), BindingState::Eligible)
                 if inspect_key_bytes(bytes) != Ok(BindingState::Eligible) =>
             {
-                Some("已有备份不是可恢复的原生 Chat 未绑定状态".to_string())
+                Some("已有备份不是可恢复的原生 Chat 第二键位状态".to_string())
             }
             _ => None,
         }
@@ -897,7 +897,7 @@ fn validate_replace_journal(target: &Path, journal: &ReplaceJournal) -> Result<(
 
 fn create_backup(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if inspect_key_bytes(bytes)? != BindingState::Eligible {
-        return Err(format!("拒绝备份非原生未绑定状态：{}", path.display()));
+        return Err(format!("拒绝备份不可替换的 Chat 第二键位状态：{}", path.display()));
     }
     let backup = backup_path(path)?;
     if path_exists_no_follow(&backup)? {
@@ -971,8 +971,12 @@ fn inspect_key_bytes(bytes: &[u8]) -> Result<BindingState, String> {
         // Cloud-created v37 files sometimes keep a stale raw key value while
         // type 0 still means unbound. The full slot is retained in the backup.
         (_, UNBOUND_KEY_TYPE) => Ok(BindingState::Eligible),
+        // A user-defined secondary Chat key is also replaceable. Installation
+        // backs up the complete slot before assigning F13, so restore can put
+        // the user's original key back exactly.
+        (_, BOUND_KEY_TYPE) => Ok(BindingState::Eligible),
         _ => Err(format!(
-            "原生 Chat 第二键位已被占用（VK=0x{secondary_key:04X}，类型={secondary_type}）"
+            "无法安全识别原生 Chat 第二键位（VK=0x{secondary_key:04X}，类型={secondary_type}）"
         )),
     }
 }
@@ -999,7 +1003,7 @@ fn restore_chat_secondary_slot(current: &[u8], backup: &[u8]) -> Result<Vec<u8>,
         return Err("当前键位文件不是可恢复状态".to_string());
     }
     if inspect_key_bytes(backup)? != BindingState::Eligible {
-        return Err("备份中的原生 Chat 第二键位不是未绑定状态".to_string());
+        return Err("备份中的原生 Chat 第二键位不可安全恢复".to_string());
     }
     let mut restored = current.to_vec();
     restored[SECONDARY_SLOT_OFFSET..SECONDARY_SLOT_OFFSET + 10]

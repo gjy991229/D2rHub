@@ -19,7 +19,7 @@ use crate::infrastructure::module_config::ModuleConfigStore;
 use crate::state::SharedState;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 const MODULE_ID: &str = "mod-catalog";
@@ -180,6 +180,112 @@ fn scan_installations(config: &GlobalConfig) -> Vec<ScannedMod> {
         })
     });
     scanned
+}
+
+fn metadata_is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        return metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn validate_safe_mod_deletion_tree(
+    mods_directory: &Path,
+    mod_directory: &Path,
+) -> Result<(), String> {
+    let mods_metadata = std::fs::symlink_metadata(mods_directory).map_err(|error| {
+        format!(
+            "无法检查 mods 目录 {}：{error}",
+            mods_directory.display()
+        )
+    })?;
+    if !mods_metadata.is_dir() || metadata_is_link_or_reparse_point(&mods_metadata) {
+        return Err(format!(
+            "拒绝从非普通目录删除 Mod：{}",
+            mods_directory.display()
+        ));
+    }
+
+    let mod_metadata = std::fs::symlink_metadata(mod_directory).map_err(|error| {
+        format!("无法检查 Mod 文件夹 {}：{error}", mod_directory.display())
+    })?;
+    if !mod_metadata.is_dir() || metadata_is_link_or_reparse_point(&mod_metadata) {
+        return Err(format!(
+            "拒绝删除链接或重解析点形式的 Mod 文件夹：{}",
+            mod_directory.display()
+        ));
+    }
+
+    let canonical_mods = std::fs::canonicalize(mods_directory).map_err(|error| {
+        format!(
+            "无法规范化 mods 目录 {}：{error}",
+            mods_directory.display()
+        )
+    })?;
+    let canonical_mod = std::fs::canonicalize(mod_directory).map_err(|error| {
+        format!(
+            "无法规范化 Mod 文件夹 {}：{error}",
+            mod_directory.display()
+        )
+    })?;
+    if canonical_mod.parent() != Some(canonical_mods.as_path()) {
+        return Err(format!(
+            "拒绝删除 mods 目录之外的文件夹：{}",
+            mod_directory.display()
+        ));
+    }
+
+    let mut pending = vec![canonical_mod];
+    while let Some(directory) = pending.pop() {
+        let entries = std::fs::read_dir(&directory)
+            .map_err(|error| format!("无法检查 Mod 文件夹 {}：{error}", directory.display()))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|error| format!("无法读取 Mod 文件夹 {}：{error}", directory.display()))?;
+            let path = entry.path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("无法检查 Mod 文件 {}：{error}", path.display()))?;
+            if metadata_is_link_or_reparse_point(&metadata) {
+                return Err(format!(
+                    "Mod 文件夹包含链接或重解析点，已拒绝删除：{}",
+                    path.display()
+                ));
+            }
+            if metadata.is_dir() {
+                pending.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn delete_scanned_mod_directory(
+    config: &GlobalConfig,
+    edition: &str,
+    mod_name: &str,
+) -> Result<(), String> {
+    let game_directory = match edition {
+        "CN" => config.cn_game_path.trim(),
+        "Global" => config.global_game_path.trim(),
+        _ => return Err(format!("无法识别 Mod 所属游戏版本：{edition}")),
+    };
+    if game_directory.is_empty() {
+        return Err(format!("尚未配置{edition}游戏目录"));
+    }
+    let mods_directory = PathBuf::from(game_directory).join("mods");
+    let mod_directory = mods_directory.join(mod_name);
+    validate_safe_mod_deletion_tree(&mods_directory, &mod_directory)?;
+    std::fs::remove_dir_all(&mod_directory)
+        .map_err(|error| format!("无法删除 Mod 文件夹 {}：{error}", mod_directory.display()))
 }
 
 fn validate_arguments(arguments: &str) -> Result<String, String> {
@@ -411,7 +517,7 @@ fn build_pool(
                 source_eligible: entry.installed.source_eligible,
                 update_required: entry.installed.update_required,
                 ready: true,
-                deletable: false,
+                deletable: true,
                 assigned_account_ids: Vec::new(),
             }
         })
@@ -1128,23 +1234,49 @@ pub fn delete_mod_capsule(
     let (generation, mut payload) =
         load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
     let config = state.configuration().snapshot().unwrap_or(config);
-    let index = payload
-        .custom_entries
+    let pool = build_pool(&config, generation, &payload, &scanned);
+    let current = pool
+        .capsules
         .iter()
-        .position(|entry| entry.id == capsule_id)
-        .ok_or_else(|| {
-            "扫描自游戏目录的官方预设不能删除；删除文件夹后重新扫描即可移除".to_string()
-        })?;
-    let usage = capsule_usage(&config, &payload.custom_entries[index].launch_arguments);
+        .find(|capsule| capsule.id == capsule_id)
+        .cloned()
+        .ok_or_else(|| "要删除的 Mod 参数已不存在".to_string())?;
+    let usage = capsule_usage(&config, &current.launch_arguments);
     if !usage.is_empty() {
         return Err(format!(
-            "该自定义参数仍被以下项目使用：{}",
+            "该 Mod 参数仍被以下项目使用：{}",
             usage.join("、")
         ));
     }
-    payload.custom_entries.remove(index);
+
+    if current.origin == "custom" {
+        let index = payload
+            .custom_entries
+            .iter()
+            .position(|entry| entry.id == current.id)
+            .ok_or_else(|| "要删除的自定义 Mod 参数已不存在".to_string())?;
+        payload.custom_entries.remove(index);
+        let (generation, payload) = save_payload(state.inner(), generation, payload)?;
+        return Ok(build_pool(&config, generation, &payload, &scanned));
+    }
+    if current.origin != "scanned" {
+        return Err(format!("不支持删除来源为“{}”的 Mod 参数", current.origin));
+    }
+
+    let scanned_mod = scanned
+        .iter()
+        .find(|entry| entry.id == current.id)
+        .ok_or_else(|| "要删除的扫描 Mod 已不存在，请重新扫描后再试".to_string())?;
+    ensure_audio_mod_not_in_use(state.inner(), &config, &scanned_mod.installed.name)?;
+    delete_scanned_mod_directory(
+        &config,
+        &scanned_mod.edition,
+        &scanned_mod.installed.name,
+    )?;
+    payload.argument_overrides.remove(&current.id);
     let (generation, payload) = save_payload(state.inner(), generation, payload)?;
-    Ok(build_pool(&config, generation, &payload, &scanned))
+    let rescanned = scan_installations(&config);
+    Ok(build_pool(&config, generation, &payload, &rescanned))
 }
 
 #[tauri::command]
