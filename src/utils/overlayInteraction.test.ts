@@ -50,9 +50,11 @@ export function runTests() {
   assert(
     overlaySource.includes("await win.setIgnoreCursorEvents(true)")
       && overlaySource.includes("await win.setIgnoreCursorEvents(false)")
-      && overlaySource.includes("await applyStatsMiniOverlaySize(win)")
-      && overlaySource.includes('if (isStatsOverlay && displayModeRef.current === "mini") return;'),
-    "statistics mini mode is fixed, click-through, and excluded from drag and docking gestures",
+      && overlaySource.includes("await applyStatsMiniOverlaySize(win, miniSize)")
+      && overlaySource.includes("STATS_OVERLAY_MINI_SIZE_STORAGE_KEY")
+      && overlaySource.includes("STATS_MINI_OVERLAY_RESIZE_INSET")
+      && overlaySource.includes('reportOverlayIssue("WARN", "persist moved stats mini overlay failed", err)'),
+    "statistics mini mode remains click-through while persisting its movable and resizable layout",
   );
   assert(
     overlaySource.includes('event.payload !== "StatsOverlayMiniToggle"')

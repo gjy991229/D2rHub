@@ -37,10 +37,12 @@ export function runTests() {
   );
   assert(
     auxiliaryWindows.includes("WebviewWindowBuilder::from_config")
-      && auxiliaryWindows.includes("create_configured_windows")
       && auxiliaryWindows.includes("ensure_window")
+      && !auxiliaryWindows.includes("pub(crate) fn create_configured_windows")
+      && overlayCapability.includes("auxiliary_windows::ensure_window")
+      && petCapability.includes("auxiliary_windows::ensure_window")
       && native.includes("AuxiliaryWindowLifecycle::default()"),
-    "auxiliary WebViews are created from their native config on startup demand and first use",
+    "auxiliary WebViews are created from native config only when their capability first starts",
   );
   assert(
     auxiliaryWindows.includes("pub(crate) fn destroy_window")
@@ -76,7 +78,9 @@ export function runTests() {
   );
   assert(
     tray.includes('"recover-overlays"')
-      && tray.includes('recover_auxiliary_windows_for_app(app, "cursor")'),
+      && tray.includes("recover_auxiliary_windows_for_app(")
+      && tray.includes("&recover_app,")
+      && tray.includes('"cursor",'),
     "the tray provides an emergency recovery path on the cursor display",
   );
   assert(

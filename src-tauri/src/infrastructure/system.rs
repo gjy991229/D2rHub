@@ -2103,7 +2103,7 @@ pub fn find_game_hwnd_by_title(_title: &str) -> Option<isize> {
 #[cfg(target_os = "windows")]
 pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
     extern "system" {
-        fn GetWindowRect(hWnd: isize, lpRect: *mut RECT) -> i32;
+        fn GetWindowRect(hWnd: isize, lpRect: *mut std::ffi::c_void) -> i32;
     }
     // Keep the native Windows spelling so the declaration matches Win32 documentation.
     #[allow(clippy::upper_case_acronyms)]
@@ -2122,7 +2122,7 @@ pub fn get_window_rect(hwnd: isize) -> Option<(i32, i32)> {
         bottom: 0,
     };
     unsafe {
-        if GetWindowRect(hwnd, &mut rect) != 0 {
+        if GetWindowRect(hwnd, (&mut rect as *mut RECT).cast()) != 0 {
             Some((rect.left, rect.top))
         } else {
             None

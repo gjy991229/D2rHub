@@ -897,7 +897,10 @@ fn validate_replace_journal(target: &Path, journal: &ReplaceJournal) -> Result<(
 
 fn create_backup(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if inspect_key_bytes(bytes)? != BindingState::Eligible {
-        return Err(format!("拒绝备份不可替换的 Chat 第二键位状态：{}", path.display()));
+        return Err(format!(
+            "拒绝备份不可替换的 Chat 第二键位状态：{}",
+            path.display()
+        ));
     }
     let backup = backup_path(path)?;
     if path_exists_no_follow(&backup)? {

@@ -190,7 +190,7 @@ fn metadata_is_link_or_reparse_point(metadata: &std::fs::Metadata) -> bool {
     {
         use std::os::windows::fs::MetadataExt;
         const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-        return metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
     }
     #[cfg(not(windows))]
     {
@@ -202,12 +202,8 @@ fn validate_safe_mod_deletion_tree(
     mods_directory: &Path,
     mod_directory: &Path,
 ) -> Result<(), String> {
-    let mods_metadata = std::fs::symlink_metadata(mods_directory).map_err(|error| {
-        format!(
-            "无法检查 mods 目录 {}：{error}",
-            mods_directory.display()
-        )
-    })?;
+    let mods_metadata = std::fs::symlink_metadata(mods_directory)
+        .map_err(|error| format!("无法检查 mods 目录 {}：{error}", mods_directory.display()))?;
     if !mods_metadata.is_dir() || metadata_is_link_or_reparse_point(&mods_metadata) {
         return Err(format!(
             "拒绝从非普通目录删除 Mod：{}",
@@ -215,9 +211,8 @@ fn validate_safe_mod_deletion_tree(
         ));
     }
 
-    let mod_metadata = std::fs::symlink_metadata(mod_directory).map_err(|error| {
-        format!("无法检查 Mod 文件夹 {}：{error}", mod_directory.display())
-    })?;
+    let mod_metadata = std::fs::symlink_metadata(mod_directory)
+        .map_err(|error| format!("无法检查 Mod 文件夹 {}：{error}", mod_directory.display()))?;
     if !mod_metadata.is_dir() || metadata_is_link_or_reparse_point(&mod_metadata) {
         return Err(format!(
             "拒绝删除链接或重解析点形式的 Mod 文件夹：{}",
@@ -225,18 +220,10 @@ fn validate_safe_mod_deletion_tree(
         ));
     }
 
-    let canonical_mods = std::fs::canonicalize(mods_directory).map_err(|error| {
-        format!(
-            "无法规范化 mods 目录 {}：{error}",
-            mods_directory.display()
-        )
-    })?;
-    let canonical_mod = std::fs::canonicalize(mod_directory).map_err(|error| {
-        format!(
-            "无法规范化 Mod 文件夹 {}：{error}",
-            mod_directory.display()
-        )
-    })?;
+    let canonical_mods = std::fs::canonicalize(mods_directory)
+        .map_err(|error| format!("无法规范化 mods 目录 {}：{error}", mods_directory.display()))?;
+    let canonical_mod = std::fs::canonicalize(mod_directory)
+        .map_err(|error| format!("无法规范化 Mod 文件夹 {}：{error}", mod_directory.display()))?;
     if canonical_mod.parent() != Some(canonical_mods.as_path()) {
         return Err(format!(
             "拒绝删除 mods 目录之外的文件夹：{}",
@@ -1243,10 +1230,7 @@ pub fn delete_mod_capsule(
         .ok_or_else(|| "要删除的 Mod 参数已不存在".to_string())?;
     let usage = capsule_usage(&config, &current.launch_arguments);
     if !usage.is_empty() {
-        return Err(format!(
-            "该 Mod 参数仍被以下项目使用：{}",
-            usage.join("、")
-        ));
+        return Err(format!("该 Mod 参数仍被以下项目使用：{}", usage.join("、")));
     }
 
     if current.origin == "custom" {
@@ -1268,11 +1252,7 @@ pub fn delete_mod_capsule(
         .find(|entry| entry.id == current.id)
         .ok_or_else(|| "要删除的扫描 Mod 已不存在，请重新扫描后再试".to_string())?;
     ensure_audio_mod_not_in_use(state.inner(), &config, &scanned_mod.installed.name)?;
-    delete_scanned_mod_directory(
-        &config,
-        &scanned_mod.edition,
-        &scanned_mod.installed.name,
-    )?;
+    delete_scanned_mod_directory(&config, &scanned_mod.edition, &scanned_mod.installed.name)?;
     payload.argument_overrides.remove(&current.id);
     let (generation, payload) = save_payload(state.inner(), generation, payload)?;
     let rescanned = scan_installations(&config);

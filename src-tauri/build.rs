@@ -212,7 +212,11 @@ fn validate_command_surfaces() {
         "]",
         "main-window-commands allow list",
     ));
-    assert_same_commands("APP_COMMANDS and main-window-commands ACL", &declared, &main_acl);
+    assert_same_commands(
+        "APP_COMMANDS and main-window-commands ACL",
+        &declared,
+        &main_acl,
+    );
 
     let contract_source = std::fs::read_to_string("../src/platform/tauri/contracts.ts")
         .expect("failed to read frontend Tauri command contract");
@@ -234,12 +238,7 @@ fn validate_command_surfaces() {
     }
 }
 
-fn delimited_block<'a>(
-    source: &'a str,
-    start: &str,
-    end: &str,
-    label: &str,
-) -> &'a str {
+fn delimited_block<'a>(source: &'a str, start: &str, end: &str, label: &str) -> &'a str {
     let (_, remainder) = source
         .split_once(start)
         .unwrap_or_else(|| panic!("{label} start marker is missing"));

@@ -47,7 +47,6 @@ const ROOM_TOOL_BUTTON_Y: i64 = 12;
 const ROOM_TOOL_NEXT_X: i64 = -1_040;
 const ROOM_TOOL_CREATE_X: i64 = -760;
 const ROOM_TOOL_JOIN_X: i64 = -480;
-const ROOM_TOOL_CONFIRM_Y: i64 = 92;
 const QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS: f64 = 0.5;
 const ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS: f64 = 0.01;
 const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = 0.05;
@@ -522,9 +521,7 @@ fn validate_upgrade_source_feature_group_entries(
             && group.recipe_version == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
         {
             if group.fingerprint != PREVIOUS_IN_GAME_ROOM_TOOLS_FINGERPRINT {
-                return Err(
-                    "上一版局内房间工具指纹无效，不能作为原位升级来源".to_string(),
-                );
+                return Err("上一版局内房间工具指纹无效，不能作为原位升级来源".to_string());
             }
         } else {
             validate_supported_feature_group(group)?;
@@ -1365,6 +1362,7 @@ fn validate_in_game_room_tool_layouts_for_recipe(
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_in_game_room_tool_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
     validate_in_game_room_tool_layouts_for_recipe(mod_directory, mod_name, true)
 }
@@ -1499,8 +1497,7 @@ fn validate_compatible_audio_mod_directory_with_policy(
         let uses_previous_room_tools = allow_previous_room_tools
             && feature_groups.iter().any(|group| {
                 group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                    && group.recipe_version
-                        == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+                    && group.recipe_version == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
             });
         validate_in_game_room_tool_layouts_for_recipe(
             &mod_directory,
@@ -4177,8 +4174,7 @@ mod tests {
         IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION, ITEM_CATALOG_FILE_NAME,
         LEGACY_MANIFEST_FILE_NAME, NEXT_GAME_TOOLTIP_OFFSET_Y, PROTOCOL_VERSION,
         REQUIRED_AUDIO_MOD_RECIPE_VERSION, ROOM_TOOL_BUTTON_SCALE, ROOM_TOOL_BUTTON_Y,
-        ROOM_TOOL_CONFIRM_Y, ROOM_TOOL_CREATE_X, ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY,
-        ROOM_TOOL_NEXT_X,
+        ROOM_TOOL_CREATE_X, ROOM_TOOL_JOIN_X, ROOM_TOOL_LAYOUT_DIRECTORY, ROOM_TOOL_NEXT_X,
     };
 
     const TEST_TRANSACTION_ID: &str = "0123456789abcdef0123456789abcdef";
@@ -4281,9 +4277,9 @@ mod tests {
                 serde_json::json!({"children": [
                     {"name": "D2RHubNextGame", "fields": {
                         "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
-                        "tooltipString": "再次确认后进入下一局",
+                        "tooltipString": "左键双击进入下一局",
                         "tooltipOffset": {"y": NEXT_GAME_TOOLTIP_OFFSET_Y},
-                        "onClickMessage": "PanelManager:TogglePanel:D2RHubQuickRecreateConfirm"
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreateArm"
                     }},
                     {"name": "D2RHubCreateGame", "fields": {
                         "rect": {"x": ROOM_TOOL_CREATE_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
@@ -4296,21 +4292,41 @@ mod tests {
                 ]}),
             ),
             (
-                "D2RHubQuickRecreateConfirmhd.json",
+                "D2RHubQuickRecreateArmhd.json",
                 serde_json::json!({
-                    "fields": {"isDismissable": true, "acceptsEscKeyEverywhere": true},
+                    "type": "TooltipsPanel",
                     "children": [
-                        {"name": "D2RHubConfirmNextGame", "fields": {
-                            "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_CONFIRM_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
+                        {"name": "D2RHubArmedNextGame", "fields": {
+                            "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
                             "onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"
                         }},
-                        {"fields": {"message": "PanelManager:ClosePanel:D2RHubQuickRecreateConfirm"}}
+                        {"fields": {"time": 0.5, "message": "PanelManager:ClosePanel:D2RHubQuickRecreateArm"}}
                     ]
                 }),
             ),
             (
                 "D2RHubQuickRecreatehd.json",
-                serde_json::json!({"children": [{"fields": {"message": "CharacterSelect:LoadCharacter:2"}}]}),
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
+                    {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
+                    {"fields": {"time": 0.05, "message": "CharacterSelect:LoadCharacter:2"}}
+                ]}),
+            ),
+            (
+                "D2RHubCommitCreateGamehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
+                    {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
+                    {"fields": {"time": 0.05, "message": "CreateGame:CreateGame"}}
+                ]}),
+            ),
+            (
+                "D2RHubCommitJoinGamehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
+                    {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
+                    {"fields": {"time": 0.05, "message": "JoinGame:JoinGame"}}
+                ]}),
             ),
             (
                 "D2RHubOpenCreateGamehd.json",
@@ -4351,7 +4367,10 @@ mod tests {
                 serde_json::json!({
                     "fields": {"defaultWidget": "GameNameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
                     "children": [
-                        {"name": "GameNameInput", "fields": {"imeEnabled": true}},
+                        {"name": "GameNameInput", "fields": {
+                            "imeEnabled": true,
+                            "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubCommitCreateGame"
+                        }},
                         {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "DescriptionInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
@@ -4363,7 +4382,10 @@ mod tests {
                 serde_json::json!({
                     "fields": {"defaultWidget": "NameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
                     "children": [
-                        {"name": "NameInput", "fields": {"imeEnabled": true}},
+                        {"name": "NameInput", "fields": {
+                            "imeEnabled": true,
+                            "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubCommitJoinGame"
+                        }},
                         {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
                     ]

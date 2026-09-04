@@ -25,8 +25,7 @@ static STATS_OVERLAY_LAST_CLICK_TIME: AtomicU32 = AtomicU32::new(0);
 static STATS_OVERLAY_LAST_CLICK_X: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
-static STATS_OVERLAY_MINI_HWND: AtomicPtr<std::ffi::c_void> =
-    AtomicPtr::new(std::ptr::null_mut());
+static STATS_OVERLAY_MINI_HWND: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static STATS_OVERLAY_MINI_GESTURE: AtomicU32 = AtomicU32::new(0);
 static STATS_OVERLAY_MINI_RESIZE_EDGE: AtomicU32 = AtomicU32::new(0);
 static STATS_OVERLAY_GESTURE_START_CURSOR_X: AtomicI32 = AtomicI32::new(0);
@@ -339,6 +338,9 @@ pub(crate) fn set_stats_overlay_mini_input_region_state(
 }
 
 #[tauri::command]
+// Tauri exposes command parameters as named IPC fields; keeping them flat
+// preserves the existing frontend command contract.
+#[allow(clippy::too_many_arguments)]
 pub fn set_stats_overlay_mini_input_region(
     app: AppHandle,
     enabled: bool,
@@ -372,10 +374,8 @@ pub fn set_stats_overlay_mini_input_region(
             .hwnd()
             .map_err(|error| format!("获取统计悬浮窗句柄失败: {error}"))?;
         let scale_factor = window.scale_factor().unwrap_or(1.0).max(0.1);
-        let physical_min_width =
-            (f64::from(min_width) * scale_factor).round().max(1.0) as u32;
-        let physical_min_height =
-            (f64::from(min_height) * scale_factor).round().max(1.0) as u32;
+        let physical_min_width = (f64::from(min_width) * scale_factor).round().max(1.0) as u32;
+        let physical_min_height = (f64::from(min_height) * scale_factor).round().max(1.0) as u32;
         let physical_resize_inset =
             (f64::from(resize_inset) * scale_factor).round().max(1.0) as i32;
 
@@ -531,13 +531,10 @@ extern "system" {
     fn GetDoubleClickTime() -> u32;
     fn GetSystemMetrics(nIndex: i32) -> i32;
 
-    fn GetWindowRect(
-        hWnd: *mut std::ffi::c_void,
-        lpRect: *mut RECT,
-    ) -> std::os::raw::c_int;
+    fn GetWindowRect(hWnd: isize, lpRect: *mut std::ffi::c_void) -> std::os::raw::c_int;
     fn SetWindowPos(
-        hWnd: *mut std::ffi::c_void,
-        hWndInsertAfter: *mut std::ffi::c_void,
+        hWnd: isize,
+        hWndInsertAfter: isize,
         X: i32,
         Y: i32,
         cx: i32,
@@ -589,7 +586,7 @@ unsafe fn begin_stats_overlay_mini_gesture(
         right: 0,
         bottom: 0,
     };
-    if GetWindowRect(hwnd, &mut rect) == 0 {
+    if GetWindowRect(hwnd as isize, (&mut rect as *mut RECT).cast()) == 0 {
         return false;
     }
 
@@ -612,8 +609,7 @@ unsafe fn begin_stats_overlay_mini_resize(mouse: &MSLLHOOKSTRUCT) -> bool {
         return false;
     }
     let edge = stats_overlay_resize_edge(mouse.pt.x, mouse.pt.y);
-    edge != 0
-        && begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_RESIZE, edge)
+    edge != 0 && begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_RESIZE, edge)
 }
 
 unsafe fn update_stats_overlay_mini_gesture(mouse: &MSLLHOOKSTRUCT) -> bool {
@@ -679,8 +675,8 @@ unsafe fn update_stats_overlay_mini_gesture(mouse: &MSLLHOOKSTRUCT) -> bool {
     const SWP_NOZORDER: u32 = 0x0004;
     const SWP_NOACTIVATE: u32 = 0x0010;
     if SetWindowPos(
-        hwnd,
-        std::ptr::null_mut(),
+        hwnd as isize,
+        0,
         left,
         top,
         width,
@@ -1037,20 +1033,16 @@ unsafe extern "system" fn mouse_hook_proc(
                     return 1;
                 }
             }
-            WM_LBUTTONUP => {
-                if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_RESIZE) {
-                    return 1;
-                }
+            WM_LBUTTONUP if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_RESIZE) => {
+                return 1;
             }
             WM_MBUTTONDOWN => {
                 if begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_MOVE, 0) {
                     return 1;
                 }
             }
-            WM_MBUTTONUP => {
-                if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_MOVE) {
-                    return 1;
-                }
+            WM_MBUTTONUP if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_MOVE) => {
+                return 1;
             }
             _ => {}
         }
