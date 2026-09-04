@@ -2080,12 +2080,33 @@ html, body, #root {
   font-size: 10px;
   font-weight: 760;
   transition: background var(--duration-normal) var(--ease-out-expo),
-              color var(--duration-normal) var(--ease-out-expo);
+              color var(--duration-normal) var(--ease-out-expo),
+              transform var(--duration-fast) var(--ease-out-expo);
 }
 
 .preset-pill:hover {
   color: var(--text-primary);
   background: var(--surface-active);
+}
+
+.preset-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.preset-pill:active {
+  transform: translateY(1px);
+}
+
+.preset-pill[data-active="true"] {
+  color: var(--cta-text);
+  background: var(--cta-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preset-pill {
+    transition: none;
+  }
 }
 
 .combo-field {

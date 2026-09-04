@@ -16,6 +16,7 @@ interface Props {
 
 type Tab = "display" | "graphics" | "audio" | "gameplay" | "automap";
 type FieldType = "toggle" | "select" | "range" | "number" | "resolution";
+type GraphicsQualityPreset = "low" | "medium" | "high";
 
 export type SettingsMap = Record<string, unknown>;
 
@@ -314,6 +315,52 @@ const settingsSections: ConfigSection[] = [
   },
 ];
 
+const graphicsQualityPresets: ReadonlyArray<{
+  id: GraphicsQualityPreset;
+  label: string;
+  dlss: number;
+  framerateCap: number;
+}> = [
+  { id: "low", label: "低", dlss: 5, framerateCap: 30 },
+  { id: "medium", label: "中", dlss: 1, framerateCap: 180 },
+  { id: "high", label: "高", dlss: 2, framerateCap: 0 },
+];
+
+function createGraphicsQualityPreset(preset: GraphicsQualityPreset): SettingsMap {
+  const patch: SettingsMap = {};
+  const graphicsSection = settingsSections.find((section) => section.id === "graphics");
+
+  for (const field of graphicsSection?.fields ?? []) {
+    if (field.type !== "select" || !field.options?.length) continue;
+
+    const optionIndex = preset === "low"
+      ? 0
+      : preset === "high"
+        ? field.options.length - 1
+        : Math.floor((field.options.length - 1) / 2);
+    patch[field.key] = field.options[optionIndex].value;
+  }
+
+  const selectedPreset = graphicsQualityPresets.find((candidate) => candidate.id === preset)
+    ?? graphicsQualityPresets[0];
+
+  return {
+    ...patch,
+    "NVIDIA DLSS": selectedPreset.dlss,
+    "Graphic Presets": 7,
+    "Anti Aliasing": 1,
+    [FRAMERATE_CAP_KEY]: selectedPreset.framerateCap,
+    Perspective: 0,
+    VSync: 0,
+  };
+}
+
+function matchesGraphicsQualityPreset(settings: SettingsMap, preset: GraphicsQualityPreset): boolean {
+  return Object.entries(createGraphicsQualityPreset(preset)).every(
+    ([key, value]) => Number(settings[key]) === Number(value),
+  );
+}
+
 const tabs = settingsSections.map(({ id, label, icon }) => ({ id, label, icon }));
 
 const baseResolutionOptions = [
@@ -560,7 +607,15 @@ export function SettingRow({ label, children }: { label: string; children: React
   );
 }
 
-export function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
+export function SectionCard({
+  title,
+  actions,
+  children,
+}: {
+  title: string;
+  actions?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
     <div
       className="rounded-card p-3"
@@ -569,7 +624,10 @@ export function SectionCard({ title, children }: { title: string; children: Reac
         border: "1px solid var(--border-default)",
       }}
     >
-      <h3 className="text-sm font-medium text-text-primary mb-2">{title}</h3>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-medium text-text-primary">{title}</h3>
+        {actions}
+      </div>
       <div>{children}</div>
     </div>
   );
@@ -745,13 +803,15 @@ function SettingsSection({
   section,
   settings,
   update,
+  actions,
 }: {
   section: ConfigSection;
   settings: SettingsMap;
   update: (k: string, v: unknown) => void;
+  actions?: React.ReactNode;
 }) {
   return (
-    <SectionCard title={section.title}>
+    <SectionCard title={section.title} actions={actions}>
       {section.fields.map((field) => (
         <SettingRow key={field.key} label={field.label}>
           <FieldControl field={field} settings={settings} update={update} />
@@ -761,12 +821,57 @@ function SettingsSection({
   );
 }
 
+function GraphicsQualityPresetControl({
+  settings,
+  update,
+}: {
+  settings: SettingsMap;
+  update: (k: string, v: unknown) => void;
+}) {
+  const applyPreset = (preset: GraphicsQualityPreset) => {
+    for (const [key, value] of Object.entries(createGraphicsQualityPreset(preset))) {
+      update(key, value);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="micro-meta">快速预设</span>
+      <div className="preset-pill-group" role="group" aria-label="图形质量快速预设">
+        {graphicsQualityPresets.map((preset) => {
+          const active = matchesGraphicsQualityPreset(settings, preset.id);
+          return (
+            <button
+              key={preset.id}
+              type="button"
+              className="preset-pill"
+              data-active={active ? "true" : "false"}
+              aria-pressed={active}
+              title={`应用${preset.label}画质预设`}
+              onClick={() => applyPreset(preset.id)}
+            >
+              {preset.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function DisplaySection({ settings, update }: { settings: SettingsMap; update: (k: string, v: unknown) => void }) {
   return <SettingsSection section={settingsSections[0]} settings={settings} update={update} />;
 }
 
 export function GraphicsSection({ settings, update }: { settings: SettingsMap; update: (k: string, v: unknown) => void }) {
-  return <SettingsSection section={settingsSections[1]} settings={settings} update={update} />;
+  return (
+    <SettingsSection
+      section={settingsSections[1]}
+      settings={settings}
+      update={update}
+      actions={<GraphicsQualityPresetControl settings={settings} update={update} />}
+    />
+  );
 }
 
 export function AudioSection({ settings, update }: { settings: SettingsMap; update: (k: string, v: unknown) => void }) {
