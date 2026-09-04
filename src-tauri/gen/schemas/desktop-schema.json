@@ -801,10 +801,22 @@
           "markdownDescription": "Enables the open_logs_dir command without any pre-configured scope."
         },
         {
+          "description": "Enables the open_mods_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-mods-directory",
+          "markdownDescription": "Enables the open_mods_directory command without any pre-configured scope."
+        },
+        {
           "description": "Enables the open_stats_page command without any pre-configured scope.",
           "type": "string",
           "const": "allow-open-stats-page",
           "markdownDescription": "Enables the open_stats_page command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the open_token_login_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-open-token-login-url",
+          "markdownDescription": "Enables the open_token_login_url command without any pre-configured scope."
         },
         {
           "description": "Enables the open_url_in_browser command without any pre-configured scope.",
@@ -1539,10 +1551,22 @@
           "markdownDescription": "Denies the open_logs_dir command without any pre-configured scope."
         },
         {
+          "description": "Denies the open_mods_directory command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-mods-directory",
+          "markdownDescription": "Denies the open_mods_directory command without any pre-configured scope."
+        },
+        {
           "description": "Denies the open_stats_page command without any pre-configured scope.",
           "type": "string",
           "const": "deny-open-stats-page",
           "markdownDescription": "Denies the open_stats_page command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the open_token_login_url command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-open-token-login-url",
+          "markdownDescription": "Denies the open_token_login_url command without any pre-configured scope."
         },
         {
           "description": "Denies the open_url_in_browser command without any pre-configured scope.",
