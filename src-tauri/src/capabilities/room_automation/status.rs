@@ -61,7 +61,13 @@ pub struct WorkflowStatus {
     pub attempt: u32,
     pub primary_account_id: Option<String>,
     pub follower_account_ids: Vec<String>,
+    /// Accounts whose native command attempt has finished. This does not
+    /// assert that the game joined or finished loading the room.
     pub completed_follower_account_ids: Vec<String>,
+    /// Accounts whose native join command could not be delivered. This is
+    /// diagnostic only: interval dispatch continues on its fixed schedule.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub undelivered_follower_account_ids: Vec<String>,
     /// Timestamp is supplied by the application adapter. The pure state
     /// machine never reads a clock.
     pub started_at: Option<String>,
@@ -85,6 +91,7 @@ impl Default for WorkflowStatus {
             primary_account_id: None,
             follower_account_ids: Vec::new(),
             completed_follower_account_ids: Vec::new(),
+            undelivered_follower_account_ids: Vec::new(),
             started_at: None,
             last_error: None,
             recovery_action: None,
@@ -236,6 +243,7 @@ impl WorkflowTaskState {
             primary_account_id: Some(config.primary_account_id.clone()),
             follower_account_ids: config.follower_account_ids.clone(),
             completed_follower_account_ids: Vec::new(),
+            undelivered_follower_account_ids: Vec::new(),
             started_at,
             last_error: None,
             recovery_action: None,
@@ -326,6 +334,7 @@ impl WorkflowTaskState {
         self.status.waiting_mode = None;
         self.status.follower_account_ids = follower_account_ids;
         self.status.completed_follower_account_ids.clear();
+        self.status.undelivered_follower_account_ids.clear();
         self.status.last_error = None;
         self.status.recovery_action = None;
         Ok(self.snapshot())
@@ -376,6 +385,7 @@ impl WorkflowTaskState {
             primary_account_id: Some(config.primary_account_id.clone()),
             follower_account_ids: config.follower_account_ids.clone(),
             completed_follower_account_ids: Vec::new(),
+            undelivered_follower_account_ids: Vec::new(),
             started_at,
             last_error: None,
             recovery_action: None,
@@ -391,10 +401,23 @@ impl WorkflowTaskState {
         task_id: WorkflowTaskId,
         account_id: &str,
     ) -> Result<WorkflowStatus, WorkflowStateError> {
+        self.record_follower_dispatch(task_id, account_id, true)
+    }
+
+    /// Records completion of one native command attempt. `delivered` only
+    /// describes whether the window message sequence was sent; it must never
+    /// be interpreted as proof that the account entered or finished loading
+    /// the room.
+    pub fn record_follower_dispatch(
+        &mut self,
+        task_id: WorkflowTaskId,
+        account_id: &str,
+        delivered: bool,
+    ) -> Result<WorkflowStatus, WorkflowStateError> {
         self.require_task_phase(
             task_id,
             WorkflowPhase::Followers,
-            "record follower completion",
+            "record follower dispatch",
         )?;
         if !self
             .status
@@ -415,6 +438,11 @@ impl WorkflowTaskState {
         let revision = self.next_revision()?;
 
         self.status.revision = revision;
+        if !delivered {
+            self.status
+                .undelivered_follower_account_ids
+                .push(account_id.to_string());
+        }
         self.status
             .completed_follower_account_ids
             .push(account_id.to_string());

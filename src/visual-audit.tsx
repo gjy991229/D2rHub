@@ -299,6 +299,8 @@ let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
     follower_account_ids: ["barb-02", "pala-03"],
     auto_followers_enabled: false,
     auto_followers_delay_secs: 5,
+    follower_join_mode: "simultaneous",
+    follower_join_interval_secs: 3,
     shortcut: "Ctrl+Alt+R",
     join_shortcut: "Ctrl+Alt+J",
     name_prefix: "chaos-",

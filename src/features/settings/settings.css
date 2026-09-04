@@ -1198,10 +1198,120 @@
 
 .room-automation-account-name { color: var(--text-primary); font-weight: 650; }
 
+.room-automation-follower-order {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-default);
+}
+
+.room-automation-follower-order-heading strong,
+.room-automation-follower-order-heading span {
+  display: block;
+}
+
+.room-automation-follower-order-heading strong {
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+}
+
+.room-automation-follower-order-heading span {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+}
+
+.room-automation-follower-order ol {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-automation-follower-order li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 4px 5px 4px 7px;
+  border-radius: 9px;
+  background: var(--surface-hover);
+}
+
+.room-automation-follower-position {
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  font-weight: 750;
+  text-align: center;
+}
+
+.room-automation-follower-order-name {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-automation-follower-order-actions {
+  display: flex;
+  gap: 3px;
+}
+
+.room-automation-follower-order-actions button {
+  display: inline-flex;
+  width: 26px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.room-automation-follower-order-actions button:hover:not(:disabled) {
+  background: var(--surface-card);
+  color: var(--text-primary);
+}
+
+.room-automation-follower-order-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.room-automation-follower-order-actions button:disabled {
+  color: color-mix(in srgb, var(--text-muted) 55%, transparent);
+  cursor: default;
+}
+
 .room-automation-mode-options {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.room-automation-join-mode-options {
+  margin-top: 2px;
+  padding-top: 9px;
+  border-top: 1px solid var(--border-default);
+}
+
+.room-automation-join-mode-options > legend {
+  grid-column: 1 / -1;
+  margin-bottom: -1px;
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  font-weight: 650;
 }
 
 .room-automation-mode-options > label {
@@ -1246,6 +1356,13 @@
   justify-self: start;
   border-radius: 8px;
   background: var(--surface-hover);
+}
+
+.room-automation-dispatch-hint {
+  margin-top: -2px;
+  color: var(--text-muted);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
 }
 
 .room-automation-room-builder {
@@ -2001,6 +2118,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .room-automation-account-row,
+  .room-automation-follower-order-actions button,
   .room-automation-mode-options > label,
   .room-automation-advanced > summary svg {
     transition: none;

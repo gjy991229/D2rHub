@@ -12,6 +12,8 @@ const MIN_CHARACTER_DELAY_MS: u64 = 10;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
 const MIN_AUTO_FOLLOWERS_DELAY_SECS: u64 = 2;
 const MAX_AUTO_FOLLOWERS_DELAY_SECS: u64 = 60;
+const MIN_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 1;
+const MAX_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 60;
 const MIN_SEQUENCE_WIDTH: u8 = 1;
 const MAX_SEQUENCE_WIDTH: u8 = 6;
 
@@ -72,6 +74,18 @@ fn default_auto_followers_delay_secs() -> u64 {
     5
 }
 
+fn default_follower_join_interval_secs() -> u64 {
+    3
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowerJoinMode {
+    #[default]
+    Simultaneous,
+    Interval,
+}
+
 fn default_primary_shortcut() -> String {
     "Ctrl+Alt+R".to_string()
 }
@@ -103,7 +117,8 @@ fn default_standard_flow() -> FlowStrategy {
 /// Persisted configuration for room automation.
 ///
 /// Legacy field aliases import the `room_rotation` object used through
-/// strategy v16; v17 persists one unified keyboard flow.
+/// strategy v16; v17 persists one unified keyboard flow. Follower dispatch
+/// settings are additive fields with backward-compatible Serde defaults.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
     #[serde(default)]
@@ -120,6 +135,10 @@ pub struct RoomAutomationConfig {
     pub auto_followers_enabled: bool,
     #[serde(default = "default_auto_followers_delay_secs")]
     pub auto_followers_delay_secs: u64,
+    #[serde(default)]
+    pub follower_join_mode: FollowerJoinMode,
+    #[serde(default = "default_follower_join_interval_secs")]
+    pub follower_join_interval_secs: u64,
     #[serde(default = "default_primary_shortcut")]
     pub shortcut: String,
     #[serde(default = "default_followers_shortcut")]
@@ -153,6 +172,8 @@ impl Default for RoomAutomationConfig {
             follower_account_ids: Vec::new(),
             auto_followers_enabled: false,
             auto_followers_delay_secs: default_auto_followers_delay_secs(),
+            follower_join_mode: FollowerJoinMode::default(),
+            follower_join_interval_secs: default_follower_join_interval_secs(),
             shortcut: default_primary_shortcut(),
             join_shortcut: default_followers_shortcut(),
             name_prefix: default_name_prefix(),
@@ -216,6 +237,10 @@ pub enum RoomAutomationConfigError {
         "automatic follower delay must be between {MIN_AUTO_FOLLOWERS_DELAY_SECS} and {MAX_AUTO_FOLLOWERS_DELAY_SECS} seconds"
     )]
     InvalidAutoFollowersDelay,
+    #[error(
+        "follower join interval must be between {MIN_FOLLOWER_JOIN_INTERVAL_SECS} and {MAX_FOLLOWER_JOIN_INTERVAL_SECS} seconds"
+    )]
+    InvalidFollowerJoinInterval,
     #[error("background text strategy {0:?} is unsupported")]
     InvalidBackgroundTextStrategy(String),
     #[error(
@@ -271,6 +296,10 @@ impl RoomAutomationConfig {
         self.auto_followers_delay_secs = self
             .auto_followers_delay_secs
             .clamp(MIN_AUTO_FOLLOWERS_DELAY_SECS, MAX_AUTO_FOLLOWERS_DELAY_SECS);
+        self.follower_join_interval_secs = self.follower_join_interval_secs.clamp(
+            MIN_FOLLOWER_JOIN_INTERVAL_SECS,
+            MAX_FOLLOWER_JOIN_INTERVAL_SECS,
+        );
 
         self.shortcut = normalize_shortcut_or_trim(&self.shortcut);
         self.join_shortcut = normalize_shortcut_or_trim(&self.join_shortcut);
@@ -344,6 +373,12 @@ impl RoomAutomationConfig {
             .contains(&self.auto_followers_delay_secs)
         {
             return Err(RoomAutomationConfigError::InvalidAutoFollowersDelay);
+        }
+        if self.follower_join_mode == FollowerJoinMode::Interval
+            && !(MIN_FOLLOWER_JOIN_INTERVAL_SECS..=MAX_FOLLOWER_JOIN_INTERVAL_SECS)
+                .contains(&self.follower_join_interval_secs)
+        {
+            return Err(RoomAutomationConfigError::InvalidFollowerJoinInterval);
         }
         if !matches!(
             self.background_text_strategy.as_str(),

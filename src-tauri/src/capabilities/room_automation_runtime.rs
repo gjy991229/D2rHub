@@ -5,8 +5,8 @@
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    RoomAutomationConfig, WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError,
-    WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
+    FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase, WorkflowRecoveryAction,
+    WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
     RoomAutomationConfigController, RoomAutomationConfigControllerError,
@@ -40,7 +40,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Weak};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{Emitter, Manager};
 
 #[cfg(target_os = "windows")]
@@ -601,15 +601,23 @@ impl TauriRuntimeBridge {
                 let total = status.follower_account_ids.len().max(1);
                 let completed = status.completed_follower_account_ids.len().min(total);
                 let progress = 50 + ((completed * 45) / total) as u8;
-                let _ = current.handle.update(
-                    progress,
-                    "followers",
-                    &format!("小号跟进 {completed}/{total}"),
-                );
+                let undelivered = status.undelivered_follower_account_ids.len();
+                let message = if undelivered > 0 {
+                    format!("小号指令已派发 {completed}/{total}，{undelivered} 个窗口未送达")
+                } else {
+                    format!("小号指令已派发 {completed}/{total}")
+                };
+                let _ = current.handle.update(progress, "followers", &message);
             }
             WorkflowPhase::Complete => {
                 if let Some(completed) = active.take() {
-                    let _ = completed.handle.succeed("自动跟房工作流完成");
+                    let undelivered = status.undelivered_follower_account_ids.len();
+                    let message = if undelivered > 0 {
+                        format!("跟房指令已全部派发，{undelivered} 个窗口未送达")
+                    } else {
+                        "跟房指令已全部派发".to_string()
+                    };
+                    let _ = completed.handle.succeed(&message);
                 }
             }
             WorkflowPhase::Cancelled => {
@@ -1033,6 +1041,7 @@ impl RoomAutomationManager {
         validate_follower_trigger(&snapshot)?;
 
         let previously_completed = snapshot.completed_follower_account_ids.clone();
+        let previously_undelivered = snapshot.undelivered_follower_account_ids.clone();
         let pending_password = self
             .workflow
             .lock()
@@ -1086,10 +1095,13 @@ impl RoomAutomationManager {
                 .iter()
                 .any(|candidate| candidate.eq_ignore_ascii_case(account_id))
             {
+                let delivered = !previously_undelivered
+                    .iter()
+                    .any(|undelivered| undelivered.eq_ignore_ascii_case(account_id));
                 let completion = self
                     .workflow
                     .lock()
-                    .record_follower_complete(task_id, account_id);
+                    .record_follower_dispatch(task_id, account_id, delivered);
                 match completion {
                     Ok(status) => self.bridge.publish_status(&status),
                     Err(error) => {
@@ -1452,6 +1464,11 @@ impl RoomAutomationManager {
         room_name: String,
         cancel: Arc<CancellationSignal>,
     ) {
+        if config.follower_join_mode == FollowerJoinMode::Interval {
+            self.run_interval_followers(task_id, config, followers, room_name, cancel);
+            return;
+        }
+
         let host = Arc::clone(&self.host);
         let results = std::thread::scope(|scope| {
             let mut handles = Vec::with_capacity(followers.len());
@@ -1508,6 +1525,73 @@ impl RoomAutomationManager {
                 &format!("部分小号执行失败：{}", failures.join("；")),
             );
         }
+    }
+
+    fn run_interval_followers(
+        &self,
+        task_id: WorkflowTaskId,
+        config: RoomAutomationConfig,
+        followers: Vec<(String, RunningInstance)>,
+        room_name: String,
+        cancel: Arc<CancellationSignal>,
+    ) {
+        let host = Arc::clone(&self.host);
+        let interval = Duration::from_secs(config.follower_join_interval_secs);
+        let dispatch_started_at = Instant::now();
+
+        std::thread::scope(|scope| {
+            let (result_sender, result_receiver) = std::sync::mpsc::channel();
+            for (index, (account_id, instance)) in followers.into_iter().enumerate() {
+                let account_config = config.clone();
+                let account_room = room_name.clone();
+                let account_cancel = Arc::clone(&cancel);
+                let account_host = Arc::clone(&host);
+                let account_result_sender = result_sender.clone();
+                let dispatch_at = dispatch_started_at + interval.saturating_mul(index as u32);
+                scope.spawn(move || {
+                    let wait = dispatch_at.saturating_duration_since(Instant::now());
+                    if account_cancel.wait(wait) {
+                        return;
+                    }
+                    let result = account_host.run_follower(
+                        &account_config,
+                        &account_id,
+                        instance.pid,
+                        &account_room,
+                        &account_cancel,
+                    );
+                    let _ = account_result_sender.send((account_id, result));
+                });
+            }
+            drop(result_sender);
+
+            for (account_id, result) in result_receiver {
+                let delivered = result.is_ok();
+                if let Err(error) = &result {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("跟随账号“{account_id}”的进房指令未送达，队列继续：{error}"),
+                    );
+                }
+                match self
+                    .workflow
+                    .lock()
+                    .record_follower_dispatch(task_id, &account_id, delivered)
+                {
+                    Ok(status) => self.bridge.publish_status(&status),
+                    Err(WorkflowStateError::StaleTask { .. })
+                    | Err(WorkflowStateError::InvalidTransition { .. }) => {}
+                    Err(error) => crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("记录跟随账号“{account_id}”的指令派发结果失败：{error}"),
+                    ),
+                }
+            }
+        });
+
+        self.lifecycle.lock().leases = None;
     }
 
     fn persist_used_sequence(&self, task_id: WorkflowTaskId, sequence: u32) -> Result<(), String> {

@@ -1,5 +1,7 @@
 import {
   AlertCircle,
+  ArrowDown,
+  ArrowUp,
   ChevronDown,
   KeyRound,
   RefreshCw,
@@ -59,6 +61,8 @@ type Operation = "save" | "scan" | "restore";
 function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
     ...config,
+    follower_join_mode: config.follower_join_mode ?? "simultaneous",
+    follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     follower_account_ids: [...config.follower_account_ids],
     flow: { ...config.flow },
   };
@@ -242,6 +246,7 @@ export function RoomAutomationPanel({
   const workflowActive = isWorkflowActive(status);
   const saving = operation === "save";
   const editorDisabled = loading || !!unavailable || (!!operation && operation !== "save");
+  const followerJoinMode = draft?.follower_join_mode ?? "simultaneous";
   const participantAccountIds = useMemo(() => draft
     ? [draft.primary_account_id, ...draft.follower_account_ids].filter(Boolean)
     : [], [draft]);
@@ -656,6 +661,60 @@ export function RoomAutomationPanel({
                   );
                 })}
               </div>
+              {followerJoinMode === "interval" && draft.follower_account_ids.length > 0 && (
+                <div className="room-automation-follower-order">
+                  <div className="room-automation-follower-order-heading">
+                    <strong>{copy.followerJoinOrder}</strong>
+                    <span>{copy.followerJoinOrderHelp}</span>
+                  </div>
+                  <ol>
+                    {draft.follower_account_ids.map((accountId, index) => {
+                      const account = eligibleAccounts.find((candidate) => candidate.id === accountId);
+                      const label = account ? accountLabel(account) : accountId;
+                      return (
+                        <li key={accountId}>
+                          <span className="room-automation-follower-position" aria-hidden="true">{index + 1}</span>
+                          <span className="room-automation-follower-order-name">{label}</span>
+                          <span className="room-automation-follower-order-actions">
+                            <button
+                              type="button"
+                              disabled={index === 0}
+                              aria-label={copy.moveFollowerUp(label)}
+                              title={copy.moveFollowerUp(label)}
+                              onClick={() => updateDraft((current) => {
+                                const follower_account_ids = [...current.follower_account_ids];
+                                [follower_account_ids[index - 1], follower_account_ids[index]] = [
+                                  follower_account_ids[index],
+                                  follower_account_ids[index - 1],
+                                ];
+                                return { ...current, follower_account_ids };
+                              })}
+                            >
+                              <ArrowUp size={13} aria-hidden="true" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={index === draft.follower_account_ids.length - 1}
+                              aria-label={copy.moveFollowerDown(label)}
+                              title={copy.moveFollowerDown(label)}
+                              onClick={() => updateDraft((current) => {
+                                const follower_account_ids = [...current.follower_account_ids];
+                                [follower_account_ids[index], follower_account_ids[index + 1]] = [
+                                  follower_account_ids[index + 1],
+                                  follower_account_ids[index],
+                                ];
+                                return { ...current, follower_account_ids };
+                              })}
+                            >
+                              <ArrowDown size={13} aria-hidden="true" />
+                            </button>
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </div>
+              )}
               {validation?.fieldErrors.followers && <small role="alert">{validation.fieldErrors.followers}</small>}
             </fieldset>
 
@@ -743,6 +802,28 @@ export function RoomAutomationPanel({
           </label>
         </fieldset>
 
+        <fieldset className="room-automation-mode-options room-automation-join-mode-options" disabled={editorDisabled}>
+          <legend>{copy.followerJoinMode}</legend>
+          <label data-selected={followerJoinMode === "simultaneous" ? "true" : "false"}>
+            <input
+              type="radio"
+              name="room-follower-join-mode"
+              checked={followerJoinMode === "simultaneous"}
+              onChange={() => updateDraft((current) => ({ ...current, follower_join_mode: "simultaneous" }))}
+            />
+            <span><strong>{copy.simultaneousJoin}</strong><small>{copy.simultaneousJoinHelp}</small></span>
+          </label>
+          <label data-selected={followerJoinMode === "interval" ? "true" : "false"}>
+            <input
+              type="radio"
+              name="room-follower-join-mode"
+              checked={followerJoinMode === "interval"}
+              onChange={() => updateDraft((current) => ({ ...current, follower_join_mode: "interval" }))}
+            />
+            <span><strong>{copy.intervalJoin}</strong><small>{copy.intervalJoinHelp}</small></span>
+          </label>
+        </fieldset>
+
         <div className="room-automation-shortcuts">
           {draft.auto_followers_enabled && (
             <NumberField
@@ -752,6 +833,17 @@ export function RoomAutomationPanel({
               max={60}
               disabled={editorDisabled}
               onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_delay_secs: value }))}
+            />
+          )}
+          {followerJoinMode === "interval" && (
+            <NumberField
+              label={copy.followerJoinInterval}
+              value={draft.follower_join_interval_secs ?? 3}
+              min={1}
+              max={60}
+              disabled={editorDisabled}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(value) => updateDraft((current) => ({ ...current, follower_join_interval_secs: value }))}
             />
           )}
           <ShortcutField
@@ -773,6 +865,9 @@ export function RoomAutomationPanel({
             onChange={(join_shortcut) => updateDraft((current) => ({ ...current, join_shortcut }))}
           />
         </div>
+        {followerJoinMode === "interval" && (
+          <p className="room-automation-dispatch-hint">{copy.followerJoinIntervalHelp}</p>
+        )}
 
         <div className="room-automation-room-builder">
           <div className="room-automation-room-builder-heading">

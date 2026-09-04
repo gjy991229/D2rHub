@@ -3,6 +3,8 @@ export interface RoomFlowStrategy {
   character_delay_ms: number;
 }
 
+export type FollowerJoinMode = "simultaneous" | "interval";
+
 export interface RoomAutomationConfig {
   enabled: boolean;
   chat_f13_auto_patch_enabled: boolean;
@@ -10,6 +12,10 @@ export interface RoomAutomationConfig {
   follower_account_ids: string[];
   auto_followers_enabled: boolean;
   auto_followers_delay_secs: number;
+  /** Absent only on a legacy snapshot; the UI treats it as `simultaneous`. */
+  follower_join_mode?: FollowerJoinMode;
+  /** Absent only on a legacy snapshot; the UI treats it as 3 seconds. */
+  follower_join_interval_secs?: number;
   shortcut: string;
   join_shortcut: string;
   name_prefix: string;
@@ -75,6 +81,7 @@ export interface RoomAutomationWorkflowStatus {
   primary_account_id: string | null;
   follower_account_ids: string[];
   completed_follower_account_ids: string[];
+  undelivered_follower_account_ids?: string[];
   started_at: string | null;
   last_error: string | null;
 }

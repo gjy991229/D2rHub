@@ -9,7 +9,8 @@ mod status;
 
 pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
-    FlowStrategy, NormalizationReport, RoomAutomationConfig, RoomAutomationConfigError,
+    FlowStrategy, FollowerJoinMode, NormalizationReport, RoomAutomationConfig,
+    RoomAutomationConfigError,
 };
 pub use status::{
     WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus,
