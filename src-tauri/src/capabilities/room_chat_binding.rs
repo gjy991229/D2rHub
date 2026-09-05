@@ -1,4 +1,4 @@
-//! Lifecycle-owned one-shot scanner for the room-automation F13 binding.
+//! Lifecycle-owned one-shot scanner for the room-automation Pause/F13 binding.
 //!
 //! This adapter deliberately owns no global configuration or Tauri state. A
 //! capability driver supplies the save directories and the process probe, and
@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use super::room_automation::ChatKey;
 use crate::infrastructure::durable_fs;
 
 const KEY_FILE_VERSION: u16 = 37;
@@ -22,6 +23,7 @@ const CHAT_ACTION_ID: u32 = 5;
 const CHAT_RECORD_OFFSET: usize = KEY_FILE_HEADER_SIZE + CHAT_ACTION_INDEX * KEY_RECORD_SIZE;
 const SECONDARY_SLOT_OFFSET: usize = CHAT_RECORD_OFFSET + 10;
 const VK_RETURN: u16 = 0x000D;
+#[cfg(test)]
 const VK_F13: u16 = 0x007C;
 const BOUND_KEY_TYPE: u32 = 1;
 const UNBOUND_KEY_TYPE: u32 = 0;
@@ -43,7 +45,7 @@ impl ExplicitChatBindingConsent {
         if granted {
             Ok(Self(()))
         } else {
-            Err("未获得用户对 F13 配置变更扫描的显式同意".to_string())
+            Err("未获得用户对聊天键配置变更扫描的显式同意".to_string())
         }
     }
 }
@@ -94,13 +96,13 @@ impl InspectedFile {
             Err(error) => return Some(error.clone()),
         };
         match (&self.backup, state) {
-            // A manually installed F13 needs no D2RHub backup because install
+            // A manually installed selected key needs no D2RHub backup because install
             // will not touch it. Backup ownership matters only when an
             // eligible file is about to be changed.
             (_, BindingState::Installed) => None,
             (Some(Err(error)), BindingState::Eligible) => Some(error.clone()),
             (Some(Ok(bytes)), BindingState::Eligible)
-                if inspect_key_bytes(bytes) != Ok(BindingState::Eligible) =>
+                if inspect_key_bytes_for(bytes, None).is_err() =>
             {
                 Some("已有备份不是可恢复的原生 Chat 第二键位状态".to_string())
             }
@@ -112,7 +114,7 @@ impl InspectedFile {
         self.backup.as_ref().is_some_and(|result| {
             result
                 .as_ref()
-                .is_ok_and(|bytes| inspect_key_bytes(bytes) == Ok(BindingState::Eligible))
+                .is_ok_and(|bytes| inspect_key_bytes_for(bytes, None).is_ok())
         })
     }
 }
@@ -179,12 +181,13 @@ struct ReplaceJournal {
 
 struct ServiceInner {
     directories: Vec<PathBuf>,
+    chat_key: ChatKey,
     d2r_running: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
     operation: Mutex<()>,
     consent_granted: AtomicBool,
 }
 
-/// Capability-owned F13 binding service.
+/// Capability-owned chat binding service. Legacy type and backup names are retained.
 ///
 /// A newly constructed service has no consent and starts no threads. A
 /// successful [`Self::install`] grants consent and performs one bounded scan.
@@ -195,7 +198,19 @@ pub(crate) struct ChatF13BindingService {
 }
 
 impl ChatF13BindingService {
+    /// Legacy entry point for callers that explicitly use F13.
     pub(crate) fn new<F>(directories: Vec<PathBuf>, d2r_running: F) -> Result<Self, String>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
+        Self::new_with_key(directories, d2r_running, ChatKey::F13)
+    }
+
+    pub(crate) fn new_with_key<F>(
+        directories: Vec<PathBuf>,
+        d2r_running: F,
+        chat_key: ChatKey,
+    ) -> Result<Self, String>
     where
         F: Fn() -> bool + Send + Sync + 'static,
     {
@@ -203,11 +218,16 @@ impl ChatF13BindingService {
         Ok(Self {
             inner: Arc::new(ServiceInner {
                 directories,
+                chat_key,
                 d2r_running: Arc::new(d2r_running),
                 operation: Mutex::new(()),
                 consent_granted: AtomicBool::new(false),
             }),
         })
+    }
+
+    pub(crate) fn chat_key(&self) -> ChatKey {
+        self.inner.chat_key
     }
 
     /// Preflights every key file, creates durable non-overwriting backups,
@@ -219,7 +239,8 @@ impl ChatF13BindingService {
     fn scan_once(&self) -> Result<ChatF13BindingStatus, String> {
         {
             let _operation = lock(&self.inner.operation);
-            let snapshot = inspect_filesystem(&self.inner.directories)?;
+            let snapshot =
+                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
             if snapshot.ready() {
                 self.inner.consent_granted.store(true, Ordering::Release);
                 return Ok(build_status(&self.inner, &snapshot));
@@ -234,7 +255,8 @@ impl ChatF13BindingService {
             let _operation = lock(&self.inner.operation);
             ensure_d2r_closed(&self.inner)?;
             recover_interrupted_transactions(&self.inner.directories)?;
-            let snapshot = inspect_filesystem(&self.inner.directories)?;
+            let snapshot =
+                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
             preflight_install(&snapshot)?;
 
             // Finish every backup before changing the first live key file.
@@ -249,7 +271,10 @@ impl ChatF13BindingService {
                 if file.state == Ok(BindingState::Installed) {
                     continue;
                 }
-                let patched = patch_f13(&file.bytes)?;
+                let patched = match self.inner.chat_key {
+                    ChatKey::F13 => patch_f13(&file.bytes)?,
+                    key => patch_chat_key(&file.bytes, key)?,
+                };
                 if let Err(error) = atomic_replace_bytes(&file.path, &file.bytes, &patched) {
                     let rollback_errors = rollback_changed_files(&changed);
                     let suffix = if rollback_errors.is_empty() {
@@ -262,7 +287,8 @@ impl ChatF13BindingService {
                 changed.push((&file.path, file.bytes.clone()));
             }
 
-            let verified = inspect_filesystem(&self.inner.directories)?;
+            let verified =
+                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
             require_scan_ready(&verified)?;
             Ok::<FilesystemSnapshot, String>(verified)
         })()?;
@@ -295,7 +321,7 @@ impl ChatF13BindingService {
     /// consent, backups or live key files.
     pub(crate) fn preflight_restore(&self) -> Result<(), String> {
         let _operation = lock(&self.inner.operation);
-        let snapshot = inspect_filesystem(&self.inner.directories)?;
+        let snapshot = inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
         if snapshot.transaction_artifacts.is_empty() {
             if !build_restore_plan(&snapshot)?.is_empty() {
                 ensure_d2r_closed(&self.inner)?;
@@ -315,12 +341,14 @@ impl ChatF13BindingService {
         let restore_result =
             (|| {
                 let _operation = lock(&self.inner.operation);
-                let before_recovery = inspect_filesystem(&self.inner.directories)?;
+                let before_recovery =
+                    inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
                 if !before_recovery.transaction_artifacts.is_empty() {
                     ensure_d2r_closed(&self.inner)?;
                     recover_interrupted_transactions(&self.inner.directories)?;
                 }
-                let snapshot = inspect_filesystem(&self.inner.directories)?;
+                let snapshot =
+                    inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
                 let restore_plan = build_restore_plan(&snapshot)?;
                 if !restore_plan.is_empty() {
                     ensure_d2r_closed(&self.inner)?;
@@ -363,9 +391,10 @@ impl ChatF13BindingService {
         let (cleanup_warnings, restored_any) = restore_result?;
         let mut status = self.status()?;
         if !restored_any {
-            status
-                .message
-                .push_str("；没有 D2RHub 管理的备份，已仅关闭配置变更扫描，未改动手动 F13 键位");
+            status.message.push_str(&format!(
+                "；没有 D2RHub 管理的备份，已仅关闭配置变更扫描，未改动手动 {} 键位",
+                self.inner.chat_key.label()
+            ));
         }
         if !cleanup_warnings.is_empty() {
             status.message.push_str(&format!(
@@ -379,7 +408,7 @@ impl ChatF13BindingService {
     pub(crate) fn status(&self) -> Result<ChatF13BindingStatus, String> {
         let _operation = lock(&self.inner.operation);
         validate_configured_directories(&self.inner.directories)?;
-        let snapshot = inspect_filesystem(&self.inner.directories)?;
+        let snapshot = inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
         Ok(build_status(&self.inner, &snapshot))
     }
 }
@@ -406,7 +435,7 @@ fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!(
-            "F13 安装预检失败，未修改任何键位文件：{}",
+            "聊天键安装预检失败，未修改任何键位文件：{}",
             problems.join("；")
         ))
     }
@@ -427,15 +456,15 @@ fn require_scan_ready(snapshot: &FilesystemSnapshot) -> Result<(), String> {
         })
         .collect();
     if snapshot.files.is_empty() {
-        Err("没有可验证的 .key/.keyo 键位文件，F13 扫描未完成".to_string())
+        Err("没有可验证的 .key/.keyo 键位文件，聊天键扫描未完成".to_string())
     } else if !snapshot.transaction_artifacts.is_empty() {
         Err(format!(
-            "仍有未完成的键位写入事务，F13 扫描未完成：{}",
+            "仍有未完成的键位写入事务，聊天键扫描未完成：{}",
             display_paths(&snapshot.transaction_artifacts)
         ))
     } else {
         Err(format!(
-            "F13 键位或备份未通过扫描校验：{}",
+            "聊天键或备份未通过扫描校验：{}",
             if problems.is_empty() {
                 "并非所有键位文件都已安装且可恢复".to_string()
             } else {
@@ -469,8 +498,9 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     let consent_granted = inner.consent_granted.load(Ordering::Acquire);
     let watcher_running = false;
     let d2r_running = probe_d2r_running(inner);
+    let key_label = inner.chat_key.label();
     let mut message = if ready {
-        format!("F13 原生 Chat 备用键已验证：{installed_files}/{total_files} 个键位文件")
+        format!("{key_label} 原生 Chat 备用键已验证：{installed_files}/{total_files} 个键位文件")
     } else if total_files == 0 {
         "存档目录中没有找到 .key/.keyo 键位文件".to_string()
     } else if transaction_artifacts > 0 {
@@ -478,7 +508,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     } else if conflicted_files > 0 {
         format!("发现 {conflicted_files} 个格式、键位、备份或路径冲突；未自动覆盖")
     } else {
-        format!("尚有 {eligible_files}/{total_files} 个键位文件可以安全安装 F13")
+        format!("尚有 {eligible_files}/{total_files} 个键位文件可以安全安装 {key_label}")
     };
     if d2r_running {
         message.push_str("；D2R 正在运行，扫描补装或恢复前必须全部关闭");
@@ -494,7 +524,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     let externally_managed = installed_files.saturating_sub(managed_installed_files);
     if externally_managed > 0 {
         message.push_str(&format!(
-            "；其中 {externally_managed} 个 F13 键位由用户或其他工具管理，不会由 D2RHub 恢复"
+            "；其中 {externally_managed} 个 {key_label} 键位由用户或其他工具管理，不会由 D2RHub 恢复"
         ));
     }
     if orphan_backup_files > 0 {
@@ -526,7 +556,10 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
     }
 }
 
-fn inspect_filesystem(directories: &[PathBuf]) -> Result<FilesystemSnapshot, String> {
+fn inspect_filesystem_for_key(
+    directories: &[PathBuf],
+    chat_key: ChatKey,
+) -> Result<FilesystemSnapshot, String> {
     validate_configured_directories(directories)?;
     let mut snapshot = FilesystemSnapshot::default();
     let mut key_files = Vec::new();
@@ -577,7 +610,10 @@ fn inspect_filesystem(directories: &[PathBuf]) -> Result<FilesystemSnapshot, Str
 
     for path in key_files {
         let bytes = read_regular_file(&path)?;
-        let state = inspect_key_bytes(&bytes);
+        let state = match chat_key {
+            ChatKey::F13 => inspect_key_bytes(&bytes),
+            key => inspect_key_bytes_for(&bytes, Some(key)),
+        };
         let backup = backup_targets
             .remove(&path)
             .map(|backup| read_regular_file(&backup));
@@ -648,7 +684,7 @@ fn recover_interrupted_transactions(directories: &[PathBuf]) -> Result<(), Strin
                 validate_regular_file(&path)?;
                 let target = target_from_suffixed_path(&path, suffix)?;
                 if !is_key_file(&target) {
-                    return Err(format!("F13 安全写入事务文件名无效：{}", path.display()));
+                    return Err(format!("聊天键安全写入事务文件名无效：{}", path.display()));
                 }
                 targets.insert(target);
             }
@@ -707,7 +743,7 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
         }
         Err(error) => {
             return Err(format!(
-                "F13 安全写入事务日志损坏且无法安全判定提交点 {}：{error}",
+                "聊天键安全写入事务日志损坏且无法安全判定提交点 {}：{error}",
                 journal_path.display()
             ));
         }
@@ -773,7 +809,7 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
                 "WARN",
                 "RoomChatBinding",
                 &format!(
-                    "未提交的 F13 staging 校验失败，正在恢复原键位并清理残留：{}",
+                    "未提交的 聊天键 staging 校验失败，正在恢复原键位并清理残留：{}",
                     stage.display()
                 ),
             );
@@ -832,7 +868,7 @@ fn atomic_replace_bytes(
         replacement_checksum: checksum(replacement),
     };
     let journal_bytes = serde_json::to_vec(&journal)
-        .map_err(|error| format!("无法序列化 F13 安全写入事务：{error}"))?;
+        .map_err(|error| format!("无法序列化 聊天键安全写入事务：{error}"))?;
     if let Err(error) = create_synced_new_file(&journal_path, &journal_bytes) {
         let _ = remove_regular_if_exists(&stage);
         return Err(error);
@@ -878,7 +914,7 @@ fn atomic_replace_bytes(
 fn validate_replace_journal(target: &Path, journal: &ReplaceJournal) -> Result<(), String> {
     if journal.version != REPLACE_JOURNAL_VERSION {
         return Err(format!(
-            "不支持的 F13 安全写入事务版本：{}",
+            "不支持的 聊天键安全写入事务版本：{}",
             journal.version
         ));
     }
@@ -888,7 +924,7 @@ fn validate_replace_journal(target: &Path, journal: &ReplaceJournal) -> Result<(
         .ok_or_else(|| format!("键位文件名不是有效 Unicode：{}", target.display()))?;
     if journal.target_file_name != expected {
         return Err(format!(
-            "F13 安全写入事务目标不匹配：期望 {expected}，实际 {}",
+            "聊天键安全写入事务目标不匹配：期望 {expected}，实际 {}",
             journal.target_file_name
         ));
     }
@@ -896,7 +932,7 @@ fn validate_replace_journal(target: &Path, journal: &ReplaceJournal) -> Result<(
 }
 
 fn create_backup(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    if inspect_key_bytes(bytes)? != BindingState::Eligible {
+    if inspect_key_bytes_for(bytes, None).is_err() {
         return Err(format!(
             "拒绝备份不可替换的 Chat 第二键位状态：{}",
             path.display()
@@ -905,7 +941,7 @@ fn create_backup(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let backup = backup_path(path)?;
     if path_exists_no_follow(&backup)? {
         let existing = read_regular_file(&backup)?;
-        if inspect_key_bytes(&existing)? != BindingState::Eligible {
+        if inspect_key_bytes_for(&existing, None).is_err() {
             return Err(format!("已有备份不可安全恢复：{}", backup.display()));
         }
         return Ok(());
@@ -930,6 +966,12 @@ fn create_synced_new_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 fn inspect_key_bytes(bytes: &[u8]) -> Result<BindingState, String> {
+    inspect_key_bytes_for(bytes, Some(ChatKey::F13))
+}
+
+// None validates an original backup independently of the currently selected key.
+// Switching F13/Pause must never replace the first backup or invalidate it.
+fn inspect_key_bytes_for(bytes: &[u8], chat_key: Option<ChatKey>) -> Result<BindingState, String> {
     if read_u16(bytes, 0)? != KEY_FILE_VERSION {
         return Err("不是已验证的 D2R v37 键位格式".to_string());
     }
@@ -963,19 +1005,27 @@ fn inspect_key_bytes(bytes: &[u8]) -> Result<BindingState, String> {
             let slot_offset = record_offset + slot * 10;
             let key = read_u16(bytes, slot_offset + 4)?;
             let key_type = read_u32(bytes, slot_offset + 6)?;
-            if key == VK_F13 && key_type != UNBOUND_KEY_TYPE {
-                return Err(format!("F13 已被动作 {record} 的第 {} 键位占用", slot + 1));
+            if let Some(selected) = chat_key {
+                if key == selected.virtual_key() && key_type != UNBOUND_KEY_TYPE {
+                    return Err(format!(
+                        "{} 已被动作 {record} 的第 {} 键位占用",
+                        selected.label(),
+                        slot + 1
+                    ));
+                }
             }
         }
     }
 
     match (secondary_key, secondary_type) {
-        (VK_F13, BOUND_KEY_TYPE) => Ok(BindingState::Installed),
+        (key, BOUND_KEY_TYPE) if chat_key.is_some_and(|selected| key == selected.virtual_key()) => {
+            Ok(BindingState::Installed)
+        }
         // Cloud-created v37 files sometimes keep a stale raw key value while
         // type 0 still means unbound. The full slot is retained in the backup.
         (_, UNBOUND_KEY_TYPE) => Ok(BindingState::Eligible),
         // A user-defined secondary Chat key is also replaceable. Installation
-        // backs up the complete slot before assigning F13, so restore can put
+        // backs up the complete slot before replacement, so restore can put
         // the user's original key back exactly.
         (_, BOUND_KEY_TYPE) => Ok(BindingState::Eligible),
         _ => Err(format!(
@@ -985,33 +1035,41 @@ fn inspect_key_bytes(bytes: &[u8]) -> Result<BindingState, String> {
 }
 
 fn patch_f13(bytes: &[u8]) -> Result<Vec<u8>, String> {
-    if inspect_key_bytes(bytes)? != BindingState::Eligible {
+    patch_chat_key(bytes, ChatKey::F13)
+}
+
+fn patch_chat_key(bytes: &[u8], chat_key: ChatKey) -> Result<Vec<u8>, String> {
+    if inspect_key_bytes_for(bytes, Some(chat_key))? != BindingState::Eligible {
         return Err("该键位文件不是可安装状态".to_string());
     }
     let mut patched = bytes.to_vec();
     write_u32(&mut patched, SECONDARY_SLOT_OFFSET, CHAT_ACTION_ID);
-    write_u16(&mut patched, SECONDARY_SLOT_OFFSET + 4, VK_F13);
+    write_u16(
+        &mut patched,
+        SECONDARY_SLOT_OFFSET + 4,
+        chat_key.virtual_key(),
+    );
     write_u32(&mut patched, SECONDARY_SLOT_OFFSET + 6, BOUND_KEY_TYPE);
-    if inspect_key_bytes(&patched)? != BindingState::Installed {
-        return Err("F13 键位写入后的结构校验失败".to_string());
+    if inspect_key_bytes_for(&patched, Some(chat_key))? != BindingState::Installed {
+        return Err("聊天键写入后的结构校验失败".to_string());
     }
     Ok(patched)
 }
 
 fn restore_chat_secondary_slot(current: &[u8], backup: &[u8]) -> Result<Vec<u8>, String> {
     if !matches!(
-        inspect_key_bytes(current)?,
+        inspect_key_bytes_for(current, None)?,
         BindingState::Installed | BindingState::Eligible
     ) {
         return Err("当前键位文件不是可恢复状态".to_string());
     }
-    if inspect_key_bytes(backup)? != BindingState::Eligible {
+    if inspect_key_bytes_for(backup, None)? != BindingState::Eligible {
         return Err("备份中的原生 Chat 第二键位不可安全恢复".to_string());
     }
     let mut restored = current.to_vec();
     restored[SECONDARY_SLOT_OFFSET..SECONDARY_SLOT_OFFSET + 10]
         .copy_from_slice(&backup[SECONDARY_SLOT_OFFSET..SECONDARY_SLOT_OFFSET + 10]);
-    if inspect_key_bytes(&restored)? != BindingState::Eligible {
+    if inspect_key_bytes_for(&restored, None)? != BindingState::Eligible {
         return Err("恢复后的键位结构校验失败".to_string());
     }
     Ok(restored)
@@ -1293,7 +1351,6 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

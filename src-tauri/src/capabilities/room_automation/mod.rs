@@ -10,7 +10,7 @@ mod status;
 pub use model::CURRENT_STRATEGY_VERSION;
 pub(crate) use model::canonicalize_shortcut;
 pub use model::{
-    FlowStrategy, FollowerJoinMode, NormalizationReport, RoomAutomationConfig,
+    ChatKey, FlowStrategy, FollowerJoinMode, NormalizationReport, RoomAutomationConfig,
     RoomAutomationConfigError,
 };
 pub use status::{

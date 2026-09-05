@@ -26,9 +26,8 @@ const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 22;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 21;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FINGERPRINT: &str = "room-tools-v21";
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 23;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 2] = [21, 22];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -518,9 +517,9 @@ fn validate_upgrade_source_feature_group_entries(
     validate_feature_group_metadata(groups)?;
     for group in groups {
         if group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-            && group.recipe_version == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+            && PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS.contains(&group.recipe_version)
         {
-            if group.fingerprint != PREVIOUS_IN_GAME_ROOM_TOOLS_FINGERPRINT {
+            if group.fingerprint != format!("room-tools-v{}", group.recipe_version) {
                 return Err("上一版局内房间工具指纹无效，不能作为原位升级来源".to_string());
             }
         } else {
@@ -966,6 +965,32 @@ fn validate_auto_exit_on_death_layouts(
         || stub.get("name").and_then(serde_json::Value::as_str) != Some(AUTO_EXIT_ON_DEATH_PANEL)
     {
         return Err("死亡后自动退出面板入口无效".to_string());
+    }
+    Ok(())
+}
+
+fn validate_lobby_return_hint(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
+    let layout_directory = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let lobby = read_room_tool_layout(&layout_directory, "lobbybackgroundpanelhd.json")?;
+    let hint = find_layout_node(&lobby, "D2RHubLobbyReturnHint")
+        .ok_or_else(|| "局内房间工具缺少大厅 Esc 返回提示，请重新加工".to_string())?;
+    let expected = serde_json::json!({
+        "type": "TextBoxWidget",
+        "name": "D2RHubLobbyReturnHint",
+        "fields": {
+            "rect": { "x": -50, "y": 0 },
+            "text": "按 Esc 键返回",
+            "style": {
+                "alignment": { "h": "center", "v": "center" },
+                "fontColor": "$FontColorDarkGold",
+                "pointSize": 120
+            }
+        }
+    });
+    if hint != &expected {
+        return Err("大厅 Esc 返回提示的文案或格式无效，请重新加工".to_string());
     }
     Ok(())
 }
@@ -1494,16 +1519,22 @@ fn validate_compatible_audio_mod_directory_with_policy(
             .iter()
             .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
     {
-        let uses_previous_room_tools = allow_previous_room_tools
+        let uses_legacy_room_transition = allow_previous_room_tools
             && feature_groups.iter().any(|group| {
                 group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                    && group.recipe_version == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+                    && group.recipe_version == 21
             });
         validate_in_game_room_tool_layouts_for_recipe(
             &mod_directory,
             mod_name,
-            !uses_previous_room_tools,
+            !uses_legacy_room_transition,
         )?;
+        if feature_groups.iter().any(|group| {
+            group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
+                && group.recipe_version == IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+        }) {
+            validate_lobby_return_hint(&mod_directory, mod_name)?;
+        }
     }
     if current_feature_protocol
         && feature_groups
@@ -3821,12 +3852,12 @@ async fn upgrade_audio_mod_impl(
             validated
                 .feature_groups
                 .iter()
-                // The generator intentionally replaces the known r21 room group with r22.
+                // The generator replaces known r21/r22 room groups with the current recipe.
                 // Preserve every other known or opaque group byte-for-byte across replacement.
                 .filter(|group| {
                     !(group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                        && group.recipe_version
-                            == PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION)
+                        && PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS
+                            .contains(&group.recipe_version))
                 })
                 .cloned()
                 .collect::<Vec<_>>()

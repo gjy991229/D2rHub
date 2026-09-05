@@ -61,10 +61,11 @@ type Operation = "save" | "scan" | "restore";
 function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
     ...config,
+    chat_key: config.chat_key ?? "pause",
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     follower_account_ids: [...config.follower_account_ids],
-    flow: { ...config.flow },
+    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },
   };
 }
 
@@ -279,7 +280,8 @@ export function RoomAutomationPanel({
         dirtyRef.current = false;
       }
       setStale(false);
-      if (candidate.enabled && candidate.chat_f13_auto_patch_enabled) {
+      if (outcome.snapshot.config.chat_f13_auto_patch_enabled
+        && (candidate.enabled || candidate.chat_key !== currentSnapshot.config.chat_key)) {
         setBindingFeedback(outcome.apply_warning ? null : copy.configScanComplete);
         setBindingReloadKey((current) => current + 1);
       }
@@ -297,15 +299,15 @@ export function RoomAutomationPanel({
   }, [copy, eligibleAccounts, gateway, stale]);
 
   useEffect(() => {
-    if (!draft || !dirty || !validation?.valid || stale || operationRef.current) return;
+    if (!draft || !dirty || !validation?.valid || stale || operationError || operationRef.current) return;
     void persistDraft(cloneConfig(draft));
-  }, [dirty, draft, persistDraft, saving, stale, validation?.valid]);
+  }, [dirty, draft, operationError, persistDraft, saving, stale, validation?.valid]);
 
   const updateBinding = async (
     kind: "scan" | "restore",
     action: () => Promise<RoomChatBindingStatus>,
   ): Promise<RoomChatBindingStatus | null> => {
-    if (editorDisabled || dirty || (kind === "scan" && !draft?.enabled) || !binding || bindingLoading
+    if (editorDisabled || dirty || !binding || bindingLoading
       || bindingError || operationRef.current) return null;
     operationRef.current = kind;
     setOperation(kind);
@@ -495,11 +497,11 @@ export function RoomAutomationPanel({
           >
             <span>
               <strong id="room-binding-title">{copy.f13Title}</strong>
-              <small>{binding?.ready ? copy.bindingReadySummary : copy.bindingNotReady}</small>
+              <small>{draft.chat_key === "f13" ? "F13" : "Pause"} · {binding?.ready ? copy.bindingReadySummary : copy.bindingNotReady}</small>
             </span>
             <ChevronDown size={15} aria-hidden="true" />
           </button>
-          {draft.enabled && (
+          {(draft.enabled || draft.chat_f13_auto_patch_enabled) && (
             <Button
               size="sm"
               variant="secondary"
@@ -516,7 +518,23 @@ export function RoomAutomationPanel({
 
         {bindingCardOpen && (
           <div id="room-automation-binding-body" className="room-automation-binding-body">
-            <p className="room-automation-consent-copy">{copy.f13Description}</p>
+            <label className="room-automation-field">
+              <span>{copy.chatKey}</span>
+              <select
+                className="settings-input"
+                value={draft.chat_key ?? "pause"}
+                disabled={editorDisabled || saving || bindingLoading || !!binding?.d2rRunning}
+                aria-describedby="room-chat-key-help"
+                onChange={(event) => updateDraft((current) => ({
+                  ...current,
+                  chat_key: event.target.value as RoomAutomationConfig["chat_key"],
+                }))}
+              >
+                <option value="pause">{copy.pauseKey}</option>
+                <option value="f13">F13</option>
+              </select>
+            </label>
+            <p id="room-chat-key-help" className="room-automation-consent-copy">{copy.f13Description}</p>
             <div className="flex justify-end">
               <Button
                 size="sm"
@@ -596,7 +614,7 @@ export function RoomAutomationPanel({
             <strong>{stale ? copy.staleHint : copy.error}</strong>
             {operationError && <p>{operationError}</p>}
           </div>
-          {stale && <Button size="sm" onClick={reload}>{copy.retryLoad}</Button>}
+          {(stale || (dirty && operationError)) && <Button size="sm" onClick={reload}>{copy.retryLoad}</Button>}
         </div>
       )}
 
@@ -911,6 +929,9 @@ export function RoomAutomationPanel({
             <NumberField label={copy.stepDelay} value={draft.flow.step_delay_ms} min={0} max={2000}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, step_delay_ms } }))} />
+            <NumberField label={copy.keyHold} value={draft.flow.key_hold_ms ?? 50} min={10} max={250}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(key_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, key_hold_ms } }))} />
             <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms} min={10} max={250}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
@@ -929,6 +950,7 @@ export function RoomAutomationPanel({
               </select>
             </label>
           </div>
+          <p className="room-automation-consent-copy">{copy.inputTimingHelp}</p>
           {validation?.fieldErrors.timing && <p className="room-automation-field-error" role="alert">{validation.fieldErrors.timing}</p>}
         </fieldset>
       </details>

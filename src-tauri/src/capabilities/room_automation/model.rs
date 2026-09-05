@@ -7,6 +7,7 @@ pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 100;
 const DEFAULT_CHARACTER_DELAY_MS: u64 = 50;
+const DEFAULT_KEY_HOLD_MS: u64 = 50;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
 const MIN_CHARACTER_DELAY_MS: u64 = 10;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
@@ -25,6 +26,34 @@ fn default_character_delay_ms() -> u64 {
     DEFAULT_CHARACTER_DELAY_MS
 }
 
+fn default_key_hold_ms() -> u64 {
+    DEFAULT_KEY_HOLD_MS
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatKey {
+    #[default]
+    Pause,
+    F13,
+}
+
+impl ChatKey {
+    pub(crate) fn virtual_key(self) -> u16 {
+        match self {
+            Self::Pause => 0x13,
+            Self::F13 => 0x7C,
+        }
+    }
+
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Pause => "Pause",
+            Self::F13 => "F13",
+        }
+    }
+}
+
 /// Keyboard pacing for one room-form workflow profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -33,6 +62,8 @@ pub struct FlowStrategy {
     pub step_delay_ms: u64,
     #[serde(default = "default_character_delay_ms")]
     pub character_delay_ms: u64,
+    #[serde(default = "default_key_hold_ms")]
+    pub key_hold_ms: u64,
 }
 
 impl FlowStrategy {
@@ -40,6 +71,7 @@ impl FlowStrategy {
         Self {
             step_delay_ms: DEFAULT_STANDARD_STEP_DELAY_MS,
             character_delay_ms: DEFAULT_CHARACTER_DELAY_MS,
+            key_hold_ms: DEFAULT_KEY_HOLD_MS,
         }
     }
 
@@ -48,16 +80,19 @@ impl FlowStrategy {
         self.character_delay_ms = self
             .character_delay_ms
             .clamp(MIN_CHARACTER_DELAY_MS, MAX_CHARACTER_DELAY_MS);
+        self.key_hold_ms = self.key_hold_ms.clamp(10, 250);
     }
 
     fn validate(&self, profile: &'static str) -> Result<(), RoomAutomationConfigError> {
         if self.step_delay_ms > MAX_STEP_DELAY_MS
             || !(MIN_CHARACTER_DELAY_MS..=MAX_CHARACTER_DELAY_MS).contains(&self.character_delay_ms)
+            || !(10..=250).contains(&self.key_hold_ms)
         {
             return Err(RoomAutomationConfigError::InvalidFlowStrategy {
                 profile,
                 step_delay_ms: self.step_delay_ms,
                 character_delay_ms: self.character_delay_ms,
+                key_hold_ms: self.key_hold_ms,
             });
         }
         Ok(())
@@ -128,6 +163,8 @@ pub struct RoomAutomationConfig {
     #[serde(default)]
     pub chat_f13_auto_patch_enabled: bool,
     #[serde(default)]
+    pub chat_key: ChatKey,
+    #[serde(default)]
     pub primary_account_id: String,
     #[serde(default)]
     pub follower_account_ids: Vec<String>,
@@ -168,6 +205,7 @@ impl Default for RoomAutomationConfig {
         Self {
             enabled: false,
             chat_f13_auto_patch_enabled: false,
+            chat_key: ChatKey::default(),
             primary_account_id: String::new(),
             follower_account_ids: Vec::new(),
             auto_followers_enabled: false,
@@ -244,12 +282,13 @@ pub enum RoomAutomationConfigError {
     #[error("background text strategy {0:?} is unsupported")]
     InvalidBackgroundTextStrategy(String),
     #[error(
-        "flow profile {profile} has invalid timing ({step_delay_ms} ms, {character_delay_ms} ms)"
+        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, release {character_delay_ms} ms, hold {key_hold_ms} ms)"
     )]
     InvalidFlowStrategy {
         profile: &'static str,
         step_delay_ms: u64,
         character_delay_ms: u64,
+        key_hold_ms: u64,
     },
     #[error("primary account is not configured")]
     MissingPrimaryAccount,
@@ -666,7 +705,6 @@ fn parse_decimal(value: &str) -> Option<u8> {
         .then(|| value.parse::<u8>().ok())
         .flatten()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

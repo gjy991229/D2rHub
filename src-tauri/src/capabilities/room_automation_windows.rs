@@ -5,7 +5,7 @@
 //! window messages. Every wait and key boundary consults the caller's cancel
 //! signal so capability shutdown never leaves detached input work behind.
 
-use crate::capabilities::room_automation::FlowStrategy;
+use crate::capabilities::room_automation::{ChatKey, FlowStrategy};
 use std::time::Duration;
 
 const WM_KEYDOWN: u32 = 0x0100;
@@ -21,10 +21,9 @@ const VK_ESCAPE: u16 = 0x1B;
 const VK_END: u16 = 0x23;
 const VK_LEFT: u16 = 0x25;
 const VK_RIGHT: u16 = 0x27;
-const VK_F13: u16 = 0x7C;
 const VK_OEM_MINUS: u16 = 0xBD;
 const MAPVK_VK_TO_VSC: u32 = 0;
-const KEY_DOWN_HOLD_MS: u64 = 14;
+const EXTRA_PANEL_SETTLE_MS: u64 = 50;
 const MIN_CHARACTER_GAP_MS: u64 = 10;
 const PUNCTUATION_GAP_MS: u64 = 18;
 const FIELD_CLEAR_SETTLE_MS: u64 = 24;
@@ -90,6 +89,7 @@ pub(crate) fn foreground_pid() -> Option<u32> {
 pub(crate) struct RoomFormRequest<'a> {
     pub pid: u32,
     pub background_text_strategy: &'a str,
+    pub chat_key: ChatKey,
     pub create: bool,
     pub open_form: bool,
     pub name: &'a str,
@@ -107,64 +107,101 @@ pub(crate) fn fill_room_form(
     let strategy = BackgroundTextStrategy::from_value(request.background_text_strategy);
 
     if request.open_form {
-        open_room_form(
-            hwnd,
-            request.create,
-            strategy,
-            request.flow.step_delay_ms,
-            cancel,
-        )?;
+        open_room_form(hwnd, request.create, strategy, request.flow, cancel)?;
     }
-    enter_native_chat_mode(hwnd, strategy, request.flow.step_delay_ms, cancel)?;
-    replace_text(
+    enter_native_chat_mode(hwnd, strategy, request.chat_key, request.flow, cancel)?;
+    replace_text(hwnd, request.name, strategy, request.flow, cancel)?;
+    wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
+    deliver_key(
         hwnd,
-        request.name,
+        VK_TAB,
+        false,
         strategy,
-        request.flow.character_delay_ms,
+        request.flow.key_hold_ms,
+        20,
         cancel,
     )?;
-    wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
-    deliver_key(hwnd, VK_TAB, false, strategy, 20, cancel)?;
-    wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
-    replace_text(
-        hwnd,
-        request.password,
-        strategy,
-        request.flow.character_delay_ms,
+    wait(
         cancel,
+        Duration::from_millis(request.flow.step_delay_ms + EXTRA_PANEL_SETTLE_MS),
     )?;
+    replace_text(hwnd, request.password, strategy, request.flow, cancel)?;
     wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
-    deliver_key(hwnd, VK_RETURN, false, strategy, 20, cancel)
+    deliver_key(
+        hwnd,
+        VK_RETURN,
+        false,
+        strategy,
+        request.flow.key_hold_ms,
+        20,
+        cancel,
+    )
 }
 
 fn open_room_form(
     hwnd: isize,
     create: bool,
     strategy: BackgroundTextStrategy,
-    step_delay_ms: u64,
+    flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let step = step_delay_ms.clamp(60, 500);
-    deliver_key(hwnd, VK_ESCAPE, false, strategy, 20, cancel)?;
+    let step = flow.step_delay_ms.clamp(60, 500);
+    deliver_key(
+        hwnd,
+        VK_ESCAPE,
+        false,
+        strategy,
+        flow.key_hold_ms,
+        20,
+        cancel,
+    )?;
     wait(cancel, Duration::from_millis(step))?;
     let direction = if create { VK_LEFT } else { VK_RIGHT };
     for _ in 0..GATEWAY_DIRECTION_REPETITIONS {
-        deliver_key(hwnd, direction, false, strategy, 20, cancel)?;
+        deliver_key(
+            hwnd,
+            direction,
+            false,
+            strategy,
+            flow.key_hold_ms,
+            20,
+            cancel,
+        )?;
         wait(cancel, Duration::from_millis(step))?;
     }
-    deliver_key(hwnd, VK_RETURN, false, strategy, 20, cancel)?;
+    deliver_key(
+        hwnd,
+        VK_RETURN,
+        false,
+        strategy,
+        flow.key_hold_ms,
+        20,
+        cancel,
+    )?;
     wait(cancel, Duration::from_millis(step))?;
-    wait(cancel, Duration::from_millis(ROOM_FORM_SETTLE_MS))
+    wait(
+        cancel,
+        Duration::from_millis(ROOM_FORM_SETTLE_MS + EXTRA_PANEL_SETTLE_MS),
+    )
 }
 
 fn enter_native_chat_mode(
     hwnd: isize,
     strategy: BackgroundTextStrategy,
-    step_delay_ms: u64,
+    chat_key: ChatKey,
+    flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let step = step_delay_ms.clamp(60, 500).max(CHAT_MODE_SETTLE_MS);
-    deliver_key(hwnd, VK_F13, false, strategy, 20, cancel)?;
+    let step = flow.step_delay_ms.clamp(60, 500).max(CHAT_MODE_SETTLE_MS);
+    deliver_key(
+        hwnd,
+        chat_key.virtual_key(),
+        false,
+        strategy,
+        flow.key_hold_ms,
+        20,
+        cancel,
+    )?;
     wait(cancel, Duration::from_millis(step))
 }
 
@@ -172,14 +209,22 @@ fn replace_text(
     hwnd: isize,
     value: &str,
     strategy: BackgroundTextStrategy,
-    character_delay_ms: u64,
+    flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
     validate_text(value)?;
-    let gap = character_delay_ms.clamp(MIN_CHARACTER_GAP_MS, 250);
-    deliver_key(hwnd, VK_END, false, strategy, gap, cancel)?;
+    let gap = flow.character_delay_ms.clamp(MIN_CHARACTER_GAP_MS, 250);
+    deliver_key(hwnd, VK_END, false, strategy, flow.key_hold_ms, gap, cancel)?;
     for _ in 0..FIELD_CLEAR_COUNT {
-        deliver_key(hwnd, VK_BACK, false, strategy, 0, cancel)?;
+        deliver_key(
+            hwnd,
+            VK_BACK,
+            false,
+            strategy,
+            flow.key_hold_ms,
+            gap,
+            cancel,
+        )?;
     }
     wait(cancel, Duration::from_millis(FIELD_CLEAR_SETTLE_MS))?;
     for character in value.chars() {
@@ -189,7 +234,15 @@ fn replace_text(
         } else {
             gap
         };
-        deliver_key(hwnd, key, shift, strategy, release_gap, cancel)?;
+        deliver_key(
+            hwnd,
+            key,
+            shift,
+            strategy,
+            flow.key_hold_ms,
+            release_gap,
+            cancel,
+        )?;
     }
     Ok(())
 }
@@ -199,6 +252,7 @@ fn deliver_key(
     key: u16,
     shift: bool,
     strategy: BackgroundTextStrategy,
+    key_hold_ms: u64,
     release_gap_ms: u64,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
@@ -220,7 +274,7 @@ fn deliver_key(
     // Cancellation may arrive during the key-down hold. Always emit matching
     // key-up messages before returning so the target window cannot retain a
     // logically pressed key (especially Shift) after the capability stops.
-    if let Err(error) = wait(cancel, Duration::from_millis(KEY_DOWN_HOLD_MS)) {
+    if let Err(error) = wait(cancel, Duration::from_millis(key_hold_ms.clamp(10, 250))) {
         let key_release = deliver_key_message(hwnd, key, false, strategy);
         let shift_release = shift
             .then(|| deliver_key_message(hwnd, VK_SHIFT, false, strategy))

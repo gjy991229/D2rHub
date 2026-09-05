@@ -1,6 +1,8 @@
 export interface RoomFlowStrategy {
   step_delay_ms: number;
   character_delay_ms: number;
+  /** Legacy snapshots default to a 50 ms key hold. */
+  key_hold_ms?: number;
 }
 
 export type FollowerJoinMode = "simultaneous" | "interval";
@@ -8,6 +10,8 @@ export type FollowerJoinMode = "simultaneous" | "interval";
 export interface RoomAutomationConfig {
   enabled: boolean;
   chat_f13_auto_patch_enabled: boolean;
+  /** Legacy snapshots and new configurations default to Pause. */
+  chat_key?: "pause" | "f13";
   primary_account_id: string;
   follower_account_ids: string[];
   auto_followers_enabled: boolean;

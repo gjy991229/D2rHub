@@ -119,7 +119,14 @@ export function roomAutomationConfigsEqual(
   right: RoomAutomationConfig | null,
 ): boolean {
   if (!left || !right) return left === right;
-  return JSON.stringify(left) === JSON.stringify(right);
+  const withDefaults = (config: RoomAutomationConfig) => ({
+    ...config,
+    chat_key: config.chat_key ?? "pause",
+    follower_join_mode: config.follower_join_mode ?? "simultaneous",
+    follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
+    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },
+  });
+  return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
 }
 
 export function generatedRoomName(config: RoomAutomationConfig): string {
@@ -198,6 +205,8 @@ export function validateRoomAutomationConfig(
     || invalidFollowerJoinInterval
     || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)
       || !Number.isSafeInteger(flow.character_delay_ms)
+      || !Number.isSafeInteger(flow.key_hold_ms ?? 50)
+      || (flow.key_hold_ms ?? 50) < 10 || (flow.key_hold_ms ?? 50) > 250
       || flow.step_delay_ms < 0 || flow.step_delay_ms > 2000
       || flow.character_delay_ms < 10 || flow.character_delay_ms > 250)) {
     fieldErrors.timing = copy.invalidTiming;

@@ -1,12 +1,12 @@
 //! Tauri/Windows adapter for the optional room-automation capability.
 //!
 //! The sidecar controller is the only configuration authority. This adapter
-//! owns every shortcut, bounded F13 scan, account lease, cancellation signal
+//! owns every shortcut, bounded chat-binding scan, account lease, cancellation signal
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase, WorkflowRecoveryAction,
-    WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
+    ChatKey, FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase,
+    WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
     RoomAutomationConfigController, RoomAutomationConfigControllerError,
@@ -287,6 +287,7 @@ impl RuntimeHost for WindowsRuntimeHost {
                 windows::RoomFormRequest {
                     pid,
                     background_text_strategy: &config.background_text_strategy,
+                    chat_key: config.chat_key,
                     create: true,
                     // Every physical create-shortcut press starts a new room
                     // form. The old lobby-era duplicate-dialog confirmation
@@ -321,6 +322,7 @@ impl RuntimeHost for WindowsRuntimeHost {
                 windows::RoomFormRequest {
                     pid,
                     background_text_strategy: &config.background_text_strategy,
+                    chat_key: config.chat_key,
                     create: false,
                     open_form: true,
                     name: room_name,
@@ -369,6 +371,21 @@ fn canonicalize_account_references(
 }
 
 trait ChatBindingPort: Send + Sync {
+    fn status_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        self.status()
+    }
+    fn install_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        self.install()
+    }
+    fn resume_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        self.resume()
+    }
+    fn preflight_restore_for_key(&self, _key: ChatKey) -> Result<(), String> {
+        self.preflight_restore()
+    }
+    fn restore_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        self.restore()
+    }
     fn status(&self) -> Result<ChatF13BindingStatus, String>;
     fn install(&self) -> Result<ChatF13BindingStatus, String>;
     fn resume(&self) -> Result<ChatF13BindingStatus, String>;
@@ -409,6 +426,10 @@ impl LazyChatBinding {
     /// Must be called while `operation` is held. A directory change replaces
     /// the cached service before the next bounded scan.
     fn service(&self) -> Result<Arc<ChatF13BindingService>, String> {
+        self.service_for_key(ChatKey::F13)
+    }
+
+    fn service_for_key(&self, key: ChatKey) -> Result<Arc<ChatF13BindingService>, String> {
         let directories = match self.configured_directories() {
             Ok(directories) => directories,
             Err(error) => {
@@ -416,41 +437,57 @@ impl LazyChatBinding {
                 return Err(error);
             }
         };
-        self.service_for_directories(directories)
+        if key == ChatKey::F13 {
+            self.service_for_directories(directories)
+        } else {
+            self.service_for_directories_and_key(directories, key)
+        }
     }
 
     fn service_for_directories(
         &self,
         directories: Vec<PathBuf>,
     ) -> Result<Arc<ChatF13BindingService>, String> {
+        self.service_for_directories_and_key(directories, ChatKey::F13)
+    }
+
+    fn service_for_directories_and_key(
+        &self,
+        directories: Vec<PathBuf>,
+        key: ChatKey,
+    ) -> Result<Arc<ChatF13BindingService>, String> {
         let previous = {
             let mut current = self.service.lock();
             if let Some(cached) = current.as_ref() {
-                if cached.directories == directories {
+                if cached.directories == directories && cached.service.chat_key() == key {
                     return Ok(Arc::clone(&cached.service));
                 }
             }
             current.take()
         };
         let rescan_with_consent = previous.as_ref().is_some_and(|cached| {
-            cached
-                .service
-                .status()
-                .is_ok_and(|status| status.consent_granted)
+            cached.service.chat_key() == key
+                && cached
+                    .service
+                    .status()
+                    .is_ok_and(|status| status.consent_granted)
         });
         if let Some(cached) = previous {
             cached.service.shutdown()?;
         }
-        let service = Arc::new(ChatF13BindingService::new(directories.clone(), || {
-            !crate::infrastructure::system::get_d2r_pids().is_empty()
-        })?);
+        let probe = || !crate::infrastructure::system::get_d2r_pids().is_empty();
+        let service = Arc::new(if key == ChatKey::F13 {
+            ChatF13BindingService::new(directories.clone(), probe)?
+        } else {
+            ChatF13BindingService::new_with_key(directories.clone(), probe, key)?
+        });
         if rescan_with_consent {
             let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
             if let Err(error) = service.start_watcher_with_consent(consent) {
                 crate::logger::log_msg(
                     "WARN",
                     "RoomAutomation",
-                    &format!("存档目录变化后 F13 一次性扫描失败：{error}"),
+                    &format!("存档目录变化后聊天键一次性扫描失败：{error}"),
                 );
             }
         }
@@ -470,6 +507,33 @@ impl LazyChatBinding {
 }
 
 impl ChatBindingPort for LazyChatBinding {
+    fn status_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        let _operation = self.operation.lock();
+        self.service_for_key(key)?.status()
+    }
+
+    fn install_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        let _operation = self.operation.lock();
+        self.service_for_key(key)?.install()
+    }
+
+    fn resume_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        let _operation = self.operation.lock();
+        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
+        self.service_for_key(key)?
+            .start_watcher_with_consent(consent)
+    }
+
+    fn preflight_restore_for_key(&self, key: ChatKey) -> Result<(), String> {
+        let _operation = self.operation.lock();
+        self.service_for_key(key)?.preflight_restore()
+    }
+
+    fn restore_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
+        let _operation = self.operation.lock();
+        self.service_for_key(key)?.restore()
+    }
+
     fn status(&self) -> Result<ChatF13BindingStatus, String> {
         let _operation = self.operation.lock();
         self.service()?.status()
@@ -506,7 +570,7 @@ impl ChatBindingPort for LazyChatBinding {
                 auto_patch_enabled: false,
                 directories: Vec::new(),
                 last_watcher_error: None,
-                message: "F13 扫描服务尚未初始化".to_string(),
+                message: "聊天键扫描服务尚未初始化".to_string(),
             }),
         }
     }
@@ -660,10 +724,15 @@ impl RuntimeBridge for TauriRuntimeBridge {
 
     fn apply_requested(&self, enabled: bool) -> Result<(), String> {
         self.state.configuration().project_current(|config| {
-            let installed = self.state.optional_runtime_ready() && config.is_some_and(|config| {
-                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
-            });
-            self.state.capabilities().set_requested(ROOM_AUTOMATION_ID, installed && enabled)
+            let installed = self.state.optional_runtime_ready()
+                && config.is_some_and(|config| {
+                    config.optional_module_runtime_allowed(
+                        crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
+                    )
+                });
+            self.state
+                .capabilities()
+                .set_requested(ROOM_AUTOMATION_ID, installed && enabled)
                 .map_err(|error| error.to_string())
         })?;
         if let Some(supervisor) = self.app.try_state::<CapabilitySupervisor>() {
@@ -783,7 +852,10 @@ impl RoomAutomationManager {
             crate::input_listener::with_shortcut_routing_transaction(|| {
                 crate::input_listener::replace_saved_capability_shortcuts(
                     ROOM_AUTOMATION_MODULE_ID,
-                    [snapshot.config.shortcut.as_str(), snapshot.config.join_shortcut.as_str()],
+                    [
+                        snapshot.config.shortcut.as_str(),
+                        snapshot.config.join_shortcut.as_str(),
+                    ],
                 );
             });
             snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())?;
@@ -877,36 +949,62 @@ impl RoomAutomationManager {
         let operation = self.operation.lock();
 
         let previous = self.get_config();
+        let chat_key_changed = candidate.chat_key != previous.config.chat_key;
+        if chat_key_changed {
+            // A key-file edit cannot take effect in already-running clients.
+            // Reject before committing a sender key that their cached binding lacks.
+            if self
+                .chat_binding
+                .status_for_key(previous.config.chat_key)?
+                .d2r_running
+            {
+                return Err(
+                    "请先关闭全部 D2R 窗口，再切换聊天按键；游戏会缓存并覆盖键位文件".to_string(),
+                );
+            }
+            candidate.chat_f13_auto_patch_enabled = true;
+        }
         let consent_granted_while_enabling = !previous.config.enabled
             && candidate.enabled
             && !previous.config.chat_f13_auto_patch_enabled
             && candidate.chat_f13_auto_patch_enabled;
         if candidate.chat_f13_auto_patch_enabled != previous.config.chat_f13_auto_patch_enabled
             && !consent_granted_while_enabling
+            && !chat_key_changed
         {
-            return Err("F13 授权只能通过安装或恢复操作修改".to_string());
+            return Err("聊天键授权只能通过安装或恢复操作修改".to_string());
         }
         candidate
             .normalize_legacy()
             .map_err(|error| error.to_string())?;
         let saved = crate::input_listener::with_shortcut_routing_transaction(|| {
-            self.host.canonicalize_and_validate_accounts(&mut candidate)?;
+            self.host
+                .canonicalize_and_validate_accounts(&mut candidate)?;
             // Reject conflicts before durable save, even when routes are dormant.
             // Unchanged disabled drafts remain editable/recoverable.
-            if candidate.enabled || candidate.shortcut != previous.config.shortcut
+            if candidate.enabled
+                || candidate.shortcut != previous.config.shortcut
                 || candidate.join_shortcut != previous.config.join_shortcut
             {
                 crate::input_listener::validate_saved_capability_shortcuts(
                     ROOM_AUTOMATION_MODULE_ID,
-                    [candidate.shortcut.as_str(), candidate.join_shortcut.as_str()],
+                    [
+                        candidate.shortcut.as_str(),
+                        candidate.join_shortcut.as_str(),
+                    ],
                 )?;
             }
             let shortcuts = self.host.account_shortcuts()?;
-            let saved = self.controller.save(expected_generation, candidate, &shortcuts)
+            let saved = self
+                .controller
+                .save(expected_generation, candidate, &shortcuts)
                 .map_err(|error| error.to_string())?;
             crate::input_listener::replace_saved_capability_shortcuts(
                 ROOM_AUTOMATION_MODULE_ID,
-                [saved.config.shortcut.as_str(), saved.config.join_shortcut.as_str()],
+                [
+                    saved.config.shortcut.as_str(),
+                    saved.config.join_shortcut.as_str(),
+                ],
             );
             *self.snapshot.write() = saved.clone();
             Ok::<_, String>(saved)
@@ -935,10 +1033,12 @@ impl RoomAutomationManager {
             } else {
                 None
             };
-        let binding_warning = if saved.config.enabled && saved.config.chat_f13_auto_patch_enabled {
-            match self.chat_binding.resume() {
+        let binding_warning = if (saved.config.enabled || chat_key_changed)
+            && saved.config.chat_f13_auto_patch_enabled
+        {
+            match self.chat_binding.resume_for_key(saved.config.chat_key) {
                 Ok(_) => None,
-                Err(error) => Some(format!("F13 一次性扫描未完成：{error}")),
+                Err(error) => Some(format!("聊天键一次性扫描未完成：{error}")),
             }
         } else {
             None
@@ -1189,17 +1289,20 @@ impl RoomAutomationManager {
     }
 
     pub(crate) fn get_chat_binding(&self) -> Result<ChatF13BindingStatus, String> {
-        self.chat_binding.status()
+        let _operation = self.operation.lock();
+        self.chat_binding
+            .status_for_key(self.get_config().config.chat_key)
     }
 
     pub(crate) fn install_chat_binding(&self) -> Result<ChatF13BindingStatus, String> {
         let _config_apply = self.config_apply.lock();
         let _operation = self.operation.lock();
-        self.require_started()?;
         if self.workflow_is_reserved() {
             return Err("请先完成或取消当前自动跟房任务".to_string());
         }
-        let installed = self.chat_binding.install()?;
+        let installed = self
+            .chat_binding
+            .install_for_key(self.get_config().config.chat_key)?;
         match self.controller.set_chat_binding_consent(true) {
             Ok(snapshot) => {
                 *self.snapshot.write() = snapshot.clone();
@@ -1208,7 +1311,7 @@ impl RoomAutomationManager {
             }
             Err(error) => {
                 let _ = self.chat_binding.stop();
-                Err(format!("F13 已安装但扫描授权保存失败：{error}"))
+                Err(format!("聊天键已安装但扫描授权保存失败：{error}"))
             }
         }
     }
@@ -1222,7 +1325,8 @@ impl RoomAutomationManager {
         // Only revoke durable consent after a read-only filesystem preflight.
         // If the following transaction rolls back, restore the exact previous
         // scan consent as compensation.
-        self.chat_binding.preflight_restore()?;
+        let chat_key = self.get_config().config.chat_key;
+        self.chat_binding.preflight_restore_for_key(chat_key)?;
         let previous_consent = self.snapshot.read().config.chat_f13_auto_patch_enabled;
         let revoked = self
             .controller
@@ -1230,7 +1334,7 @@ impl RoomAutomationManager {
             .map_err(|error| error.to_string())?;
         *self.snapshot.write() = revoked.clone();
         self.bridge.publish_config(&revoked);
-        match self.chat_binding.restore() {
+        match self.chat_binding.restore_for_key(chat_key) {
             Ok(restored) => Ok(restored),
             Err(error) => match self.controller.set_chat_binding_consent(previous_consent) {
                 Ok(snapshot) => {
@@ -1263,6 +1367,14 @@ impl RoomAutomationManager {
         let config = self.get_config().config;
         if !config.enabled {
             return Err("自动跟房模块尚未启用".to_string());
+        }
+        let binding = self.chat_binding.status_for_key(config.chat_key)?;
+        if !binding.ready {
+            return Err(format!(
+                "{} 聊天键绑定尚未就绪，请关闭游戏后扫描安装：{}",
+                config.chat_key.label(),
+                binding.message
+            ));
         }
         Ok(config)
     }
@@ -2003,7 +2115,6 @@ fn prune_missing_accounts(
     }
     Ok(snapshot)
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
