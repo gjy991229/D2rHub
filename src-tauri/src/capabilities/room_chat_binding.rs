@@ -232,6 +232,7 @@ impl ChatF13BindingService {
 
     /// Preflights every key file, creates durable non-overwriting backups,
     /// atomically patches eligible files, and grants consent.
+    /// Running clients keep their cached bindings until their next launch.
     pub(crate) fn install(&self) -> Result<ChatF13BindingStatus, String> {
         self.scan_once()
     }
@@ -248,12 +249,10 @@ impl ChatF13BindingService {
             if snapshot.transaction_artifacts.is_empty() {
                 preflight_install(&snapshot)?;
             }
-            ensure_d2r_closed(&self.inner)?;
         }
 
         let verified = (|| {
             let _operation = lock(&self.inner.operation);
-            ensure_d2r_closed(&self.inner)?;
             recover_interrupted_transactions(&self.inner.directories)?;
             let snapshot =
                 inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
@@ -511,7 +510,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         format!("尚有 {eligible_files}/{total_files} 个键位文件可以安全安装 {key_label}")
     };
     if d2r_running {
-        message.push_str("；D2R 正在运行，扫描补装或恢复前必须全部关闭");
+        message.push_str("；D2R 正在运行，仍可扫描更新绑定，更改在游戏下次启动时生效");
     }
     if consent_granted {
         message.push_str("；自动跟房配置变更时会扫描一次，新建角色后请手动扫描");

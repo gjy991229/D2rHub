@@ -96,9 +96,9 @@ pub(crate) fn room_automation_get_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
-    // Resolving this status can initialize the lazy directory service.
-    let _profile = global.runtime_activation_lock.try_lock()
-        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
+    // Resolving this status can initialize the lazy directory service. Wait for
+    // activation or a profile transition instead of surfacing transient contention.
+    let _profile = global.runtime_activation_lock.lock();
     require_module_installed(&global)?;
     manager(&state)?.get_chat_binding()
 }
@@ -108,8 +108,7 @@ pub(crate) fn room_automation_install_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
-    let _profile = global.runtime_activation_lock.try_lock()
-        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
+    let _profile = global.runtime_activation_lock.lock();
     require_module_installed(&global)?;
     manager(&state)?.install_chat_binding()
 }

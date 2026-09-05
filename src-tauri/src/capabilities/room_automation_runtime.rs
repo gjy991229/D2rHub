@@ -1371,7 +1371,7 @@ impl RoomAutomationManager {
         let binding = self.chat_binding.status_for_key(config.chat_key)?;
         if !binding.ready {
             return Err(format!(
-                "{} 聊天键绑定尚未就绪，请关闭游戏后扫描安装：{}",
+                "{} 聊天键绑定尚未就绪，请扫描安装并重新启动游戏使其生效：{}",
                 config.chat_key.label(),
                 binding.message
             ));

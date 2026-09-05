@@ -318,7 +318,7 @@ export function RoomAutomationPanel({
       const next = await action();
       setBinding(next);
       if (kind === "scan") {
-        setBindingFeedback(copy.manualScanComplete(next.installedFiles, next.totalFiles));
+        setBindingFeedback(copy.manualScanComplete(next.installedFiles, next.totalFiles, next.d2rRunning));
       }
       const committed = await gateway.getConfig();
       commitConfig(committed);
@@ -588,7 +588,7 @@ export function RoomAutomationPanel({
                 {bindingFeedback}
               </p>
             )}
-            {binding?.d2rRunning && <p className="room-automation-field-error" role="alert">{copy.gameMustClose}</p>}
+            {binding?.d2rRunning && <p className="room-automation-scan-hint" role="note">{copy.gameRunningHint}</p>}
             {binding?.lastWatcherError && <p className="room-automation-field-error" role="alert">{binding.lastWatcherError}</p>}
             {!draft.enabled && (
               <div className="room-automation-actions">
