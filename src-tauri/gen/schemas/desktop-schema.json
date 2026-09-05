@@ -1053,6 +1053,12 @@
           "markdownDescription": "Enables the set_mod_auto_exit_on_death_enabled command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_mod_room_toolbar_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-mod-room-toolbar-visible",
+          "markdownDescription": "Enables the set_mod_room_toolbar_visible command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_settings_customized command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-settings-customized",
@@ -1819,6 +1825,12 @@
           "type": "string",
           "const": "deny-set-mod-auto-exit-on-death-enabled",
           "markdownDescription": "Denies the set_mod_auto_exit_on_death_enabled command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the set_mod_room_toolbar_visible command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-mod-room-toolbar-visible",
+          "markdownDescription": "Denies the set_mod_room_toolbar_visible command without any pre-configured scope."
         },
         {
           "description": "Denies the set_settings_customized command without any pre-configured scope.",

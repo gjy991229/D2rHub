@@ -97,6 +97,7 @@ const APP_COMMANDS: &[&str] = &[
     "scan_mod_capsule_pool",
     "open_mods_directory",
     "set_mod_auto_exit_on_death_enabled",
+    "set_mod_room_toolbar_visible",
     "add_mod_capsule",
     "update_mod_capsule",
     "delete_mod_capsule",
