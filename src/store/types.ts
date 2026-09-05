@@ -44,6 +44,8 @@ export interface GlobalConfig {
   app_data_roaming_bnet_path: string;
   accounts_dir: string;
   first_run_complete: boolean;
+  feature_profile?: "normal" | "minimal";
+  feature_profile_prompt_revision?: number;
   installed_optional_modules?: string[];
   browser_path: string;
   browser_type: string;
@@ -68,6 +70,8 @@ export interface GlobalConfig {
   rune_audio_min_gem_level?: number;
   rune_audio_tracked_charm_codes?: string[];
   shortcut_bindings_json: string;
+  show_main_window_shortcut?: string;
+  hide_main_window_shortcut?: string;
   overlay_opacity: number;
   main_opacity: number;
   font_scale: string;

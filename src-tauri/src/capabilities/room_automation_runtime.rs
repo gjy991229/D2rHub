@@ -659,13 +659,13 @@ impl RuntimeBridge for TauriRuntimeBridge {
     }
 
     fn apply_requested(&self, enabled: bool) -> Result<(), String> {
-        let installed = self.state.configuration().snapshot().is_some_and(|config| {
-            config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
-        });
-        self.state
-            .capabilities()
-            .set_requested(ROOM_AUTOMATION_ID, installed && enabled)
-            .map_err(|error| error.to_string())?;
+        self.state.configuration().project_current(|config| {
+            let installed = self.state.optional_runtime_ready() && config.is_some_and(|config| {
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+            });
+            self.state.capabilities().set_requested(ROOM_AUTOMATION_ID, installed && enabled)
+                .map_err(|error| error.to_string())
+        })?;
         if let Some(supervisor) = self.app.try_state::<CapabilitySupervisor>() {
             supervisor.schedule_reconcile();
         }
@@ -780,6 +780,12 @@ impl RoomAutomationManager {
             let mut snapshot = controller
                 .load_or_initialize(legacy, &shortcuts)
                 .map_err(config_failure)?;
+            crate::input_listener::with_shortcut_routing_transaction(|| {
+                crate::input_listener::replace_saved_capability_shortcuts(
+                    ROOM_AUTOMATION_MODULE_ID,
+                    [snapshot.config.shortcut.as_str(), snapshot.config.join_shortcut.as_str()],
+                );
+            });
             snapshot = prune_missing_accounts(&controller, snapshot, host.as_ref())?;
             if !global
                 .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
@@ -883,14 +889,28 @@ impl RoomAutomationManager {
         candidate
             .normalize_legacy()
             .map_err(|error| error.to_string())?;
-        self.host
-            .canonicalize_and_validate_accounts(&mut candidate)?;
-        let shortcuts = self.host.account_shortcuts()?;
-        let saved = self
-            .controller
-            .save(expected_generation, candidate, &shortcuts)
-            .map_err(|error| error.to_string())?;
-        *self.snapshot.write() = saved.clone();
+        let saved = crate::input_listener::with_shortcut_routing_transaction(|| {
+            self.host.canonicalize_and_validate_accounts(&mut candidate)?;
+            // Reject conflicts before durable save, even when routes are dormant.
+            // Unchanged disabled drafts remain editable/recoverable.
+            if candidate.enabled || candidate.shortcut != previous.config.shortcut
+                || candidate.join_shortcut != previous.config.join_shortcut
+            {
+                crate::input_listener::validate_saved_capability_shortcuts(
+                    ROOM_AUTOMATION_MODULE_ID,
+                    [candidate.shortcut.as_str(), candidate.join_shortcut.as_str()],
+                )?;
+            }
+            let shortcuts = self.host.account_shortcuts()?;
+            let saved = self.controller.save(expected_generation, candidate, &shortcuts)
+                .map_err(|error| error.to_string())?;
+            crate::input_listener::replace_saved_capability_shortcuts(
+                ROOM_AUTOMATION_MODULE_ID,
+                [saved.config.shortcut.as_str(), saved.config.join_shortcut.as_str()],
+            );
+            *self.snapshot.write() = saved.clone();
+            Ok::<_, String>(saved)
+        })?;
         self.bridge.publish_config(&saved);
 
         let old_shortcut =

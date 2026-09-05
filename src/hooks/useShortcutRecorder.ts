@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { invokeCommand } from "../platform/tauri";
 import { normalizeShortcut } from "../utils/shortcut";
 
 /**
@@ -84,5 +85,21 @@ export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLElement>): 
  */
 export function useShortcutRecorder() {
   const [recordingPos, setRecordingPos] = useState<string | null>(null);
+
+  useEffect(() => {
+    const stopRecording = () => setRecordingPos(null);
+    window.addEventListener("blur", stopRecording);
+    return () => window.removeEventListener("blur", stopRecording);
+  }, []);
+
+  useEffect(() => {
+    void invokeCommand("set_shortcut_capture_active", { active: recordingPos !== null }).catch(() => {});
+    return () => {
+      if (recordingPos !== null) {
+        void invokeCommand("set_shortcut_capture_active", { active: false }).catch(() => {});
+      }
+    };
+  }, [recordingPos]);
+
   return { recordingPos, setRecordingPos };
 }

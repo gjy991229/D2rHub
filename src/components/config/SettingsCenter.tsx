@@ -34,11 +34,17 @@ import { useAccountSettingsController } from "../../features/settings/useAccount
 import { useOptionalModuleController } from "../../features/settings/useOptionalModuleController";
 import {
   isOptionalModuleTab,
+  isSettingsTabAvailableInMinimal,
   isSettingsTabId,
   normalizeInstalledOptionalModules,
   normalizeSettingsLanguage,
   type SettingsTabId,
 } from "../../features/settings/settingsRegistry";
+import {
+  isMinimalMode,
+  normalizeFeatureProfile,
+  type FeatureProfile,
+} from "../../features/profile/featureProfile";
 import { DisclosureDialog } from "../../features/disclosures/DisclosureDialog";
 import "../../features/settings/settings.css";
 
@@ -76,6 +82,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const installedModules = normalizeInstalledOptionalModules(config?.installed_optional_modules);
   const installedModuleKey = installedModules.join("|");
   const settingsLanguage = normalizeSettingsLanguage(config?.app_language);
+  const minimalMode = isMinimalMode(config);
 
   const [activeTab, setActiveTab] = useState<SettingsTabId>("accounts");
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
@@ -88,6 +95,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [navigationSaving, setNavigationSaving] = useState(false);
   const [appearanceDraft, setAppearanceDraft] = useState<AppearanceSettingsDraft | null>(null);
   const [appearanceApplying, setAppearanceApplying] = useState(false);
+  const [profileChanging, setProfileChanging] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -164,23 +172,29 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     if (!open) {
       setExportPickerOpen(false);
       setExportPlaintextRiskAcknowledged(false);
+      setRecordingPos(null);
       navigationSaveRef.current = false;
     }
-  }, [open]);
+  }, [open, setRecordingPos]);
 
   useEffect(() => {
-    if (open && isOptionalModuleTab(activeTab) && !installedModules.includes(activeTab)) {
+    if (!open) return;
+    if (minimalMode && !isSettingsTabAvailableInMinimal(activeTab)) {
+      setActiveTab("accounts");
+    } else if (!minimalMode && isOptionalModuleTab(activeTab) && !installedModules.includes(activeTab)) {
       setActiveTab("module-management");
     }
-  }, [activeTab, installedModuleKey, open]);
+  }, [activeTab, installedModuleKey, minimalMode, open]);
 
   useEffect(() => {
     if (open) {
       if (initialTab?.startsWith("mod-processing") || isSettingsTabId(initialTab)) {
         const requested = initialTab?.startsWith("mod-processing") ? "mod-processing" : initialTab as SettingsTabId;
-        setActiveTab(isOptionalModuleTab(requested) && !installedModules.includes(requested)
-          ? "module-management"
-          : requested);
+        setActiveTab(minimalMode && !isSettingsTabAvailableInMinimal(requested)
+          ? "accounts"
+          : isOptionalModuleTab(requested) && !installedModules.includes(requested)
+            ? "module-management"
+            : requested);
       } else {
         setActiveTab("accounts");
       }
@@ -318,6 +332,33 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
+  const handleChangeFeatureProfile = async (profile: FeatureProfile) => {
+    const current = useGlobalConfig.getState().config;
+    if (!current || normalizeFeatureProfile(current.feature_profile) === profile) return true;
+    if (navigationSaveRef.current) return false;
+    navigationSaveRef.current = true;
+    setNavigationSaving(true);
+    setProfileChanging(true);
+    setRecordingPos(null);
+    try {
+      if (!(await commitPendingSettings())) return false;
+      const saved = await useGlobalConfig.getState().switchProfile(profile);
+      setOriginalConfig(JSON.parse(JSON.stringify(saved)));
+      setActiveTab("advanced");
+      showToast("success", profile === "minimal"
+        ? "已切换到极简模式；其他模块配置已保留并暂停运行"
+        : "已切换到正常模式；模块将按原配置启动，启动异常可在模块设置查看");
+      return true;
+    } catch (error) {
+      showToast("error", `切换使用模式失败：${error}`);
+      return false;
+    } finally {
+      setProfileChanging(false);
+      navigationSaveRef.current = false;
+      setNavigationSaving(false);
+    }
+  };
+
   const {
     audioStatus,
     audioModState,
@@ -376,6 +417,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     persistConfig: persistGlobalDraft,
     loadAccounts,
     setActiveTab,
+    optionalFeaturesAvailable: !minimalMode,
   });
   const modProcessingTarget = validateTrackingTarget(modProcessingTargetId, accounts);
   const modCapsules = useModCapsulePool({
@@ -435,7 +477,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   };
 
   // Keyboard shortcut listener
-  const handleShortcutKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, pos: string) => {
+  const handleShortcutKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, target: string) => {
     if (e.key === "Tab") {
       setRecordingPos(null);
       return;
@@ -454,6 +496,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     const combo = parseShortcutFromKeyEvent(e);
     if (!combo) return;
 
+    if (target.startsWith("app:")
+      && !/^(Ctrl|Alt|Shift)\+/.test(combo)
+      && !/^F(?:[1-9]|1\d|2[0-4])$/.test(combo)) {
+      setRecordingPos(null);
+      e.currentTarget.blur();
+      showToast("error", "主面板快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
+      return;
+    }
+
     if (config) {
       let bindings: Record<string, string> = {};
       try {
@@ -461,9 +512,34 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       } catch {
         bindings = {};
       }
-      bindings[pos] = combo;
+
+      const assigned = [
+        ...Object.entries(bindings).map(([position, shortcut]) => ({
+          target: `account:${position}`,
+          shortcut,
+          label: `账号位置 #${position}`,
+        })),
+        { target: "app:show", shortcut: config.show_main_window_shortcut || "", label: "呼出主面板" },
+        { target: "app:hide", shortcut: config.hide_main_window_shortcut || "", label: "最小化主面板" },
+      ];
+      const conflict = assigned.find((entry) => entry.target !== target
+        && entry.shortcut.trim().toLocaleLowerCase() === combo.toLocaleLowerCase());
+      if (conflict) {
+        setRecordingPos(null);
+        e.currentTarget.blur();
+        showToast("error", `快捷键 ${combo} 已用于${conflict.label}，原设置保持不变`);
+        return;
+      }
+
       updateConfig(c => {
-        c.shortcut_bindings_json = JSON.stringify(bindings);
+        if (target === "app:show") {
+          c.show_main_window_shortcut = combo;
+        } else if (target === "app:hide") {
+          c.hide_main_window_shortcut = combo;
+        } else if (target.startsWith("account:")) {
+          bindings[target.slice("account:".length)] = combo;
+          c.shortcut_bindings_json = JSON.stringify(bindings);
+        }
       });
     }
 
@@ -472,7 +548,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     showToast("success", `快捷键已配置为: ${combo}`);
   };
 
-  const handleClearShortcut = (pos: string) => {
+  const handleClearShortcut = (target: string) => {
     if (config) {
       let bindings: Record<string, string> = {};
       try {
@@ -480,9 +556,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       } catch {
         bindings = {};
       }
-      delete bindings[pos];
       updateConfig(c => {
-        c.shortcut_bindings_json = JSON.stringify(bindings);
+        if (target === "app:show") {
+          c.show_main_window_shortcut = "";
+        } else if (target === "app:hide") {
+          c.hide_main_window_shortcut = "";
+        } else if (target.startsWith("account:")) {
+          delete bindings[target.slice("account:".length)];
+          c.shortcut_bindings_json = JSON.stringify(bindings);
+        }
       });
       showToast("info", "快捷键已清除");
     }
@@ -547,9 +629,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       installedModules={installedModules}
       onClose={handleClose}
       onTabChange={handleTabChange}
-      dismissible={!pendingDisclosureModule}
+      dismissible={!pendingDisclosureModule && !profileChanging}
     >
-            {activeTab === "module-management" && config && (
+            {!minimalMode && activeTab === "module-management" && config && (
               <ModuleManagementPanel
                 config={config}
                 installedModules={installedModules}
@@ -616,7 +698,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {activeTab === "overlays" && config && (
+            {!minimalMode && activeTab === "overlays" && config && (
               <OverlayPanel
                 config={config}
                 updateConfig={updateConfig}
@@ -627,7 +709,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {activeTab === "automation" && config && (
+            {!minimalMode && activeTab === "automation" && config && (
               <AutomationPanel
                 config={config}
                 updateConfig={updateConfig}
@@ -686,6 +768,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
 
             {activeTab === "mod-processing" && config && (
               <ModProcessingPanel
+                minimalMode={minimalMode}
                 config={config}
                 initializedAccounts={initializedTrackingAccounts}
                 trackingTarget={modProcessingTarget}
@@ -735,7 +818,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {activeTab === "room-automation" && (
+            {!minimalMode && activeTab === "room-automation" && (
               <RoomAutomationPanel
                 accounts={accounts}
                 language={config?.app_language}
@@ -751,7 +834,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {activeTab === "pet" && config && (
+            {!minimalMode && activeTab === "pet" && config && (
               <PetPanel
                 config={config}
                 windowPlacementBusy={windowPlacementBusy}
@@ -772,12 +855,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {activeTab === "tasks" && config && (
+            {!minimalMode && activeTab === "tasks" && config && (
               <TaskRuntimePanel language={config.app_language} />
             )}
 
             {activeTab === "advanced" && config && (
               <MaintenancePanel
+                featureProfile={normalizeFeatureProfile(config.feature_profile)}
+                profileChanging={profileChanging}
+                installedOptionalModuleCount={installedModules.length}
+                onChangeFeatureProfile={handleChangeFeatureProfile}
                 accounts={accounts}
                 transferBusy={accountTransferBusy}
                 exportPickerOpen={exportPickerOpen}

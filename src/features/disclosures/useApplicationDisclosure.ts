@@ -13,11 +13,15 @@ interface ApplicationDisclosureState {
   accept: () => Promise<void>;
 }
 
-export function useApplicationDisclosure(ready: boolean): ApplicationDisclosureState {
+export function useApplicationDisclosure(
+  ready: boolean,
+  runtimeReady = true,
+): ApplicationDisclosureState {
   const [checking, setChecking] = useState(true);
   const [required, setRequired] = useState(false);
   const [version, setVersion] = useState<string | null>(null);
   const [accepting, setAccepting] = useState(false);
+  const [acceptedInSession, setAcceptedInSession] = useState(false);
 
   useEffect(() => {
     if (!ready) return;
@@ -29,15 +33,22 @@ export function useApplicationDisclosure(ready: boolean): ApplicationDisclosureS
 
       const normalizedVersion = currentVersion.replace(/^v/i, "").trim() || "unknown";
       setVersion(normalizedVersion);
-      if (
-        normalizedVersion === "unknown"
-        || !hasAcceptedApplicationDisclosure(normalizedVersion)
-      ) {
+      const accepted = normalizedVersion === "unknown"
+        ? acceptedInSession
+        : hasAcceptedApplicationDisclosure(normalizedVersion);
+      if (!accepted) {
         setRequired(true);
         setChecking(false);
         return;
       }
 
+      if (!runtimeReady) {
+        setRequired(false);
+        setChecking(false);
+        return;
+      }
+
+      setChecking(true);
       try {
         await invokeCommand<boolean>("activate_application_runtime");
         if (!cancelled) setRequired(false);
@@ -52,19 +63,22 @@ export function useApplicationDisclosure(ready: boolean): ApplicationDisclosureS
     return () => {
       cancelled = true;
     };
-  }, [ready]);
+  }, [acceptedInSession, ready, runtimeReady]);
 
   const accept = useCallback(async () => {
     if (!version || accepting) return;
     setAccepting(true);
     try {
-      await invokeCommand<boolean>("activate_application_runtime");
-      if (version !== "unknown") acceptApplicationDisclosure(version);
+      if (runtimeReady) {
+        await invokeCommand<boolean>("activate_application_runtime");
+      }
+      if (version === "unknown") setAcceptedInSession(true);
+      else acceptApplicationDisclosure(version);
       setRequired(false);
     } finally {
       setAccepting(false);
     }
-  }, [accepting, version]);
+  }, [accepting, runtimeReady, version]);
 
   return { checking, required, version, accepting, accept };
 }

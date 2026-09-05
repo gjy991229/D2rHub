@@ -14,8 +14,15 @@ const FEATURE_LABELS: Record<string, readonly [string, string]> = {
   [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: ["死亡自动退房", "Auto-exit on death"],
 };
 
-export function capsuleFeatureLabels(capsule: ModCapsule, isEnglish = false): string[] {
-  return capsule.feature_groups.map((feature) => {
+export function capsuleFeatureLabels(
+  capsule: ModCapsule,
+  isEnglish = false,
+  minimalMode = false,
+): string[] {
+  const visibleFeatures = minimalMode
+    ? capsule.feature_groups.filter((feature) => feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE)
+    : capsule.feature_groups;
+  return visibleFeatures.map((feature) => {
     if (feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE
       && capsule.auto_exit_on_death_enabled === false) {
       return isEnglish ? "Auto-exit on death (off)" : "死亡自动退房（已停用）";

@@ -1,7 +1,7 @@
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use crate::application::capability::CapabilityRegistry;
@@ -9,6 +9,13 @@ use crate::application::configuration::ConfigurationRuntime;
 use crate::application::multi_instance::{AccountOperationLease, MultiInstanceRuntime};
 use crate::application::task_runtime::TaskRuntime;
 use crate::error::AppError;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CoreShortcutAction {
+    FocusAccount(usize),
+    ShowMainWindow,
+    HideMainWindow,
+}
 
 /// 应用全局运行时状态
 pub struct AppState {
@@ -25,17 +32,20 @@ pub struct AppState {
     /// Battle.net 目录、注册表和 Agent 都是主机级共享状态，同一时刻只能由一个流程修改。
     /// 该租约必须在产生任何进程、文件或注册表副作用之前取得。
     pub host_runtime_busy: AtomicBool,
-    /// 首次披露确认后的运行服务启动锁，确保并发 IPC 也只会激活一次。
+    /// Serializes activation, profile transitions and explicit optional starts.
     pub(crate) runtime_activation_lock: Mutex<()>,
     /// 高风险运行服务是否已经完成激活。
     pub(crate) runtime_activated: AtomicBool,
+    /// Suppresses optional starts while a profile transition drains workers.
+    pub(crate) optional_features_suspended: AtomicBool,
+    pub(crate) optional_window_operations: Mutex<()>,
     /// 本进程内已经逻辑删除的稳定账号 ID。配置策略用它阻止排队中的陈旧
     /// 全量保存重新引入已删除账号；不扫描目录，避免与账号目录替换窗口竞争。
     retired_account_ids: RwLock<HashSet<String>>,
     /// 同一时间只允许一个 Mod 加工任务，避免两个生成器写入同一个 mods 目录。
     pub audio_mod_build_busy: AtomicBool,
-    /// 快捷键内存映射缓存：lowercase_shortcut -> account_position (1-based)
-    pub shortcut_map: RwLock<HashMap<String, usize>>,
+    /// 快捷键内存映射缓存：lowercase_shortcut -> 核心动作。
+    pub shortcut_map: RwLock<HashMap<String, CoreShortcutAction>>,
     /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
     pub window_placement_io: Mutex<()>,
 }
@@ -62,6 +72,8 @@ impl AppState {
             host_runtime_busy: AtomicBool::new(false),
             runtime_activation_lock: Mutex::new(()),
             runtime_activated: AtomicBool::new(false),
+            optional_features_suspended: AtomicBool::new(false),
+            optional_window_operations: Mutex::new(()),
             retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
@@ -71,6 +83,11 @@ impl AppState {
 
     pub fn configuration(&self) -> &ConfigurationRuntime {
         &self.configuration
+    }
+
+    pub(crate) fn optional_runtime_ready(&self) -> bool {
+        self.runtime_activated.load(Ordering::Acquire)
+            && !self.optional_features_suspended.load(Ordering::Acquire)
     }
 
     pub fn capabilities(&self) -> &Arc<CapabilityRegistry> {

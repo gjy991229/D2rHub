@@ -8,6 +8,7 @@ const HEALTH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs
 
 enum SupervisorMessage {
     Reconcile,
+    ReconcileAndReply(mpsc::SyncSender<Result<CapabilityStatusSnapshot, String>>),
     Shutdown,
 }
 
@@ -47,18 +48,18 @@ impl CapabilitySupervisor {
                     };
                     match message {
                         SupervisorMessage::Reconcile => {
-                            let mut queued_shutdown = false;
-                            while let Ok(queued) = receiver.try_recv() {
-                                if matches!(queued, SupervisorMessage::Shutdown) {
-                                    queued_shutdown = true;
-                                    break;
-                                }
-                            }
-                            if queued_shutdown || worker_shutdown.load(Ordering::Acquire) {
+                            if worker_shutdown.load(Ordering::Acquire) {
                                 shutdown_and_publish(&app, &registry);
                                 break;
                             }
                             reconcile_and_publish(&app, &registry);
+                        }
+                        SupervisorMessage::ReconcileAndReply(reply) => {
+                            let result = registry.reconcile_all().map_err(|error| error.to_string());
+                            if let Ok(snapshot) = &result {
+                                publish_snapshot(&app, snapshot);
+                            }
+                            let _ = reply.send(result);
                         }
                         SupervisorMessage::Shutdown => {
                             shutdown_and_publish(&app, &registry);
@@ -88,6 +89,32 @@ impl CapabilitySupervisor {
                 "capability supervisor 已停止，无法应用最新模块开关",
             ),
         }
+    }
+
+    /// Wait on the same lifecycle worker; a queued request is never mistaken
+    /// for completed cleanup. Neither configuration nor window locks may be held.
+    pub(crate) fn reconcile_and_wait(&self) -> Result<CapabilityStatusSnapshot, String> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        let (reply, result) = mpsc::sync_channel(1);
+        let mut message = SupervisorMessage::ReconcileAndReply(reply);
+        loop {
+            if self.shutdown_requested.load(Ordering::Acquire) {
+                return Err("应用正在退出，无法切换模式".to_string());
+            }
+            match self.sender.try_send(message) {
+                Ok(()) => break,
+                Err(mpsc::TrySendError::Full(pending)) => message = pending,
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err("模块生命周期服务已停止".to_string());
+                }
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("等待模块停止超时，模式未修改".to_string());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        result.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+            .map_err(|error| format!("等待模块停止失败，模式未修改：{error}"))?
     }
 
     pub(crate) fn shutdown(&self) {

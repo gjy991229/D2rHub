@@ -11,6 +11,8 @@ import {
   compatibleCapsulesForAccount,
 } from "../../features/modCapsules/model";
 import { useI18n } from "../../i18n";
+import { useGlobalConfig } from "../../store/globalConfig";
+import { isMinimalMode } from "../../features/profile/featureProfile";
 
 interface AccountModEditorProps {
   account: AccountMeta;
@@ -40,6 +42,7 @@ export function AccountModEditor({
 }: AccountModEditorProps) {
   const { language } = useI18n();
   const isEnglish = language === "en-US";
+  const minimalMode = useGlobalConfig((state) => isMinimalMode(state.config));
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -201,7 +204,7 @@ export function AccountModEditor({
             </button>
             {capsules.map((capsule) => {
               const active = capsule.launch_arguments.trim() === activeArguments.trim();
-              const features = capsuleFeatureLabels(capsule, isEnglish);
+              const features = capsuleFeatureLabels(capsule, isEnglish, minimalMode);
               return (
                 <button
                   type="button"

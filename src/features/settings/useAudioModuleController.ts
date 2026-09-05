@@ -34,6 +34,7 @@ interface AudioModuleControllerOptions {
   persistConfig: (draft: GlobalConfig, quiet?: boolean) => Promise<unknown>;
   loadAccounts: () => Promise<void>;
   setActiveTab: Dispatch<SetStateAction<SettingsTabId>>;
+  optionalFeaturesAvailable?: boolean;
 }
 
 export function useAudioModuleController({
@@ -46,6 +47,7 @@ export function useAudioModuleController({
   persistConfig,
   loadAccounts,
   setActiveTab,
+  optionalFeaturesAvailable = true,
 }: AudioModuleControllerOptions) {
   const [audioStatus, setAudioStatus] = useState<RuneAudioStatus | null>(null);
   const [audioModState, setAudioModState] = useState<AudioModSetupState | null>(null);
@@ -91,7 +93,7 @@ export function useAudioModuleController({
   const hasAudioTarget = !!trackingTargetId;
   const hasReadyAudioMod = hasAudioTarget && !!audioModState?.ready;
   const isAudioEnableRequested = !!config?.rune_audio_enabled;
-  const isAudioRecognitionActive = isAudioEnableRequested && hasReadyAudioMod;
+  const isAudioRecognitionActive = optionalFeaturesAvailable && isAudioEnableRequested && hasReadyAudioMod;
   const installedAudioFeatureGroups = selectedProcessingTarget?.feature_groups ?? [];
   const selectedAudioSource = audioSetupMode === "existing"
     ? audioModState?.installed_mods.find((mod) => mod.name === audioSetupSource)
@@ -163,7 +165,7 @@ export function useAudioModuleController({
   };
 
   useEffect(() => {
-    if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;
+    if (!optionalFeaturesAvailable || !open || activeTab !== "automation") return;
     let cancelled = false;
     let timer: number | undefined;
     const poll = async () => {
@@ -180,7 +182,7 @@ export function useAudioModuleController({
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, [open, activeTab]);
+  }, [open, activeTab, optionalFeaturesAvailable]);
 
   useEffect(() => {
     if (!open || (activeTab !== "automation" && activeTab !== "mod-processing") || !setupAccountId) return;
@@ -208,7 +210,7 @@ export function useAudioModuleController({
         if (cancelled) return;
         cacheState(setupAccountId, next);
         applySetupDefaults(next);
-        if (!next.ready && config?.rune_audio_enabled) {
+        if (optionalFeaturesAvailable && !next.ready && config?.rune_audio_enabled) {
           applyFeatureDefaults("recognition");
           setAudioSetupPurpose("recognition");
           setAudioSetupOpen(true);
@@ -224,7 +226,7 @@ export function useAudioModuleController({
         if (!cancelled) setAudioModStateLoading(false);
       });
     return () => { cancelled = true; };
-  }, [open, activeTab, setupAccountId]);
+  }, [open, activeTab, setupAccountId, optionalFeaturesAvailable]);
 
   useEffect(() => {
     if (!open || (activeTab !== "automation" && activeTab !== "mod-processing")) return;

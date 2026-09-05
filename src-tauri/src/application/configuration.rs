@@ -77,6 +77,14 @@ impl ConfigurationRuntime {
         self.cache.read().clone()
     }
 
+    /// Reprojects bounded runtime intent in commit order without writing disk.
+    /// The callback must not re-enter configuration or perform native UI/I/O.
+    pub(crate) fn project_current<T>(&self, project: impl FnOnce(Option<&GlobalConfig>) -> T) -> T {
+        let _transaction = self.transaction.lock();
+        let current = self.cache.read();
+        project(current.as_ref())
+    }
+
     /// Loads once even when several callers arrive concurrently. Reads share
     /// the transaction barrier so no caller can observe a half-published
     /// configuration epoch.

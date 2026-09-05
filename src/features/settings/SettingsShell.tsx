@@ -4,6 +4,7 @@ import type { CapabilityStatusSnapshot, GlobalConfig } from "../../store/types";
 import { initCapabilityStatusSync } from "../capabilities";
 import { SettingsNavigation } from "./SettingsNavigation";
 import { OptionalFeaturesNavigation } from "./OptionalFeaturesNavigation";
+import { isMinimalMode } from "../profile/featureProfile";
 import {
   isOptionalSettingsTab,
   type OptionalModuleTabId,
@@ -35,10 +36,15 @@ export function SettingsShell({
 }: SettingsShellProps) {
   const [capabilityStatus, setCapabilityStatus] = useState<CapabilityStatusSnapshot | null>(null);
   const [capabilityStatusUnavailable, setCapabilityStatusUnavailable] = useState(false);
-  const optionalFeatureActive = isOptionalSettingsTab(activeTab);
+  const minimalMode = isMinimalMode(config);
+  const optionalFeatureActive = !minimalMode && isOptionalSettingsTab(activeTab);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || minimalMode) {
+      setCapabilityStatus(null);
+      setCapabilityStatusUnavailable(false);
+      return;
+    }
 
     let disposed = false;
     let stopListening: (() => void) | undefined;
@@ -62,7 +68,7 @@ export function SettingsShell({
       disposed = true;
       stopListening?.();
     };
-  }, [open]);
+  }, [minimalMode, open]);
 
   return (
     <Modal

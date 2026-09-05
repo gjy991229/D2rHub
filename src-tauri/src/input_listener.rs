@@ -4,7 +4,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use crate::application::multi_instance::{GameWindowPort, WindowMatch};
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::infrastructure::system;
-use crate::state::SharedState;
+use crate::state::{CoreShortcutAction, SharedState};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
@@ -27,6 +27,8 @@ static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
 static STATS_OVERLAY_MINI_HWND: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static STATS_OVERLAY_MINI_GESTURE: AtomicU32 = AtomicU32::new(0);
+static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static OPTIONAL_SHORTCUTS_ALLOWED: AtomicBool = AtomicBool::new(false);
 static STATS_OVERLAY_MINI_RESIZE_EDGE: AtomicU32 = AtomicU32::new(0);
 static STATS_OVERLAY_GESTURE_START_CURSOR_X: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_GESTURE_START_CURSOR_Y: AtomicI32 = AtomicI32::new(0);
@@ -58,8 +60,9 @@ struct CapabilityShortcutRoute {
 
 #[derive(Default)]
 struct CapabilityShortcutRegistry {
-    core: HashMap<String, usize>,
+    core: HashMap<String, CoreShortcutAction>,
     owners: HashMap<&'static str, (u64, HashMap<String, CapabilityShortcutRoute>)>,
+    saved_owners: HashMap<&'static str, HashSet<String>>,
 }
 
 /// RAII registration owned by an optional capability driver. Dropping the
@@ -93,11 +96,21 @@ pub(crate) fn with_shortcut_routing_transaction<T>(operation: impl FnOnce() -> T
 pub(crate) fn replace_core_shortcut_reservations(
     shortcuts: impl IntoIterator<Item = (String, usize)>,
 ) {
+    replace_core_shortcut_routes(
+        shortcuts
+            .into_iter()
+            .map(|(shortcut, position)| (shortcut, CoreShortcutAction::FocusAccount(position))),
+    );
+}
+
+pub(crate) fn replace_core_shortcut_routes(
+    shortcuts: impl IntoIterator<Item = (String, CoreShortcutAction)>,
+) {
     capability_shortcuts().write().core = shortcuts
         .into_iter()
-        .filter_map(|(shortcut, position)| {
+        .filter_map(|(shortcut, action)| {
             let shortcut = shortcut.trim().to_ascii_lowercase();
-            (!shortcut.is_empty()).then_some((shortcut, position))
+            (!shortcut.is_empty()).then_some((shortcut, action))
         })
         .collect();
 }
@@ -121,8 +134,62 @@ pub(crate) fn validate_core_shortcut_reservations<'a>(
             .find_map(|(owner, (_, routes))| routes.contains_key(&shortcut).then_some(*owner))
         {
             return Err(format!(
-                "账号快捷键 {shortcut} 与已启用模块 {owner} 的快捷键冲突"
+                "核心快捷键 {shortcut} 与已启用模块 {owner} 的快捷键冲突"
             ));
+        }
+    }
+    Ok(())
+}
+
+/// Durable reservations survive dropping a capability's active routes.
+/// Only installed modules reserve keys, so uninstalling releases the keys
+/// without deleting that module's saved settings.
+pub(crate) fn validate_core_shortcut_reservations_for_modules<'a>(
+    shortcuts: impl IntoIterator<Item = &'a str>,
+    installed_modules: &[String],
+) -> Result<(), String> {
+    let shortcuts: Vec<_> = shortcuts.into_iter().collect();
+    validate_core_shortcut_reservations(shortcuts.iter().copied())?;
+    let registry = capability_shortcuts().read();
+    for shortcut in shortcuts {
+        let shortcut = shortcut.trim().to_ascii_lowercase();
+        if !shortcut.is_empty() && registry.saved_owners.iter().any(|(owner, saved)| {
+            installed_modules.iter().any(|module| module.as_str() == *owner) && saved.contains(&shortcut)
+        }) {
+            return Err(format!("快捷键 {shortcut} 已被原配置保留，请选择其他组合"));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn replace_saved_capability_shortcuts<'a>(
+    owner: &'static str,
+    shortcuts: impl IntoIterator<Item = &'a str>,
+) {
+    let saved = shortcuts.into_iter().filter_map(|shortcut| {
+        crate::capabilities::room_automation::canonicalize_shortcut(shortcut).ok()
+            .map(|shortcut| shortcut.to_ascii_lowercase())
+    }).collect();
+    capability_shortcuts().write().saved_owners.insert(owner, saved);
+}
+
+/// Caller holds the routing transaction until the module sidecar is committed.
+pub(crate) fn validate_saved_capability_shortcuts<'a>(
+    owner: &'static str,
+    shortcuts: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let registry = capability_shortcuts().read();
+    for shortcut in shortcuts {
+        let Ok(shortcut) = crate::capabilities::room_automation::canonicalize_shortcut(shortcut) else {
+            continue; // Disabled module drafts may contain incomplete shortcuts.
+        };
+        let shortcut = shortcut.to_ascii_lowercase();
+        if registry.core.contains_key(&shortcut)
+            || registry.owners.iter().any(|(other, (_, routes))| {
+                *other != owner && routes.contains_key(&shortcut)
+            })
+        {
+            return Err(format!("快捷键 {shortcut} 已被其他动作使用，配置未保存"));
         }
     }
     Ok(())
@@ -230,9 +297,16 @@ fn install_capability_shortcuts_in_transaction(
         return Err(format!("capability {owner_id} 的快捷键已注册"));
     }
     for shortcut in normalized.keys() {
-        if let Some(position) = registry.core.get(shortcut) {
+        if let Some(action) = registry.core.get(shortcut) {
+            let owner = match action {
+                CoreShortcutAction::FocusAccount(position) => {
+                    format!("多开核心账号位置 {position}")
+                }
+                CoreShortcutAction::ShowMainWindow => "D2RHub 主面板呼出动作".to_string(),
+                CoreShortcutAction::HideMainWindow => "D2RHub 主面板最小化动作".to_string(),
+            };
             return Err(format!(
-                "快捷键 {shortcut} 已由多开核心账号位置 {position} 使用"
+                "快捷键 {shortcut} 已由{owner}使用"
             ));
         }
         if let Some(conflicting_owner) = registry
@@ -255,8 +329,10 @@ fn install_capability_shortcuts_in_transaction(
 }
 
 fn dispatch_capability_shortcut(shortcut: &str) -> bool {
-    let delivery = capability_shortcuts()
-        .read()
+    let Some(registry) = capability_shortcuts().try_read() else {
+        return false;
+    };
+    let delivery = registry
         .owners
         .values()
         .find_map(|(_, routes)| {
@@ -264,6 +340,7 @@ fn dispatch_capability_shortcut(shortcut: &str) -> bool {
                 .get(shortcut)
                 .map(|route| (route.sender.clone(), route.action))
         });
+    drop(registry);
     let Some((sender, action)) = delivery else {
         return false;
     };
@@ -300,13 +377,15 @@ pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
 
 #[tauri::command]
 pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    let state = app.state::<SharedState>();
+    let _operation = state.optional_window_operations.try_lock()
+        .ok_or_else(|| "辅助窗口操作进行中，请稍后重试".to_string())?;
     if visible {
-        let installed = app
-            .state::<SharedState>()
+        let installed = state.optional_runtime_ready() && state
             .configuration()
             .snapshot()
             .is_some_and(|config| {
-                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
             });
         if !installed {
             return Err("桌宠模块尚未安装".to_string());
@@ -352,14 +431,16 @@ pub fn set_stats_overlay_mini_input_region(
     min_height: u32,
     resize_inset: u32,
 ) -> Result<(), String> {
+    let state = app.state::<SharedState>();
+    let _operation = state.optional_window_operations.try_lock()
+        .ok_or_else(|| "辅助窗口操作进行中，请稍后重试".to_string())?;
     if enabled {
-        let installed = app
-            .state::<SharedState>()
+        let installed = state.optional_runtime_ready() && state
             .configuration()
             .snapshot()
             .is_some_and(|config| {
-                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                    && config.optional_module_installed(
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                    && config.optional_module_runtime_allowed(
                         crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
                     )
             });
@@ -857,6 +938,9 @@ fn build_shortcut_string(ctrl: bool, alt: bool, shift: bool, key: &str) -> Strin
 /// 检查当前按键组合是否匹配某个已配置的快捷键，若匹配则聚焦对应账号窗口
 /// 返回 true 表示已处理（应吞掉该按键事件）
 unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
+    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+        return false;
+    }
     // 忽略修饰键本身的按下
     let vk = kbd.vk_code;
     if vk == 0x10 || vk == 0x11 || vk == 0x12 {
@@ -880,26 +964,51 @@ unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
                 // configuration snapshot. Configuration updates rebuild the
                 // shortcut map, so overlapping both locks would invert that
                 // writer's lock order.
-                let position = {
-                    let shortcut_map = state.shortcut_map.read();
+                let action = {
+                    let Some(shortcut_map) = state.shortcut_map.try_read() else {
+                        return false;
+                    };
                     shortcut_map.get(&combo_lower).copied()
                 };
-                if let Some(pos) = position {
-                    if let Some(cfg) = state.configuration().snapshot() {
-                        let accounts_dir = cfg.accounts_dir.clone();
-                        let app_clone = app.clone();
-                        let combo_clone = combo.clone();
-                        std::thread::spawn(move || {
-                            focus_account_at_position(&app_clone, &accounts_dir, pos, &combo_clone);
-                        });
-                        return true; // 已处理，吞掉按键
+                if let Some(action) = action {
+                    match action {
+                        CoreShortcutAction::FocusAccount(position) => {
+                            let state = state.inner().clone();
+                            let app_clone = app.clone();
+                            let combo_clone = combo.clone();
+                            std::thread::spawn(move || {
+                                if let Some(cfg) = state.configuration().snapshot() {
+                                    focus_account_at_position(
+                                        &app_clone,
+                                        &cfg.accounts_dir,
+                                        position,
+                                        &combo_clone,
+                                    );
+                                }
+                            });
+                        }
+                        CoreShortcutAction::ShowMainWindow => {
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                crate::window_placement::show_main_window_safely(&app);
+                            });
+                        }
+                        CoreShortcutAction::HideMainWindow => {
+                            let app = app.clone();
+                            std::thread::spawn(move || {
+                                crate::window_placement::hide_main_window_to_tray(&app);
+                            });
+                        }
                     }
+                    return true; // 已处理，吞掉按键
                 }
                 // Multi-instance account focus is a core action and therefore
                 // always wins if a legacy or concurrently edited optional
                 // module happens to claim the same key. Module configuration
                 // validation still prevents new conflicts at rest.
-                if dispatch_capability_shortcut(&combo_lower) {
+                if OPTIONAL_SHORTCUTS_ALLOWED.load(Ordering::Acquire)
+                    && dispatch_capability_shortcut(&combo_lower)
+                {
                     return true;
                 }
             }
@@ -1122,6 +1231,19 @@ pub fn start_input_listener(app_handle: AppHandle) {
             }
         }
     });
+}
+
+#[tauri::command]
+pub fn set_shortcut_capture_active(active: bool) {
+    SHORTCUT_CAPTURE_ACTIVE.store(active, Ordering::Release);
+}
+
+pub(crate) fn set_optional_shortcuts_allowed(allowed: bool) {
+    OPTIONAL_SHORTCUTS_ALLOWED.store(allowed, Ordering::Release);
+}
+
+pub(crate) fn cancel_shortcut_capture() {
+    set_shortcut_capture_active(false);
 }
 
 #[cfg(test)]

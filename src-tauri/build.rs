@@ -21,6 +21,7 @@ const APP_COMMANDS: &[&str] = &[
     "room_automation_restore_chat_binding",
     "save_global_config",
     "patch_global_config",
+    "switch_feature_profile",
     "patch_desktop_pet_settings",
     "save_window_geometry",
     "load_window_geometry",
@@ -76,6 +77,7 @@ const APP_COMMANDS: &[&str] = &[
     "kill_all_d2r_processes",
     "bring_bnet_to_foreground",
     "bring_self_to_foreground",
+    "hide_main_window",
     "bring_window_by_title_to_front",
     "get_foreground_window_title",
     "get_d2r_window_titles",
@@ -124,6 +126,7 @@ const APP_COMMANDS: &[&str] = &[
     "write_log",
     "set_bongo_cat_input_visible",
     "set_stats_overlay_mini_input_region",
+    "set_shortcut_capture_active",
 ];
 
 fn main() {

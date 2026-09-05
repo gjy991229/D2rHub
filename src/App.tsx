@@ -7,6 +7,7 @@ import { useAccounts } from "./store/accounts";
 import { syncThemeFromConfig } from "./store/theme";
 import { useWindowGeometrySave } from "./hooks/useWindowGeometrySave";
 import { SetupWizard } from "./pages/SetupWizard";
+import { FeatureProfileChooser } from "./pages/FeatureProfileChooser";
 import { AboutModal } from "./pages/AboutModal";
 import { SettingsCenter } from "./components/config/SettingsCenter";
 import { ToastContainer, showToast } from "./components/ui/Toast";
@@ -41,7 +42,6 @@ import type {
   GlobalConfig,
   AccountMeta,
 } from "./store/types";
-import { setAuxiliaryWindowVisible } from "./utils/windowPlacement";
 import { sortAccountsByCardOrder } from "./utils/accountOrder";
 import { validateTrackingTarget } from "./utils/trackingTarget";
 import {
@@ -54,15 +54,25 @@ import { useLaunchGroupController } from "./hooks/useLaunchGroupController";
 import { useModCapsulePool } from "./features/modCapsules/useModCapsulePool";
 import { DisclosureDialog } from "./features/disclosures/DisclosureDialog";
 import { useApplicationDisclosure } from "./features/disclosures/useApplicationDisclosure";
+import {
+  isFeatureProfileDecisionCurrent,
+  optionalFeaturesAreAvailable,
+  type FeatureProfile,
+} from "./features/profile/featureProfile";
 
 type View =
   | { type: "loading" }
+  | { type: "profile" }
   | { type: "setup"; existingConfig?: GlobalConfig }
   | { type: "main"; };
 
 function App() {
   const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
-  const applicationDisclosure = useApplicationDisclosure(!initialLoading && config !== null);
+  const profileDecisionCurrent = isFeatureProfileDecisionCurrent(config);
+  const applicationDisclosure = useApplicationDisclosure(
+    !initialLoading && config !== null,
+    profileDecisionCurrent,
+  );
   const { loadAccounts, accounts, deleteAccount, renameAccount, reorderAccounts } = useAccounts();
   const {
     launching,
@@ -91,6 +101,9 @@ function App() {
   const disclosureBlockingStartup = initialLoading
     || applicationDisclosure.checking
     || applicationDisclosure.required;
+  const profileDecisionPending = !!config && !profileDecisionCurrent;
+  const startupServicesBlocked = disclosureBlockingStartup || profileDecisionPending;
+  const optionalFeaturesAvailable = optionalFeaturesAreAvailable(config);
 
   const handleKillAllD2R = async () => {
     setKilling(true);
@@ -186,8 +199,12 @@ function App() {
   // Update view state
   useEffect(() => {
     if (initialLoading) return;
-    if (!config || !config.first_run_complete) {
+    if (!config || config.legacy_path_migration) {
       setView({ type: "setup", existingConfig: config ?? undefined });
+    } else if (!isFeatureProfileDecisionCurrent(config)) {
+      setView({ type: "profile" });
+    } else if (!config.first_run_complete) {
+      setView({ type: "setup", existingConfig: config });
     }
     else setView({ type: "main" });
     // Sync theme from config (config as source of truth)
@@ -204,14 +221,14 @@ function App() {
   }, [config?.font_scale]);
 
   // Execute App Side Effects
-  useBongoCatWindow(disclosureBlockingStartup, config);
-  useLaunchEvents(config);
-  useAutoUpdate(disclosureBlockingStartup, config, (version, url) => {
+  useBongoCatWindow(startupServicesBlocked || !optionalFeaturesAvailable, config);
+  useLaunchEvents(config, optionalFeaturesAvailable);
+  useAutoUpdate(startupServicesBlocked, config, (version, url) => {
     setAutoUpdateVersion(version);
     setAutoUpdateUrl(url);
     setShowAutoUpdateConfirm(true);
   });
-  useFirstLaunch(disclosureBlockingStartup, config, patch);
+  useFirstLaunch(startupServicesBlocked, config, patch);
 
   const handleDisclosureExit = async () => {
     if (exitingForDisclosure) return;
@@ -245,7 +262,7 @@ function App() {
   );
 
   useEffect(() => {
-    if (disclosureBlockingStartup || !config?.rune_audio_enabled) {
+    if (startupServicesBlocked || !optionalFeaturesAvailable || !config?.rune_audio_enabled) {
       setAudioModUpdate(null);
       return;
     }
@@ -266,10 +283,18 @@ function App() {
     return () => {
       cancelled = true;
     };
-  }, [disclosureBlockingStartup, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
+  }, [startupServicesBlocked, optionalFeaturesAvailable, config?.rune_audio_enabled, config?.rune_audio_target_account, accounts, showSettings]);
 
   const handleReconfigure = () => {
     setView({ type: "setup", existingConfig: config ?? undefined });
+  };
+
+  const handleFeatureProfileConfirm = async (profile: FeatureProfile) => {
+    try {
+      await useGlobalConfig.getState().switchProfile(profile);
+    } catch (error) {
+      showToast("error", `保存使用模式失败：${error}`);
+    }
   };
 
   if (!initialLoading && configError && !config) return (
@@ -321,6 +346,21 @@ function App() {
     </>
   );
 
+  if (view.type === "profile" && config) return (
+    <>
+      <AppShell>
+        <FeatureProfileChooser
+          config={config}
+          saving={configSaving}
+          onConfirm={handleFeatureProfileConfirm}
+          onExit={() => void handleDisclosureExit()}
+        />
+        <ToastContainer />
+      </AppShell>
+      {applicationDisclosureDialog}
+    </>
+  );
+
   // ── setup ──
   if (view.type === "setup") return (
     <>
@@ -328,7 +368,12 @@ function App() {
         <div className="flex-1 flex flex-col">
           <SetupWizard
             initialConfig={view.existingConfig}
-            onComplete={() => setView({ type: "main" })}
+            onComplete={() => {
+              const latest = useGlobalConfig.getState().config;
+              setView(latest && !isFeatureProfileDecisionCurrent(latest)
+                ? { type: "profile" }
+                : { type: "main" });
+            }}
           />
         </div>
         <ToastContainer />
@@ -350,26 +395,7 @@ function App() {
         <Dashboard
           onAbout={() => setShowAbout(true)}
           onExit={async () => {
-            const mainWin = getCurrentWindow();
-            await mainWin.hide();
-            const overlays = [
-              config?.enable_tz_overlay ? 'overlay' as const : null,
-              config?.enable_stats_overlay ? 'stats-overlay' as const : null,
-            ].filter((label): label is 'overlay' | 'stats-overlay' => label !== null);
-            const results = await Promise.allSettled(
-              overlays.map(label => setAuxiliaryWindowVisible(label, true)),
-            );
-            const failures = results.flatMap((result, index) =>
-              result.status === 'rejected'
-                ? [`${overlays[index]}: ${String(result.reason)}`]
-                : [],
-            );
-            if (failures.length > 0) {
-              void invokeCommand('write_log', {
-                level: 'WARN',
-                message: `主面板隐藏后显示悬浮窗部分失败: ${failures.join('; ')}`,
-              }).catch(() => {});
-            }
+            await invokeCommand("hide_main_window");
           }}
           onOpenConfig={() => { setShowSettings(true); setSettingsTab(null); setSettingsAccountId(null); }}
           onStats={async () => {
@@ -379,7 +405,8 @@ function App() {
               showToast("error", `打开统计失败: ${e}`);
             }
           }}
-          statsModuleInstalled={config?.installed_optional_modules?.includes("automation") === true}
+          statsModuleInstalled={optionalFeaturesAvailable
+            && config?.installed_optional_modules?.includes("automation") === true}
           onShareReport={handleShareBattleReport}
           sharingReport={sharingReport}
           onHelp={async () => {
@@ -406,9 +433,10 @@ function App() {
               setSettingsAccountId(null);
               setShowSettings(true);
             }}
+            showOptionalFeatures={optionalFeaturesAvailable}
           />
 
-          {audioModUpdate && (
+          {optionalFeaturesAvailable && audioModUpdate && (
             <div className="shrink-0 px-5 pb-2.5">
               <div
                 role="status"

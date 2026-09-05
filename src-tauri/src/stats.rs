@@ -446,8 +446,8 @@ fn migrate_legacy_drops(drops_json: &str) -> Vec<DropEntry> {
 }
 
 fn ensure_stats_module_installed(state: &SharedState) -> Result<(), String> {
-    let installed = state.configuration().snapshot().is_some_and(|config| {
-        config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+    let installed = state.optional_runtime_ready() && state.configuration().snapshot().is_some_and(|config| {
+        config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
     });
     installed
         .then_some(())
@@ -1005,6 +1005,15 @@ static STATS_API_RUNTIME: std::sync::OnceLock<std::sync::Mutex<Option<StatsApiRu
     std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STATS_API_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static STATS_API_ACTIVE_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+struct StatsApiWorkerLifetime;
+
+impl Drop for StatsApiWorkerLifetime {
+    fn drop(&mut self) {
+        STATS_API_ACTIVE_WORKERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 
 fn stats_api_runtime() -> &'static std::sync::Mutex<Option<StatsApiRuntime>> {
     STATS_API_RUNTIME.get_or_init(|| std::sync::Mutex::new(None))
@@ -1056,6 +1065,19 @@ pub(crate) fn stop_stats_api() {
     reap_stats_api_worker(runtime.worker, "后台回收");
 }
 
+/// A profile switch also waits for in-flight requests and detached old workers.
+pub(crate) fn stop_stats_api_and_wait() -> Result<(), String> {
+    stop_stats_api();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while STATS_API_ACTIVE_WORKERS.load(std::sync::atomic::Ordering::SeqCst) != 0 {
+        if std::time::Instant::now() >= deadline {
+            return Err("统计服务尚未停止完成，使用模式未修改，请稍后重试".to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Ok(())
+}
+
 /// 启动统计页微 HTTP API 服务（供浏览器中的 stats.html 调用）
 fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
     let mut runtime = stats_api_runtime()
@@ -1092,7 +1114,10 @@ fn start_stats_api(app_data_dir: String) -> Result<(u16, String), String> {
     );
     let expected_api_token = api_token.clone();
 
+    STATS_API_ACTIVE_WORKERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let lifetime = StatsApiWorkerLifetime;
     let api_thread = std::thread::Builder::new().name("stats-api".into()).spawn(move || {
+        let _lifetime = lifetime;
         for stream in listener.incoming() {
             if !STATS_API_RUNNING.load(std::sync::atomic::Ordering::SeqCst)
                 || STATS_API_GENERATION.load(std::sync::atomic::Ordering::SeqCst) != generation
@@ -1555,11 +1580,14 @@ pub fn open_stats_page(
     state: tauri::State<'_, SharedState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
+    let _operation = state.optional_window_operations.lock();
     let config = state
         .configuration()
         .snapshot()
         .ok_or_else(|| "全局配置尚未加载".to_string())?;
-    if !config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION) {
+    if !state.optional_runtime_ready()
+        || !config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+    {
         return Err("识别与统计模块尚未安装".to_string());
     }
     // 1. 查询统计数据

@@ -81,11 +81,12 @@ impl ConfigurationRepository for GlobalConfigRepository<'_> {
 
 struct GlobalConfigPolicy<'a> {
     state: &'a SharedState,
+    profile_transition: bool,
 }
 
 impl<'a> GlobalConfigPolicy<'a> {
     fn new(state: &'a SharedState) -> Self {
-        Self { state }
+        Self { state, profile_transition: false }
     }
 }
 
@@ -103,6 +104,16 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         previous: Option<&GlobalConfig>,
         candidate: GlobalConfig,
     ) -> Result<GlobalConfig, AppError> {
+        if self.profile_transition {
+            // This private policy is used only by the mode-only mutation below.
+            // Unrelated stale paths/module drafts must not block a safe pause.
+            return Ok(candidate);
+        }
+        if previous.is_some_and(|previous| previous.feature_profile != candidate.feature_profile
+            || previous.feature_profile_prompt_revision != candidate.feature_profile_prompt_revision)
+        {
+            return Err(AppError::ConfigWriteError("使用模式已变化，请使用模式切换操作并重新加载设置".to_string()));
+        }
         let retired_account_ids = self.state.retired_account_ids_snapshot();
         let prepared = prepare_global_config_with_retired_accounts(
             &self.state.app_data_dir,
@@ -110,11 +121,23 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
             candidate,
             &retired_account_ids,
         )?;
-        if let Ok(bindings) = serde_json::from_str::<std::collections::HashMap<String, String>>(
+        let bindings = serde_json::from_str::<std::collections::HashMap<String, String>>(
             &prepared.shortcut_bindings_json,
-        ) {
-            crate::input_listener::validate_core_shortcut_reservations(
-                bindings.values().map(String::as_str),
+        )
+        .unwrap_or_default();
+        if previous.is_none_or(|previous| previous.shortcut_bindings_json != prepared.shortcut_bindings_json
+            || previous.show_main_window_shortcut != prepared.show_main_window_shortcut
+            || previous.hide_main_window_shortcut != prepared.hide_main_window_shortcut)
+        {
+            crate::input_listener::validate_core_shortcut_reservations_for_modules(
+                bindings
+                    .values()
+                    .map(String::as_str)
+                    .chain([
+                        prepared.show_main_window_shortcut.as_str(),
+                        prepared.hide_main_window_shortcut.as_str(),
+                    ]),
+                &prepared.installed_optional_modules,
             )
             .map_err(AppError::ConfigWriteError)?;
         }
@@ -130,7 +153,14 @@ struct RuntimeConfigurationObserver<'a> {
 impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
     fn apply(&self, config: &GlobalConfig) {
         update_shortcut_map(self.state, config);
-        if !config.optional_module_installed(OPTIONAL_MODULE_AUTOMATION) {
+        if !config.optional_features_runtime_allowed() {
+            crate::input_listener::set_bongo_cat_input_enabled(false);
+            crate::input_listener::set_bongo_cat_input_visible_state(false);
+            crate::input_listener::set_stats_overlay_mini_input_region_state(
+                false, 0, 0, 0, 0,
+            );
+        }
+        if !config.optional_module_runtime_allowed(OPTIONAL_MODULE_AUTOMATION) {
             crate::stats::stop_stats_api();
         }
         crate::capabilities::apply_configuration(self.state, self.app, config);
@@ -138,6 +168,7 @@ impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
 
     fn publish(&self, config: &GlobalConfig) {
         if let Some(app) = self.app {
+            crate::tray::schedule_menu_update(app);
             if let Err(error) = app.emit("global-config-updated", config) {
                 crate::logger::log_msg(
                     "WARN",
@@ -192,6 +223,73 @@ fn should_validate_installation_paths(
         || previous.cn_saved_games_path != next.cn_saved_games_path
         || previous.global_game_path != next.global_game_path
         || previous.global_saved_games_path != next.global_saved_games_path
+}
+
+fn normalize_and_validate_main_window_shortcuts(
+    config: &mut GlobalConfig,
+) -> Result<(), AppError> {
+    let normalize = |value: &str, label: &str| -> Result<String, AppError> {
+        if value.trim().is_empty() {
+            return Ok(String::new());
+        }
+        let shortcut = crate::capabilities::room_automation::canonicalize_shortcut(value)
+            .map_err(|error| AppError::ConfigWriteError(format!("{label}快捷键无效：{error}")))?;
+        let function_key = shortcut
+            .strip_prefix('F')
+            .and_then(|number| number.parse::<u8>().ok())
+            .is_some_and(|number| (1..=24).contains(&number));
+        if !shortcut.starts_with("Ctrl+")
+            && !shortcut.starts_with("Alt+")
+            && !shortcut.starts_with("Shift+")
+            && !function_key
+        {
+            return Err(AppError::ConfigWriteError(format!(
+                "{label}快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键"
+            )));
+        }
+        Ok(shortcut)
+    };
+
+    config.show_main_window_shortcut = normalize(
+        &config.show_main_window_shortcut,
+        "呼出主面板",
+    )?;
+    config.hide_main_window_shortcut = normalize(
+        &config.hide_main_window_shortcut,
+        "最小化主面板",
+    )?;
+
+    if !config.show_main_window_shortcut.is_empty()
+        && config
+            .show_main_window_shortcut
+            .eq_ignore_ascii_case(&config.hide_main_window_shortcut)
+    {
+        return Err(AppError::ConfigWriteError(
+            "呼出主面板和最小化主面板不能使用同一个快捷键".to_string(),
+        ));
+    }
+
+    let account_bindings = serde_json::from_str::<std::collections::HashMap<String, String>>(
+        &config.shortcut_bindings_json,
+    )
+    .unwrap_or_default();
+    for (label, shortcut) in [
+        ("呼出主面板", &config.show_main_window_shortcut),
+        ("最小化主面板", &config.hide_main_window_shortcut),
+    ] {
+        if shortcut.is_empty() {
+            continue;
+        }
+        if let Some((position, _)) = account_bindings
+            .iter()
+            .find(|(_, account_shortcut)| account_shortcut.eq_ignore_ascii_case(shortcut))
+        {
+            return Err(AppError::ConfigWriteError(format!(
+                "{label}快捷键 {shortcut} 与账号位置 #{position} 的快捷键冲突"
+            )));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1808,6 +1906,7 @@ impl GlobalConfig {
             if matches!(
                 key.as_str(),
                 "version" | "accounts_dir" | "legacy_path_migration"
+                    | "feature_profile" | "feature_profile_prompt_revision"
             ) {
                 return Err(AppError::ConfigWriteError(format!(
                     "配置字段 {key} 由程序管理，不能通过补丁修改"
@@ -2300,6 +2399,9 @@ impl GlobalConfig {
             config.version = CURRENT_CONFIG_VERSION;
             migrated = true;
         }
+        if config.normalize_feature_profile() {
+            migrated = true;
+        }
         if !had_optional_module_state {
             // Before v10 the feature switches were the only durable evidence
             // that a user had opted into an optional capability. Promote those
@@ -2789,20 +2891,39 @@ impl GlobalConfig {
 pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
     let bindings: std::collections::HashMap<String, String> =
         serde_json::from_str(&cfg.shortcut_bindings_json).unwrap_or_default();
-    let normalized = bindings
+    let mut normalized = bindings
         .iter()
         .filter_map(|(pos_str, shortcut)| {
             pos_str
                 .parse::<usize>()
                 .ok()
                 .filter(|position| *position >= 1)
-                .map(|position| (shortcut.to_lowercase(), position))
+                .map(|position| {
+                    (
+                        shortcut.to_lowercase(),
+                        crate::state::CoreShortcutAction::FocusAccount(position),
+                    )
+                })
         })
         .collect::<std::collections::HashMap<_, _>>();
-    crate::input_listener::replace_core_shortcut_reservations(
+    for (shortcut, action) in [
+        (
+            cfg.show_main_window_shortcut.trim(),
+            crate::state::CoreShortcutAction::ShowMainWindow,
+        ),
+        (
+            cfg.hide_main_window_shortcut.trim(),
+            crate::state::CoreShortcutAction::HideMainWindow,
+        ),
+    ] {
+        if !shortcut.is_empty() {
+            normalized.entry(shortcut.to_ascii_lowercase()).or_insert(action);
+        }
+    }
+    crate::input_listener::replace_core_shortcut_routes(
         normalized
             .iter()
-            .map(|(shortcut, position)| (shortcut.clone(), *position)),
+            .map(|(shortcut, action)| (shortcut.clone(), *action)),
     );
     let mut map = state.shortcut_map.write();
     map.clear();
@@ -2888,6 +3009,91 @@ where
 }
 
 // ── Tauri Commands ──
+
+/// A failed transition restores the latest committed intent, never a stale
+/// full-config snapshot. Already canceled automation is deliberately not replayed.
+struct ProfileSuspension<'a> {
+    state: &'a SharedState,
+    app: &'a tauri::AppHandle,
+}
+
+impl Drop for ProfileSuspension<'_> {
+    fn drop(&mut self) {
+        self.state.configuration().project_current(|config| {
+            self.state.optional_features_suspended.store(false, std::sync::atomic::Ordering::Release);
+            if let Some(config) = config {
+                crate::capabilities::apply_configuration(self.state, Some(self.app), config);
+            }
+        });
+        crate::tray::schedule_menu_update(self.app);
+    }
+}
+
+#[tauri::command(async)]
+pub fn switch_feature_profile(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    profile: String,
+) -> Result<GlobalConfig, AppError> {
+    use crate::domain::config::{
+        CURRENT_FEATURE_PROFILE_PROMPT_REVISION, FEATURE_PROFILE_MINIMAL, FEATURE_PROFILE_NORMAL,
+    };
+    use std::sync::atomic::Ordering;
+    if !matches!(profile.as_str(), FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL) {
+        return Err(AppError::ConfigWriteError("不支持的使用模式".to_string()));
+    }
+    let _transition = state.runtime_activation_lock.try_lock()
+        .ok_or_else(|| AppError::ConfigWriteError("正在激活服务或切换模式，请稍后重试".to_string()))?;
+    let current = state.configuration().snapshot()
+        .ok_or_else(|| AppError::ConfigWriteError("全局配置尚未加载".to_string()))?;
+    if current.legacy_path_migration.is_some() {
+        return Err(AppError::ConfigWriteError("请先完成旧版路径迁移".to_string()));
+    }
+    if current.feature_profile == profile && current.feature_profile_decided() {
+        return Ok(current);
+    }
+    let _suspension = ProfileSuspension { state: state.inner(), app: &app };
+    state.configuration().project_current(|config| {
+        state.optional_features_suspended.store(true, Ordering::Release);
+        crate::input_listener::set_optional_shortcuts_allowed(false);
+        if let Some(config) = config {
+            crate::capabilities::apply_configuration(state.inner(), Some(&app), config);
+        }
+    });
+    if state.runtime_activated.load(Ordering::Acquire) {
+        crate::capabilities::wait_until_disabled(&app)
+            .map_err(|error| AppError::ConfigWriteError(format!(
+                "模式未修改，模块未能安全停止：{error}。原配置已保留；已取消的跟房任务不会自动重跑"
+            )))?;
+    }
+    crate::capabilities::stop_explicit_optional_activity(&app)
+        .map_err(|error| AppError::ConfigWriteError(format!("模式未修改，附加任务清理失败：{error}")))?;
+    // Drain manual window/API operations that passed their gate before us.
+    // Never hold this lock while waiting for capability lifecycle hooks.
+    let _windows = state.optional_window_operations.try_lock_for(std::time::Duration::from_secs(5))
+        .ok_or_else(|| AppError::ConfigWriteError("窗口操作尚未结束，模式未修改，请稍后重试".to_string()))?;
+    crate::stats::stop_stats_api_and_wait().map_err(AppError::ConfigWriteError)?;
+    for label in [
+        crate::auxiliary_windows::TERROR_ZONE_OVERLAY_LABEL,
+        crate::auxiliary_windows::STATS_OVERLAY_LABEL,
+        crate::auxiliary_windows::DESKTOP_PET_LABEL,
+    ] {
+        crate::auxiliary_windows::destroy_window(&app, label)?;
+    }
+    crate::input_listener::with_shortcut_routing_transaction(|| {
+        let repository = GlobalConfigRepository::new(&state.app_data_dir);
+        let policy = GlobalConfigPolicy { state: state.inner(), profile_transition: true };
+        let observer = RuntimeConfigurationObserver { state: state.inner(), app: Some(&app) };
+        state.configuration().mutate_if_loaded(&repository, &policy, &observer, |config| {
+            config.feature_profile = profile;
+            config.feature_profile_prompt_revision = config.feature_profile_prompt_revision
+                .max(CURRENT_FEATURE_PROFILE_PROMPT_REVISION);
+            Ok(true)
+        })?;
+        state.configuration().snapshot()
+            .ok_or_else(|| AppError::ConfigWriteError("全局配置尚未加载".to_string()))
+    })
+}
 
 #[tauri::command]
 pub fn get_global_config(state: tauri::State<'_, SharedState>) -> Result<GlobalConfig, AppError> {
@@ -2986,6 +3192,8 @@ fn prepare_global_config_with_retired_accounts(
     cfg.preserved_unknown_fields = previous
         .map(|previous| previous.preserved_unknown_fields.clone())
         .unwrap_or_default();
+    cfg.normalize_feature_profile();
+    normalize_and_validate_main_window_shortcuts(&mut cfg)?;
     // 模块安装状态是可选能力的上层权限；旧开关只能在模块存在时生效。
     cfg.normalize_optional_module_configuration();
     cfg.accounts_dir = app_accounts_dir(app_data_dir).to_string_lossy().to_string();

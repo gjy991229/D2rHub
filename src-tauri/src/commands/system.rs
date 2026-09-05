@@ -105,6 +105,11 @@ pub fn bring_self_to_foreground(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
+pub fn hide_main_window(app: tauri::AppHandle) {
+    crate::window_placement::hide_main_window_to_tray(&app);
+}
+
+#[tauri::command]
 pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
     adapter::send_keys_to_window(pid)
 }

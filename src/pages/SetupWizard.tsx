@@ -10,11 +10,12 @@ import { resolveLegacyPathMigration, type LegacyPathResolution } from "../utils/
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
 
 const defaultConfig: GlobalConfig = {
-  version: 10, cn_battle_net_path: "",
+  version: 11, cn_battle_net_path: "",
   cn_game_path: "", cn_saved_games_path: "",
   global_game_path: "", global_saved_games_path: "",
   program_data_agent_path: "", app_data_roaming_bnet_path: "",
   accounts_dir: "", first_run_complete: false,
+  feature_profile: "normal", feature_profile_prompt_revision: 0,
   installed_optional_modules: [],
   browser_path: "", browser_type: "", enable_overlay: false,
   enable_tz_overlay: false, enable_stats_overlay: false,
@@ -27,6 +28,7 @@ const defaultConfig: GlobalConfig = {
   rune_audio_min_gem_level: 1,
   rune_audio_tracked_charm_codes: ["cm1", "cm2", "cm3"],
   shortcut_bindings_json: "",
+  show_main_window_shortcut: "", hide_main_window_shortcut: "",
   overlay_opacity: 95, main_opacity: 95, font_scale: "default",
   enable_bongo_cat: false, bongo_cat_chatterbox: true,
   bongo_cat_scale: 1.0, bongo_cat_skin: "original",

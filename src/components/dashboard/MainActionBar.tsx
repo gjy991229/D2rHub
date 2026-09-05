@@ -21,6 +21,7 @@ interface MainActionBarProps {
   onToggleLaunchGroupPanel: () => void;
   onOpenModManager: () => void;
   onOpenRoomAutomation: () => void;
+  showOptionalFeatures?: boolean;
 }
 
 export function MainActionBar({
@@ -35,6 +36,7 @@ export function MainActionBar({
   onToggleLaunchGroupPanel,
   onOpenModManager,
   onOpenRoomAutomation,
+  showOptionalFeatures = true,
 }: MainActionBarProps) {
   const { config, saving } = useGlobalConfig();
   const { accounts } = useAccounts();
@@ -133,11 +135,13 @@ export function MainActionBar({
           >
             一键关闭
           </button>
-          <RoomAutomationQuickEdit
-            active={config?.installed_optional_modules?.includes("room-automation") === true}
-            language={config?.app_language}
-            onOpenSettings={onOpenRoomAutomation}
-          />
+          {showOptionalFeatures && (
+            <RoomAutomationQuickEdit
+              active={config?.installed_optional_modules?.includes("room-automation") === true}
+              language={config?.app_language}
+              onOpenSettings={onOpenRoomAutomation}
+            />
+          )}
         </div>
         <div className="flex-1" />
         <button type="button" className="control-btn" onClick={onOpenModManager}>

@@ -36,7 +36,7 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
 }
 
-export function useLaunchEvents(config: GlobalConfig | null) {
+export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAvailable = true) {
   const { launching, results, reset: resetLaunch } = useLaunch();
   const { accounts } = useAccounts();
   const prevLaunchingRef = useRef(launching);
@@ -65,6 +65,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
   }, []);
 
   useEffect(() => {
+    if (!optionalFeaturesAvailable) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<AudioModRuntimeWarning>("audio-mod-compatibility-warning", (event) => {
@@ -77,7 +78,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
       cancelled = true;
       unlisten?.();
     };
-  }, []);
+  }, [optionalFeaturesAvailable]);
 
   useEffect(() => {
     if (!launching && results.length > 0) {
@@ -89,7 +90,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
   useEffect(() => {
     const wasLaunching = prevLaunchingRef.current;
     prevLaunchingRef.current = launching;
-    if (!wasLaunching || launching || !config) return;
+    if (!optionalFeaturesAvailable || !wasLaunching || launching || !config) return;
     if (!config.rune_audio_enabled) return;
 
     const target = validateTrackingTarget(config.rune_audio_target_account, accounts);
@@ -107,7 +108,7 @@ export function useLaunchEvents(config: GlobalConfig | null) {
       }
     }, 3000);
     return () => clearTimeout(timer);
-  }, [launching, results, config, accounts]);
+  }, [launching, results, config, accounts, optionalFeaturesAvailable]);
 }
 
 export function useAutoUpdate(

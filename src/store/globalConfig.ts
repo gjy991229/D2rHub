@@ -3,6 +3,7 @@ import { invokeCommand, listenEvent } from "../platform/tauri";
 import type { GlobalConfig } from "./types";
 import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
 import { shouldApplyConfigCommandResponse } from "./configCommitOrdering";
+import type { FeatureProfile } from "../features/profile/featureProfile";
 
 let mutationQueue: Promise<unknown> = Promise.resolve();
 let pendingMutations = 0;
@@ -32,6 +33,7 @@ interface GlobalConfigState {
   load: () => Promise<void>;
   save: (config: GlobalConfig) => Promise<GlobalConfig>;
   patch: (patch: GlobalConfigPatch) => Promise<GlobalConfig>;
+  switchProfile: (profile: FeatureProfile) => Promise<GlobalConfig>;
   detectSavedGamesPath: () => Promise<string | null>;
   detectGlobalSavedGamesPath: () => Promise<string | null>;
   detectProgramDataAgentPath: () => Promise<string | null>;
@@ -113,6 +115,27 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     });
   },
 
+
+  switchProfile: async (profile: FeatureProfile) => {
+    pendingMutations += 1;
+    set({ saving: true, error: null });
+    return enqueueMutation(async () => {
+      try {
+        const snapshotBeforeRequest = get().config;
+        const saved = await invokeCommand<GlobalConfig>("switch_feature_profile", { profile });
+        if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
+          set({ config: saved });
+        }
+        return saved;
+      } catch (e) {
+        set({ error: String(e) });
+        throw e;
+      } finally {
+        pendingMutations -= 1;
+        set({ saving: pendingMutations > 0 });
+      }
+    });
+  },
 
   detectSavedGamesPath: async () => {
     try {

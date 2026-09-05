@@ -340,7 +340,9 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
             .configuration()
             .snapshot()
             .ok_or_else(|| "尚未完成首次配置".to_string())?;
-        if !config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION) {
+        if !state.optional_runtime_ready()
+            || !config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        {
             return Err("识别与统计模块尚未安装".to_string());
         }
         let account = config
@@ -1286,7 +1288,12 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn start_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
     let app_for_start = app.clone();
-    tauri::async_runtime::spawn_blocking(move || start_blocking(app_for_start))
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_start.state::<crate::state::SharedState>();
+        let _profile = state.runtime_activation_lock.try_lock()
+            .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
+        start_blocking(app_for_start.clone())
+    })
         .await
         .map_err(|error| format!("等待符文声纹监控器启动失败: {error}"))??;
     crate::capabilities::schedule_reconcile(&app);
@@ -1357,11 +1364,14 @@ pub(crate) fn capability_health(app: &tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), String> {
-    request_stop();
     let app_for_start = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
+        let state = app_for_start.state::<crate::state::SharedState>();
+        let _profile = state.runtime_activation_lock.try_lock()
+            .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
+        request_stop();
         if wait_for_worker_exit(std::time::Duration::from_secs(3)) {
-            start_blocking(app_for_start)
+            start_blocking(app_for_start.clone())
         } else {
             Err("上一个符文声纹工作线程未能在 3 秒内退出".to_string())
         }
@@ -1374,6 +1384,9 @@ pub async fn restart_rune_audio_monitor(app: tauri::AppHandle) -> Result<(), Str
 
 #[tauri::command]
 pub fn start_rune_audio_diagnostic_recording(app: tauri::AppHandle) -> Result<String, String> {
+    let state = app.state::<crate::state::SharedState>();
+    let _profile = state.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     if !RUNNING.load(Ordering::SeqCst) {
         return Err("请先启动音频声纹监控".to_string());
     }

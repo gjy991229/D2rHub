@@ -6,7 +6,11 @@ use std::collections::BTreeMap;
 ///
 /// The command/application layer owns migrations, while this domain module owns
 /// the stable serialized shape and defaults.
-pub(crate) const CURRENT_CONFIG_VERSION: u32 = 10;
+pub(crate) const CURRENT_CONFIG_VERSION: u32 = 11;
+
+pub(crate) const FEATURE_PROFILE_NORMAL: &str = "normal";
+pub(crate) const FEATURE_PROFILE_MINIMAL: &str = "minimal";
+pub(crate) const CURRENT_FEATURE_PROFILE_PROMPT_REVISION: u32 = 1;
 
 pub(crate) const OPTIONAL_MODULE_OVERLAYS: &str = "overlays";
 pub(crate) const OPTIONAL_MODULE_PET: &str = "pet";
@@ -100,6 +104,14 @@ pub struct GlobalConfig {
     pub app_data_roaming_bnet_path: String,
     pub accounts_dir: String,
     pub first_run_complete: bool,
+    /// Product-level feature profile. Minimal mode keeps optional configuration
+    /// intact while suppressing its UI and runtime projection.
+    #[serde(default = "default_feature_profile")]
+    pub feature_profile: String,
+    /// Independent prompt revision so ordinary application releases do not ask
+    /// users to choose a profile again.
+    #[serde(default)]
+    pub feature_profile_prompt_revision: u32,
     /// Explicitly installed optional modules. Runtime capability flags are
     /// always gated by this list so hidden settings cannot start background work.
     #[serde(default)]
@@ -169,6 +181,11 @@ pub struct GlobalConfig {
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
     pub shortcut_bindings_json: String,
+    /// Global shortcuts for the D2RHub main window. Empty means unassigned.
+    #[serde(default)]
+    pub show_main_window_shortcut: String,
+    #[serde(default)]
+    pub hide_main_window_shortcut: String,
     /// 悬浮窗透明度 (10-100, 默认 95)
     #[serde(default = "default_opacity")]
     pub overlay_opacity: u8,
@@ -212,6 +229,10 @@ fn default_font_scale() -> String {
 
 fn default_app_language() -> String {
     "zh-CN".to_string()
+}
+
+fn default_feature_profile() -> String {
+    FEATURE_PROFILE_NORMAL.to_string()
 }
 
 fn default_opacity() -> u8 {
@@ -308,6 +329,34 @@ impl GlobalConfig {
             .any(|installed| installed == module_id)
     }
 
+    pub(crate) fn feature_profile_decided(&self) -> bool {
+        self.feature_profile_prompt_revision >= CURRENT_FEATURE_PROFILE_PROMPT_REVISION
+            && matches!(self.feature_profile.as_str(), FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL)
+    }
+
+    /// Runtime projection of optional-module intent. Raw installation and
+    /// enablement fields stay untouched so returning to normal mode restores
+    /// the user's previous configuration exactly.
+    pub(crate) fn optional_features_runtime_allowed(&self) -> bool {
+        self.feature_profile_decided() && self.feature_profile == FEATURE_PROFILE_NORMAL
+    }
+
+    pub(crate) fn optional_module_runtime_allowed(&self, module_id: &str) -> bool {
+        self.optional_features_runtime_allowed()
+            && self.optional_module_installed(module_id)
+    }
+
+    pub(crate) fn normalize_feature_profile(&mut self) -> bool {
+        if self.feature_profile == FEATURE_PROFILE_NORMAL
+            || self.feature_profile == FEATURE_PROFILE_MINIMAL
+        {
+            return false;
+        }
+        self.feature_profile = FEATURE_PROFILE_NORMAL.to_string();
+        self.feature_profile_prompt_revision = 0;
+        true
+    }
+
     /// Canonicalizes module identities and closes every legacy path that could
     /// request an optional runtime without its owning settings module.
     pub(crate) fn normalize_optional_module_configuration(&mut self) -> bool {
@@ -373,6 +422,8 @@ impl Default for GlobalConfig {
             app_data_roaming_bnet_path: String::new(),
             accounts_dir: String::new(),
             first_run_complete: false,
+            feature_profile: FEATURE_PROFILE_NORMAL.to_string(),
+            feature_profile_prompt_revision: 0,
             installed_optional_modules: Vec::new(),
             browser_path: String::new(),
             browser_type: String::new(),
@@ -397,6 +448,8 @@ impl Default for GlobalConfig {
             rune_audio_min_gem_level: default_rune_audio_min_gem_level(),
             rune_audio_tracked_charm_codes: default_rune_audio_tracked_charm_codes(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
+            show_main_window_shortcut: String::new(),
+            hide_main_window_shortcut: String::new(),
             overlay_opacity: 95,
             main_opacity: 95,
             font_scale: "default".to_string(),

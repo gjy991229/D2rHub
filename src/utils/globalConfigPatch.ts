@@ -6,6 +6,8 @@ const SERVER_MANAGED_CONFIG_KEYS = new Set<keyof GlobalConfig>([
   "version",
   "accounts_dir",
   "legacy_path_migration",
+  "feature_profile",
+  "feature_profile_prompt_revision",
 ]);
 
 function valuesEqual(left: unknown, right: unknown): boolean {

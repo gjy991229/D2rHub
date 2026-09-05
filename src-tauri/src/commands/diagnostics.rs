@@ -73,6 +73,8 @@ pub fn export_diagnostic_bundle(state: tauri::State<'_, SharedState>) -> Result<
                 "loaded": true,
                 "schema_version": config.version,
                 "first_run_complete": config.first_run_complete,
+                "feature_profile": config.feature_profile.clone(),
+                "feature_profile_prompt_revision": config.feature_profile_prompt_revision,
                 "accounts_directory_configured": !config.accounts_dir.trim().is_empty(),
                 "cn_game_configured": !config.cn_game_path.trim().is_empty(),
                 "global_game_configured": !config.global_game_path.trim().is_empty(),

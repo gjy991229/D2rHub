@@ -84,7 +84,7 @@ pub(crate) fn install(app: &tauri::App) {
         .state::<SharedState>()
         .configuration()
         .snapshot()
-        .is_some_and(|config| config.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION));
+        .is_some_and(|config| config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION));
     let (room_driver, room_requested, room_command_state): (
         Arc<dyn CapabilityDriver>,
         bool,
@@ -223,9 +223,11 @@ pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     }
     overlay_windows::install(app);
 
-    if let Some(config) = state.configuration().snapshot() {
-        apply_configuration(state.inner(), Some(app), &config);
-    }
+    state.configuration().project_current(|config| {
+        if let Some(config) = config {
+            apply_configuration(state.inner(), Some(app), config);
+        }
+    });
     Ok(())
 }
 
@@ -236,8 +238,12 @@ pub(crate) fn apply_configuration(
     app: Option<&tauri::AppHandle>,
     config: &GlobalConfig,
 ) {
+    let runtime_ready = state.optional_runtime_ready();
+    crate::input_listener::set_optional_shortcuts_allowed(
+        runtime_ready && config.optional_features_runtime_allowed(),
+    );
     for (id, requested, name) in configured_capabilities(config) {
-        match state.capabilities().set_requested(id, requested) {
+        match state.capabilities().set_requested(id, runtime_ready && requested) {
             Ok(_) => {}
             // Initial global config loading happens before Tauri adapters are
             // registered. Setup replays the cached snapshot after registration.
@@ -250,7 +256,9 @@ pub(crate) fn apply_configuration(
         }
     }
     if let Some(app) = app {
-        let room_requested = if config.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION) {
+        let room_requested = if runtime_ready
+            && config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION)
+        {
             app.try_state::<room_automation_runtime::RoomAutomationCommandState>()
                 .map(|command_state| {
                     command_state
@@ -279,12 +287,12 @@ pub(crate) fn apply_configuration(
 }
 
 fn configured_capabilities(config: &GlobalConfig) -> [(CapabilityId, bool, &'static str); 4] {
-    let overlays_installed = config.optional_module_installed(OPTIONAL_MODULE_OVERLAYS);
-    let automation_installed = config.optional_module_installed(OPTIONAL_MODULE_AUTOMATION);
+    let overlays_installed = config.optional_module_runtime_allowed(OPTIONAL_MODULE_OVERLAYS);
+    let automation_installed = config.optional_module_runtime_allowed(OPTIONAL_MODULE_AUTOMATION);
     [
         (
             DESKTOP_PET_ID,
-            config.optional_module_installed(OPTIONAL_MODULE_PET) && config.enable_bongo_cat,
+            config.optional_module_runtime_allowed(OPTIONAL_MODULE_PET) && config.enable_bongo_cat,
             "桌宠",
         ),
         (
@@ -315,6 +323,33 @@ pub(crate) fn shutdown(app: &tauri::AppHandle) {
     if let Some(supervisor) = app.try_state::<CapabilitySupervisor>() {
         supervisor.shutdown();
     }
+}
+
+pub(crate) fn wait_until_disabled(app: &tauri::AppHandle) -> Result<(), String> {
+    let supervisor = app.try_state::<CapabilitySupervisor>()
+        .ok_or_else(|| "模块生命周期服务尚未就绪".to_string())?;
+    let snapshot = supervisor.reconcile_and_wait()?;
+    let failures: Vec<_> = snapshot.capabilities.iter()
+        .filter(|status| status.requested_enabled
+            || status.state != crate::application::capability::CapabilityState::Disabled)
+        .map(|status| format!("{}：{}", status.id,
+            status.last_error.as_deref().unwrap_or("尚未停止完成")))
+        .collect();
+    if failures.is_empty() { Ok(()) } else { Err(failures.join("；")) }
+}
+
+/// Some tools can be explicitly started without enabling their capability
+/// switch (for example diagnostic capture/F13 setup). Drain those too. The
+/// caller holds the profile lock, excluding concurrent explicit start commands.
+pub(crate) fn stop_explicit_optional_activity(app: &tauri::AppHandle) -> Result<(), String> {
+    crate::rune_audio::monitor::stop_blocking()?;
+    crate::rune_audio::monitor::stop_rune_audio_diagnostic_recording()?;
+    if let Some(command_state) = app.try_state::<room_automation_runtime::RoomAutomationCommandState>() {
+        if let Ok(manager) = command_state.manager() {
+            manager.stop().map_err(|error| error.message)?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

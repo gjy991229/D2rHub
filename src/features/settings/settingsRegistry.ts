@@ -39,6 +39,8 @@ export interface SettingsFeatureDefinition {
   icon: LucideIcon;
   kind: SettingsCapabilityKind;
   group: SettingsFeatureGroup;
+  /** Minimal mode allowlist. Omission means the feature is completely hidden. */
+  availableInMinimal?: boolean;
   /** Stable backend lifecycle IDs. Their observed status is never inferred from config. */
   capabilityIds?: readonly string[];
   /** Compatibility-only configuration intent for capabilities not yet supervised. */
@@ -129,7 +131,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     accounts: { label: "账号与实例", description: "账号身份、启动参数、窗口与游戏配置" },
     paths: { label: "运行环境", description: "游戏、战网、浏览器与存档位置" },
     agent: { label: "启动策略", description: "战网 Agent 与实例启动等待策略" },
-    shortcuts: { label: "窗口快捷键", description: "快速聚焦并切换多开实例" },
+    shortcuts: { label: "窗口快捷键", description: "呼出主面板并快速聚焦多开实例" },
     advanced: { label: "维护与迁移", description: "日志、路径向导与账号迁移" },
     tasks: { label: "后台任务", description: "进度、取消、重试与诊断时间线" },
     appearance: { label: "外观与界面", description: "语言、主题、字体与主界面透明度" },
@@ -144,7 +146,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
     accounts: { label: "Accounts & Instances", description: "Identity, launch options, windows, and game settings" },
     paths: { label: "Runtime Paths", description: "Game, Battle.net, browser, and saved-game locations" },
     agent: { label: "Launch Strategy", description: "Battle.net Agent and instance launch timing" },
-    shortcuts: { label: "Window Shortcuts", description: "Focus and switch between game instances" },
+    shortcuts: { label: "Window Shortcuts", description: "Show D2RHub or focus a game instance" },
     advanced: { label: "Maintenance & Transfer", description: "Logs, setup assistant, and account transfer" },
     tasks: { label: "Background Tasks", description: "Progress, cancellation, retries, and diagnostic timelines" },
     appearance: { label: "Appearance", description: "Language, theme, typography, and main window opacity" },
@@ -188,24 +190,28 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: User,
     kind: "core",
     group: "multi-instance",
+    availableInMinimal: true,
   },
   {
     id: "paths",
     icon: Folder,
     kind: "platform",
     group: "application",
+    availableInMinimal: true,
   },
   {
     id: "agent",
     icon: Play,
     kind: "platform",
     group: "application",
+    availableInMinimal: true,
   },
   {
     id: "appearance",
     icon: Palette,
     kind: "platform",
     group: "application",
+    availableInMinimal: true,
   },
   {
     id: "tasks",
@@ -218,13 +224,18 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: ShieldAlert,
     kind: "platform",
     group: "application",
+    availableInMinimal: true,
   },
   {
     id: "shortcuts",
     icon: Settings,
     kind: "core",
     group: "multi-instance",
+    availableInMinimal: true,
     isConfigured: (config) => {
+      if (config.show_main_window_shortcut?.trim() || config.hide_main_window_shortcut?.trim()) {
+        return true;
+      }
       try {
         const bindings: unknown = JSON.parse(config.shortcut_bindings_json || "{}");
         return !!bindings
@@ -243,6 +254,7 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
     icon: PackageOpen,
     kind: "platform",
     group: "application",
+    availableInMinimal: true,
   },
   {
     id: "module-management",
@@ -284,6 +296,10 @@ export const SETTINGS_FEATURES: readonly SettingsFeatureDefinition[] = [
 
 export function isSettingsTabId(value: string | null | undefined): value is SettingsTabId {
   return SETTINGS_FEATURES.some((feature) => feature.id === value);
+}
+
+export function isSettingsTabAvailableInMinimal(tab: SettingsTabId): boolean {
+  return SETTINGS_FEATURES.find((feature) => feature.id === tab)?.availableInMinimal === true;
 }
 
 export function isOptionalSettingsTab(tab: SettingsTabId): boolean {

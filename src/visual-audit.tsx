@@ -215,7 +215,7 @@ if (seedManyAccounts) {
 }
 
 const baseConfig: GlobalConfig = {
-  version: 10,
+  version: 11,
   cn_battle_net_path: "C:\\Program Files (x86)\\Battle.net CN\\Battle.net.exe",
   cn_game_path: "D:\\Games\\Diablo II Resurrected CN",
   cn_saved_games_path: "C:\\Users\\Player\\Saved Games\\Diablo II Resurrected (CN)",
@@ -225,6 +225,8 @@ const baseConfig: GlobalConfig = {
   app_data_roaming_bnet_path: "C:\\Users\\Player\\AppData\\Roaming\\Battle.net",
   accounts_dir: "D:\\D2RHub\\accounts",
   first_run_complete: surface !== "setup",
+  feature_profile: "normal",
+  feature_profile_prompt_revision: 1,
   installed_optional_modules: ["overlays", "pet", "automation", "room-automation"],
   browser_path: "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   browser_type: "chrome",
@@ -249,6 +251,8 @@ const baseConfig: GlobalConfig = {
   rune_audio_min_gem_level: 4,
   rune_audio_tracked_charm_codes: ["cm1", "cm3"],
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
+  show_main_window_shortcut: "Ctrl+Alt+Home",
+  hide_main_window_shortcut: "Ctrl+Alt+End",
   overlay_opacity: 94,
   main_opacity: 96,
   font_scale: "default",

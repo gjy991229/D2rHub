@@ -31,6 +31,7 @@ export type ModProcessingPurpose = "recognition" | "room-tools" | "manage";
 
 interface ModProcessingPanelProps {
   config: GlobalConfig;
+  minimalMode?: boolean;
   initializedAccounts: AccountMeta[];
   trackingTarget: TrackingTarget;
   audioModState: AudioModSetupState | null;
@@ -76,6 +77,7 @@ interface ModProcessingPanelProps {
 
 export function ModProcessingPanel({
   config,
+  minimalMode = false,
   initializedAccounts,
   trackingTarget,
   audioModState,
@@ -186,6 +188,7 @@ export function ModProcessingPanel({
         catalog={modCatalog}
         accounts={initializedAccounts}
         language={config.app_language}
+        minimalMode={minimalMode}
         autoOpenAdd={openAddRequest}
         initialEdition={initialEdition}
         onProcess={async (capsule) => {
@@ -293,16 +296,16 @@ export function ModProcessingPanel({
                   key={capsule.id}
                   aria-pressed={effectiveProcessingMode === "augment"
                     && effectiveProcessingTarget.toLocaleLowerCase() === capsule.name.toLocaleLowerCase()}
-                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish).join(isEnglish ? ", " : "、")}`}
+                  title={`${capsule.edition} · ${capsuleFeatureLabels(capsule, isEnglish, minimalMode).join(isEnglish ? ", " : "、")}`}
                   disabled={audioPreparing}
                   onClick={() => selectProcessedMod(capsule.name)}
                 >
                   <b>{capsule.name}</b>
                   <span className="mod-capsule-pool-features">
                     <em data-kind="base">{capsuleBaseModLabel(capsule, isEnglish)}</em>
-                    {capsuleFeatureLabels(capsule, isEnglish).length
-                      ? capsuleFeatureLabels(capsule, isEnglish).map((label) => <em data-kind="feature" key={label}>{label}</em>)
-                      : <em data-kind="pending">{isEnglish ? "Update required" : "待更新"}</em>}
+                    {capsuleFeatureLabels(capsule, isEnglish, minimalMode).length
+                      ? capsuleFeatureLabels(capsule, isEnglish, minimalMode).map((label) => <em data-kind="feature" key={label}>{label}</em>)
+                      : !minimalMode && <em data-kind="pending">{isEnglish ? "Update required" : "待更新"}</em>}
                   </span>
                 </button>
               ))}
@@ -392,7 +395,7 @@ export function ModProcessingPanel({
               </div>
             </div>
             <div className="mod-processing-features">
-              <FeatureChoice
+              {!minimalMode && <FeatureChoice
                 title={isEnglish ? "Audio recognition" : "声纹识别"}
                 detail={isEnglish ? "Scenes, drops, Terror Zones, and run statistics" : "场景、掉落、恐怖区域与刷图统计"}
                 checked={audioSelected}
@@ -404,8 +407,8 @@ export function ModProcessingPanel({
                   : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
                 disabled={audioPreparing}
                 onChange={setIncludeAudioTelemetry}
-              />
-              <FeatureChoice
+              />}
+              {!minimalMode && <FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
                 detail={isEnglish ? "Create, recreate, and join rooms from the automation workflow" : "为自动跟房提供创建、重开与加入房间能力"}
                 checked={roomToolsSelected}
@@ -417,7 +420,7 @@ export function ModProcessingPanel({
                   : (isEnglish ? "Required for room automation" : "自动跟房必选")}
                 disabled={audioPreparing}
                 onChange={setIncludeRoomTools}
-              />
+              />}
               <FeatureChoice
                 title={isEnglish ? "Auto-exit after death" : "死亡后自动退房"}
                 detail={isEnglish

@@ -32,18 +32,18 @@ fn validate_label(label: &str) -> Result<(), AppError> {
 #[cfg(test)]
 fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
     let mut labels = Vec::with_capacity(AUXILIARY_WINDOW_LABELS.len());
-    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
         && config.enable_tz_overlay
     {
         labels.push(TERROR_ZONE_OVERLAY_LABEL);
     }
-    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-        && config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+        && config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
         && config.enable_stats_overlay
     {
         labels.push(STATS_OVERLAY_LABEL);
     }
-    if config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
         && config.enable_bongo_cat
     {
         labels.push(DESKTOP_PET_LABEL);
@@ -56,6 +56,14 @@ fn startup_window_labels(config: &GlobalConfig) -> Vec<&'static str> {
 /// WebView; a later start recreates it from this same static configuration.
 pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindow, AppError> {
     validate_label(label)?;
+    let state = app.state::<crate::state::SharedState>();
+    if !state.optional_runtime_ready()
+        || !state.configuration().snapshot().is_some_and(|config| {
+            config.optional_features_runtime_allowed()
+        })
+    {
+        return Err(AppError::Unknown("当前使用模式不允许创建辅助窗口".to_string()));
+    }
     if let Some(window) = app.get_webview_window(label) {
         return Ok(window);
     }

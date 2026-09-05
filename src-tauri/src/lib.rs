@@ -35,20 +35,28 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
         return Ok(false);
     }
 
-    state
+    let config = state
         .configuration()
         .snapshot()
         .ok_or_else(|| "全局配置尚未安全加载，拒绝激活运行服务".to_string())?;
-    capabilities::start(app).inspect_err(|error| {
-        logger::log_msg("ERROR", "Capabilities", error);
-    })?;
+    if !config.feature_profile_decided() {
+        return Err("尚未选择 D2RHub 使用模式，拒绝激活运行服务".to_string());
+    }
+    // Internal window creation uses the same activation gate as commands.
+    state.runtime_activated.store(true, Ordering::Release);
+    if let Err(error) = capabilities::start(app) {
+        state.runtime_activated.store(false, Ordering::Release);
+        input_listener::set_optional_shortcuts_allowed(false);
+        logger::log_msg("ERROR", "Capabilities", &error);
+        return Err(error);
+    }
     // Capability reconciliation is the single owner of auxiliary-window
     // creation. Starting the same WebViews here as well races the supervisor
     // and can leave one thread waiting for the Tauri event loop while another
     // path is trying to acquire the same lifecycle state.
     input_listener::start_input_listener(app.clone());
     mod_catalog::refresh_on_startup(state.inner().clone(), app.clone());
-    state.runtime_activated.store(true, Ordering::Release);
+    tray::schedule_menu_update(app);
     logger::log_msg("INFO", "System", "用户确认披露后，应用运行服务已激活");
     Ok(true)
 }
@@ -199,6 +207,7 @@ pub fn run() {
             commands::room_automation::room_automation_restore_chat_binding,
             commands::global_config::save_global_config,
             commands::global_config::patch_global_config,
+            commands::global_config::switch_feature_profile,
             commands::global_config::patch_desktop_pet_settings,
             commands::global_config::save_window_geometry,
             commands::global_config::load_window_geometry,
@@ -259,6 +268,7 @@ pub fn run() {
             commands::system::kill_all_d2r_processes,
             commands::system::bring_bnet_to_foreground,
             commands::system::bring_self_to_foreground,
+            commands::system::hide_main_window,
             commands::system::bring_window_by_title_to_front,
             commands::system::get_foreground_window_title,
             commands::system::get_d2r_window_titles,
@@ -310,6 +320,7 @@ pub fn run() {
             logger::write_log,
             input_listener::set_bongo_cat_input_visible,
             input_listener::set_stats_overlay_mini_input_region,
+            input_listener::set_shortcut_capture_active,
         ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|e| {

@@ -4109,7 +4109,11 @@ pub(crate) fn emit_runtime_compatibility_warning(
     pid: u32,
     launch_arguments: &str,
 ) {
-    if !config.rune_audio_enabled || config.rune_audio_target_account != account.id {
+    if !config.optional_module_runtime_allowed(
+        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+    ) || !config.rune_audio_enabled
+        || config.rune_audio_target_account != account.id
+    {
         return;
     }
     let context = match LaunchContext::for_account(config, account, ContextPurpose::Settings) {

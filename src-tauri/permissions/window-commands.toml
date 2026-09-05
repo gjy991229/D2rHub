@@ -9,7 +9,7 @@ commands.allow = [
   "room_automation_start_primary", "room_automation_start_followers", "room_automation_retry",
   "room_automation_cancel", "room_automation_get_chat_binding", "room_automation_install_chat_binding",
   "room_automation_restore_chat_binding",
-  "save_global_config", "patch_global_config", "patch_desktop_pet_settings", "save_window_geometry", "load_window_geometry",
+  "save_global_config", "patch_global_config", "switch_feature_profile", "patch_desktop_pet_settings", "save_window_geometry", "load_window_geometry",
   "save_overlay_geometry", "load_overlay_geometry", "save_stats_overlay_geometry", "load_stats_overlay_geometry",
   "restore_window_placement", "save_window_placement", "set_auxiliary_window_visible",
   "recover_auxiliary_windows", "save_theme", "detect_saved_games_path", "detect_global_saved_games_path",
@@ -24,7 +24,7 @@ commands.allow = [
   "get_account_settings", "save_account_settings", "get_game_settings", "snapshot_system_settings_to_account",
   "launch_browser_for_account", "open_token_login_url", "open_url_in_browser", "check_browser_running", "kill_browser_processes",
   "is_admin", "get_d2r_pids", "kill_all_d2r_processes", "bring_bnet_to_foreground",
-  "bring_self_to_foreground", "bring_window_by_title_to_front", "get_foreground_window_title",
+  "bring_self_to_foreground", "hide_main_window", "bring_window_by_title_to_front", "get_foreground_window_title",
   "get_d2r_window_titles", "refresh_account_running_state", "check_game_connected", "send_keys_to_window",
   "snapshot_processes", "wait_for_new_process", "exit_app", "open_logs_dir", "open_user_guide",
   "activate_application_runtime",
@@ -37,7 +37,7 @@ commands.allow = [
   "save_scene_record", "get_stats_data", "get_stats_json", "get_stats_page_preferences",
   "save_stats_page_preferences", "get_scene_avg_time", "get_scene_stats", "delete_scene_record", "open_stats_page",
   "get_app_version", "install_update", "check_cloud_version", "check_path_exists", "write_log",
-  "set_bongo_cat_input_visible", "set_stats_overlay_mini_input_region"
+  "set_bongo_cat_input_visible", "set_stats_overlay_mini_input_region", "set_shortcut_capture_active"
 ]
 
 [[permission]]

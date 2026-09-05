@@ -128,15 +128,15 @@ impl OverlayVisibility {
             terror_zone: config
                 .map(|config| {
                     config
-                        .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                        .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
                         && config.enable_tz_overlay
                 })
                 .unwrap_or(false),
             stats: config
                 .map(|config| {
                     config
-                        .optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                        && config.optional_module_installed(
+                        .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                        && config.optional_module_runtime_allowed(
                             crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
                         )
                         && config.enable_stats_overlay
@@ -155,6 +155,7 @@ pub(crate) fn install(app: &tauri::AppHandle) {
     main_window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
             api.prevent_close();
+            crate::input_listener::cancel_shortcut_capture();
             let _ = main_window_for_events.hide();
 
             let config =

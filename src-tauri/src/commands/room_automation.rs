@@ -14,8 +14,8 @@ fn manager<'a>(
 }
 
 fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(), String> {
-    let installed = state.configuration().snapshot().is_some_and(|config| {
-        config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+    let installed = state.optional_runtime_ready() && state.configuration().snapshot().is_some_and(|config| {
+        config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
     });
     installed
         .then_some(())
@@ -36,6 +36,8 @@ pub(crate) fn room_automation_save_config(
     expected_generation: u64,
     config: RoomAutomationConfig,
 ) -> Result<RoomAutomationSaveOutcome, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     if config.enabled {
         require_module_installed(&global)?;
     }
@@ -54,6 +56,8 @@ pub(crate) fn room_automation_start_primary(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
     manager(&state)?.start_primary()
 }
@@ -63,6 +67,8 @@ pub(crate) fn room_automation_start_followers(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
     manager(&state)?.start_followers()
 }
@@ -72,6 +78,8 @@ pub(crate) fn room_automation_retry(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
     manager(&state)?.retry()
 }
@@ -86,7 +94,12 @@ pub(crate) fn room_automation_cancel(
 #[tauri::command(async)]
 pub(crate) fn room_automation_get_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
+    global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
+    // Resolving this status can initialize the lazy directory service.
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
+    require_module_installed(&global)?;
     manager(&state)?.get_chat_binding()
 }
 
@@ -95,6 +108,8 @@ pub(crate) fn room_automation_install_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
     manager(&state)?.install_chat_binding()
 }
@@ -102,6 +117,9 @@ pub(crate) fn room_automation_install_chat_binding(
 #[tauri::command(async)]
 pub(crate) fn room_automation_restore_chat_binding(
     state: tauri::State<'_, RoomAutomationCommandState>,
+    global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
+    let _profile = global.runtime_activation_lock.try_lock()
+        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     manager(&state)?.restore_chat_binding()
 }

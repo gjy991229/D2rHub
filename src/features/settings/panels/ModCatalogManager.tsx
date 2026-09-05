@@ -15,6 +15,7 @@ interface ModCatalogManagerProps {
   autoOpenAdd?: boolean;
   initialEdition?: string;
   language?: string | null;
+  minimalMode?: boolean;
   onProcess: (capsule: ModCapsule) => Promise<void> | void;
 }
 
@@ -67,7 +68,7 @@ const COPY = {
   },
 } as const;
 
-export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, language, onProcess }: ModCatalogManagerProps) {
+export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEdition, language, minimalMode = false, onProcess }: ModCatalogManagerProps) {
   const isEnglish = language === "en-US";
   const copy = COPY[isEnglish ? "en-US" : "zh-CN"];
   const [edition, setEdition] = useState<"CN" | "Global">(
@@ -134,7 +135,11 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       <header className="mod-processing-header">
         <div>
           <h2>{copy.title}</h2>
-          <p>{copy.description}</p>
+          <p>{minimalMode
+            ? (isEnglish
+              ? "Scan, organize, assign, and process shared Mods for your accounts."
+              : "扫描、整理、分配并加工账号共用的 Mod。")
+            : copy.description}</p>
         </div>
         <div className="mod-processing-header-actions">
           <Button
@@ -208,7 +213,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           const assignedNames = capsule.assigned_account_ids
             .map((id) => accounts.find((account) => account.id === id)?.display_name || id)
             .join(isEnglish ? ", " : "、");
-          const featureLabels = capsuleFeatureLabels(capsule, isEnglish);
+          const featureLabels = capsuleFeatureLabels(capsule, isEnglish, minimalMode);
           const supportsAutoExitOnDeath = capsule.origin === "scanned"
             && capsule.feature_groups.includes("auto_exit_on_death");
           const autoExitDescriptionId = `mod-auto-exit-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
@@ -223,7 +228,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
                       <span data-kind="base" title={copy.baseMod}>{capsuleBaseModLabel(capsule, isEnglish)}</span>
                       {featureLabels.length
                         ? featureLabels.map((label) => <span data-kind="feature" key={label}>{label}</span>)
-                        : <span data-kind="pending">{copy.credentialsPending}</span>}
+                        : !minimalMode && <span data-kind="pending">{copy.credentialsPending}</span>}
                     </div>
                   )}
                   {!!assignedNames && <small title={assignedNames}>{copy.inUse}: {assignedNames}</small>}

@@ -6,12 +6,14 @@ import type {
   GlobalConfig,
 } from "../../store/types";
 import { aggregateCapabilityStatuses } from "../capabilities";
+import { isMinimalMode } from "../profile/featureProfile";
 import {
   SETTINGS_FEATURES,
   SETTINGS_COPY,
   SETTINGS_GROUP_COPY,
   SETTINGS_GROUPS,
   SETTINGS_OPTIONAL_HUB_COPY,
+  isSettingsTabAvailableInMinimal,
   isOptionalSettingsTab,
   normalizeSettingsLanguage,
   type OptionalModuleTabId,
@@ -59,12 +61,16 @@ export function SettingsNavigation({
   const buttonRefs = useRef(new Map<string, HTMLButtonElement>());
   const [compact, setCompact] = useState(false);
   const locale = normalizeSettingsLanguage(language);
+  const minimalMode = isMinimalMode(config);
   const activeNavigationKey = isOptionalSettingsTab(activeTab) ? "optional-features" : activeTab;
   const primaryEntries = SETTINGS_GROUPS.flatMap((group) => (
     group.id === "optional-features"
-      ? [{ key: "optional-features", target: "module-management" as SettingsTabId }]
+      ? minimalMode
+        ? []
+        : [{ key: "optional-features", target: "module-management" as SettingsTabId }]
       : SETTINGS_FEATURES
           .filter((feature) => feature.group === group.id)
+          .filter((feature) => !minimalMode || isSettingsTabAvailableInMinimal(feature.id))
           .map((feature) => ({ key: feature.id, target: feature.id }))
   ));
 
@@ -121,8 +127,11 @@ export function SettingsNavigation({
     >
       <div role="tablist" aria-orientation={compact ? "horizontal" : "vertical"}>
       {SETTINGS_GROUPS.map((group) => {
-        const features = SETTINGS_FEATURES.filter((feature) => feature.group === group.id);
+        const features = SETTINGS_FEATURES
+          .filter((feature) => feature.group === group.id)
+          .filter((feature) => !minimalMode || isSettingsTabAvailableInMinimal(feature.id));
         const groupCopy = SETTINGS_GROUP_COPY[locale][group.id];
+        if (features.length === 0) return null;
         if (group.id === "optional-features") {
           const hubCopy = SETTINGS_OPTIONAL_HUB_COPY[locale];
           const selected = isOptionalSettingsTab(activeTab);

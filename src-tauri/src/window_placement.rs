@@ -739,6 +739,34 @@ pub fn set_auxiliary_window_visible_for_app(
         });
     }
 
+    let state = state_from_app(app)?;
+    let _window_operation = state.optional_window_operations.lock();
+    let config = state.configuration().snapshot();
+    let allowed = state.optional_runtime_ready() && config.as_ref().is_some_and(|config| match label {
+        "overlay" => {
+            config.optional_module_runtime_allowed(
+                crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+            ) && config.enable_tz_overlay
+        }
+        "stats-overlay" => {
+            config.optional_module_runtime_allowed(
+                crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+            ) && config.optional_module_runtime_allowed(
+                crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+            ) && config.enable_stats_overlay
+        }
+        "bongo-cat" => {
+            config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
+                && config.enable_bongo_cat
+        }
+        _ => false,
+    });
+    if !allowed {
+        return Err(AppError::Unknown(
+            "当前使用模式或模块设置不允许显示此辅助窗口".to_string(),
+        ));
+    }
+
     let window = auxiliary_windows::ensure_window(app, label)?;
     let outcome = match target.filter(|target| *target != "preserve") {
         Some(target) => force_to_target_impl(app, label, target)?,
@@ -764,15 +792,15 @@ pub fn recover_auxiliary_windows_for_app(
         "overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
                     && config.enable_tz_overlay
             })
             .unwrap_or(false),
         "stats-overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                    && config.optional_module_installed(
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+                    && config.optional_module_runtime_allowed(
                         crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
                     )
                     && config.enable_stats_overlay
@@ -781,7 +809,7 @@ pub fn recover_auxiliary_windows_for_app(
         "bongo-cat" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_installed(crate::domain::config::OPTIONAL_MODULE_PET)
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
                     && config.enable_bongo_cat
             })
             .unwrap_or(false),
@@ -839,6 +867,58 @@ pub fn show_main_window_safely(app: &AppHandle) {
     let _ = window.set_focus();
 }
 
+pub fn hide_main_window_to_tray(app: &AppHandle) {
+    crate::input_listener::cancel_shortcut_capture();
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.hide();
+    }
+
+    let config = app
+        .try_state::<SharedState>()
+        .filter(|state| state.optional_runtime_ready())
+        .and_then(|state| state.configuration().snapshot());
+    let Some(config) = config else {
+        return;
+    };
+    let mut labels = Vec::new();
+    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+        && config.enable_tz_overlay
+    {
+        labels.push("overlay");
+    }
+    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
+        && config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        && config.enable_stats_overlay
+    {
+        labels.push("stats-overlay");
+    }
+    if labels.is_empty() {
+        return;
+    }
+
+    let app = app.clone();
+    if let Err(error) = std::thread::Builder::new()
+        .name("show-overlays-after-main-hide".to_string())
+        .spawn(move || {
+            for label in labels {
+                if let Err(error) = set_auxiliary_window_visible_for_app(&app, label, true, None) {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "WindowPlacement",
+                        &format!("主面板隐藏后显示悬浮窗 {label} 失败: {error}"),
+                    );
+                }
+            }
+        })
+    {
+        crate::logger::log_msg(
+            "WARN",
+            "WindowPlacement",
+            &format!("无法启动主面板隐藏后的悬浮窗恢复任务: {error}"),
+        );
+    }
+}
+
 // These commands query or mutate native windows and may need to marshal work
 // to the event loop. Tauri's async dispatch keeps that loop responsive while
 // WebView2 or third-party graphics hooks are slow.
@@ -894,7 +974,7 @@ pub fn set_auxiliary_window_visible(
                 .ok_or_else(|| AppError::Unknown("全局配置尚未加载".to_string()))?;
             if required_modules
                 .iter()
-                .any(|module_id| !config.optional_module_installed(module_id))
+                .any(|module_id| !config.optional_module_runtime_allowed(module_id))
             {
                 return Err(AppError::Unknown(format!(
                     "无法显示 {label}：对应模块尚未安装"

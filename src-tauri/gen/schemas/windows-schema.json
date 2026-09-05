@@ -699,6 +699,12 @@
           "markdownDescription": "Enables the get_terror_zone_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Enables the hide_main_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-hide-main-window",
+          "markdownDescription": "Enables the hide_main_window command without any pre-configured scope."
+        },
+        {
           "description": "Enables the import_accounts command without any pre-configured scope.",
           "type": "string",
           "const": "allow-import-accounts",
@@ -1053,6 +1059,12 @@
           "markdownDescription": "Enables the set_settings_customized command without any pre-configured scope."
         },
         {
+          "description": "Enables the set_shortcut_capture_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-set-shortcut-capture-active",
+          "markdownDescription": "Enables the set_shortcut_capture_active command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_stats_overlay_mini_input_region command without any pre-configured scope.",
           "type": "string",
           "const": "allow-set-stats-overlay-mini-input-region",
@@ -1093,6 +1105,12 @@
           "type": "string",
           "const": "allow-stop-rune-audio-monitor",
           "markdownDescription": "Enables the stop_rune_audio_monitor command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the switch_feature_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-switch-feature-profile",
+          "markdownDescription": "Enables the switch_feature_profile command without any pre-configured scope."
         },
         {
           "description": "Enables the update_account_meta command without any pre-configured scope.",
@@ -1449,6 +1467,12 @@
           "markdownDescription": "Denies the get_terror_zone_snapshot command without any pre-configured scope."
         },
         {
+          "description": "Denies the hide_main_window command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-hide-main-window",
+          "markdownDescription": "Denies the hide_main_window command without any pre-configured scope."
+        },
+        {
           "description": "Denies the import_accounts command without any pre-configured scope.",
           "type": "string",
           "const": "deny-import-accounts",
@@ -1803,6 +1827,12 @@
           "markdownDescription": "Denies the set_settings_customized command without any pre-configured scope."
         },
         {
+          "description": "Denies the set_shortcut_capture_active command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-set-shortcut-capture-active",
+          "markdownDescription": "Denies the set_shortcut_capture_active command without any pre-configured scope."
+        },
+        {
           "description": "Denies the set_stats_overlay_mini_input_region command without any pre-configured scope.",
           "type": "string",
           "const": "deny-set-stats-overlay-mini-input-region",
@@ -1843,6 +1873,12 @@
           "type": "string",
           "const": "deny-stop-rune-audio-monitor",
           "markdownDescription": "Denies the stop_rune_audio_monitor command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the switch_feature_profile command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-switch-feature-profile",
+          "markdownDescription": "Denies the switch_feature_profile command without any pre-configured scope."
         },
         {
           "description": "Denies the update_account_meta command without any pre-configured scope.",
