@@ -1740,6 +1740,11 @@
   white-space: nowrap;
 }
 
+.mod-catalog-room-toolbar small {
+  white-space: normal;
+  line-height: 1.5;
+}
+
 .mod-catalog-state { display: none; color: var(--success); font-size: var(--text-2xs); font-weight: 750; }
 .mod-catalog-state small { overflow: hidden; color: var(--text-muted); font-size: var(--text-2xs); text-overflow: ellipsis; white-space: nowrap; }
 .mod-catalog-row[data-processed="true"] .mod-catalog-state,

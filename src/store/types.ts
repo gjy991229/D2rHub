@@ -339,6 +339,7 @@ export interface ModCapsule {
   source_mod_name?: string | null;
   feature_groups: string[];
   auto_exit_on_death_enabled?: boolean;
+  room_toolbar_visible?: boolean | null;
   processed: boolean;
   source_eligible: boolean;
   update_required: boolean;

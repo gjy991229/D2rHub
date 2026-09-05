@@ -289,6 +289,7 @@ pub fn run() {
             mod_catalog::scan_mod_capsule_pool,
             mod_catalog::open_mods_directory,
             mod_catalog::set_mod_auto_exit_on_death_enabled,
+            mod_catalog::set_mod_room_toolbar_visible,
             mod_catalog::add_mod_capsule,
             mod_catalog::update_mod_capsule,
             mod_catalog::delete_mod_capsule,

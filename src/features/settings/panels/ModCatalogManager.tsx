@@ -31,6 +31,11 @@ const COPY = {
     updateSuccess: "共享参数已更新，引用它的账号和启动方案已同步",
     autoExit: "死亡自动退房", autoExitOn: "已启用；关闭游戏后可在此停用", autoExitOff: "已停用；关闭游戏后可在此启用",
     autoExitEnabled: "死亡自动退房已启用，重新启动游戏后生效", autoExitDisabled: "死亡自动退房已停用，重新启动游戏后生效",
+    roomToolbar: "显示游戏内右上角按钮",
+    roomToolbarHelp: "关闭使用此 Mod 的游戏后切换，无需重新加工；共用账号一起生效，Esc 键盘入口与跟房保留。",
+    roomToolbarUnavailable: "无法读取按钮状态，请重新扫描或加工此 Mod。",
+    roomToolbarShown: "局内按钮已设为显示，下次启动游戏生效",
+    roomToolbarHidden: "局内按钮已设为隐藏，下次启动游戏生效；键盘入口与跟房保留",
     process: "加工", editTitle: "点击编辑启动参数", restoreTitle: "恢复官方预设", restore: "恢复",
     restoreSuccess: "已恢复标准启动参数", delete: "删除",
     deleteScannedTitle: (name: string) => `删除 Mod“${name}”？`,
@@ -54,6 +59,11 @@ const COPY = {
     updateSuccess: "Shared arguments updated across accounts and launch schemes",
     autoExit: "Auto-exit on death", autoExitOn: "On; close the game before turning it off here", autoExitOff: "Off; close the game before turning it on here",
     autoExitEnabled: "Auto-exit on death enabled; restart the game to apply", autoExitDisabled: "Auto-exit on death disabled; restart the game to apply",
+    roomToolbar: "Show top-right in-game buttons",
+    roomToolbarHelp: "Close games using this Mod before changing it. No reprocessing needed; applies to all shared accounts. Esc shortcuts and room following remain available.",
+    roomToolbarUnavailable: "Cannot read button visibility. Rescan or process this Mod again.",
+    roomToolbarShown: "In-game buttons will appear on the next game launch",
+    roomToolbarHidden: "In-game buttons will be hidden on the next game launch; shortcuts and room following remain available",
     process: "Process", editTitle: "Click to edit launch arguments", restoreTitle: "Restore default preset", restore: "Restore",
     restoreSuccess: "Default launch arguments restored", delete: "Delete",
     deleteScannedTitle: (name: string) => `Delete “${name}”?`,
@@ -217,6 +227,9 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
           const supportsAutoExitOnDeath = capsule.origin === "scanned"
             && capsule.feature_groups.includes("auto_exit_on_death");
           const autoExitDescriptionId = `mod-auto-exit-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+          const supportsRoomToolbar = capsule.origin === "scanned"
+            && capsule.feature_groups.includes("in_game_room_tools");
+          const roomToolbarDescriptionId = `mod-room-toolbar-${capsule.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
           return (
             <article key={capsule.id} className="mod-catalog-row" data-processed={capsule.processed ? "true" : undefined} data-assigned={assignedNames ? "true" : undefined}>
               <div className="mod-catalog-identity">
@@ -280,6 +293,31 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
                           () => catalog.setAutoExitOnDeathEnabled(capsule.id, enabled),
                           enabled ? copy.autoExitEnabled : copy.autoExitDisabled,
                         )}
+                      />
+                    </div>
+                  )}
+                  {supportsRoomToolbar && (
+                    <div className="mod-catalog-feature-control mod-catalog-room-toolbar">
+                      <span>
+                        <b>{copy.roomToolbar}</b>
+                        <small id={roomToolbarDescriptionId}>
+                          {capsule.room_toolbar_visible == null
+                            ? copy.roomToolbarUnavailable
+                            : copy.roomToolbarHelp}
+                        </small>
+                      </span>
+                      <Toggle
+                        checked={capsule.room_toolbar_visible === true}
+                        disabled={catalog.loading || capsule.room_toolbar_visible == null || !catalog.setRoomToolbarVisible}
+                        ariaLabel={`${capsule.name} ${copy.roomToolbar}`}
+                        descriptionId={roomToolbarDescriptionId}
+                        onChange={(visible) => {
+                          const setVisible = catalog.setRoomToolbarVisible;
+                          if (setVisible) void run(
+                            () => setVisible(capsule.id, visible),
+                            visible ? copy.roomToolbarShown : copy.roomToolbarHidden,
+                          );
+                        }}
                       />
                     </div>
                   )}

@@ -36,6 +36,8 @@ const AUTO_EXIT_ON_DEATH_LEGACY_ENABLED_FINGERPRINT: &str =
 const AUTO_EXIT_ON_DEATH_LEGACY_DISABLED_FINGERPRINT: &str =
     "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100;enabled=0";
 const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
+const ROOM_TOOLBAR_OPEN_MESSAGE: &str = "PanelManager:OpenPanel:D2RHubRoomToolbar";
+const ROOM_TOOLBAR_CLOSE_MESSAGE: &str = "PanelManager:ClosePanel:D2RHubRoomToolbar";
 const ROOM_TOOL_GATEWAY_HUB: &str = "D2RHubKeyboardGatewayHub";
 const ROOM_TOOL_CREATE_GATEWAY: &str = "D2RHubKeyboardCreateGateway";
 const ROOM_TOOL_JOIN_GATEWAY: &str = "D2RHubKeyboardJoinGateway";
@@ -787,6 +789,38 @@ fn layout_has_child_message(document: &serde_json::Value, field: &str, expected:
         })
 }
 
+fn room_toolbar_visibility(hud: &serde_json::Value) -> Result<bool, String> {
+    match (
+        layout_has_child_message(hud, "message", ROOM_TOOLBAR_OPEN_MESSAGE),
+        layout_has_child_message(hud, "message", ROOM_TOOLBAR_CLOSE_MESSAGE),
+    ) {
+        (true, false) => Ok(true),
+        (false, true) => Ok(false),
+        _ => Err("局内按钮的 HUD 显示配置缺失或冲突，请重新加工".to_string()),
+    }
+}
+
+pub(crate) fn read_room_toolbar_visible(
+    mods_directory: &Path,
+    mod_name: &str,
+) -> Result<bool, String> {
+    let mod_name = plain_mod_name(mod_name)?;
+    let layout_path = mods_directory
+        .join(mod_name)
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+        .join("HudWarningshd.json");
+    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
+    ensure_safe_existing_node(&canonical_mods, &layout_path, false, "游戏 HUD 布局")?;
+    let document = read_room_tool_layout(
+        layout_path
+            .parent()
+            .ok_or_else(|| "游戏 HUD 布局路径无效".to_string())?,
+        "HudWarningshd.json",
+    )?;
+    room_toolbar_visibility(&document)
+}
+
 fn layout_has_timed_child_message(
     document: &serde_json::Value,
     expected: &str,
@@ -1004,9 +1038,8 @@ fn validate_in_game_room_tool_layouts_for_recipe(
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
     let hud = read_room_tool_layout(&layout_directory, "HudWarningshd.json")?;
-    if !layout_has_child_message(&hud, "message", "PanelManager:OpenPanel:D2RHubRoomToolbar") {
-        return Err("局内房间工具没有挂载到游戏 HUD".to_string());
-    }
+    // Toolbar visibility is independent of the PausePanel keyboard gateways.
+    room_toolbar_visibility(&hud)?;
 
     let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
     for action in [
@@ -2110,11 +2143,11 @@ pub(crate) fn ensure_audio_mod_not_in_use(
     ))
 }
 
-fn replace_auto_exit_layout_file(path: &Path, contents: &[u8]) -> Result<(), String> {
+fn replace_mod_layout_file(path: &Path, contents: &[u8]) -> Result<(), String> {
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| "死亡界面布局文件名无效".to_string())?;
+        .ok_or_else(|| "Mod 布局文件名无效".to_string())?;
     let temporary = path.with_file_name(format!(
         ".{file_name}.d2rhub-toggle-{}.tmp",
         uuid::Uuid::new_v4().simple()
@@ -2124,17 +2157,17 @@ fn replace_auto_exit_layout_file(path: &Path, contents: &[u8]) -> Result<(), Str
             .create_new(true)
             .write(true)
             .open(&temporary)
-            .map_err(|error| format!("无法创建死亡退房配置临时文件：{error}"))?;
+            .map_err(|error| format!("无法创建 Mod 配置临时文件：{error}"))?;
         file.write_all(contents)
-            .map_err(|error| format!("无法写入死亡退房配置：{error}"))?;
+            .map_err(|error| format!("无法写入 Mod 配置：{error}"))?;
         file.sync_all()
-            .map_err(|error| format!("无法持久化死亡退房配置：{error}"))?;
+            .map_err(|error| format!("无法持久化 Mod 配置：{error}"))?;
         drop(file);
         durable_fs::durable_sibling_replace(&temporary, path)
-            .map_err(|error| format!("无法原子切换死亡退房配置：{error}"))?;
+            .map_err(|error| format!("无法原子切换 Mod 配置：{error}"))?;
         if let Some(parent) = path.parent() {
             durable_fs::sync_directory(parent)
-                .map_err(|error| format!("无法持久化死亡退房配置目录：{error}"))?;
+                .map_err(|error| format!("无法持久化 Mod 配置目录：{error}"))?;
         }
         Ok(())
     })();
@@ -2142,6 +2175,79 @@ fn replace_auto_exit_layout_file(path: &Path, contents: &[u8]) -> Result<(), Str
         let _ = std::fs::remove_file(&temporary);
     }
     result
+}
+
+pub(crate) fn set_room_toolbar_visible(
+    state: &SharedState,
+    config: &GlobalConfig,
+    mods_directory: &Path,
+    mod_name: &str,
+    visible: bool,
+) -> Result<(), String> {
+    let _lease = BuildLease::acquire(state)?;
+    ensure_audio_mod_not_in_use(state, config, mod_name)?;
+    let validated = validate_audio_mod_credential(mods_directory, mod_name)?;
+    if !validated.current_feature_protocol
+        || !validated.feature_groups.iter().any(|group| {
+            group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
+                && group.recipe_version == IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+        })
+    {
+        return Err(format!("Mod“{mod_name}”不含当前版本局内房间工具，请先加工更新"));
+    }
+    // A display toggle only needs the feature credential and room UI layouts;
+    // avoid traversing or decoding the unrelated audio assets.
+    validate_in_game_room_tool_layouts_for_recipe(&validated.directory, mod_name, true)?;
+    validate_lobby_return_hint(&validated.directory, mod_name)?;
+    if read_room_toolbar_visible(mods_directory, mod_name)? == visible {
+        return Ok(());
+    }
+    let layout_path = validated
+        .directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY)
+        .join("HudWarningshd.json");
+    let original = std::fs::read(&layout_path)
+        .map_err(|error| format!("无法读取游戏 HUD 布局：{error}"))?;
+    let mut document: serde_json::Value = serde_json::from_slice(&original)
+        .map_err(|_| "游戏 HUD 布局已损坏".to_string())?;
+    let children = document
+        .get_mut("children")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| "游戏 HUD 布局缺少 children".to_string())?;
+    for child in children {
+        if let Some(message) = child.pointer_mut("/fields/message") {
+            if matches!(
+                message.as_str(),
+                Some(ROOM_TOOLBAR_OPEN_MESSAGE | ROOM_TOOLBAR_CLOSE_MESSAGE)
+            ) {
+                // Closing the toolbar removes both visuals and mouse hit regions;
+                // all form controllers and keyboard gateways stay installed.
+                *message = serde_json::json!(if visible {
+                    ROOM_TOOLBAR_OPEN_MESSAGE
+                } else {
+                    ROOM_TOOLBAR_CLOSE_MESSAGE
+                });
+            }
+        }
+    }
+    let updated = serde_json::to_vec_pretty(&document)
+        .map_err(|error| format!("无法序列化局内按钮配置：{error}"))?;
+    let result = replace_mod_layout_file(&layout_path, &updated).and_then(|()| {
+        if read_room_toolbar_visible(mods_directory, mod_name)? != visible {
+            return Err("写入后的按钮显示状态与请求不一致".to_string());
+        }
+        Ok(())
+    });
+    if let Err(error) = result {
+        return match replace_mod_layout_file(&layout_path, &original) {
+            Ok(()) => Err(format!("局内按钮配置保存失败，已恢复原配置：{error}")),
+            Err(restore) => Err(format!(
+                "局内按钮配置保存失败：{error}；恢复原配置失败：{restore}"
+            )),
+        };
+    }
+    Ok(())
 }
 
 pub(crate) fn set_auto_exit_on_death_enabled(
@@ -2197,7 +2303,7 @@ pub(crate) fn set_auto_exit_on_death_enabled(
     }
     let updated = serde_json::to_vec_pretty(&document)
         .map_err(|error| format!("无法序列化死亡退房配置：{error}"))?;
-    replace_auto_exit_layout_file(&layout_path, &updated)?;
+    replace_mod_layout_file(&layout_path, &updated)?;
 
     match validate_audio_mod_credential(mods_directory, mod_name).and_then(|after| {
         validate_auto_exit_on_death_layouts(&after.directory, mod_name, enabled)?;
@@ -2205,7 +2311,7 @@ pub(crate) fn set_auto_exit_on_death_enabled(
     }) {
         Ok(after) if after.auto_exit_on_death_enabled == enabled => Ok(enabled),
         validation => {
-            let restore = replace_auto_exit_layout_file(&layout_path, &original);
+            let restore = replace_mod_layout_file(&layout_path, &original);
             let detail = match validation {
                 Ok(_) => "写入后的启用状态与请求不一致".to_string(),
                 Err(error) => error,

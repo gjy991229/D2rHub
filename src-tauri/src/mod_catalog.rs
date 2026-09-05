@@ -6,7 +6,7 @@
 
 use crate::audio_mod::{
     active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
-    set_auto_exit_on_death_enabled, InstalledMod,
+    read_room_toolbar_visible, set_auto_exit_on_death_enabled, set_room_toolbar_visible, InstalledMod,
 };
 use crate::commands::account::{
     update_account_mods_inner, update_account_mods_with_lease_held, AccountManager, AccountMeta,
@@ -78,6 +78,7 @@ pub struct ModCapsule {
     pub source_mod_name: Option<String>,
     pub feature_groups: Vec<String>,
     pub auto_exit_on_death_enabled: bool,
+    pub room_toolbar_visible: Option<bool>,
     pub processed: bool,
     pub source_eligible: bool,
     pub update_required: bool,
@@ -500,6 +501,25 @@ fn build_pool(
                 source_mod_name: entry.installed.source_mod_name.clone(),
                 feature_groups: entry.installed.feature_groups.clone(),
                 auto_exit_on_death_enabled: entry.installed.auto_exit_on_death_enabled,
+                room_toolbar_visible: if entry
+                    .installed
+                    .feature_groups
+                    .iter()
+                    .any(|group| group == "in_game_room_tools")
+                {
+                    let game_directory = if entry.edition == "CN" {
+                        config.cn_game_path.trim()
+                    } else {
+                        config.global_game_path.trim()
+                    };
+                    read_room_toolbar_visible(
+                        &Path::new(game_directory).join("mods"),
+                        &entry.installed.name,
+                    )
+                    .ok()
+                } else {
+                    None
+                },
                 processed,
                 source_eligible: entry.installed.source_eligible,
                 update_required: entry.installed.update_required,
@@ -528,6 +548,7 @@ fn build_pool(
             source_mod_name,
             feature_groups,
             auto_exit_on_death_enabled,
+            room_toolbar_visible: None,
             processed,
             source_eligible,
             update_required,
@@ -691,6 +712,45 @@ pub fn open_mods_directory(
         .spawn()
         .map_err(|error| format!("打开 mods 文件夹失败：{error}"))?;
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_mod_room_toolbar_visible(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    capsule_id: String,
+    visible: bool,
+) -> Result<ModCapsulePool, String> {
+    let _catalog = CATALOG_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| "尚未完成首次配置".to_string())?;
+    let scanned = scan_installations(&config);
+    let _ = load_payload_with_recovery(state.inner(), &app, &config, &scanned)?;
+    let config = state.configuration().snapshot().unwrap_or(config);
+    let target = scanned
+        .iter()
+        .find(|entry| entry.id == capsule_id)
+        .ok_or_else(|| "只能切换游戏目录中实际存在的 Mod".to_string())?;
+    let game_directory = if target.edition == "CN" {
+        config.cn_game_path.trim()
+    } else {
+        config.global_game_path.trim()
+    };
+    set_room_toolbar_visible(
+        state.inner(),
+        &config,
+        &Path::new(game_directory).join("mods"),
+        &target.installed.name,
+        visible,
+    )?;
+    let rescanned = scan_installations(&config);
+    let (generation, payload) =
+        load_payload_with_recovery(state.inner(), &app, &config, &rescanned)?;
+    Ok(build_pool(&config, generation, &payload, &rescanned))
 }
 
 #[tauri::command]
