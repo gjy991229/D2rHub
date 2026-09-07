@@ -1540,7 +1540,7 @@ html, body, #root {
   color: var(--text-primary);
   font-size: 19px;
   font-weight: 780;
-  line-height: 0.98;
+  line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
