@@ -480,7 +480,11 @@ impl AccountRuntimePort for AccountManagerRuntime<'_> {
             .lock()
             .unwrap_or_else(|error| error.into_inner());
         let system_pid = sysinfo::Pid::from(pid as usize);
-        system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid]));
+        // Selected-PID refreshes in sysinfo 0.31 retain dead cached processes.
+        // Reject a PID absent from this refresh before inspecting its metadata.
+        if system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[system_pid])) == 0 {
+            return false;
+        }
         let Some(process) = system.process(system_pid) else {
             return false;
         };

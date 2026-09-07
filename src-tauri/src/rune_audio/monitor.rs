@@ -987,12 +987,22 @@ fn capture_loop(
         process_check_ticks = process_check_ticks.saturating_add(1);
         if process_check_ticks >= 4 {
             process_check_ticks = 0;
-            process_system.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[process_id]));
-            if process_system.process(process_id).is_none() {
+            // sysinfo 0.31 keeps dead entries when refreshing selected PIDs.
+            // Only the number refreshed tells us whether this PID still exists.
+            let refreshed = process_system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[process_id]),
+                sysinfo::ProcessRefreshKind::new(),
+            );
+            if refreshed == 0 {
+                crate::logger::log_msg(
+                    "INFO",
+                    "RuneAudio",
+                    &format!("目标游戏进程已退出，停止音频捕获: PID {}", config.target_pid),
+                );
                 break;
             }
         }
-        loop {
+        while monitor_generation_active(generation) {
             let packet_frames = capture_client
                 .get_next_packet_size()
                 .map_err(|error| format!("查询音频包失败: {error}"))?
@@ -1234,7 +1244,6 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         .spawn(move || {
             let result = capture_loop(app, config.clone(), generation, ready_tx);
             RUNNING.store(false, Ordering::SeqCst);
-            mark_worker_inactive();
             if GENERATION.load(Ordering::SeqCst) == generation {
                 let previous = status()
                     .lock()
@@ -1261,6 +1270,9 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
             if let Err(error) = result {
                 crate::logger::log_msg("ERROR", "RuneAudio", &error);
             }
+            // Publish the old worker's final status before allowing a new
+            // worker to start and replace it with its new account/PID.
+            mark_worker_inactive();
         })
         .map_err(|error| {
             RUNNING.store(false, Ordering::SeqCst);
@@ -1350,6 +1362,26 @@ pub(crate) fn start_capability(app: tauri::AppHandle) -> Result<(), String> {
 
 pub(crate) fn capability_health(app: &tauri::AppHandle) -> Result<(), String> {
     if RUNNING.load(Ordering::SeqCst) && WORKER_ACTIVE.load(Ordering::SeqCst) {
+        let current = get_rune_audio_status();
+        let state = app.state::<crate::state::SharedState>();
+        let instance = current
+            .account_id
+            .as_deref()
+            .and_then(|account_id| state.multi_instance().instances().get(account_id));
+        if let Some(instance) = instance {
+            if current.target_pid != Some(instance.pid) {
+                crate::logger::log_msg(
+                    "INFO",
+                    "RuneAudio",
+                    &format!(
+                        "目标账号进程已变化，重新绑定音频捕获: PID {:?} -> {}",
+                        current.target_pid, instance.pid,
+                    ),
+                );
+                stop_blocking()?;
+                return start_capability(app.clone());
+            }
+        }
         return Ok(());
     }
     if !RUNNING.load(Ordering::SeqCst) && !WORKER_ACTIVE.load(Ordering::SeqCst) {
