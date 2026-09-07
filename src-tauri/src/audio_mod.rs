@@ -26,8 +26,8 @@ const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 25;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 4] = [21, 22, 23, 24];
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 26;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 5] = [21, 22, 23, 24, 25];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -51,8 +51,8 @@ const ROOM_TOOL_JOIN_X: i64 = -480;
 const QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS: f64 = 0.5;
 const ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS: f64 = 0.01;
 const ROOM_TRANSITION_EXIT_DELAY_SECONDS: f64 = 0.05;
-const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = 0.20;
-const ROOM_TRANSITION_CLOSE_DELAY_SECONDS: f64 = 0.25;
+const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = ROOM_TRANSITION_EXIT_DELAY_SECONDS;
+const ROOM_TRANSITION_CLOSE_DELAY_SECONDS: f64 = ROOM_TRANSITION_EXIT_DELAY_SECONDS;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
@@ -1086,13 +1086,31 @@ fn validate_in_game_room_tool_layouts_for_version(
     mod_name: &str,
     room_recipe_version: u32,
 ) -> Result<(), String> {
-    // Old recipes remain readable as upgrade sources. New output must carry
-    // both the exclusive Escape binding and the separated transition timers.
+    // Old recipes remain readable as upgrade sources. r26 separates the lobby
+    // and in-game forms, and queues exit + submit at the same time like JCY.
     let requires_input_safety = room_recipe_version >= 24;
-    let commit_delay = if requires_input_safety {
+    let separate_in_game_forms = room_recipe_version >= 26;
+    let commit_delay = if separate_in_game_forms {
         ROOM_TRANSITION_COMMIT_DELAY_SECONDS
+    } else if requires_input_safety {
+        0.20
     } else {
         0.05
+    };
+    let close_delay = if separate_in_game_forms {
+        ROOM_TRANSITION_CLOSE_DELAY_SECONDS
+    } else {
+        0.25
+    };
+    let create_form_panel = if separate_in_game_forms {
+        "D2RHubInGameCreateGame"
+    } else {
+        "CreateGamePanel"
+    };
+    let join_form_panel = if separate_in_game_forms {
+        "D2RHubInGameJoinGame"
+    } else {
+        "JoinGamePanel"
     };
     let layout_directory = mod_directory
         .join(format!("{mod_name}.mpq"))
@@ -1198,7 +1216,7 @@ fn validate_in_game_room_tool_layouts_for_version(
         && !layout_has_timed_child_message(
             &quick_recreate,
             "PanelManager:ClosePanel:D2RHubQuickRecreate",
-            ROOM_TRANSITION_CLOSE_DELAY_SECONDS,
+            close_delay,
         )
     {
         return Err("局内“下一局”控制器未延后关闭，请重新加工".to_string());
@@ -1262,7 +1280,7 @@ fn validate_in_game_room_tool_layouts_for_version(
                 && !layout_has_timed_child_message(
                     &commit,
                     &format!("PanelManager:ClosePanel:{}", name.trim_end_matches("hd.json")),
-                    ROOM_TRANSITION_CLOSE_DELAY_SECONDS,
+                    close_delay,
                 )
             {
                 return Err(format!("局内房间提交控制器未延后关闭，请重新加工：{name}"));
@@ -1298,14 +1316,14 @@ fn validate_in_game_room_tool_layouts_for_version(
         (
             "D2RHubOpenCreateGamehd.json",
             "D2RHubOpenCreateGame",
-            "CreateGamePanel",
-            "JoinGamePanel",
+            create_form_panel,
+            join_form_panel,
         ),
         (
             "D2RHubOpenJoinGamehd.json",
             "D2RHubOpenJoinGame",
-            "JoinGamePanel",
-            "CreateGamePanel",
+            join_form_panel,
+            create_form_panel,
         ),
     ] {
         let opener = read_room_tool_layout(&layout_directory, name)?;
@@ -1410,14 +1428,14 @@ fn validate_in_game_room_tool_layouts_for_version(
         (
             "D2RHubKeyboardOpenCreatehd.json",
             "D2RHubKeyboardOpenCreate",
-            "CreateGamePanel",
-            "JoinGamePanel",
+            create_form_panel,
+            join_form_panel,
         ),
         (
             "D2RHubKeyboardOpenJoinhd.json",
             "D2RHubKeyboardOpenJoin",
-            "JoinGamePanel",
-            "CreateGamePanel",
+            join_form_panel,
+            create_form_panel,
         ),
     ] {
         let helper = read_room_tool_layout(&layout_directory, helper_name)?;
@@ -1442,7 +1460,7 @@ fn validate_in_game_room_tool_layouts_for_version(
         }
     }
 
-    let form_specs: [(&str, &str, &[&str], &str, &str); 2] = [
+    let mut form_specs: Vec<(&str, &str, &[&str], &str, &str)> = vec![
         (
             "creategamepanelhd.json",
             "GameNameInput",
@@ -1458,8 +1476,43 @@ fn validate_in_game_room_tool_layouts_for_version(
             "PanelManager:OpenPanel:D2RHubCommitJoinGame",
         ),
     ];
+    if separate_in_game_forms {
+        form_specs.extend([
+            (
+                "D2RHubInGameCreateGamehd.json",
+                "GameNameInput",
+                &["GameNameInput", "PasswordInput", "DescriptionInput"][..],
+                "CreateGame:CreateGame",
+                "PanelManager:OpenPanel:D2RHubCommitCreateGame",
+            ),
+            (
+                "D2RHubInGameJoinGamehd.json",
+                "NameInput",
+                &["NameInput", "PasswordInput"][..],
+                "JoinGame:JoinGame",
+                "PanelManager:OpenPanel:D2RHubCommitJoinGame",
+            ),
+        ]);
+    }
     for (name, primary_input, input_names, native_submit, routed_submit) in form_specs {
         let form = read_room_tool_layout(&layout_directory, name)?;
+        let is_lobby_form = separate_in_game_forms && !name.starts_with("D2RHubInGame");
+        let native_panel = if primary_input == "NameInput" {
+            "JoinGamePanel"
+        } else {
+            "CreateGamePanel"
+        };
+        let expected_panel = if separate_in_game_forms && !is_lobby_form {
+            name.trim_end_matches("hd.json")
+        } else {
+            native_panel
+        };
+        if separate_in_game_forms
+            && (form.get("name").and_then(serde_json::Value::as_str) != Some(expected_panel)
+                || form.get("type").and_then(serde_json::Value::as_str) != Some(native_panel))
+        {
+            return Err(format!("大厅与局内房间表单身份无效：{name}"));
+        }
         if form
             .pointer("/fields/defaultWidget")
             .and_then(serde_json::Value::as_str)
@@ -1486,21 +1539,23 @@ fn validate_in_game_room_tool_layouts_for_version(
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
-        if room_recipe_version >= 22
+        if is_lobby_form {
+            if layout_field_value_count(&form, native_submit) == 0
+                || layout_field_value_count(&form, routed_submit) != 0
+            {
+                return Err(format!("大厅表单仍包含局内退出提交入口：{name}"));
+            }
+        } else if room_recipe_version >= 22
             && (layout_field_value_count(&form, native_submit) != 0
                 || layout_field_value_count(&form, routed_submit) == 0)
         {
             return Err(format!("局内房间表单没有完整接入主动退出提交链：{name}"));
         }
-        let close_action = if primary_input == "NameInput" {
-            "PanelManager:ClosePanel:JoinGamePanel"
-        } else {
-            "PanelManager:ClosePanel:CreateGamePanel"
-        };
+        let close_action = format!("PanelManager:ClosePanel:{expected_panel}");
         if find_layout_node(&form, "D2RHubCloseRoomForm")
             .and_then(|node| node.pointer("/fields/onClickMessage"))
             .and_then(serde_json::Value::as_str)
-            != Some(close_action)
+            != Some(close_action.as_str())
         {
             return Err(format!("局内房间表单缺少关闭按钮：{name}"));
         }
@@ -4037,7 +4092,7 @@ async fn upgrade_audio_mod_impl(
             validated
                 .feature_groups
                 .iter()
-                // The generator replaces known r21-r24 room groups with the current recipe.
+                // The generator replaces known r21-r25 room groups with the current recipe.
                 // Preserve every other known or opaque group byte-for-byte across replacement.
                 .filter(|group| {
                     !(group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
