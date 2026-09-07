@@ -6,7 +6,11 @@
 //! signal so capability shutdown never leaves detached input work behind.
 
 use crate::capabilities::room_automation::{ChatKey, FlowStrategy};
+use parking_lot::Mutex;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 use std::time::Duration;
+use windows::Win32::Foundation::FILETIME;
 
 const WM_KEYDOWN: u32 = 0x0100;
 const WM_KEYUP: u32 = 0x0101;
@@ -31,6 +35,48 @@ const CHAT_MODE_SETTLE_MS: u64 = 120;
 const ROOM_FORM_SETTLE_MS: u64 = 200;
 const FIELD_CLEAR_COUNT: usize = 16;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
+const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+
+struct EnteredPassword {
+    process_created_at: u64,
+    hwnd: isize,
+    password: String,
+}
+
+// Shared by create/join and retained across capability restarts. Never persisted
+// or published in workflow status. Creation time guards against PID reuse.
+static ENTERED_PASSWORDS: OnceLock<Mutex<HashMap<u32, EnteredPassword>>> = OnceLock::new();
+
+#[link(name = "kernel32")]
+extern "system" {
+    fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> isize;
+    fn GetProcessTimes(
+        process: isize,
+        creation: *mut FILETIME,
+        exit: *mut FILETIME,
+        kernel: *mut FILETIME,
+        user: *mut FILETIME,
+    ) -> i32;
+    fn CloseHandle(handle: isize) -> i32;
+}
+
+fn process_creation_time(pid: u32) -> Option<u64> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if process == 0 {
+            return None;
+        }
+        let mut creation = FILETIME::default();
+        let mut exit = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        let result = GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user);
+        CloseHandle(process);
+        (result != 0).then_some(
+            (u64::from(creation.dwHighDateTime) << 32) | u64::from(creation.dwLowDateTime),
+        )
+    }
+}
 
 extern "system" {
     fn PostMessageW(hWnd: isize, Msg: u32, wParam: usize, lParam: isize) -> i32;
@@ -105,6 +151,19 @@ pub(crate) fn fill_room_form(
         .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {})", request.pid))?;
     validate_target(hwnd)?;
     let strategy = BackgroundTextStrategy::from_value(request.background_text_strategy);
+    let process_created_at = process_creation_time(request.pid);
+    let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));
+    let enter_password = {
+        let mut passwords = passwords.lock();
+        passwords.retain(|pid, entry| {
+            process_creation_time(*pid) == Some(entry.process_created_at)
+        });
+        !passwords.get(&request.pid).is_some_and(|entry| {
+            Some(entry.process_created_at) == process_created_at
+                && entry.hwnd == hwnd
+                && entry.password == request.password
+        })
+    };
 
     if request.open_form {
         open_room_form(hwnd, request.create, strategy, request.flow, cancel)?;
@@ -125,8 +184,12 @@ pub(crate) fn fill_room_form(
         cancel,
         Duration::from_millis(request.flow.step_delay_ms + EXTRA_PANEL_SETTLE_MS),
     )?;
-    replace_text(hwnd, request.password, strategy, request.flow, cancel)?;
-    wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
+    if enter_password {
+        // Invalidate before editing so a partial write or cancellation is retried.
+        passwords.lock().remove(&request.pid);
+        replace_text(hwnd, request.password, strategy, request.flow, cancel)?;
+        wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
+    }
     deliver_key(
         hwnd,
         VK_RETURN,
@@ -135,7 +198,20 @@ pub(crate) fn fill_room_form(
         request.flow.key_hold_ms,
         20,
         cancel,
-    )
+    )?;
+    if enter_password {
+        if let Some(process_created_at) = process_created_at {
+            passwords.lock().insert(
+                request.pid,
+                EnteredPassword {
+                    process_created_at,
+                    hwnd,
+                    password: request.password.to_string(),
+                },
+            );
+        }
+    }
+    Ok(())
 }
 
 fn open_room_form(

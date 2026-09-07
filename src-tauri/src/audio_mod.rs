@@ -26,8 +26,8 @@ const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 23;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 2] = [21, 22];
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 25;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 4] = [21, 22, 23, 24];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -50,7 +50,9 @@ const ROOM_TOOL_CREATE_X: i64 = -760;
 const ROOM_TOOL_JOIN_X: i64 = -480;
 const QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS: f64 = 0.5;
 const ROOM_TRANSITION_OPEN_PAUSE_DELAY_SECONDS: f64 = 0.01;
-const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = 0.05;
+const ROOM_TRANSITION_EXIT_DELAY_SECONDS: f64 = 0.05;
+const ROOM_TRANSITION_COMMIT_DELAY_SECONDS: f64 = 0.20;
+const ROOM_TRANSITION_CLOSE_DELAY_SECONDS: f64 = 0.25;
 const REPLACE_JOURNAL_FORMAT_VERSION: u8 = 1;
 const REPLACE_JOURNAL_PREFIX: &str = ".d2rhub-audio-replace-";
 const REPLACE_JOURNAL_SUFFIX: &str = ".json";
@@ -924,6 +926,40 @@ fn validate_routed_pause_buttons(
     Ok(routed)
 }
 
+fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str) -> Result<(), String> {
+    let is_button = node.get("type").and_then(serde_json::Value::as_str) == Some("ButtonWidget");
+    let name = node.get("name").and_then(serde_json::Value::as_str);
+    let returns_to_game = is_button && name == Some("ReturnToGame");
+    let accepts_esc = node.pointer("/fields/acceptsEscKeyEverywhere");
+    if (is_button || accepts_esc.is_some())
+        && accepts_esc.and_then(serde_json::Value::as_bool) != Some(returns_to_game)
+    {
+        return Err(format!(
+            "暂停布局仍包含其他 Mod 的 Esc 绑定或缺少统一绑定，请重新加工：{pause_name}/{}",
+            name.unwrap_or("<unnamed>")
+        ));
+    }
+    if returns_to_game
+        && node
+            .pointer("/fields/onClickMessage")
+            .and_then(serde_json::Value::as_str)
+            != Some("PausePanelMessage:Close")
+    {
+        return Err(format!(
+            "暂停布局 Esc 未绑定返回游戏，请重新加工：{pause_name}"
+        ));
+    }
+    if let Some(children) = node.get("children") {
+        let children = children
+            .as_array()
+            .ok_or_else(|| format!("暂停布局 children 不是数组：{pause_name}"))?;
+        for child in children {
+            validate_pause_esc_bindings(child, pause_name)?;
+        }
+    }
+    Ok(())
+}
+
 fn read_auto_exit_on_death_layout(
     layout_directory: &Path,
     name: &str,
@@ -1034,6 +1070,30 @@ fn validate_in_game_room_tool_layouts_for_recipe(
     mod_name: &str,
     require_room_submission_transition: bool,
 ) -> Result<(), String> {
+    validate_in_game_room_tool_layouts_for_version(
+        mod_directory,
+        mod_name,
+        if require_room_submission_transition {
+            IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
+        } else {
+            21
+        },
+    )
+}
+
+fn validate_in_game_room_tool_layouts_for_version(
+    mod_directory: &Path,
+    mod_name: &str,
+    room_recipe_version: u32,
+) -> Result<(), String> {
+    // Old recipes remain readable as upgrade sources. New output must carry
+    // both the exclusive Escape binding and the separated transition timers.
+    let requires_input_safety = room_recipe_version >= 24;
+    let commit_delay = if requires_input_safety {
+        ROOM_TRANSITION_COMMIT_DELAY_SECONDS
+    } else {
+        0.05
+    };
     let layout_directory = mod_directory
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
@@ -1126,13 +1186,22 @@ fn validate_in_game_room_tool_layouts_for_recipe(
     ) || !layout_has_timed_child_message(
         &quick_recreate,
         "PausePanelMessage:ExitGame",
-        ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+        ROOM_TRANSITION_EXIT_DELAY_SECONDS,
     ) || !layout_has_timed_child_message(
         &quick_recreate,
         "CharacterSelect:LoadCharacter:2",
-        ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+        commit_delay,
     ) {
         return Err("局内“下一局”动作无效".to_string());
+    }
+    if requires_input_safety
+        && !layout_has_timed_child_message(
+            &quick_recreate,
+            "PanelManager:ClosePanel:D2RHubQuickRecreate",
+            ROOM_TRANSITION_CLOSE_DELAY_SECONDS,
+        )
+    {
+        return Err("局内“下一局”控制器未延后关闭，请重新加工".to_string());
     }
     let quick_messages = quick_recreate
         .get("children")
@@ -1168,7 +1237,7 @@ fn validate_in_game_room_tool_layouts_for_recipe(
     {
         return Err("局内“下一局”仍包含旧版二级确认布局".to_string());
     }
-    if require_room_submission_transition {
+    if room_recipe_version >= 22 {
         for (name, native_message) in [
             ("D2RHubCommitCreateGamehd.json", "CreateGame:CreateGame"),
             ("D2RHubCommitJoinGamehd.json", "JoinGame:JoinGame"),
@@ -1181,13 +1250,22 @@ fn validate_in_game_room_tool_layouts_for_recipe(
             ) || !layout_has_timed_child_message(
                 &commit,
                 "PausePanelMessage:ExitGame",
-                ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+                ROOM_TRANSITION_EXIT_DELAY_SECONDS,
             ) || !layout_has_timed_child_message(
                 &commit,
                 native_message,
-                ROOM_TRANSITION_COMMIT_DELAY_SECONDS,
+                commit_delay,
             ) {
                 return Err(format!("局内房间提交控制器无效：{name}"));
+            }
+            if requires_input_safety
+                && !layout_has_timed_child_message(
+                    &commit,
+                    &format!("PanelManager:ClosePanel:{}", name.trim_end_matches("hd.json")),
+                    ROOM_TRANSITION_CLOSE_DELAY_SECONDS,
+                )
+            {
+                return Err(format!("局内房间提交控制器未延后关闭，请重新加工：{name}"));
             }
             let messages = commit
                 .get("children")
@@ -1254,6 +1332,16 @@ fn validate_in_game_room_tool_layouts_for_recipe(
 
     for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&layout_directory, pause_name)?;
+        if requires_input_safety {
+            if find_layout_node(&pause, "ReturnToGame")
+                .and_then(|node| node.get("type"))
+                .and_then(serde_json::Value::as_str)
+                != Some("ButtonWidget")
+            {
+                return Err(format!("暂停布局缺少返回游戏按钮：{pause_name}"));
+            }
+            validate_pause_esc_bindings(&pause, pause_name)?;
+        }
         let safe_hub = find_layout_node(&pause, ROOM_TOOL_GATEWAY_HUB)
             .ok_or_else(|| format!("暂停布局缺少安全键盘焦点：{pause_name}"))?;
         if pause
@@ -1398,7 +1486,7 @@ fn validate_in_game_room_tool_layouts_for_recipe(
         }) {
             return Err(format!("局内房间表单无法完整捕获键盘输入：{name}"));
         }
-        if require_room_submission_transition
+        if room_recipe_version >= 22
             && (layout_field_value_count(&form, native_submit) != 0
                 || layout_field_value_count(&form, routed_submit) == 0)
         {
@@ -1547,25 +1635,16 @@ fn validate_compatible_audio_mod_directory_with_policy(
             }
         }
     }
-    if current_feature_protocol
-        && feature_groups
-            .iter()
-            .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
+    if let Some(room_group) = feature_groups
+        .iter()
+        .find(|group| current_feature_protocol && group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID)
     {
-        let uses_legacy_room_transition = allow_previous_room_tools
-            && feature_groups.iter().any(|group| {
-                group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                    && group.recipe_version == 21
-            });
-        validate_in_game_room_tool_layouts_for_recipe(
+        validate_in_game_room_tool_layouts_for_version(
             &mod_directory,
             mod_name,
-            !uses_legacy_room_transition,
+            room_group.recipe_version,
         )?;
-        if feature_groups.iter().any(|group| {
-            group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                && group.recipe_version == IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
-        }) {
+        if room_group.recipe_version >= 23 {
             validate_lobby_return_hint(&mod_directory, mod_name)?;
         }
     }
@@ -3958,7 +4037,7 @@ async fn upgrade_audio_mod_impl(
             validated
                 .feature_groups
                 .iter()
-                // The generator replaces known r21/r22 room groups with the current recipe.
+                // The generator replaces known r21-r24 room groups with the current recipe.
                 // Preserve every other known or opaque group byte-for-byte across replacement.
                 .filter(|group| {
                     !(group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
