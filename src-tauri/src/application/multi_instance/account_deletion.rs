@@ -48,7 +48,7 @@ impl<'a> AccountDeletionService<'a> {
     pub fn delete(&self, requested_account_id: &str) -> Result<AccountDeletionOutcome, AppError> {
         // Cross-account/catalog operations use one documented order everywhere:
         // catalog -> account -> configuration/disk transaction.
-        let catalog_lease = self.catalog_leases.acquire();
+        let catalog_lease = self.catalog_leases.acquire()?;
         let account_lease = self.account_leases.try_acquire(requested_account_id)?;
         let deleted_account_id = self.transaction.delete(requested_account_id)?;
 

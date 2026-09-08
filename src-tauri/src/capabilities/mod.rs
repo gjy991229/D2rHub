@@ -19,6 +19,8 @@ pub(crate) mod room_chat_binding;
 mod rune_audio;
 mod supervisor;
 
+pub(crate) use overlay_windows::restore_after_main_hidden;
+
 use crate::application::capability::{
     CapabilityCategory, CapabilityDescriptor, CapabilityDriver, CapabilityFailure,
     CapabilityHealth, CapabilityId, CapabilityRegistration, CapabilityRegistryError,
@@ -56,7 +58,10 @@ impl CapabilityDriver for UnavailableCapability {
 }
 
 /// Install capability-owned policies and register concrete lifecycle drivers.
-pub(crate) fn install(app: &tauri::App) {
+pub(crate) fn install(app: &tauri::AppHandle) {
+    if !app.state::<SharedState>().capabilities().snapshot().capabilities.is_empty() {
+        return;
+    }
     crate::input_listener::set_bongo_cat_input_enabled(false);
 
     let desktop_pet_driver: Arc<dyn CapabilityDriver> =
@@ -220,12 +225,19 @@ pub(crate) fn install(app: &tauri::App) {
 /// reconciles the latest committed configuration snapshot.
 pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<SharedState>();
+    if !state.configuration().snapshot()
+        .is_some_and(|config| config.optional_features_runtime_allowed())
+    {
+        return Ok(());
+    }
+    if app.try_state::<CapabilitySupervisor>().is_some() {
+        return Ok(());
+    }
     let registry = Arc::clone(state.capabilities());
     let supervisor = CapabilitySupervisor::start(app.clone(), registry)?;
     if !app.manage(supervisor) {
         return Err("capability supervisor 重复安装".to_string());
     }
-    overlay_windows::install(app);
 
     state.configuration().project_current(|config| {
         if let Some(config) = config {
@@ -251,7 +263,8 @@ pub(crate) fn apply_configuration(
             Ok(_) => {}
             // Initial global config loading happens before Tauri adapters are
             // registered. Setup replays the cached snapshot after registration.
-            Err(CapabilityRegistryError::UnknownCapability(_)) if app.is_none() => {}
+            Err(CapabilityRegistryError::UnknownCapability(_))
+                if app.is_none() || !runtime_ready || !requested => {}
             Err(error) => crate::logger::log_msg(
                 "ERROR",
                 "Capabilities",
@@ -278,6 +291,9 @@ pub(crate) fn apply_configuration(
             .capabilities()
             .set_requested(room_automation_runtime::ROOM_AUTOMATION_ID, room_requested)
         {
+            if !room_requested && matches!(error, CapabilityRegistryError::UnknownCapability(_)) {
+                return;
+            }
             crate::logger::log_msg(
                 "ERROR",
                 "Capabilities",
@@ -330,8 +346,9 @@ pub(crate) fn shutdown(app: &tauri::AppHandle) {
 }
 
 pub(crate) fn wait_until_disabled(app: &tauri::AppHandle) -> Result<(), String> {
-    let supervisor = app.try_state::<CapabilitySupervisor>()
-        .ok_or_else(|| "模块生命周期服务尚未就绪".to_string())?;
+    let Some(supervisor) = app.try_state::<CapabilitySupervisor>() else {
+        return Ok(());
+    };
     let snapshot = supervisor.reconcile_and_wait()?;
     let failures: Vec<_> = snapshot.capabilities.iter()
         .filter(|status| status.requested_enabled

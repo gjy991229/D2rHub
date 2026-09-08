@@ -183,6 +183,17 @@ struct TaskRuntimeInner {
     revision: u64,
     next_task_id: u64,
     records: BTreeMap<u64, TaskRecord>,
+    restart_reserved: bool,
+}
+
+struct TaskRestartReservation {
+    shared: Arc<TaskRuntimeShared>,
+}
+
+impl Drop for TaskRestartReservation {
+    fn drop(&mut self) {
+        self.shared.inner.lock().restart_reserved = false;
+    }
 }
 
 struct TaskRuntimeShared {
@@ -204,6 +215,16 @@ impl Default for TaskRuntime {
 }
 
 impl TaskRuntime {
+    pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
+        let mut inner = self.shared.inner.try_lock()
+            .ok_or_else(|| "任务状态更新中，请稍后切换模式".to_string())?;
+        if inner.records.values().any(|record| !record.snapshot.state.is_terminal()) {
+            return Err("仍有任务进行中，请等待完成或取消后再切换模式".to_string());
+        }
+        inner.restart_reserved = true;
+        Ok(TaskRestartReservation { shared: Arc::clone(&self.shared) })
+    }
+
     pub fn new(max_completed: usize) -> Self {
         Self::with_clock(max_completed, Arc::new(SystemTaskClock))
     }
@@ -215,6 +236,7 @@ impl TaskRuntime {
                     revision: 0,
                     next_task_id: 1,
                     records: BTreeMap::new(),
+                    restart_reserved: false,
                 }),
                 observer: RwLock::new(None),
                 clock,
@@ -237,6 +259,9 @@ impl TaskRuntime {
         let timestamp_ms = self.shared.clock.now_ms();
         let (snapshot, cancellation) = {
             let mut inner = self.shared.inner.lock();
+            if inner.restart_reserved {
+                return Err(TaskRuntimeError::Conflict("模式切换准备中".to_string()));
+            }
             if let Some(conflict_key) = request.conflict_key.as_deref() {
                 if inner.records.values().any(|record| {
                     !record.snapshot.state.is_terminal()

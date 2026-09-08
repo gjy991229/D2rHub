@@ -6,6 +6,7 @@ import { useAccounts } from "../../store/accounts";
 import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
 import { parseShortcutFromKeyEvent, useShortcutRecorder } from "../../hooks/useShortcutRecorder";
+import { flushWindowGeometrySaves } from "../../hooks/useWindowGeometrySave";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
@@ -342,11 +343,13 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setRecordingPos(null);
     try {
       if (!(await commitPendingSettings())) return false;
+      await flushWindowGeometrySaves();
       const saved = await useGlobalConfig.getState().switchProfile(profile);
+      if (useGlobalConfig.getState().restarting) return true;
       setOriginalConfig(JSON.parse(JSON.stringify(saved)));
       setActiveTab("advanced");
       showToast("success", profile === "minimal"
-        ? "已切换到极简模式；其他模块配置已保留并暂停运行"
+        ? "已选择纯净模式；扩展运行实例将保持未加载"
         : "已切换到正常模式；模块将按原配置启动，启动异常可在模块设置查看");
       return true;
     } catch (error) {

@@ -58,16 +58,16 @@ export function MaintenancePanel({
           <div className="max-w-[68ch]">
             <h2 id="feature-profile-title" className="text-xs font-bold text-text-primary">使用模式</h2>
             <p className="text-2xs text-text-muted mt-1 leading-relaxed">
-              极简模式只显示多开、Mod 管理和必要设置。切换不会卸载模块，也不会删除模块配置。
+              纯净模式只启动基础服务，保留多开与 Mod 管理。切换会重新启动 D2RHub，模块配置与数据完整保留。
             </p>
           </div>
           <span className="settings-navigation-badge" data-state="configured">
-            当前：{featureProfile === "minimal" ? "极简模式" : "正常模式"}
+            当前：{featureProfile === "minimal" ? "纯净模式" : "正常模式"}
           </span>
         </div>
         <div className="grid grid-cols-2 gap-2 max-[620px]:grid-cols-1" role="radiogroup" aria-label="D2RHub 使用模式">
           {([
-            ["minimal", "极简模式", "只保留多开与 Mod 管理", Minimize2],
+            ["minimal", "纯净模式", "基础服务按需运行，不启动扩展实例", Minimize2],
             ["normal", "正常模式", "显示完整功能并恢复原模块状态", Layers3],
           ] as const).map(([value, label, detail, Icon]) => {
             const selected = featureProfile === value;
@@ -252,7 +252,7 @@ export function MaintenancePanel({
     <Modal
       open={pendingProfile !== null}
       onClose={() => { if (!profileChanging) setPendingProfile(null); }}
-      title={switchingToMinimal ? "切换到极简模式？" : "切换到正常模式？"}
+      title={switchingToMinimal ? "重启并进入纯净模式？" : "重启并进入正常模式？"}
       width="max-w-sm"
       dismissible={!profileChanging}
       footer={(
@@ -269,19 +269,17 @@ export function MaintenancePanel({
               });
             }}
           >
-            确认切换
+            保存模式并重启
           </Button>
         </div>
       )}
     >
       <div className="space-y-2 text-sm leading-relaxed text-text-secondary">
         <p>{switchingToMinimal
-          ? `将暂停并隐藏其他功能模块${installedOptionalModuleCount > 0 ? `（现有 ${installedOptionalModuleCount} 个模块配置会完整保留）` : ""}。多开、Mod 管理和正在运行的游戏不受影响。`
+          ? `重启后不创建扩展运行实例${installedOptionalModuleCount > 0 ? `，现有 ${installedOptionalModuleCount} 个模块配置会完整保留` : ""}。多开与 Mod 管理仍可使用。`
           : `将恢复完整界面${installedOptionalModuleCount > 0 ? `，并按原设置恢复 ${installedOptionalModuleCount} 个已安装模块` : ""}。单个模块如启动失败，不会影响多开与 Mod 管理。`}</p>
-        <p className="text-xs text-text-muted">切换完成后仍可在本页改回另一种模式。</p>
-        {switchingToMinimal && (
-          <p className="text-xs text-text-muted">会等待附加任务与悬浮窗停止后再完成切换；停止失败会保留原模式。已取消的自动跟房任务不会自动重跑。</p>
-        )}
+        <p className="text-xs text-text-muted">只重启 D2RHub，不关闭正在运行的游戏。请先完成或取消启动、导入与 Mod 加工等任务。</p>
+        <p className="text-xs text-text-muted">会先停止附加任务并确认新进程就绪，再保存模式。准备失败会保留原模式；已取消的自动跟房任务不会自动重跑。</p>
       </div>
     </Modal>
     </>

@@ -67,7 +67,7 @@ type View =
   | { type: "main"; };
 
 function App() {
-  const { config, initialLoading, saving: configSaving, error: configError, patch } = useGlobalConfig();
+  const { config, initialLoading, saving: configSaving, restarting, error: configError, patch } = useGlobalConfig();
   const profileDecisionCurrent = isFeatureProfileDecisionCurrent(config);
   const applicationDisclosure = useApplicationDisclosure(
     !initialLoading && config !== null,
@@ -102,8 +102,8 @@ function App() {
     || applicationDisclosure.checking
     || applicationDisclosure.required;
   const profileDecisionPending = !!config && !profileDecisionCurrent;
-  const startupServicesBlocked = disclosureBlockingStartup || profileDecisionPending;
-  const optionalFeaturesAvailable = optionalFeaturesAreAvailable(config);
+  const startupServicesBlocked = disclosureBlockingStartup || profileDecisionPending || restarting;
+  const optionalFeaturesAvailable = !restarting && optionalFeaturesAreAvailable(config);
 
   const handleKillAllD2R = async () => {
     setKilling(true);
@@ -123,7 +123,7 @@ function App() {
   const launchGroupDraft = launchGroups.draft;
   const launchGroupPendingDelete = launchGroups.pendingDelete;
   const modCapsules = useModCapsulePool({
-    active: view.type === "main" && !disclosureBlockingStartup,
+    active: view.type === "main" && !startupServicesBlocked && optionalFeaturesAvailable,
     onAssigned: loadAccounts,
   });
   const openModManager = (action?: "add", edition?: string | null) => {
@@ -322,6 +322,20 @@ function App() {
     </AppShell>
   );
 
+  if (restarting) return (
+    <AppShell>
+      <div className="flex-1 flex items-center justify-center" role="status" aria-live="polite">
+        <div className="flex flex-col items-center gap-4 text-center">
+          <div className="w-10 h-10 rounded-full border-2 border-accent border-t-transparent animate-spin" />
+          <p className="text-md text-text-primary">{config?.app_language === "en-US" ? "Restarting D2RHub…" : "正在重新启动 D2RHub…"}</p>
+          <p className="text-sm text-text-muted">{config?.app_language === "en-US"
+            ? "Your mode is saved. Running games will stay open."
+            : "新模式已保存，正在运行的游戏会保持打开。"}</p>
+        </div>
+      </div>
+    </AppShell>
+  );
+
   // ── loading ──
   if (view.type === "loading" || applicationDisclosure.checking) return (
     <AppShell>
@@ -495,6 +509,9 @@ function App() {
                     schemeMember={schemeMember}
                     onSchemeMemberChange={launchGroups.updateMember}
                     modCapsulePool={modCapsules.pool}
+                    modCapsuleLoading={modCapsules.loading}
+                    modCapsuleError={modCapsules.error}
+                    onRequestModCapsules={modCapsules.refresh}
                     modCapsuleAssigningAccountId={modCapsules.assigningAccountId}
                     onAssignModCapsule={modCapsules.assign}
                     onOpenModManager={openModManager}

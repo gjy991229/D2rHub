@@ -1053,7 +1053,8 @@ fn reap_stats_api_worker(worker: std::thread::JoinHandle<()>, reason: &'static s
 pub(crate) fn stop_stats_api() {
     STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-    let runtime = stats_api_runtime()
+    let Some(runtime_slot) = STATS_API_RUNTIME.get() else { return; };
+    let runtime = runtime_slot
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .take();

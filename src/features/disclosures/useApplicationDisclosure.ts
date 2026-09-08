@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { invokeCommand } from "../../platform/tauri";
+import { useAccounts } from "../../store/accounts";
 import {
   acceptApplicationDisclosure,
   hasAcceptedApplicationDisclosure,
@@ -51,6 +52,7 @@ export function useApplicationDisclosure(
       setChecking(true);
       try {
         await invokeCommand<boolean>("activate_application_runtime");
+        await useAccounts.getState().loadAccounts();
         if (!cancelled) setRequired(false);
       } catch (error) {
         console.error("Failed to activate application runtime:", error);
@@ -71,6 +73,7 @@ export function useApplicationDisclosure(
     try {
       if (runtimeReady) {
         await invokeCommand<boolean>("activate_application_runtime");
+        await useAccounts.getState().loadAccounts();
       }
       if (version === "unknown") setAcceptedInSession(true);
       else acceptApplicationDisclosure(version);

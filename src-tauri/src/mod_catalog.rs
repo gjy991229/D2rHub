@@ -26,6 +26,30 @@ const MODULE_ID: &str = "mod-catalog";
 const SCHEMA_VERSION: u32 = 1;
 const MAX_ARGUMENT_LENGTH: usize = 2_048;
 static CATALOG_LOCK: Mutex<()> = Mutex::new(());
+static RESTART_RESERVED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+struct CatalogRestartReservation;
+
+impl Drop for CatalogRestartReservation {
+    fn drop(&mut self) { RESTART_RESERVED.store(false, std::sync::atomic::Ordering::Release); }
+}
+
+fn lock_catalog() -> Result<std::sync::MutexGuard<'static, ()>, String> {
+    let guard = CATALOG_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    if RESTART_RESERVED.load(std::sync::atomic::Ordering::Acquire) {
+        return Err("模式切换准备中，请稍候".to_string());
+    }
+    Ok(guard)
+}
+
+pub(crate) fn freeze_for_restart() -> Result<impl Sized, String> {
+    let _guard = CATALOG_LOCK.try_lock()
+        .map_err(|_| "Mod 扫描或写入进行中，请完成后再切换模式".to_string())?;
+    if RESTART_RESERVED.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return Err("模式切换已经开始".to_string());
+    }
+    Ok(CatalogRestartReservation)
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -421,12 +445,22 @@ fn load_payload_with_recovery(
     config: &GlobalConfig,
     scanned: &[ScannedMod],
 ) -> Result<(u64, ModCatalogPayload), String> {
-    let (generation, mut payload) = load_payload(state, config, scanned)?;
+    let (generation, payload) = load_payload(state, config, scanned)?;
+    recover_argument_update(state, app, config, generation, payload)
+}
+
+fn recover_argument_update(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+    config: &GlobalConfig,
+    generation: u64,
+    mut payload: ModCatalogPayload,
+) -> Result<(u64, ModCatalogPayload), String> {
     let Some(pending) = payload.pending_argument_update.clone() else {
         return Ok((generation, payload));
     };
 
-    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire();
+    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire().map_err(|error| error.to_string())?;
     let _account_leases = state
         .multi_instance()
         .account_leases()
@@ -450,6 +484,28 @@ fn load_payload_with_recovery(
         &format!("已回滚上次中断的 Mod 目录编辑事务: {}", pending.capsule_id),
     );
     Ok(saved)
+}
+
+/// Required core recovery, deliberately independent of installation scanning
+/// and legacy catalog initialization. A missing sidecar stays missing.
+pub(crate) fn recover_before_launch(state: &SharedState, app: &tauri::AppHandle) -> Result<(), String> {
+    if state.core_recovery_complete.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    let _catalog = lock_catalog()?;
+    if state.core_recovery_complete.load(std::sync::atomic::Ordering::Acquire) {
+        return Ok(());
+    }
+    if let Some(envelope) = catalog_store(state)?.load::<ModCatalogPayload>()
+        .map_err(|error| error.to_string())?
+    {
+        if envelope.payload.pending_argument_update.is_some() {
+            let config = state.configuration().snapshot().ok_or("全局配置尚未加载")?;
+            recover_argument_update(state, app, &config, envelope.generation, envelope.payload)?;
+        }
+    }
+    state.core_recovery_complete.store(true, std::sync::atomic::Ordering::Release);
+    Ok(())
 }
 
 fn capsule_feature_metadata(
@@ -640,17 +696,6 @@ fn scan_pool_locked(state: &SharedState, app: &tauri::AppHandle) -> Result<ModCa
     Ok(build_pool(&config, generation, &payload, &scanned))
 }
 
-pub(crate) fn refresh_on_startup(state: SharedState, app: tauri::AppHandle) {
-    std::thread::spawn(move || {
-        let _catalog = CATALOG_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
-        if let Err(error) = scan_pool_locked(&state, &app) {
-            crate::logger::log_msg("WARN", "ModCatalog", &format!("启动扫描失败：{error}"));
-        }
-    });
-}
-
 #[tauri::command]
 pub async fn get_mod_capsule_pool(
     app: tauri::AppHandle,
@@ -658,9 +703,7 @@ pub async fn get_mod_capsule_pool(
 ) -> Result<ModCapsulePool, String> {
     let shared = state.inner().clone();
     tokio::task::spawn_blocking(move || {
-        let _catalog = CATALOG_LOCK
-            .lock()
-            .unwrap_or_else(|error| error.into_inner());
+        let _catalog = lock_catalog()?;
         scan_pool_locked(&shared, &app)
     })
     .await
@@ -721,9 +764,7 @@ pub fn set_mod_room_toolbar_visible(
     capsule_id: String,
     visible: bool,
 ) -> Result<ModCapsulePool, String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let config = state
         .configuration()
         .snapshot()
@@ -760,9 +801,7 @@ pub fn set_mod_auto_exit_on_death_enabled(
     capsule_id: String,
     enabled: bool,
 ) -> Result<ModCapsulePool, String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let config = state
         .configuration()
         .snapshot()
@@ -808,9 +847,7 @@ pub fn add_mod_capsule(
     edition: String,
     launch_arguments: String,
 ) -> Result<ModCapsulePool, String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let edition = normalize_edition(&edition)?;
     let launch_arguments = validate_arguments(&launch_arguments)?;
     let config = state
@@ -1066,9 +1103,7 @@ pub fn update_mod_capsule(
     capsule_id: String,
     launch_arguments: String,
 ) -> Result<ModCapsulePool, String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let launch_arguments = validate_arguments(&launch_arguments)?;
     let config = state
         .configuration()
@@ -1119,7 +1154,7 @@ pub fn update_mod_capsule(
             .ok_or_else(|| "自定义 Mod 参数已不存在".to_string())?;
         entry.launch_arguments = launch_arguments.clone();
     }
-    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire();
+    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire().map_err(|error| error.to_string())?;
     let account_changes = plan_catalog_argument_replacements(
         &config,
         current.launch_arguments.trim(),
@@ -1150,6 +1185,7 @@ pub fn update_mod_capsule(
     };
     let mut prepared_payload = payload.clone();
     prepared_payload.pending_argument_update = Some(pending);
+    state.core_recovery_complete.store(false, std::sync::atomic::Ordering::Release);
     let (prepared_generation, _) = save_payload(state.inner(), generation, prepared_payload)?;
 
     if let Err(error) = apply_account_mod_replacements(&config, &account_changes) {
@@ -1270,9 +1306,7 @@ pub fn delete_mod_capsule(
     state: tauri::State<'_, SharedState>,
     capsule_id: String,
 ) -> Result<ModCapsulePool, String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let config = state
         .configuration()
         .snapshot()
@@ -1326,9 +1360,7 @@ pub fn assign_mod_capsule_to_account(
     account_id: String,
     capsule_id: Option<String>,
 ) -> Result<(), String> {
-    let _catalog = CATALOG_LOCK
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let _catalog = lock_catalog()?;
     let config = state
         .configuration()
         .snapshot()

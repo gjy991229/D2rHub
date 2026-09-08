@@ -24,7 +24,7 @@ impl<'a> AccountNamingService<'a> {
 
     pub fn rename(&self, account_id: &str, new_name: &str) -> Result<AccountMeta, AppError> {
         let new_name = validate_account_display_name(new_name)?;
-        let _catalog_lease = self.catalog_leases.acquire();
+        let _catalog_lease = self.catalog_leases.acquire()?;
         let _account_lease = self.account_leases.try_acquire(account_id)?;
         self.accounts
             .ensure_display_name_available(&new_name, Some(account_id))?;

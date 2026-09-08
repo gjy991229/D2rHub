@@ -11,6 +11,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
 
+mod runtime;
+
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
 static KEYBOARD_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static MOUSE_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
@@ -39,7 +41,6 @@ static STATS_OVERLAY_GESTURE_START_BOTTOM: AtomicI32 = AtomicI32::new(0);
 static STATS_OVERLAY_MIN_WIDTH: AtomicU32 = AtomicU32::new(240);
 static STATS_OVERLAY_MIN_HEIGHT: AtomicU32 = AtomicU32::new(48);
 static STATS_OVERLAY_RESIZE_INSET: AtomicI32 = AtomicI32::new(6);
-static INPUT_EVENT_TX: OnceLock<std::sync::mpsc::Sender<&'static str>> = OnceLock::new();
 static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
     OnceLock::new();
 static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
@@ -106,13 +107,16 @@ pub(crate) fn replace_core_shortcut_reservations(
 pub(crate) fn replace_core_shortcut_routes(
     shortcuts: impl IntoIterator<Item = (String, CoreShortcutAction)>,
 ) {
-    capability_shortcuts().write().core = shortcuts
+    let routes: HashMap<_, _> = shortcuts
         .into_iter()
         .filter_map(|(shortcut, action)| {
             let shortcut = shortcut.trim().to_ascii_lowercase();
             (!shortcut.is_empty()).then_some((shortcut, action))
         })
         .collect();
+    runtime::set_core_input_needed(!routes.is_empty());
+    capability_shortcuts().write().core = routes;
+    runtime::request_refresh();
 }
 
 /// Rejects a core multi-instance shortcut that would be shadowed by an
@@ -322,6 +326,9 @@ fn install_capability_shortcuts_in_transaction(
     }
     let generation = CAPABILITY_SHORTCUT_GENERATION.fetch_add(1, Ordering::Relaxed);
     registry.owners.insert(owner_id, (generation, normalized));
+    runtime::set_capability_input_needed(true);
+    drop(registry);
+    runtime::request_refresh();
     Ok(CapabilityShortcutRegistration {
         owner_id,
         generation,
@@ -364,15 +371,20 @@ impl Drop for CapabilityShortcutRegistration {
         {
             registry.owners.remove(self.owner_id);
         }
+        runtime::set_capability_input_needed(!registry.owners.is_empty());
+        drop(registry);
+        runtime::request_refresh();
     }
 }
 
 pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
+    runtime::request_refresh();
 }
 
 pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
+    runtime::request_refresh();
 }
 
 #[tauri::command]
@@ -414,6 +426,7 @@ pub(crate) fn set_stats_overlay_mini_input_region_state(
         STATS_OVERLAY_MINI_HWND.store(std::ptr::null_mut(), Ordering::Release);
     }
     STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
+    runtime::request_refresh();
 }
 
 #[tauri::command]
@@ -819,10 +832,7 @@ unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) -> bool
     }
 
     STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-    if let Some(tx) = INPUT_EVENT_TX.get() {
-        let _ = tx.send("StatsOverlayMiniToggle");
-    }
-    true
+    runtime::emit_input_event("StatsOverlayMiniToggle")
 }
 
 fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
@@ -834,12 +844,13 @@ fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
     if STATS_OVERLAY_POINTER_INSIDE.swap(inside, Ordering::Relaxed) == inside {
         return;
     }
-    if let Some(tx) = INPUT_EVENT_TX.get() {
-        let _ = tx.send(if inside {
-            "StatsOverlayMiniHoverEnter"
-        } else {
-            "StatsOverlayMiniHoverLeave"
-        });
+    if !runtime::emit_input_event(if inside {
+        "StatsOverlayMiniHoverEnter"
+    } else {
+        "StatsOverlayMiniHoverLeave"
+    }) {
+        // Retry the transition on the next move if the queue was unavailable.
+        STATS_OVERLAY_POINTER_INSIDE.store(!inside, Ordering::Relaxed);
     }
 }
 
@@ -1091,7 +1102,9 @@ unsafe extern "system" fn keyboard_hook_proc(
     }
     if code >= 0 && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        if active_handled_shortcut_keys().lock().remove(&kbd.vk_code) {
+        let handled = active_handled_shortcut_keys().lock().remove(&kbd.vk_code);
+        if handled {
+            if !runtime::keyboard_accepts_shortcuts() { runtime::request_refresh(); }
             // The matching key-down was a global shortcut and was swallowed.
             // Swallow its key-up as well so D2R never receives an orphan event.
             return 1;
@@ -1099,25 +1112,25 @@ unsafe extern "system" fn keyboard_hook_proc(
     } else if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
         // ── 快捷键检测 ──
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        if active_handled_shortcut_keys().lock().contains(&kbd.vk_code) {
+        let mut handled_keys = active_handled_shortcut_keys().lock();
+        if handled_keys.contains(&kbd.vk_code) {
             // Windows emits repeated key-down messages while a key is held.
             // The first event already dispatched this shortcut; consume repeats
             // without enqueueing duplicate room workflows.
             return 1;
         }
         // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
-        if (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
-            active_handled_shortcut_keys().lock().insert(kbd.vk_code);
+        if runtime::keyboard_accepts_shortcuts() && (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
+            handled_keys.insert(kbd.vk_code);
             // 快捷键已处理，吞掉该按键，不传递给其他应用
             return 1;
         }
+        drop(handled_keys);
 
         if BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
             && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
         {
-            if let Some(tx) = INPUT_EVENT_TX.get() {
-                let _ = tx.send("Keyboard");
-            }
+            runtime::emit_input_event("Keyboard");
         }
     }
     CallNextHookEx(KEYBOARD_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
@@ -1175,76 +1188,17 @@ unsafe extern "system" fn mouse_hook_proc(
         && BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
         && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
     {
-        if let Some(tx) = INPUT_EVENT_TX.get() {
-            let event_type = if wparam == WM_LBUTTONDOWN {
-                "MouseLeft"
-            } else {
-                "MouseRight"
-            };
-            let _ = tx.send(event_type);
-        }
+        runtime::emit_input_event(if wparam == WM_LBUTTONDOWN { "MouseLeft" } else { "MouseRight" });
     }
     CallNextHookEx(MOUSE_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
 }
 
 pub fn start_input_listener(app_handle: AppHandle) {
     if let Ok(mut guard) = APP_HANDLE.lock() {
-        *guard = Some(app_handle.clone());
+        *guard = Some(app_handle);
+        drop(guard);
+        runtime::initialize();
     }
-
-    let (tx, rx) = std::sync::mpsc::channel::<&'static str>();
-    let _ = INPUT_EVENT_TX.set(tx);
-    std::thread::spawn(move || {
-        while let Ok(event_type) = rx.recv() {
-            let _ = app_handle.emit("global-input-event", event_type);
-        }
-    });
-
-    std::thread::spawn(|| {
-        unsafe {
-            let k_hook = SetWindowsHookExW(
-                WH_KEYBOARD_LL,
-                Some(keyboard_hook_proc),
-                std::ptr::null_mut(),
-                0,
-            );
-            KEYBOARD_HOOK.store(k_hook, Ordering::SeqCst);
-
-            let m_hook =
-                SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), std::ptr::null_mut(), 0);
-            MOUSE_HOOK.store(m_hook, Ordering::SeqCst);
-
-            if KEYBOARD_HOOK.load(Ordering::SeqCst).is_null()
-                || MOUSE_HOOK.load(Ordering::SeqCst).is_null()
-            {
-                crate::logger::log_msg("ERROR", "System", "Failed to install global input hooks.");
-                return;
-            }
-
-            crate::logger::log_msg(
-                "INFO",
-                "System",
-                "Global input hooks installed successfully.",
-            );
-
-            // Standard Win32 Message Loop to keep the hooks alive
-            // HookGuard 确保即使线程 panic，钩子也会被释放
-            let _k_guard = HookGuard::new(k_hook, &KEYBOARD_HOOK);
-            let _m_guard = HookGuard::new(m_hook, &MOUSE_HOOK);
-
-            let mut msg = std::mem::zeroed::<MSG>();
-            while GetMessageW(
-                &mut msg as *mut MSG as *mut std::ffi::c_void,
-                std::ptr::null_mut(),
-                0,
-                0,
-            ) > 0
-            {
-                TranslateMessage(&msg as *const MSG as *const std::ffi::c_void);
-                DispatchMessageW(&msg as *const MSG as *const std::ffi::c_void);
-            }
-        }
-    });
 }
 
 #[tauri::command]
@@ -1254,6 +1208,7 @@ pub fn set_shortcut_capture_active(active: bool) {
 
 pub(crate) fn set_optional_shortcuts_allowed(allowed: bool) {
     OPTIONAL_SHORTCUTS_ALLOWED.store(allowed, Ordering::Release);
+    runtime::request_refresh();
 }
 
 pub(crate) fn cancel_shortcut_capture() {

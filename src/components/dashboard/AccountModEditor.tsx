@@ -17,6 +17,9 @@ import { isMinimalMode } from "../../features/profile/featureProfile";
 interface AccountModEditorProps {
   account: AccountMeta;
   modCapsulePool?: ModCapsulePool | null;
+  poolLoading?: boolean;
+  poolError?: string | null;
+  onRequestPool?: () => Promise<unknown>;
   assigning?: boolean;
   isSelectionMode?: boolean;
   schemeMember?: LaunchGroupMember;
@@ -33,6 +36,9 @@ function legacyLabel(argumentsValue: string, isEnglish: boolean): string {
 export function AccountModEditor({
   account,
   modCapsulePool = null,
+  poolLoading = false,
+  poolError = null,
+  onRequestPool,
   assigning = false,
   isSelectionMode,
   schemeMember,
@@ -44,6 +50,9 @@ export function AccountModEditor({
   const isEnglish = language === "en-US";
   const minimalMode = useGlobalConfig((state) => isMinimalMode(state.config));
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (open && !modCapsulePool) void onRequestPool?.();
+  }, [open, modCapsulePool, onRequestPool]);
   const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -223,7 +232,13 @@ export function AccountModEditor({
               );
             })}
           </div>
-          {capsules.length === 0 && <p className="account-mod-picker-empty">
+          {poolLoading && <p className="account-mod-picker-empty" role="status">
+            {isEnglish ? "Loading Mods…" : "正在读取 Mod…"}
+          </p>}
+          {poolError && <p className="account-mod-picker-empty" role="alert">
+            {poolError} <button type="button" onClick={() => void onRequestPool?.()}>{isEnglish ? "Retry" : "重试"}</button>
+          </p>}
+          {!poolLoading && !poolError && modCapsulePool && capsules.length === 0 && <p className="account-mod-picker-empty">
             {isEnglish ? "No Mods are available for this edition. Scan or add one in Mod Management." : "当前版本还没有可用 Mod，请前往 Mod 管理扫描或新增。"}
           </p>}
         </div>,

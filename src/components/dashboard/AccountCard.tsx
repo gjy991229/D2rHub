@@ -55,6 +55,9 @@ export interface GridItemProps {
   schemeMember?: LaunchGroupMember;
   onSchemeMemberChange?: (id: string, patch: Partial<LaunchGroupMember>) => void;
   modCapsulePool?: ModCapsulePool | null;
+  modCapsuleLoading?: boolean;
+  modCapsuleError?: string | null;
+  onRequestModCapsules?: () => Promise<unknown>;
   modCapsuleAssigningAccountId?: string | null;
   onAssignModCapsule?: (accountId: string, capsuleId: string | null) => Promise<unknown>;
   onOpenModManager?: (action?: "add", edition?: string | null) => void;
@@ -161,6 +164,7 @@ export function AccountGridItem({
   account, onRename, onDelete, onConfigure, onLaunch, onBattleNetOnly, progress,
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
+  modCapsuleLoading, modCapsuleError, onRequestModCapsules,
   getPositionSchemeUsage, onUpdateToken, config,
 }: GridItemProps) {
   const display = account.display_name || account.id;
@@ -441,6 +445,9 @@ export function AccountGridItem({
                   schemeMember={schemeMember}
                   onSchemeMemberChange={onSchemeMemberChange}
                   modCapsulePool={modCapsulePool}
+                  poolLoading={modCapsuleLoading}
+                  poolError={modCapsuleError}
+                  onRequestPool={onRequestModCapsules}
                   assigning={modCapsuleAssigningAccountId === account.id}
                   onAssign={onAssignModCapsule}
                   onOpenModManager={onOpenModManager}

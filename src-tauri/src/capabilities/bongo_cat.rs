@@ -66,9 +66,9 @@ struct BongoCatWorker {
 }
 
 impl BongoCatCapability {
-    pub(crate) fn install(app: &tauri::App) -> Result<Arc<Self>, CapabilityFailure> {
+    pub(crate) fn install(app: &tauri::AppHandle) -> Result<Arc<Self>, CapabilityFailure> {
         Ok(Arc::new(Self {
-            app: app.handle().clone(),
+            app: app.clone(),
             window: Mutex::new(None),
             worker: Mutex::new(None),
         }))

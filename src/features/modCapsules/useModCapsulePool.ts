@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeCommand } from "../../platform/tauri";
 import type { ModCapsulePool } from "../../store/types";
 
@@ -12,20 +12,27 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   const [loading, setLoading] = useState(false);
   const [assigningAccountId, setAssigningAccountId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const refreshInFlight = useRef<Promise<ModCapsulePool | null> | null>(null);
 
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const next = await invokeCommand<ModCapsulePool>("get_mod_capsule_pool");
-      setPool(next);
-      return next;
-    } catch (reason) {
-      setError(String(reason));
-      return null;
-    } finally {
-      setLoading(false);
-    }
+  const refresh = useCallback((): Promise<ModCapsulePool | null> => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const next = await invokeCommand<ModCapsulePool>("get_mod_capsule_pool");
+        setPool(next);
+        return next;
+      } catch (reason) {
+        setError(String(reason));
+        return null;
+      } finally {
+        setLoading(false);
+      }
+    })();
+    refreshInFlight.current = request;
+    void request.finally(() => { refreshInFlight.current = null; });
+    return request;
   }, []);
 
   useEffect(() => {

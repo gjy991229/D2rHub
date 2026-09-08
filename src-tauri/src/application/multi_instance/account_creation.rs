@@ -50,7 +50,7 @@ impl<'a> AccountCreationService<'a> {
 
     pub fn create(&self, request: CreateAccountRequest) -> Result<String, AppError> {
         let display_name = validate_account_display_name(&request.display_name)?;
-        let _catalog_lease = self.catalog_leases.acquire();
+        let _catalog_lease = self.catalog_leases.acquire()?;
         self.accounts
             .ensure_display_name_available(&display_name, None)?;
         let account_id = self.accounts.next_account_id();

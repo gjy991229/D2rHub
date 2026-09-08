@@ -28,6 +28,7 @@ interface GlobalConfigState {
   config: GlobalConfig | null;
   initialLoading: boolean;
   saving: boolean;
+  restarting: boolean;
   error: string | null;
 
   load: () => Promise<void>;
@@ -45,6 +46,7 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
   config: null,
   initialLoading: true,
   saving: false,
+  restarting: false,
   error: null,
 
   load: async () => {
@@ -122,11 +124,15 @@ export const useGlobalConfig = create<GlobalConfigState>((set, get) => ({
     return enqueueMutation(async () => {
       try {
         const snapshotBeforeRequest = get().config;
-        const saved = await invokeCommand<GlobalConfig>("switch_feature_profile", { profile });
-        if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
-          set({ config: saved });
+        const result = await invokeCommand<{ config: GlobalConfig; restarting: boolean }>("switch_feature_profile", { profile });
+        if (result.restarting) {
+          // The next mode belongs to the replacement process. Keep the old
+          // configuration until exit so no optional hooks mount prematurely.
+          set({ restarting: true });
+        } else if (shouldApplyConfigCommandResponse(snapshotBeforeRequest, get().config)) {
+          set({ config: result.config });
         }
-        return saved;
+        return result.config;
       } catch (e) {
         set({ error: String(e) });
         throw e;

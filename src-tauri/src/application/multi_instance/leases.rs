@@ -1,12 +1,24 @@
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::AppError;
 
 #[derive(Default)]
 struct AccountLeaseState {
     active: Mutex<HashMap<String, AccountLeaseEntry>>,
+    restart_reserved: AtomicBool,
+}
+
+struct AccountRestartReservation {
+    state: Arc<AccountLeaseState>,
+}
+
+impl Drop for AccountRestartReservation {
+    fn drop(&mut self) {
+        self.state.restart_reserved.store(false, Ordering::Release);
+    }
 }
 
 #[derive(Default)]
@@ -46,11 +58,17 @@ pub struct AccountOperationLeases {
 /// as display-name uniqueness and import/create/delete catalog updates.
 #[derive(Default)]
 pub struct AccountCatalogLeaseManager {
-    state: Mutex<()>,
+    state: Mutex<bool>,
 }
 
 pub(crate) struct AccountCatalogLease<'a> {
-    _guard: MutexGuard<'a, ()>,
+    _guard: MutexGuard<'a, bool>,
+}
+
+struct CatalogRestartReservation<'a>(&'a AccountCatalogLeaseManager);
+
+impl Drop for CatalogRestartReservation<'_> {
+    fn drop(&mut self) { *self.0.state.lock() = false; }
 }
 
 fn account_key(account_id: &str) -> String {
@@ -58,12 +76,27 @@ fn account_key(account_id: &str) -> String {
 }
 
 impl AccountLeaseManager {
+    /// Holds admission closed until restart; existing operations must finish
+    /// first. Dropping the guard on preparation failure reopens admission.
+    pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
+        let active = self.state.active.try_lock()
+            .ok_or_else(|| "账号操作进行中，请完成后再切换模式".to_string())?;
+        if !active.is_empty() {
+            return Err("账号启动或保存进行中，请完成后再切换模式".to_string());
+        }
+        self.state.restart_reserved.store(true, Ordering::Release);
+        Ok(AccountRestartReservation { state: Arc::clone(&self.state) })
+    }
+
     pub fn try_acquire(&self, account_id: &str) -> Result<AccountOperationLease, AppError> {
         let operation_key = account_key(account_id);
         if operation_key.is_empty() {
             return Err(AppError::Unknown("账号 ID 不能为空".to_string()));
         }
         let mut active = self.state.active.lock();
+        if self.state.restart_reserved.load(Ordering::Acquire) {
+            return Err(AppError::Unknown("模式切换准备中，请稍候".to_string()));
+        }
         if active
             .get(&operation_key)
             .is_some_and(|entry| entry.writer || entry.readers > 0)
@@ -95,6 +128,9 @@ impl AccountLeaseManager {
             return Err(AppError::Unknown("账号 ID 不能为空".to_string()));
         }
         let mut active = self.state.active.lock();
+        if self.state.restart_reserved.load(Ordering::Acquire) {
+            return Err(AppError::Unknown("模式切换准备中，请稍候".to_string()));
+        }
         let entry = active.entry(operation_key.clone()).or_default();
         if entry.writer {
             return Err(AppError::Unknown(format!(
@@ -131,6 +167,9 @@ impl AccountLeaseManager {
         // Check and reserve the whole set while holding one lock. No observer
         // can see a partially acquired workflow lease set.
         let mut active = self.state.active.lock();
+        if self.state.restart_reserved.load(Ordering::Acquire) {
+            return Err(AppError::Unknown("模式切换准备中，请稍候".to_string()));
+        }
         if let Some(account_id) = ids.iter().find(|account_id| {
             active
                 .get(*account_id)
@@ -177,16 +216,23 @@ impl AccountLeaseManager {
 }
 
 impl AccountCatalogLeaseManager {
-    pub fn acquire(&self) -> AccountCatalogLease<'_> {
-        AccountCatalogLease {
-            _guard: self.state.lock(),
-        }
+    pub fn acquire(&self) -> Result<AccountCatalogLease<'_>, AppError> {
+        let guard = self.state.lock();
+        if *guard { return Err(AppError::Unknown("模式切换准备中，请稍候".to_string())); }
+        Ok(AccountCatalogLease { _guard: guard })
     }
 
-    #[cfg(test)]
+    pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
+        let mut guard = self.state.try_lock().ok_or("账号目录更新中，请完成后再切换模式")?;
+        if *guard { return Err("模式切换已经开始".to_string()); }
+        *guard = true;
+        Ok(CatalogRestartReservation(self))
+    }
+
     pub fn try_acquire(&self) -> Option<AccountCatalogLease<'_>> {
         self.state
             .try_lock()
+            .filter(|guard| !**guard)
             .map(|guard| AccountCatalogLease { _guard: guard })
     }
 }

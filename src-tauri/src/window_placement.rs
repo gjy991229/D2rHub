@@ -556,6 +556,7 @@ fn restore_impl(
     let _io_guard = state.window_placement_io.lock();
     let path = placement_path(&state.app_data_dir, label);
     let saved = load_placement(&path);
+    let writes_allowed = !state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire);
 
     if let Some(saved) = saved {
         let current = window_rect(&window)?;
@@ -570,7 +571,7 @@ fn restore_impl(
             fallback_index,
         );
         let moved = apply_position(&window, resolved.rect)?;
-        if resolved.used_fallback {
+        if resolved.used_fallback && writes_allowed {
             let mut updated = saved;
             updated.fallback_rect = Some(resolved.rect);
             save_placement(&path, &updated)?;
@@ -613,7 +614,7 @@ fn restore_impl(
         )
     };
     let moved = apply_position(&window, rect)?;
-    if legacy_geometry.is_some() || persist_default {
+    if writes_allowed && (legacy_geometry.is_some() || persist_default) {
         let placement = capture_preferred(rect, &monitors[monitor_index], None);
         save_placement(&path, &placement)?;
     }
@@ -658,6 +659,7 @@ fn save_current_impl(
 
     let state = state_from_app(app)?;
     let _io_guard = state.window_placement_io.lock();
+    if state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) { return Ok(false); }
     let path = placement_path(&state.app_data_dir, label);
     let existing = load_placement(&path);
     let same_preferred_monitor = existing
@@ -701,10 +703,12 @@ fn force_to_target_impl(
     let state = state_from_app(app)?;
     let _io_guard = state.window_placement_io.lock();
     let path = placement_path(&state.app_data_dir, label);
-    save_placement(
-        &path,
-        &capture_preferred(rect, &monitors[monitor_index], None),
-    )?;
+    if !state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) {
+        save_placement(
+            &path,
+            &capture_preferred(rect, &monitors[monitor_index], None),
+        )?;
+    }
     Ok(PlacementOutcome {
         label: label.to_string(),
         moved,
@@ -857,6 +861,18 @@ pub fn ensure_main_window_visible(app: &AppHandle) {
     }
 }
 
+pub(crate) fn install_main_window_lifecycle(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window("main") {
+        let app = app.clone();
+        window.on_window_event(move |event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                hide_main_window_to_tray(&app);
+            }
+        });
+    }
+}
+
 pub fn show_main_window_safely(app: &AppHandle) {
     ensure_main_window_visible(app);
     let Some(window) = app.get_webview_window("main") else {
@@ -873,50 +889,7 @@ pub fn hide_main_window_to_tray(app: &AppHandle) {
         let _ = window.hide();
     }
 
-    let config = app
-        .try_state::<SharedState>()
-        .filter(|state| state.optional_runtime_ready())
-        .and_then(|state| state.configuration().snapshot());
-    let Some(config) = config else {
-        return;
-    };
-    let mut labels = Vec::new();
-    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-        && config.enable_tz_overlay
-    {
-        labels.push("overlay");
-    }
-    if config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-        && config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
-        && config.enable_stats_overlay
-    {
-        labels.push("stats-overlay");
-    }
-    if labels.is_empty() {
-        return;
-    }
-
-    let app = app.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name("show-overlays-after-main-hide".to_string())
-        .spawn(move || {
-            for label in labels {
-                if let Err(error) = set_auxiliary_window_visible_for_app(&app, label, true, None) {
-                    crate::logger::log_msg(
-                        "WARN",
-                        "WindowPlacement",
-                        &format!("主面板隐藏后显示悬浮窗 {label} 失败: {error}"),
-                    );
-                }
-            }
-        })
-    {
-        crate::logger::log_msg(
-            "WARN",
-            "WindowPlacement",
-            &format!("无法启动主面板隐藏后的悬浮窗恢复任务: {error}"),
-        );
-    }
+    crate::capabilities::restore_after_main_hidden(app);
 }
 
 // These commands query or mutate native windows and may need to marshal work

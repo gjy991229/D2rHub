@@ -12,6 +12,7 @@ mod input_listener;
 mod launch_context;
 pub mod logger;
 mod mod_catalog;
+mod runtime_restart;
 mod rune_audio;
 mod rune_data;
 mod state;
@@ -42,8 +43,12 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
     if !config.feature_profile_decided() {
         return Err("尚未选择 D2RHub 使用模式，拒绝激活运行服务".to_string());
     }
+    mod_catalog::recover_before_launch(state.inner(), app)?;
     // Internal window creation uses the same activation gate as commands.
     state.runtime_activated.store(true, Ordering::Release);
+    if config.optional_features_runtime_allowed() {
+        capabilities::install(app);
+    }
     if let Err(error) = capabilities::start(app) {
         state.runtime_activated.store(false, Ordering::Release);
         input_listener::set_optional_shortcuts_allowed(false);
@@ -55,7 +60,6 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
     // and can leave one thread waiting for the Tauri event loop while another
     // path is trying to acquire the same lifecycle state.
     input_listener::start_input_listener(app.clone());
-    mod_catalog::refresh_on_startup(state.inner().clone(), app.clone());
     tray::schedule_menu_update(app);
     logger::log_msg("INFO", "System", "用户确认披露后，应用运行服务已激活");
     Ok(true)
@@ -63,6 +67,12 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A replacement process must wait for its predecessor before acquiring
+    // the single-instance mutex or touching configuration and runtime state.
+    if let Err(error) = runtime_restart::wait_for_predecessor() {
+        eprintln!("{error}");
+        return;
+    }
     // ── 单实例检查：不允许同时运行多个 D2RHub ──
     #[cfg(target_os = "windows")]
     {
@@ -125,6 +135,7 @@ pub fn run() {
     }
 
     let app_state = Arc::new(AppState::new());
+    runtime_restart::restore_instances(&app_state);
 
     // Load global config through the application transaction runtime so startup,
     // commands and background consumers all observe the same committed snapshot.
@@ -175,7 +186,7 @@ pub fn run() {
             }
             window_placement::ensure_main_window_visible(app.handle());
 
-            capabilities::install(app);
+            window_placement::install_main_window_lifecycle(app.handle());
             commands::task::install_observer(app.handle(), &app_state);
 
             // 初始化托盘

@@ -824,7 +824,7 @@ impl RoomAutomationCommandState {
 }
 
 impl RoomAutomationManager {
-    pub(crate) fn install(app: &tauri::App) -> Result<Arc<Self>, CapabilityFailure> {
+    pub(crate) fn install(app: &tauri::AppHandle) -> Result<Arc<Self>, CapabilityFailure> {
         #[cfg(not(target_os = "windows"))]
         return Err(CapabilityFailure::new(
             "platform-unsupported",
@@ -851,7 +851,9 @@ impl RoomAutomationManager {
                 .get("room_rotation")
                 .cloned();
             let mut snapshot = controller
-                .load_or_initialize(legacy, &shortcuts)
+                // Cross-module key conflicts must not make the settings
+                // manager inaccessible. Activation checks the current keys.
+                .load_or_initialize(legacy, &[])
                 .map_err(config_failure)?;
             crate::input_listener::with_shortcut_routing_transaction(|| {
                 crate::input_listener::replace_saved_capability_shortcuts(
@@ -875,12 +877,15 @@ impl RoomAutomationManager {
             }
 
             let mut validated = snapshot.config.clone();
-            host.canonicalize_and_validate_accounts(&mut validated)
-                .map_err(|error| CapabilityFailure::new("account-config-invalid", error))?;
-            if validated != snapshot.config {
-                snapshot = controller
-                    .save(snapshot.generation, validated, &shortcuts)
-                    .map_err(config_failure)?;
+            match host.canonicalize_and_validate_accounts(&mut validated) {
+                Ok(()) if validated != snapshot.config => {
+                    snapshot = controller.save(snapshot.generation, validated, &shortcuts)
+                        .map_err(config_failure)?;
+                }
+                Ok(()) => {}
+                Err(error) => crate::logger::log_msg("WARN", "RoomAutomation", &format!(
+                    "配置需要修正，保留设置入口；启动时将阻止无效配置：{error}"
+                )),
             }
 
             let chat_binding: Arc<dyn ChatBindingPort> = Arc::new(LazyChatBinding {
@@ -889,7 +894,7 @@ impl RoomAutomationManager {
                 service: Mutex::new(None),
             });
             let bridge: Arc<dyn RuntimeBridge> = Arc::new(TauriRuntimeBridge {
-                app: app.handle().clone(),
+                app: app.clone(),
                 state: state.clone(),
                 unified_task: Mutex::new(None),
             });

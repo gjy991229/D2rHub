@@ -6,11 +6,12 @@ use crate::capabilities::room_automation_runtime::{
 use crate::capabilities::room_chat_binding::ChatF13BindingStatus;
 use crate::state::SharedState;
 use std::sync::Arc;
+use tauri::Manager;
 
-fn manager<'a>(
-    state: &'a tauri::State<'a, RoomAutomationCommandState>,
-) -> Result<&'a Arc<RoomAutomationManager>, String> {
-    state.manager()
+fn manager(app: &tauri::AppHandle) -> Result<Arc<RoomAutomationManager>, String> {
+    app.try_state::<RoomAutomationCommandState>()
+        .ok_or_else(|| "当前模式未加载自动跟房模块".to_string())?
+        .manager().cloned()
 }
 
 fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(), String> {
@@ -24,14 +25,14 @@ fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(),
 
 #[tauri::command]
 pub(crate) fn room_automation_get_config(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
 ) -> Result<RoomAutomationConfigSnapshot, String> {
-    Ok(manager(&state)?.get_config())
+    Ok(manager(&app)?.get_config())
 }
 
 #[tauri::command(async, rename_all = "camelCase")]
 pub(crate) fn room_automation_save_config(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
     expected_generation: u64,
     config: RoomAutomationConfig,
@@ -41,84 +42,84 @@ pub(crate) fn room_automation_save_config(
     if config.enabled {
         require_module_installed(&global)?;
     }
-    manager(&state)?.save_config(expected_generation, config)
+    manager(&app)?.save_config(expected_generation, config)
 }
 
 #[tauri::command]
 pub(crate) fn room_automation_get_status(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
 ) -> Result<WorkflowStatus, String> {
-    Ok(manager(&state)?.get_status())
+    Ok(manager(&app)?.get_status())
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_start_primary(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
     let _profile = global.runtime_activation_lock.try_lock()
         .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
-    manager(&state)?.start_primary()
+    manager(&app)?.start_primary()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_start_followers(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
     let _profile = global.runtime_activation_lock.try_lock()
         .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
-    manager(&state)?.start_followers()
+    manager(&app)?.start_followers()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_retry(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<WorkflowStatus, String> {
     let _profile = global.runtime_activation_lock.try_lock()
         .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
     require_module_installed(&global)?;
-    manager(&state)?.retry()
+    manager(&app)?.retry()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_cancel(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
 ) -> Result<WorkflowStatus, String> {
-    manager(&state)?.cancel()
+    manager(&app)?.cancel()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_get_chat_binding(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
     // Resolving this status can initialize the lazy directory service. Wait for
     // activation or a profile transition instead of surfacing transient contention.
     let _profile = global.runtime_activation_lock.lock();
     require_module_installed(&global)?;
-    manager(&state)?.get_chat_binding()
+    manager(&app)?.get_chat_binding()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_install_chat_binding(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
     let _profile = global.runtime_activation_lock.lock();
     require_module_installed(&global)?;
-    manager(&state)?.install_chat_binding()
+    manager(&app)?.install_chat_binding()
 }
 
 #[tauri::command(async)]
 pub(crate) fn room_automation_restore_chat_binding(
-    state: tauri::State<'_, RoomAutomationCommandState>,
+    app: tauri::AppHandle,
     global: tauri::State<'_, SharedState>,
 ) -> Result<ChatF13BindingStatus, String> {
     let _profile = global.runtime_activation_lock.try_lock()
         .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
-    manager(&state)?.restore_chat_binding()
+    manager(&app)?.restore_chat_binding()
 }

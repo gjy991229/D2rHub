@@ -19,8 +19,8 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
     ? {
         title: "Choose how you use D2RHub",
         description: "This only changes which features are visible and running. Your settings and data are never deleted.",
-        minimal: "Minimal mode",
-        minimalDetail: "Multi-instance launching and Mod management only. Other modules are paused and completely hidden.",
+        minimal: "Pure mode",
+        minimalDetail: "Multi-instance launching and Mod management. Optional runtimes stay unloaded; input services start only when needed.",
         normal: "Normal mode",
         normalDetail: "Keep the current complete experience and resume previously enabled modules.",
         affected: `${installedCount} configured module${installedCount === 1 ? "" : "s"} will be kept for normal mode.`,
@@ -31,8 +31,8 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
     : {
         title: "选择 D2RHub 使用模式",
         description: "模式只改变可见功能和实际运行范围，不会删除任何设置或数据。",
-        minimal: "极简模式",
-        minimalDetail: "仅保留多开与 Mod 管理；其他模块暂停运行并完全隐藏。",
+        minimal: "纯净模式",
+        minimalDetail: "保留多开与 Mod 管理；不创建扩展运行实例，输入服务按需启动。",
         normal: "正常模式",
         normalDetail: "保留当前完整功能，并按原配置恢复已启用模块。",
         affected: `现有 ${installedCount} 个模块配置会为正常模式完整保留。`,

@@ -1,9 +1,8 @@
 use crate::application::capability::{CapabilityDriver, CapabilityFailure, CapabilityHealth};
-use crate::{commands, domain::config::GlobalConfig, window_placement};
+use crate::{domain::config::GlobalConfig, state::SharedState, window_placement};
 use std::sync::Arc;
 use tauri::Manager;
 
-const MAIN_WINDOW_LABEL: &str = "main";
 const TERROR_ZONE_OVERLAY_LABEL: &str = "overlay";
 const STATS_OVERLAY_LABEL: &str = "stats-overlay";
 const PRESERVE_PLACEMENT_MODE: &str = "preserve";
@@ -14,9 +13,9 @@ pub(crate) struct OverlayWindowCapability {
 }
 
 impl OverlayWindowCapability {
-    pub(crate) fn install(app: &tauri::App, label: &'static str) -> Arc<Self> {
+    pub(crate) fn install(app: &tauri::AppHandle, label: &'static str) -> Arc<Self> {
         Arc::new(Self {
-            app: app.handle().clone(),
+            app: app.clone(),
             label,
         })
     }
@@ -146,36 +145,17 @@ impl OverlayVisibility {
     }
 }
 
-pub(crate) fn install(app: &tauri::AppHandle) {
-    let Some(main_window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
-        return;
-    };
-
-    let main_window_for_events = main_window.clone();
-    main_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-            api.prevent_close();
-            crate::input_listener::cancel_shortcut_capture();
-            let _ = main_window_for_events.hide();
-
-            let config =
-                commands::global_config::get_global_config_ext(main_window_for_events.app_handle());
-            let visibility = OverlayVisibility::from_config(config.as_ref());
-
-            if visibility.terror_zone {
-                show_overlay_without_blocking(
-                    main_window_for_events.app_handle().clone(),
-                    TERROR_ZONE_OVERLAY_LABEL,
-                );
-            }
-            if visibility.stats {
-                show_overlay_without_blocking(
-                    main_window_for_events.app_handle().clone(),
-                    STATS_OVERLAY_LABEL,
-                );
-            }
-        }
-    });
+pub(crate) fn restore_after_main_hidden(app: &tauri::AppHandle) {
+    let config = app.try_state::<SharedState>()
+        .filter(|state| state.optional_runtime_ready())
+        .and_then(|state| state.configuration().snapshot());
+    let visibility = OverlayVisibility::from_config(config.as_ref());
+    if visibility.terror_zone {
+        show_overlay_without_blocking(app.clone(), TERROR_ZONE_OVERLAY_LABEL);
+    }
+    if visibility.stats {
+        show_overlay_without_blocking(app.clone(), STATS_OVERLAY_LABEL);
+    }
 }
 
 #[cfg(test)]

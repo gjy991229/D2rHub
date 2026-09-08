@@ -36,6 +36,9 @@ pub struct AppState {
     pub(crate) runtime_activation_lock: Mutex<()>,
     /// 高风险运行服务是否已经完成激活。
     pub(crate) runtime_activated: AtomicBool,
+    pub(crate) core_recovery_complete: AtomicBool,
+    /// A committed mode change is waiting for the replacement process.
+    pub(crate) restart_pending: AtomicBool,
     /// Suppresses optional starts while a profile transition drains workers.
     pub(crate) optional_features_suspended: AtomicBool,
     pub(crate) optional_window_operations: Mutex<()>,
@@ -48,6 +51,7 @@ pub struct AppState {
     pub shortcut_map: RwLock<HashMap<String, CoreShortcutAction>>,
     /// 串行化窗口位置文件的迁移和写入，避免多个 WebView 同时读改写导致配置丢失。
     pub window_placement_io: Mutex<()>,
+    pub(crate) window_writes_suspended: AtomicBool,
 }
 
 impl AppState {
@@ -72,12 +76,15 @@ impl AppState {
             host_runtime_busy: AtomicBool::new(false),
             runtime_activation_lock: Mutex::new(()),
             runtime_activated: AtomicBool::new(false),
+            core_recovery_complete: AtomicBool::new(false),
+            restart_pending: AtomicBool::new(false),
             optional_features_suspended: AtomicBool::new(false),
             optional_window_operations: Mutex::new(()),
             retired_account_ids: RwLock::new(HashSet::new()),
             audio_mod_build_busy: AtomicBool::new(false),
             shortcut_map: RwLock::new(HashMap::new()),
             window_placement_io: Mutex::new(()),
+            window_writes_suspended: AtomicBool::new(false),
         }
     }
 
@@ -87,6 +94,7 @@ impl AppState {
 
     pub(crate) fn optional_runtime_ready(&self) -> bool {
         self.runtime_activated.load(Ordering::Acquire)
+            && !self.restart_pending.load(Ordering::Acquire)
             && !self.optional_features_suspended.load(Ordering::Acquire)
     }
 
