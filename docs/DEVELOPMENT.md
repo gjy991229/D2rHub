@@ -105,6 +105,42 @@ D2RHub 是模块化单体，不在提权进程中加载第三方 DLL 或脚本�
 `ModuleConfigStore` 的 generation/CAS、staging、backup 和自动恢复能力；不要把新模块字段塞回
 全局 v9 envelope。迁移旧字段时应只导入一次、保留旧值供降级使用，并保证重复启动幂等。
 
+自动跟房策略 v18 在模块 sidecar 中新增 `input_method`（`background_keys` /
+`foreground_mouse`），缺省仍为原后台方案，沿用 generation/CAS 保存与幂等迁移。
+策略 v20 撤回 v19 的后台消息点击试验。旧 `followers_background_clicks` 字段由
+Serde 忽略，策略版本迁移触发 sidecar 的 CAS 重写并移除该字段，不回退版本号。
+策略 v21 新增模块专属 `foreground_timing`。通过结构体默认值兼容缺省及部分旧配置，
+并在现有 normalize/CAS 流程中幂等迁移。v22 将其简化为整项操作预算，旧的响应子字段
+通过 Serde 忽略并随版本迁移移除；新增 `click_ms`、`paste_ms`、`difficulty_ms`
+分别缺省为 50、100、50ms。切前台与开表单缺省为 100ms，按键及鼠标按住为 20ms，
+操作间隔为 1ms。`finish_step` 使用 `Instant` 扣除已执行耗时，只等待剩余预算，
+随后才加步骤间隔；内部按住时间计入总预算，不重复相加。粘贴预算分为全选和直接
+粘贴两段，各占一半，仅空密码使用删除替代空内容粘贴。选地狱后不重新聚焦。
+回车按住后抬起即返回，不调用 `finish_step`，没有提交响应等待或末尾间隔。
+v23 为同一 `foreground_timing` 增加小号专属 `join_form_response_ms = 150`、
+`join_focus_response_ms = 100`、`join_select_response_ms = 100`、
+`join_paste_response_ms = 100`、`join_key_hold_ms = 50`。旧 sidecar 缺省补齐并经
+版本迁移持久化。创建和加入仍由同一适配入口调度，但加入的 `fill_join_fields`
+采用独立响应等待：开表单及焦点响应从鼠标抬起后计时，文本响应从按键抬起后计时，
+不调用主号的剩余总预算算法。加入使用 NameInput 的原生 Tab 导航切到 PasswordInput。
+小号密码缓存比较时序快照，修改输入参数后会重新填写；主号密码和地狱缓存保持原逻辑。
+v24 移除上述主号预算 / 小号响应的分支：所有账号调用同一个 `fill_fields`，通过
+同一个 `click`、`paste`、`finish_step` 实现响应等待，且全部以 Tab 切到密码框。
+统一字段为 `form_response_ms`、`focus_response_ms`、`select_response_ms`、
+`paste_response_ms`、`chord_hold_ms` 和 `submit_hold_ms`，分别通过 Serde alias
+继承 v23 的 `join_*` 参数及原 `key_hold_ms`；旧主号预算字段被忽略并随 CAS 迁移
+移除。早于 v23 的 `form_response_ms` 只是旧预算的附加响应，迁移时使用完整响应默认
+150ms，避免错误继承 20ms 的片段值。界面只展示一套参数，所有账号的缓存均比较同一
+时序快照。创建与加入仅在布局入口、控件坐标和首次选择地狱这项业务步骤上有差别。
+鼠标按住期间和组合键按下期间的等待均可取消，返回取消前先释放已按下的输入。
+此路径不读取 `FlowStrategy` 的时序值。取消信号、目标窗口与坐标校验、资源竞争等待及用户尚未
+松开触发快捷键的等待继续保留，调度层的自动跟随延时和进房间隔不变。
+前台方案由独立 capability 适配器编排；实际 Win32 输入、剪贴板和 DPI 作用域由
+`infrastructure/physical_input.rs` 承载。它只读取已加工 Mod 的布局，不调用加工器。
+所有输入归属现有可取消工作线程；缓存仅驻内存并区分进程创建时间、HWND 和表单类型，
+失败前失效，避免半次填写被当成已完成。注入事件带专用标记，绕过 Hub 全局快捷键路由，
+避免物理 Ctrl+A / Ctrl+V 被账号或房间快捷键吞掉。
+
 ## 本地数据与调试文件
 
 应用运行时可能在用户数据目录保存账号配置、加密 Token、注册表快照、日志、统计

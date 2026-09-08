@@ -1,8 +1,9 @@
+use super::ForegroundTiming;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-pub const CURRENT_STRATEGY_VERSION: u8 = 17;
+pub const CURRENT_STRATEGY_VERSION: u8 = 24;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 50;
@@ -145,6 +146,15 @@ fn default_background_text_strategy() -> String {
     "post_keys".to_string()
 }
 
+/// Independent execution paths; old configurations retain background delivery.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputMethod {
+    #[default]
+    BackgroundKeys,
+    ForegroundMouse,
+}
+
 fn default_standard_flow() -> FlowStrategy {
     FlowStrategy::standard()
 }
@@ -152,10 +162,19 @@ fn default_standard_flow() -> FlowStrategy {
 /// Persisted configuration for room automation.
 ///
 /// Legacy field aliases import the `room_rotation` object used through
-/// strategy v16; v17 persists one unified keyboard flow. Follower dispatch
-/// settings are additive fields with backward-compatible Serde defaults.
+/// strategy v16; v17 persists one unified keyboard flow. V18 adds a separate
+/// foreground mouse adapter while missing fields preserve background behavior.
+/// V20 retires the v19 background-click experiment. V21 gives foreground
+/// operations independent execution budgets and a separate step interval.
+/// V22 uses complete operation budgets instead of additive response substeps.
+/// V23 separates follower focus/selection/paste response waits from primary budgets.
+/// V24 applies that response flow to every participant, preserving its settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
+    #[serde(default)]
+    pub input_method: InputMethod,
+    #[serde(default)]
+    pub foreground_timing: ForegroundTiming,
     #[serde(default)]
     pub enabled: bool,
     /// Explicit consent only. Legacy imports must never infer this value from
@@ -203,6 +222,8 @@ pub struct RoomAutomationConfig {
 impl Default for RoomAutomationConfig {
     fn default() -> Self {
         Self {
+            input_method: InputMethod::default(),
+            foreground_timing: ForegroundTiming::default(),
             enabled: false,
             chat_f13_auto_patch_enabled: false,
             chat_key: ChatKey::default(),
@@ -255,6 +276,8 @@ pub enum ShortcutValidationError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RoomAutomationConfigError {
+    #[error("foreground operation durations must be 1–2000 ms and the step interval 0–2000 ms")]
+    InvalidForegroundTiming,
     #[error("room automation strategy v{found} is newer than supported v{supported}")]
     UnsupportedStrategyVersion { found: u8, supported: u8 },
     #[error("room name prefix is empty")]
@@ -313,7 +336,7 @@ pub enum RoomAutomationConfigError {
 }
 
 impl RoomAutomationConfig {
-    /// Normalizes any legacy strategy from the unversioned shape through v16.
+    /// Normalizes legacy strategies from the unversioned shape through v23.
     /// Unknown obsolete mouse/profile fields are ignored by Serde and disappear
     /// on the next serialization.
     pub fn normalize_legacy(&mut self) -> Result<NormalizationReport, RoomAutomationConfigError> {
@@ -355,6 +378,12 @@ impl RoomAutomationConfig {
         };
 
         self.flow.normalize();
+        // Before v23, form_response_ms was only an extra delay added to an
+        // obsolete primary budget. It is now the entire post-click response.
+        if source_strategy_version < 23 {
+            self.foreground_timing.form_response_ms = ForegroundTiming::default().form_response_ms;
+        }
+        self.foreground_timing.normalize();
 
         let primary_account_id = self.primary_account_id.clone();
         let primary_identity = account_identity(&primary_account_id);
@@ -428,6 +457,9 @@ impl RoomAutomationConfig {
             ));
         }
         self.flow.validate("unified")?;
+        if !self.foreground_timing.valid() {
+            return Err(RoomAutomationConfigError::InvalidForegroundTiming);
+        }
 
         let primary = self.primary_account_id.as_str();
         if primary.is_empty() {

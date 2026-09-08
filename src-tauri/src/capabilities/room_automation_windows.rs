@@ -5,7 +5,7 @@
 //! window messages. Every wait and key boundary consults the caller's cancel
 //! signal so capability shutdown never leaves detached input work behind.
 
-use crate::capabilities::room_automation::{ChatKey, FlowStrategy};
+use crate::capabilities::room_automation::{ChatKey, FlowStrategy, ForegroundTiming, InputMethod};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -60,7 +60,7 @@ extern "system" {
     fn CloseHandle(handle: isize) -> i32;
 }
 
-fn process_creation_time(pid: u32) -> Option<u64> {
+pub(super) fn process_creation_time(pid: u32) -> Option<u64> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
         if process == 0 {
@@ -133,6 +133,8 @@ pub(crate) fn foreground_pid() -> Option<u32> {
 }
 
 pub(crate) struct RoomFormRequest<'a> {
+    pub input_method: InputMethod,
+    pub foreground_timing: &'a ForegroundTiming,
     pub pid: u32,
     pub background_text_strategy: &'a str,
     pub chat_key: ChatKey,
@@ -147,6 +149,14 @@ pub(crate) fn fill_room_form(
     request: RoomFormRequest<'_>,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
+    if request.input_method == InputMethod::ForegroundMouse {
+        ENTERED_PASSWORDS
+            .get_or_init(|| Mutex::new(HashMap::new()))
+            .lock()
+            .remove(&request.pid);
+        return super::room_automation_foreground::fill_room_form(request, cancel);
+    }
+    super::room_automation_foreground::invalidate(request.pid);
     let hwnd = crate::infrastructure::system::find_game_hwnd(request.pid)
         .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {})", request.pid))?;
     validate_target(hwnd)?;

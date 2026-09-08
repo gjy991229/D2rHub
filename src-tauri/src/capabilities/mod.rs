@@ -11,6 +11,10 @@ pub(crate) mod room_automation_config;
 pub(crate) mod room_automation_runtime;
 #[cfg(target_os = "windows")]
 mod room_automation_windows;
+#[cfg(target_os = "windows")]
+mod room_automation_foreground;
+#[cfg(target_os = "windows")]
+mod room_automation_layout;
 pub(crate) mod room_chat_binding;
 mod rune_audio;
 mod supervisor;

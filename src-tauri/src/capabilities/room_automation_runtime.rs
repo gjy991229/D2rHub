@@ -5,7 +5,7 @@
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    ChatKey, FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase,
+    ChatKey, FollowerJoinMode, InputMethod, RoomAutomationConfig, WaitingMode, WorkflowPhase,
     WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
@@ -285,6 +285,8 @@ impl RuntimeHost for WindowsRuntimeHost {
             let flow = config.flow();
             windows::fill_room_form(
                 windows::RoomFormRequest {
+                    input_method: config.input_method,
+                    foreground_timing: &config.foreground_timing,
                     pid,
                     background_text_strategy: &config.background_text_strategy,
                     chat_key: config.chat_key,
@@ -320,6 +322,8 @@ impl RuntimeHost for WindowsRuntimeHost {
         {
             windows::fill_room_form(
                 windows::RoomFormRequest {
+                    input_method: config.input_method,
+                    foreground_timing: &config.foreground_timing,
                     pid,
                     background_text_strategy: &config.background_text_strategy,
                     chat_key: config.chat_key,
@@ -1033,7 +1037,8 @@ impl RoomAutomationManager {
             } else {
                 None
             };
-        let binding_warning = if (saved.config.enabled || chat_key_changed)
+        let binding_warning = if saved.config.input_method == InputMethod::BackgroundKeys
+            && (saved.config.enabled || chat_key_changed)
             && saved.config.chat_f13_auto_patch_enabled
         {
             match self.chat_binding.resume_for_key(saved.config.chat_key) {
@@ -1368,6 +1373,9 @@ impl RoomAutomationManager {
         if !config.enabled {
             return Err("自动跟房模块尚未启用".to_string());
         }
+        if config.input_method == InputMethod::ForegroundMouse {
+            return Ok(config);
+        }
         let binding = self.chat_binding.status_for_key(config.chat_key)?;
         if !binding.ready {
             return Err(format!(
@@ -1386,7 +1394,10 @@ impl RoomAutomationManager {
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let primary = self.host.running_instance(&config.primary_account_id)?;
-        if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
+        if config.input_method == InputMethod::BackgroundKeys
+            && require_primary_foreground
+            && self.host.foreground_pid() != Some(primary.pid)
+        {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
         }
         Ok((config, primary))
@@ -1596,6 +1607,10 @@ impl RoomAutomationManager {
         room_name: String,
         cancel: Arc<CancellationSignal>,
     ) {
+        if config.input_method == InputMethod::ForegroundMouse {
+            self.run_foreground_followers(task_id, config, followers, room_name, cancel);
+            return;
+        }
         if config.follower_join_mode == FollowerJoinMode::Interval {
             self.run_interval_followers(task_id, config, followers, room_name, cancel);
             return;
@@ -1657,6 +1672,56 @@ impl RoomAutomationManager {
                 &format!("部分小号执行失败：{}", failures.join("；")),
             );
         }
+    }
+
+    /// A desktop has one cursor and clipboard. Keep configured account order,
+    /// waiting for each input sequence before another window can take focus.
+    fn run_foreground_followers(
+        &self,
+        task_id: WorkflowTaskId,
+        config: RoomAutomationConfig,
+        followers: Vec<(String, RunningInstance)>,
+        room_name: String,
+        cancel: Arc<CancellationSignal>,
+    ) {
+        let mut previous_dispatch = None::<Instant>;
+        for (account_id, instance) in followers {
+            if let Some(started) = previous_dispatch {
+                if config.follower_join_mode == FollowerJoinMode::Interval {
+                    let delay = Duration::from_secs(config.follower_join_interval_secs)
+                        .saturating_sub(started.elapsed());
+                    if cancel.wait(delay) {
+                        return;
+                    }
+                }
+            }
+            if cancel.check_active().is_err() {
+                return;
+            }
+            previous_dispatch = Some(Instant::now());
+            if let Err(error) = self.host.run_follower(
+                &config,
+                &account_id,
+                instance.pid,
+                &room_name,
+                &cancel,
+            ) {
+                self.fail_and_release(task_id, &format!("{account_id}: {error}"));
+                return;
+            }
+            if cancel.check_active().is_err() {
+                return;
+            }
+            match self
+                .workflow
+                .lock()
+                .record_follower_complete(task_id, &account_id)
+            {
+                Ok(status) => self.bridge.publish_status(&status),
+                Err(_) => return,
+            }
+        }
+        self.lifecycle.lock().leases = None;
     }
 
     fn run_interval_followers(

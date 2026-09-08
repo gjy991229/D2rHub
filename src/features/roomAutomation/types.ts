@@ -7,7 +7,23 @@ export interface RoomFlowStrategy {
 
 export type FollowerJoinMode = "simultaneous" | "interval";
 
+export interface ForegroundTiming {
+  step_interval_ms: number;
+  window_focus_ms: number;
+  mouse_hold_ms: number;
+  form_response_ms: number;
+  focus_response_ms: number;
+  select_response_ms: number;
+  paste_response_ms: number;
+  chord_hold_ms: number;
+  submit_hold_ms: number;
+}
+
 export interface RoomAutomationConfig {
+  /** Missing on legacy snapshots, which keep background delivery. */
+  input_method?: "background_keys" | "foreground_mouse";
+  /** Legacy snapshots receive the independent foreground operation defaults. */
+  foreground_timing?: ForegroundTiming;
   enabled: boolean;
   chat_f13_auto_patch_enabled: boolean;
   /** Legacy snapshots and new configurations default to Pause. */

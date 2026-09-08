@@ -1082,6 +1082,13 @@ unsafe extern "system" fn keyboard_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    #[cfg(target_os = "windows")]
+    if code >= 0 {
+        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
+        if kbd.dw_extra_info == crate::infrastructure::physical_input::INPUT_TAG {
+            return CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam);
+        }
+    }
     if code >= 0 && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
         let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
         if active_handled_shortcut_keys().lock().remove(&kbd.vk_code) {
@@ -1121,6 +1128,13 @@ unsafe extern "system" fn mouse_hook_proc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    #[cfg(target_os = "windows")]
+    if code >= 0 {
+        let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
+        if mouse.dw_extra_info == crate::infrastructure::physical_input::INPUT_TAG {
+            return CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam);
+        }
+    }
     if code >= 0 {
         let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
         match wparam {
