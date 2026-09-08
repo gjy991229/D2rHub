@@ -123,6 +123,11 @@ trait RuntimeHost: Send + Sync {
     ) -> Result<(), String>;
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
     fn foreground_pid(&self) -> Option<u32>;
+    fn focus_primary(&self, account_id: &str, cancel: &CancellationSignal) -> Result<(), String> {
+        let _ = account_id;
+        cancel.check_active()?;
+        Err("当前运行环境不支持切回主号焦点".to_string())
+    }
     fn run_primary(
         &self,
         config: &RoomAutomationConfig,
@@ -269,6 +274,20 @@ impl RuntimeHost for WindowsRuntimeHost {
         #[cfg(not(target_os = "windows"))]
         {
             None
+        }
+    }
+
+    fn focus_primary(&self, account_id: &str, cancel: &CancellationSignal) -> Result<(), String> {
+        cancel.check_active()?;
+        #[cfg(target_os = "windows")]
+        {
+            let primary = self.running_instance(account_id)?;
+            super::room_automation_foreground::focus_game(primary.pid, cancel)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = account_id;
+            Err("自动跟房仅支持 Windows".to_string())
         }
     }
 
@@ -1730,7 +1749,8 @@ impl RoomAutomationManager {
         cancel: Arc<CancellationSignal>,
     ) {
         let mut previous_dispatch = None::<Instant>;
-        for (account_id, instance) in followers {
+        let follower_count = followers.len();
+        for (index, (account_id, instance)) in followers.into_iter().enumerate() {
             if let Some(started) = previous_dispatch {
                 if config.follower_join_mode == FollowerJoinMode::Interval {
                     let delay = Duration::from_secs(config.follower_join_interval_secs)
@@ -1756,6 +1776,29 @@ impl RoomAutomationManager {
             }
             if cancel.check_active().is_err() {
                 return;
+            }
+            if index + 1 == follower_count {
+                // Return focus only after the whole available follower queue
+                // has submitted. Keep the lease until this final action ends.
+                // A focus failure must not replay already-submitted followers.
+                match self
+                    .host
+                    .focus_primary(&config.primary_account_id, &cancel)
+                {
+                    Ok(()) => crate::logger::log_msg(
+                        "INFO",
+                        "RoomAutomation",
+                        &format!(
+                            "可用小号流程已执行完毕，已切回主号“{}”",
+                            config.primary_account_id
+                        ),
+                    ),
+                    Err(error) => crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("可用小号流程已执行完毕，但切回主号焦点失败：{error}"),
+                    ),
+                }
             }
             match self
                 .workflow

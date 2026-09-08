@@ -25,6 +25,30 @@ pub(super) fn invalidate(pid: u32) {
         .retain(|(id, _), _| *id != pid);
 }
 
+pub(super) fn focus_game(pid: u32, cancel: &dyn CancellationCheck) -> Result<(), String> {
+    let _desktop = loop {
+        cancel.check()?;
+        if let Some(guard) = DESKTOP.try_lock() {
+            break guard;
+        }
+        wait(cancel, 25)?;
+    };
+    let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
+        .ok_or("无法找到主号 D2R 窗口")?;
+    let created = process_creation_time(pid).ok_or("无法确认主号进程身份")?;
+    cancel.check()?;
+    crate::infrastructure::system::bring_window_to_foreground_raw(hwnd);
+    if process_creation_time(pid) != Some(created)
+        || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd)
+    {
+        return Err("主号游戏进程或窗口已变化".to_string());
+    }
+    if super::room_automation_windows::foreground_pid() != Some(pid) {
+        return Err("未能将主号窗口切到前台".to_string());
+    }
+    Ok(())
+}
+
 pub(super) fn fill_room_form(
     request: RoomFormRequest<'_>,
     cancel: &dyn CancellationCheck,
