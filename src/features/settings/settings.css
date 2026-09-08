@@ -883,7 +883,7 @@
   width: 100%;
   flex-direction: column;
   gap: 10px;
-  max-width: none;
+  max-width: 1120px;
   margin: 0 auto;
 }
 
