@@ -1,4 +1,5 @@
 import { X } from "lucide-react";
+import { useEffect } from "react";
 import type { Dispatch, KeyboardEvent, SetStateAction } from "react";
 import type { AccountMeta, GlobalConfig } from "../../../store/types";
 
@@ -9,6 +10,8 @@ interface ShortcutsPanelProps {
   setRecordingPosition: Dispatch<SetStateAction<string | null>>;
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>, target: string) => void;
   onClear: (target: string) => void;
+  errors?: Record<string, string>;
+  checkingTarget?: string | null;
 }
 
 export function ShortcutsPanel({
@@ -18,7 +21,11 @@ export function ShortcutsPanel({
   setRecordingPosition,
   onKeyDown,
   onClear,
+  errors = {},
+  checkingTarget = null,
 }: ShortcutsPanelProps) {
+  useEffect(() => () => setRecordingPosition(null), [setRecordingPosition]);
+
   const isEnglish = config.app_language === "en-US";
   let bindings: Record<string, string> = {};
   try {
@@ -29,53 +36,60 @@ export function ShortcutsPanel({
 
   const applicationShortcuts = [
     {
-      target: "app:show",
-      label: isEnglish ? "Show main window" : "呼出主面板",
+      target: "app:toggle",
+      label: isEnglish ? "Toggle main window" : "切换主面板",
       detail: isEnglish
-        ? "Restore, show, and focus D2RHub while it is running"
-        : "D2RHub 运行时恢复、显示并聚焦主面板",
-      shortcut: config.show_main_window_shortcut || "",
-    },
-    {
-      target: "app:hide",
-      label: isEnglish ? "Minimize to tray" : "最小化到托盘",
-      detail: isEnglish
-        ? "Hide the main window without closing running games"
-        : "隐藏主面板，不关闭正在运行的游戏",
-      shortcut: config.hide_main_window_shortcut || "",
+        ? "Hide to tray when focused; otherwise restore, show, and focus D2RHub"
+        : "主面板在前台时隐藏到托盘；未聚焦、已隐藏或已最小化时恢复并聚焦",
+      shortcut: config.show_main_window_shortcut || config.hide_main_window_shortcut || "",
     },
   ];
 
   const shortcutControl = (target: string, shortcut: string, label: string) => {
     const isRecording = recordingPosition === target;
+    const error = errors[target];
+    const errorId = `shortcut-error-${target.replace(":", "-")}`;
     return (
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex w-[180px] max-w-[45%] shrink-0 flex-col items-end gap-1">
+      <div className="flex max-w-full items-center gap-2">
         <input
           aria-label={`${label}${isEnglish ? " shortcut" : "快捷键"}`}
           type="text"
           readOnly
-          value={isRecording
+          disabled={checkingTarget !== null}
+          aria-invalid={!!error}
+          aria-describedby={error ? errorId : undefined}
+          aria-busy={checkingTarget === target}
+          data-shortcut-recording={isRecording ? "true" : "false"}
+          value={checkingTarget === target ? (isEnglish ? "Checking..." : "正在检查占用...") : isRecording
             ? isEnglish ? "Press a key combo..." : "请按键输入组合..."
             : shortcut || (isEnglish ? "None" : "无")}
-          onKeyDown={event => onKeyDown(event, target)}
+          onKeyDown={event => {
+            if (isRecording) onKeyDown(event, target);
+          }}
+          onFocus={() => setRecordingPosition(target)}
           onClick={() => setRecordingPosition(target)}
-          className={`h-[28px] w-[140px] px-3 rounded-lg text-sm font-mono text-center select-none border focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 transition-all duration-150 max-[520px]:w-[112px] ${
+          onBlur={() => setRecordingPosition(current => current === target ? null : current)}
+          className={`h-[28px] w-[140px] min-w-0 px-3 rounded-lg text-sm font-mono text-center select-none border focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 transition-all duration-150 max-[520px]:w-[112px] ${
             isRecording
               ? "border-accent bg-accent/10 text-accent font-bold"
-              : "border-border-default bg-surface-hover text-text-primary cursor-pointer hover:border-border-strong"
+              : error ? "border-error bg-error/5 text-error cursor-pointer" : "border-border-default bg-surface-hover text-text-primary cursor-pointer hover:border-border-strong"
           }`}
         />
         {shortcut && (
           <button
             type="button"
+            disabled={checkingTarget !== null}
             onClick={() => onClear(target)}
             aria-label={`${isEnglish ? "Clear " : "清除"}${label}${isEnglish ? " shortcut" : "快捷键"}`}
-            className="h-[28px] w-[28px] rounded-lg border border-border-default hover:border-error hover:bg-error/5 text-text-muted hover:text-error transition-all flex items-center justify-center"
+            className="h-[28px] w-[28px] shrink-0 rounded-lg border border-border-default hover:border-error hover:bg-error/5 text-text-muted hover:text-error transition-all flex items-center justify-center"
             title={isEnglish ? "Clear" : "清除"}
           >
             <X size={12} />
           </button>
         )}
+      </div>
+      {error && <p id={errorId} role="alert" className="w-full break-words text-2xs text-error">{error}</p>}
       </div>
     );
   };
@@ -88,8 +102,8 @@ export function ShortcutsPanel({
         </h2>
         <p className="text-2xs text-text-muted mb-2">
           {isEnglish
-            ? "These global shortcuts work while D2RHub is running, including from the tray."
-            : "D2RHub 运行或位于托盘时均可使用；快捷键不会从未运行状态启动软件。"}
+            ? "Use one global shortcut to show or hide D2RHub. F12 is reserved by Windows."
+            : "使用同一个全局快捷键呼出或收起主面板。F12 为 Windows 保留键，不可使用。"}
         </p>
 
         <div className="space-y-2.5 pt-1">

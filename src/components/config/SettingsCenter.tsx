@@ -5,7 +5,8 @@ import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
 import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
-import { parseShortcutFromKeyEvent, useShortcutRecorder } from "../../hooks/useShortcutRecorder";
+import { parseShortcutFromKeyEvent, useShortcutRecorder, validateShortcutAvailability } from "../../hooks/useShortcutRecorder";
+import { normalizeShortcut } from "../../utils/shortcut";
 import { flushWindowGeometrySaves } from "../../hooks/useWindowGeometrySave";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
@@ -120,6 +121,15 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
 
   const { recordingPos, setRecordingPos } = useShortcutRecorder();
+  const [shortcutErrors, setShortcutErrors] = useState<Record<string, string>>({});
+  const [checkingShortcut, setCheckingShortcut] = useState<string | null>(null);
+  const shortcutRequest = useRef(0);
+
+  useEffect(() => {
+    setCheckingShortcut(null);
+    setShortcutErrors({});
+    return () => { shortcutRequest.current += 1; };
+  }, [open, activeTab]);
 
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
   const {
@@ -480,7 +490,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   };
 
   // Keyboard shortcut listener
-  const handleShortcutKeyDown = (e: React.KeyboardEvent<HTMLInputElement>, target: string) => {
+  const handleShortcutKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>, target: string) => {
+    if (checkingShortcut || e.repeat) return;
     if (e.key === "Tab") {
       setRecordingPos(null);
       return;
@@ -496,15 +507,26 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     e.preventDefault();
     e.stopPropagation();
 
+    if (e.metaKey) return;
     const combo = parseShortcutFromKeyEvent(e);
     if (!combo) return;
+    const isEnglish = config?.app_language === "en-US";
+    const rejectShortcut = (message: string) => {
+      setShortcutErrors(current => ({ ...current, [target]: message }));
+      showToast("error", message);
+    };
+    setRecordingPos(null);
+    e.currentTarget.blur();
+    setShortcutErrors(current => ({ ...current, [target]: "" }));
+    if (/(?:^|\+)F12$/i.test(combo)) {
+      rejectShortcut(isEnglish ? "F12 is reserved by Windows. Choose another shortcut." : "F12 是 Windows 调试器保留键，请选择其他快捷键");
+      return;
+    }
 
     if (target.startsWith("app:")
       && !/^(Ctrl|Alt|Shift)\+/.test(combo)
       && !/^F(?:[1-9]|1\d|2[0-4])$/.test(combo)) {
-      setRecordingPos(null);
-      e.currentTarget.blur();
-      showToast("error", "主面板快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
+      rejectShortcut(isEnglish ? "Use Ctrl, Alt, Shift, or a function key for the main window shortcut." : "主面板快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
       return;
     }
 
@@ -520,38 +542,49 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         ...Object.entries(bindings).map(([position, shortcut]) => ({
           target: `account:${position}`,
           shortcut,
-          label: `账号位置 #${position}`,
+          label: isEnglish ? `account position #${position}` : `账号位置 #${position}`,
         })),
-        { target: "app:show", shortcut: config.show_main_window_shortcut || "", label: "呼出主面板" },
-        { target: "app:hide", shortcut: config.hide_main_window_shortcut || "", label: "最小化主面板" },
+        { target: "app:toggle", shortcut: config.show_main_window_shortcut || config.hide_main_window_shortcut || "", label: isEnglish ? "Toggle main window" : "切换主面板" },
       ];
       const conflict = assigned.find((entry) => entry.target !== target
-        && entry.shortcut.trim().toLocaleLowerCase() === combo.toLocaleLowerCase());
+        && normalizeShortcut(entry.shortcut).toLowerCase() === combo.toLowerCase());
       if (conflict) {
-        setRecordingPos(null);
-        e.currentTarget.blur();
-        showToast("error", `快捷键 ${combo} 已用于${conflict.label}，原设置保持不变`);
+        rejectShortcut(isEnglish ? `${combo} is already assigned to ${conflict.label}. Previous binding kept.` : `快捷键 ${combo} 已用于${conflict.label}，原设置保持不变`);
         return;
       }
 
-      updateConfig(c => {
-        if (target === "app:show") {
-          c.show_main_window_shortcut = combo;
-        } else if (target === "app:hide") {
-          c.hide_main_window_shortcut = combo;
-        } else if (target.startsWith("account:")) {
-          bindings[target.slice("account:".length)] = combo;
-          c.shortcut_bindings_json = JSON.stringify(bindings);
+      const request = ++shortcutRequest.current;
+      setCheckingShortcut(target);
+      try {
+        await validateShortcutAvailability(combo, true);
+        if (request !== shortcutRequest.current) return;
+        if (useGlobalConfig.getState().config !== config) {
+          throw new Error(isEnglish ? "Settings changed during the check. Record the shortcut again." : "检查期间设置已变化，请重新录入快捷键");
         }
-      });
+        updateConfig(c => {
+          if (target === "app:toggle") {
+            c.show_main_window_shortcut = combo;
+            c.hide_main_window_shortcut = "";
+          } else if (target.startsWith("account:")) {
+            bindings[target.slice("account:".length)] = combo;
+            c.shortcut_bindings_json = JSON.stringify(bindings);
+          }
+        });
+        showToast("success", isEnglish ? `Shortcut available: ${combo}. Save settings to apply.` : `快捷键 ${combo} 可用，保存设置后生效`);
+      } catch (error) {
+        if (request === shortcutRequest.current) {
+          rejectShortcut(error instanceof Error ? error.message : String(error));
+        }
+      } finally {
+        if (request === shortcutRequest.current) setCheckingShortcut(null);
+      }
     }
-
-    setRecordingPos(null);
-    (e.target as HTMLInputElement).blur();
-    showToast("success", `快捷键已配置为: ${combo}`);
   };
 
   const handleClearShortcut = (target: string) => {
+    shortcutRequest.current += 1;
+    setCheckingShortcut(null);
+    setShortcutErrors(current => ({ ...current, [target]: "" }));
     if (config) {
       let bindings: Record<string, string> = {};
       try {
@@ -560,9 +593,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         bindings = {};
       }
       updateConfig(c => {
-        if (target === "app:show") {
+        if (target === "app:toggle") {
           c.show_main_window_shortcut = "";
-        } else if (target === "app:hide") {
           c.hide_main_window_shortcut = "";
         } else if (target.startsWith("account:")) {
           delete bindings[target.slice("account:".length)];
@@ -851,6 +883,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               <ShortcutsPanel
                 config={config}
                 accounts={shortcutAccounts}
+                errors={shortcutErrors}
+                checkingTarget={checkingShortcut}
                 recordingPosition={recordingPos}
                 setRecordingPosition={setRecordingPos}
                 onKeyDown={handleShortcutKeyDown}

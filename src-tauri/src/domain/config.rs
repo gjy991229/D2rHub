@@ -181,9 +181,10 @@ pub struct GlobalConfig {
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
     pub shortcut_bindings_json: String,
-    /// Global shortcuts for the D2RHub main window. Empty means unassigned.
+    /// Main-window toggle shortcut. Keep the persisted name for compatibility.
     #[serde(default)]
     pub show_main_window_shortcut: String,
+    /// Legacy hide-only shortcut, migrated only when the show shortcut is empty.
     #[serde(default)]
     pub hide_main_window_shortcut: String,
     /// 悬浮窗透明度 (10-100, 默认 95)
@@ -323,6 +324,23 @@ fn default_bongo_cat_unlocked_skins() -> Vec<String> {
 }
 
 impl GlobalConfig {
+    pub(crate) fn main_window_shortcut(&self) -> &str {
+        if self.show_main_window_shortcut.trim().is_empty() {
+            self.hide_main_window_shortcut.trim()
+        } else {
+            self.show_main_window_shortcut.trim()
+        }
+    }
+
+    pub(crate) fn normalize_main_window_shortcut(&mut self) -> bool {
+        let shortcut = self.main_window_shortcut().to_string();
+        let changed = self.show_main_window_shortcut != shortcut
+            || !self.hide_main_window_shortcut.is_empty();
+        self.show_main_window_shortcut = shortcut;
+        self.hide_main_window_shortcut.clear();
+        changed
+    }
+
     pub(crate) fn optional_module_installed(&self, module_id: &str) -> bool {
         self.installed_optional_modules
             .iter()

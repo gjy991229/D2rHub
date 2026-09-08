@@ -13,8 +13,7 @@ use crate::error::AppError;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CoreShortcutAction {
     FocusAccount(usize),
-    ShowMainWindow,
-    HideMainWindow,
+    ToggleMainWindow,
 }
 
 /// 应用全局运行时状态

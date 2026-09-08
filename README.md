@@ -31,15 +31,15 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **音频数据包**：按 v7 协议识别 33 个符文、50 个扩展物品、全部游戏 Area 与主界面，并按目标 D2R PID 捕获实际混音输出；可设置最低记录符文编号，且掉落仅在已确认的野外/地下城场景入库。隐藏场景统计悬浮窗不会停止已开启的声纹监控。
 - **独立功能组 Mod 加工**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器，可按需加入声纹识别、局内房间工具和显式选择的“死亡后自动退房”。死亡退房会保留原死亡界面，在死亡判定后约 0.11 秒离开当前游戏，不能避免死亡或挽救专家模式角色；能力指纹只标识支持情况，不包含启停状态。安装后可在“设置 → 可选功能 → Mod 管理”的具体 Mod 条目中切换，D2RHub 仅原子增删死亡界面的具名定时入口，不调用加工器或重建 Mod；正在使用该 Mod 的游戏需先关闭，并在下次启动时生效。无论从原版还是现有 Mod 准备，软件都会生成新 Mod、复核功能组清单并安全配置账号启动参数。游戏、源 Mod 与输出目录支持中文、空格及 Windows 允许的特殊字符；源 Mod 数据表兼容 UTF-8、UTF-16、GBK/GB18030 与常见 Windows ANSI 编码，JSON 资源兼容常见 JSON5 写法，0 字节 FLAC 静音占位也会保持静音。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可同时勾选并编辑女伯爵、地穴、安达利尔、墨菲斯托、Chaos、巴尔等常用 Farm 策略组，也可创建和编辑自定义路线。策略组内分段先合计耗时，再作为一场参与场次与平均耗时计算；重叠策略不会重复计数，原始数据保持不变。筛选器可折叠，离群优化默认开启，短空场阈值默认 1 秒且可调。
-- **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部，并支持贴边自动隐藏。双击空白区域或按 Enter 可切换为仅显示识别场景、计时和场次的迷你模式；迷你窗口保持鼠标穿透，可拖拽边缘调节大小，并支持中键拖动位置。
+- **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部，并支持贴边自动隐藏。双击空白区域或按 Enter 可切换为仅显示识别场景、计时和场次的迷你模式；与 TZ 迷你窗一样，可直接拖动位置和拖拽边缘缩放，不开启鼠标穿透，也不依赖全局鼠标钩子。
 - **可选自动跟房**：以多开核心中的已运行账号为边界，主号每次按创建快捷键都会生成并提交新房间，随后可手动或延时让小号跟进最近一组房号密码。小号既可同时进房，也可按可调整的固定间隔依序派发；单个窗口的状态或指令投递失败不会阻断后续账号。任务支持取消、账号租约和下一房序号持久化。启用前会验证受信任的启动快照、局内房间工具与所选聊天键位（默认 Pause，可选 F13），停用后自动回收快捷键、watcher 和工作线程。按住时间默认 50ms，可与松开间隔分别配置；开表单和切字段后各追加固定 50ms 等待。关闭游戏后切换聊天键会覆盖现有聊天第二键位并同步发送端，保留首次备份。
-- **快捷键与桌宠**：按账号位置聚焦游戏窗口；Bongo Cat 支持缩放、气泡和可解锁皮肤。
+- **快捷键与桌宠**：按账号位置聚焦游戏窗口；主面板使用同一个快捷键切换，在前台时隐藏到托盘，未聚焦或已最小化时恢复并聚焦。旧配置优先沿用呼出键，没有呼出键时沿用最小化键。Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
 聊天键扫描直接修改第二快捷键，第一快捷键无需为回车。扫描同时读取系统存档目录的 `.key/.keyo` 和对应游戏安装目录（Mod 管理打开的位置）下 `mods/<Mod名>/` 中的 `.keyo`。游戏与存档目录按国服、国际服配置配对；每组目录中的同名 `.keyo` 取修改时间最新的完整配置，更新聊天第二快捷键后同步至系统目录和已有的 Mod 副本；时间相同优先系统副本，其次按 Mod 目录名排序。源文件保留，写入保留所选版本的修改时间，各路径保留首次备份，恢复时只还原各文件的聊天第二快捷键。国服、国际服的不同存档目录分别处理。
 
 自动跟房设置中的“建房 / 入房操作方案”还可选择**方案二：前台键鼠接管**。原方案保持默认，原有后台投递与聊天键设置分别保留。新方案无需绑定 Pause/F13，也无需重新加工 Mod：从局内开始，将主号或小号切到前台，点击对应工具栏按钮与房名输入框，用 `SendInput` 扫描码模拟物理 `Ctrl+V`。密码在对应进程首次操作或变化时填写（变为空时清空）；主号首次选择地狱后直接回车提交，不重新聚焦输入框。进程重启、PID 重用、窗口更换及切换方案后会重新初始化输入缓存。
 
-前台方案要求显示局内工具栏并使用 **16:9 高清键鼠界面**。坐标读取目标进程实际加载 Mod 的创建/加入布局，分别累加父控件偏移、锚点与缩放，并转换为窗口客户区位置；无法识别的布局、比例、隐藏工具栏、窗口遮挡或失去前台时会报错停止。小号按配置顺序串行接管，间隔模式还保留最小开始间隔，失败时停止本次队列。所有当前可用小号的流程执行完成后，自动将焦点切回主号；中途取消或失败时不切回。若主号已退出或无法获得焦点，只记录原因，不重复小号的入房操作。每次输入短暂独占键鼠，结束或取消后释放按键、恢复鼠标位置；剪贴板未被其他程序改动时恢复原内容。Hub 的触发快捷键仍可使用，表单操作本身不依赖游戏快捷键。
+前台方案要求显示局内工具栏并使用 **16:9 高清键鼠界面**。坐标读取目标进程实际加载 Mod 的创建/加入布局，分别累加父控件偏移、锚点与缩放，并转换为窗口客户区位置；无法识别的布局、比例、隐藏工具栏、窗口遮挡或失去前台时会报错停止。小号按配置顺序串行接管，间隔模式还保留最小开始间隔，失败时停止本次队列。所有当前可用小号的流程执行完成后，自动将焦点切回主号；中途取消或失败时不切回。若主号已退出或无法获得焦点，只记录原因，不重复小号的入房操作。每次输入短暂独占键鼠，结束或取消后释放按键、恢复鼠标位置；剪贴板未被其他程序改动时恢复原内容。自动输入期间暂时注销 Hub 热键，结束后恢复，防止模拟按键触发业务动作；表单操作本身不依赖游戏快捷键。
 
 鼠标接管的主号与小号共用 **同一个填写流程、同一套时序和间隔**：打开对应表单 → 点击房名 → Ctrl+A 全选 → Ctrl+V 直接覆盖 → 需要更新密码时以 Tab 切到密码框 → 全选并粘贴密码 → 回车。正常文本不预先清空，只有空密码使用全选后删除；首次建房额外点击地狱，不重新聚焦。不同 Mod 的控件坐标仍分别读取。
 
@@ -106,9 +106,9 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 - V7 audio-signature decoding, statistics, overlays, and all account-management features in the standard build.
 - Per-process WASAPI capture, all-Area and frontend detection, lifecycle deduplication, immediate SQLite persistence, and live overlay updates. Hiding the statistics overlay does not stop enabled audio tracking.
 - A bundled but independently maintained `d2r-audio-mod.exe` generator for adding independently verified audio recognition, in-game room tools, and an explicit opt-in auto-exit-after-death feature. The latter preserves the death UI and leaves the current game roughly 0.11 seconds after death is already confirmed; it cannot prevent death or save a Hardcore character. Its stable capability fingerprint is independent of activation state. The switch on the concrete Mod row atomically adds or removes only the named death-screen timer while no game instance is using that Mod; it does not invoke the generator or rebuild the Mod. Game, source-Mod, and output paths support Unicode, spaces, and other Windows-valid characters; source JSON5 and common table encodings are normalized only in the new output Mod, never in the source.
-- Grouped overlay drops with counts, short-lived new-drop notices, a compact latest-five view, and edge-docked auto-hide. Double-clicking an empty area or pressing Enter switches to a click-through mini view that shows only the detected scene, timer, and run count; drag an edge to resize it or middle-drag to move it.
+- Grouped overlay drops with counts, short-lived new-drop notices, a compact latest-five view, and edge-docked auto-hide. Double-clicking an empty area or pressing Enter switches to a mini view that shows only the detected scene, timer, and run count. Like the TZ mini window, it supports direct dragging and edge resizing, without click-through or global mouse hooks.
 - Optional room automation built on trusted running instances. Every primary shortcut submits a newly numbered room, and followers use the latest captured room/password pair. Followers can dispatch together or on an adjustable fixed schedule; one window's state or delivery failure never blocks later accounts. The workflow also owns cancellation, account leases, durable sequence updates, shortcuts, and F13 binding.
-- Focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat.
+- Account focus shortcuts, run/rune/Terror Zone overlay, and Bongo Cat. A single main-window shortcut hides D2RHub to the tray when focused, or restores and focuses it otherwise. Existing configurations reuse the show shortcut, falling back to the old hide shortcut when no show shortcut is assigned.
 
 ### Quick start
 

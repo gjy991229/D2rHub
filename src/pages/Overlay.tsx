@@ -111,7 +111,6 @@ const STATS_EXPANDED_OVERLAY_MIN_HEIGHT = 180;
 const DEFAULT_STATS_EXPANDED_OVERLAY_SIZE: OverlaySize = { width: 280, height: 300 };
 const STATS_MINI_OVERLAY_MIN_WIDTH = 240;
 const STATS_MINI_OVERLAY_MIN_HEIGHT = 48;
-const STATS_MINI_OVERLAY_RESIZE_INSET = 6;
 const DEFAULT_STATS_MINI_OVERLAY_SIZE: OverlaySize = { width: 320, height: 48 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
@@ -312,36 +311,6 @@ async function applyStatsExpandedOverlaySize(
   );
 }
 
-async function syncStatsMiniInputRegion(
-  win: ReturnType<typeof getCurrentWindow>,
-  enabled: boolean,
-) {
-  if (!enabled) {
-    await invokeCommand("set_stats_overlay_mini_input_region", {
-      enabled: false,
-      x: 0,
-      y: 0,
-      width: 0,
-      height: 0,
-      minWidth: STATS_MINI_OVERLAY_MIN_WIDTH,
-      minHeight: STATS_MINI_OVERLAY_MIN_HEIGHT,
-      resizeInset: STATS_MINI_OVERLAY_RESIZE_INSET,
-    });
-    return;
-  }
-
-  const [position, size] = await Promise.all([win.outerPosition(), win.outerSize()]);
-  await invokeCommand("set_stats_overlay_mini_input_region", {
-    enabled: true,
-    x: position.x,
-    y: position.y,
-    width: size.width,
-    height: size.height,
-    minWidth: STATS_MINI_OVERLAY_MIN_WIDTH,
-    minHeight: STATS_MINI_OVERLAY_MIN_HEIGHT,
-    resizeInset: STATS_MINI_OVERLAY_RESIZE_INSET,
-  });
-}
 const IMMUNITY_EN_LABELS: Record<string, string> = {
   f: "F",
   c: "C",
@@ -476,7 +445,6 @@ export function Overlay() {
   const useEnglish = isEnglishLanguage(config?.app_language);
   const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
   const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
-  const [statsMiniHovered, setStatsMiniHovered] = useState(false);
   const [showAllDropGroups, setShowAllDropGroups] = useState(false);
   const [dropScope, setDropScope] = useState<DropScope>("current");
   const [dropSlideDirection, setDropSlideDirection] = useState<"previous" | "next">("next");
@@ -858,7 +826,6 @@ export function Overlay() {
         storeOverlaySize(expandedSizeStorageKey, expandedSize);
 
         displayModeRef.current = "mini";
-        setStatsMiniHovered(false);
         setDisplayMode("mini");
         storeOverlayMode(modeStorageKey, "mini");
 
@@ -871,8 +838,7 @@ export function Overlay() {
           miniSizeRef.current = miniSize;
           storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
           await applyStatsMiniOverlaySize(win, miniSize);
-          await win.setIgnoreCursorEvents(true);
-          await syncStatsMiniInputRegion(win, true);
+          await win.setIgnoreCursorEvents(false);
         } else {
           const miniSize =
             miniSizeRef.current ??
@@ -887,7 +853,6 @@ export function Overlay() {
           const miniSize = normalizeStatsMiniOverlaySize({ width, height });
           miniSizeRef.current = miniSize;
           storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
-          await syncStatsMiniInputRegion(win, false);
           await win.setIgnoreCursorEvents(false);
         } else {
           const miniSize = normalizeMiniOverlaySize({ width, height });
@@ -897,7 +862,6 @@ export function Overlay() {
 
         const expandedSize = expandedSizeRef.current;
         displayModeRef.current = "expanded";
-        setStatsMiniHovered(false);
         setDisplayMode("expanded");
         storeOverlayMode(modeStorageKey, "expanded");
 
@@ -963,26 +927,6 @@ export function Overlay() {
     return () => window.removeEventListener("keydown", handleOverlayWindowKeyDown, true);
   }, [isStatsOverlay, supportsCompactMode]);
 
-  useEffect(() => {
-    if (!isStatsOverlay) return;
-    const unlisten = listenEvent<string>("global-input-event", (event) => {
-      if (event.payload === "StatsOverlayMiniHoverEnter") {
-        if (displayModeRef.current === "mini") setStatsMiniHovered(true);
-        return;
-      }
-      if (event.payload === "StatsOverlayMiniHoverLeave") {
-        setStatsMiniHovered(false);
-        return;
-      }
-      if (event.payload !== "StatsOverlayMiniToggle") return;
-      if (displayModeRef.current !== "mini") return;
-      void toggleOverlayDisplayMode();
-    });
-    return () => {
-      void unlisten.then((stop) => stop());
-    };
-  }, [isStatsOverlay]);
-
   function finishCurrentTimer() {
     if (!useStats.getState().isTiming) return;
     void useStats.getState().finishRunAsTown();
@@ -1002,7 +946,6 @@ export function Overlay() {
   }
 
   function handleOverlayWindowPointerDownCapture(event: React.PointerEvent<HTMLDivElement>) {
-    if (isStatsOverlay && displayModeRef.current === "mini") return;
     if (event.button !== 0 || event.detail > 1) return;
     const target = event.target;
     if (!(target instanceof Element)) return;
@@ -1023,7 +966,6 @@ export function Overlay() {
   }
 
   function handleOverlayWindowPointerMoveCapture(event: React.PointerEvent<HTMLDivElement>) {
-    if (isStatsOverlay && displayModeRef.current === "mini") return;
     const drag = overlayWindowDragStateRef.current;
     if (!drag || drag.pointerId !== event.pointerId) return;
 
@@ -1193,6 +1135,7 @@ export function Overlay() {
       session.edge,
       event.screenX - session.startScreenX,
       event.screenY - session.startScreenY,
+      isStatsOverlay ? { width: STATS_MINI_OVERLAY_MIN_WIDTH, height: STATS_MINI_OVERLAY_MIN_HEIGHT } : undefined,
     );
     void flushMiniOverlayResize(session);
   }
@@ -1511,16 +1454,13 @@ export function Overlay() {
 
           if (displayModeRef.current === "mini") {
             await applyStatsMiniOverlaySize(win, miniSize);
-            await win.setIgnoreCursorEvents(true);
+            await win.setIgnoreCursorEvents(false);
           } else {
-            await syncStatsMiniInputRegion(win, false);
             await win.setIgnoreCursorEvents(false);
             await applyStatsExpandedOverlaySize(win, expandedSize);
           }
           await restoreWindowPlacement("stats-overlay", saved);
-          if (displayModeRef.current === "mini") {
-            await syncStatsMiniInputRegion(win, true);
-          } else {
+          if (displayModeRef.current !== "mini") {
             window.setTimeout(() => {
               if (!cancelled) void evaluateOverlayDocking();
             }, OVERLAY_DOCK_SETTLE_DELAY_MS);
@@ -1600,7 +1540,6 @@ export function Overlay() {
                   const miniSize = normalizeStatsMiniOverlaySize({ width, height });
                   miniSizeRef.current = miniSize;
                   storeOverlaySize(STATS_OVERLAY_MINI_SIZE_STORAGE_KEY, miniSize);
-                  await syncStatsMiniInputRegion(getCurrentWindow(), true);
                   await persistOverlayGeometry(undefined, true);
                   return;
                 }
@@ -1675,7 +1614,6 @@ export function Overlay() {
               if (!cancelled && displayModeRef.current === "mini") {
                 void (async () => {
                   try {
-                    await syncStatsMiniInputRegion(win, true);
                     await persistOverlayGeometry(undefined, true);
                   } catch (err) {
                     reportOverlayIssue("WARN", "persist moved stats mini overlay failed", err);
@@ -1998,20 +1936,20 @@ export function Overlay() {
   const overlayRegionLabel = isStatsOverlay
     ? displayMode === "mini"
       ? (useEnglish
-          ? "Statistics overlay, resizable mini click-through mode"
-          : "统计悬浮窗，可缩放的迷你穿透模式")
+          ? "Statistics overlay, resizable mini mode"
+          : "统计悬浮窗，可缩放的迷你模式")
       : (useEnglish ? "Statistics overlay" : "统计悬浮窗")
     : (useEnglish ? "Terror Zone broadcast overlay" : "TZ 播报悬浮窗");
   const overlayModeTitle = displayMode === "mini"
     ? isStatsOverlay
       ? (useEnglish
-          ? "Middle-drag to move · Drag an edge to resize · Double-click or press Enter for normal mode"
-          : "中键拖动位置 · 拖拽边缘调节大小 · 双击或按 Enter 返回正常模式")
+          ? "Drag to move · Drag an edge to resize · Double-click or press Enter for normal mode"
+          : "拖动位置 · 拖拽边缘调节大小 · 双击或按 Enter 返回正常模式")
       : (useEnglish ? "Double-click anywhere or press Enter to expand" : "双击任意位置或按 Enter 展开")
     : isStatsOverlay
       ? (useEnglish
-          ? "Double-click an empty area or press Enter for mini click-through mode"
-          : "双击空白区域或按 Enter 切换迷你穿透模式")
+          ? "Double-click an empty area or press Enter for mini mode"
+          : "双击空白区域或按 Enter 切换迷你模式")
       : (useEnglish ? "Double-click anywhere or press Enter for mini mode" : "双击任意位置或按 Enter 切换迷你模式");
   const timerActionTitle = stats.isTiming
     ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
@@ -2043,7 +1981,6 @@ export function Overlay() {
       : (useEnglish ? "Syncing forecast" : "正在同步预报");
 
   function handleDockPointerEnter() {
-    if (isStatsOverlay && displayModeRef.current === "mini") return;
     pointerInsideDockRef.current = true;
     if (dockStateRef.current) void revealDockedOverlay();
   }
@@ -2058,7 +1995,6 @@ export function Overlay() {
   }
 
   function handleDockPointerLeave() {
-    if (isStatsOverlay && displayModeRef.current === "mini") return;
     pointerInsideDockRef.current = false;
     if (dockStateRef.current) scheduleDockHide();
   }
@@ -2087,7 +2023,7 @@ export function Overlay() {
       onPointerLeave={handleDockPointerLeave}
     >
       {dockEdge && <div className="overlay-dock-handle" aria-hidden="true" />}
-      {!isStatsOverlay && displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
+      {displayMode === "mini" && MINI_OVERLAY_RESIZE_EDGES.map((edge) => (
         <div
           key={edge}
           className="overlay-mini-resize-handle"
@@ -2265,19 +2201,7 @@ export function Overlay() {
               {useEnglish ? "Runs" : "场次"}
             </span>
           </div>
-          {statsMiniHovered && (
-            <div
-              className="absolute inset-0 flex flex-col items-center justify-center rounded-md bg-surface-glass px-2 text-center"
-              aria-hidden="true"
-            >
-              <span className="text-xs font-semibold text-text-primary">
-                {useEnglish ? "Middle-drag to move · Drag an edge to resize" : "中键拖动位置 · 拖拽边缘调节大小"}
-              </span>
-              <span className="mt-1 text-2xs font-medium text-text-muted">
-                {useEnglish ? "Double-click for normal mode · Click-through stays on" : "双击返回正常模式 · 鼠标穿透保持开启"}
-              </span>
-            </div>
-          )}
+
         </div>
       ) : !isStatsOverlay && displayMode === "mini" ? (
           <div

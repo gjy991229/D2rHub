@@ -128,9 +128,6 @@ pub(crate) fn destroy_window(app: &AppHandle, label: &str) -> Result<bool, AppEr
     let Some(window) = app.get_webview_window(label) else {
         return Ok(false);
     };
-    if label == STATS_OVERLAY_LABEL {
-        crate::input_listener::set_stats_overlay_mini_input_region_state(false, 0, 0, 0, 0);
-    }
     crate::logger::log_msg(
         "INFO",
         "AuxiliaryWindow",

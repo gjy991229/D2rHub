@@ -1,13 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invokeCommand } from "../platform/tauri";
 import { normalizeShortcut } from "../utils/shortcut";
+
+const captureOwners = new Set<symbol>();
+let captureQueue: Promise<unknown> = Promise.resolve();
+function syncCapture(owner: symbol, active: boolean) {
+  if (active) captureOwners.add(owner);
+  else captureOwners.delete(owner);
+  // Serialize native unregister/register operations across all recorder fields.
+  captureQueue = captureQueue.then(() => invokeCommand("set_shortcut_capture_active", {
+    active: captureOwners.size > 0,
+  })).catch(error => console.error("Failed to update shortcut capture", error));
+}
+
+export async function validateShortcutAvailability(shortcut: string, checkModuleConflicts = false): Promise<void> {
+  await captureQueue;
+  await invokeCommand("validate_shortcut_availability", { shortcut, checkModuleConflicts });
+}
 
 /**
  * 从键盘事件中解析快捷键组合字符串。
  * 返回 null 表示仅按下了修饰键（Ctrl/Alt/Shift），应忽略。
  * 不支持 Win 键。
  */
-export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLElement>): string | null {
+export function parseShortcutFromKeyEvent(
+  e: Pick<KeyboardEvent, "key" | "code" | "ctrlKey" | "altKey" | "shiftKey">,
+): string | null {
   const key = e.key;
 
   // 忽略纯修饰键
@@ -85,6 +103,7 @@ export function parseShortcutFromKeyEvent(e: React.KeyboardEvent<HTMLElement>): 
  */
 export function useShortcutRecorder() {
   const [recordingPos, setRecordingPos] = useState<string | null>(null);
+  const captureOwner = useRef(Symbol("shortcut-recorder"));
 
   useEffect(() => {
     const stopRecording = () => setRecordingPos(null);
@@ -93,12 +112,9 @@ export function useShortcutRecorder() {
   }, []);
 
   useEffect(() => {
-    void invokeCommand("set_shortcut_capture_active", { active: recordingPos !== null }).catch(() => {});
-    return () => {
-      if (recordingPos !== null) {
-        void invokeCommand("set_shortcut_capture_active", { active: false }).catch(() => {});
-      }
-    };
+    const owner = captureOwner.current;
+    syncCapture(owner, recordingPos !== null);
+    return () => syncCapture(owner, false);
   }, [recordingPos]);
 
   return { recordingPos, setRecordingPos };

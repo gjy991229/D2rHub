@@ -1421,6 +1421,7 @@ pub fn exit_app(app: tauri::AppHandle) {
             // inside an IPC or tray event callback: keeping the event loop free
             // is what lets those workers finish.
             crate::capabilities::shutdown(&shutdown_app);
+            crate::input_listener::shutdown();
             shutdown_app.exit(0);
         }) {
         Ok(_) => {}

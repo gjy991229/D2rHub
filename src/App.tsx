@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invokeCommand } from "./platform/tauri";
+import { invokeCommand, listenEvent } from "./platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AlertTriangle } from "lucide-react";
 import { useGlobalConfig, initConfigSync } from "./store/globalConfig";
@@ -67,6 +67,10 @@ type View =
   | { type: "main"; };
 
 function App() {
+  useEffect(() => {
+    const listener = listenEvent<string>("global-hotkey-error", event => showToast("error", event.payload));
+    return () => { void listener.then(stop => stop()).catch(() => {}); };
+  }, []);
   const { config, initialLoading, saving: configSaving, restarting, error: configError, patch } = useGlobalConfig();
   const profileDecisionCurrent = isFeatureProfileDecisionCurrent(config);
   const applicationDisclosure = useApplicationDisclosure(

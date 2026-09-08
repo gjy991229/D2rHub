@@ -16,21 +16,21 @@ auxiliary WebViews. Configuration, account recovery, launch leases and the main
 window lifecycle remain core services. The empty application registry is only a
 control-plane value and owns no optional runtime resources.
 
-Input services are demand-driven in both profiles. Core shortcuts require only
-the keyboard hook; room shortcuts subscribe while enabled. Mouse hooks exist
-only for visible pet input or statistics-window interaction. Their forwarded events
-share a bounded queue, active whenever either consumer needs it. Statistics
-double-click and hover events do not depend on enabling the pet. With no consumers,
-the hooks and their worker threads are released. Configuration observers enqueue
-coalesced updates on the shared blocking executor instead of running native
-lifecycle operations inside the configuration transaction. No input supervisor
-thread is retained when idle.
+Business shortcuts use one Windows RegisterHotKey / WM_HOTKEY message thread,
+with MOD_NOREPEAT and native conflict reporting. Core shortcuts remain available
+in Pure mode; room shortcuts are registered only while that capability is active.
+Recording and scoped automatic input temporarily unregister hotkeys and restore
+the current route snapshot afterward. Hotkeys are unregistered on shutdown.
 
-Keyboard, mouse and event-forwarding workers have independent ownership. An
-optional mouse/forwarder failure cannot remove an existing core keyboard hook.
-Keyboard retirement is serialized with shortcut dispatch and waits for consumed
-keys to be released. Startup timeouts retain cancellable ownership of late workers.
+Desktop-pet input is independent: one passive listener thread owns both keyboard
+and mouse hooks, and a bounded queue forwards animation events. The listener is
+created only for an enabled, visible pet and retired when it is no longer needed.
+Its callbacks always pass input onward. Startup timeouts retain cancellable
+ownership of late workers. Pet failures cannot remove business hotkeys.
 
+Both statistics and TZ mini windows use local double-click, Enter, pointer drag,
+and resize events. Statistics mini mode no longer enables click-through, and
+neither overlay needs a global mouse hook.
 Persisted room shortcuts are consulted when core keys are edited, even in Pure
 mode, without constructing a room runtime. Existing conflicts leave the room
 settings manager available for repair; activation still validates and refuses

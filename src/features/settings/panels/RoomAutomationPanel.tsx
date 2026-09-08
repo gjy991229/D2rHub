@@ -10,7 +10,9 @@ import {
 import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
-import { parseShortcutFromKeyEvent } from "../../../hooks/useShortcutRecorder";
+import { parseShortcutFromKeyEvent, useShortcutRecorder, validateShortcutAvailability } from "../../../hooks/useShortcutRecorder";
+import { useGlobalConfig } from "../../../store/globalConfig";
+import { normalizeShortcut } from "../../../utils/shortcut";
 import type { AccountMeta, ModCapsulePool } from "../../../store/types";
 import {
   accountsMissingCapsuleFeature,
@@ -325,6 +327,27 @@ export function RoomAutomationPanel({
       }
     };
   }, []);
+
+  const checkShortcutConflict = (shortcut: string, field: "shortcut" | "join_shortcut") => {
+    const config = useGlobalConfig.getState().config;
+    let bindings: Record<string, string> = {};
+    try { bindings = JSON.parse(config?.shortcut_bindings_json || "{}"); } catch { /* No saved bindings. */ }
+    const otherField = field === "shortcut" ? "join_shortcut" : "shortcut";
+    const assigned = [
+      ...Object.entries(bindings).map(([position, value]) => ({
+        shortcut: value,
+        label: locale === "en-US" ? `account position #${position}` : `账号位置 #${position}`,
+      })),
+      { shortcut: config?.show_main_window_shortcut || config?.hide_main_window_shortcut || "", label: locale === "en-US" ? "Toggle main window" : "切换主面板" },
+      { shortcut: draftRef.current?.[otherField] || "", label: otherField === "shortcut" ? copy.createShortcut : copy.followerShortcut },
+    ];
+    const conflict = assigned.find(entry => normalizeShortcut(entry.shortcut).toLowerCase() === shortcut.toLowerCase());
+    if (conflict) {
+      throw new Error(locale === "en-US"
+        ? `${shortcut} is already assigned to ${conflict.label}. Previous binding kept.`
+        : `快捷键 ${shortcut} 已用于${conflict.label}，原设置保持不变`);
+    }
+  };
 
   useEffect(() => {
     if (!draft || !dirty || !validation?.valid || stale || operationError || operationRef.current) return;
@@ -777,6 +800,8 @@ export function RoomAutomationPanel({
           )}
           <ShortcutField
             label={copy.createShortcut}
+            checkingLabel={locale === "en-US" ? "Checking availability..." : "正在检查占用..."}
+            checkConflict={shortcut => checkShortcutConflict(shortcut, "shortcut")}
             value={draft.shortcut}
             captureHint={copy.shortcutCapture}
             recordingLabel={copy.shortcutRecording}
@@ -786,6 +811,8 @@ export function RoomAutomationPanel({
           />
           <ShortcutField
             label={copy.followerShortcut}
+            checkingLabel={locale === "en-US" ? "Checking availability..." : "正在检查占用..."}
+            checkConflict={shortcut => checkShortcutConflict(shortcut, "join_shortcut")}
             value={draft.join_shortcut}
             captureHint={copy.shortcutCapture}
             recordingLabel={copy.shortcutRecording}
@@ -1061,6 +1088,8 @@ interface ShortcutFieldProps {
   value: string;
   captureHint: string;
   recordingLabel: string;
+  checkingLabel: string;
+  checkConflict: (value: string) => void;
   disabled?: boolean;
   invalid?: boolean;
   onChange: (value: string) => void;
@@ -1071,14 +1100,27 @@ function ShortcutField({
   value,
   captureHint,
   recordingLabel,
+  checkingLabel,
+  checkConflict,
   disabled,
   invalid,
   onChange,
 }: ShortcutFieldProps) {
-  const [recording, setRecording] = useState(false);
+  const { recordingPos, setRecordingPos } = useShortcutRecorder();
+  const [checking, setChecking] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const requestRef = useRef(0);
+  const errorId = useId();
+  useEffect(() => {
+    setChecking(false);
+    setError(null);
+    return () => { requestRef.current += 1; };
+  }, [disabled, value]);
+  const recording = recordingPos !== null;
+  const setRecording = (active: boolean) => setRecordingPos(active ? "room-shortcut" : null);
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (!recording) return;
+  const handleKeyDown = async (event: KeyboardEvent<HTMLButtonElement>) => {
+    if (!recording || checking || event.repeat) return;
     if (event.key === "Tab") {
       setRecording(false);
       return;
@@ -1094,8 +1136,21 @@ function ShortcutField({
     const shortcut = parseShortcutFromKeyEvent(event);
     const canonical = shortcut && canonicalizeRoomAutomationShortcut(shortcut);
     if (!canonical) return;
-    onChange(canonical);
     setRecording(false);
+    setError(null);
+    const request = ++requestRef.current;
+    setChecking(true);
+    try {
+      checkConflict(canonical);
+      await validateShortcutAvailability(canonical);
+      if (request !== requestRef.current) return;
+      checkConflict(canonical);
+      onChange(canonical);
+    } catch (failure) {
+      if (request === requestRef.current) setError(errorMessage(failure));
+    } finally {
+      if (request === requestRef.current) setChecking(false);
+    }
   };
 
   return (
@@ -1105,16 +1160,19 @@ function ShortcutField({
         type="button"
         className="settings-input room-automation-shortcut-input"
         data-recording={recording ? "true" : "false"}
-        disabled={disabled}
+        disabled={disabled || checking}
         aria-label={label}
-        aria-invalid={invalid || undefined}
+        aria-invalid={!!error || invalid || undefined}
+        aria-describedby={error ? errorId : undefined}
+        aria-busy={checking}
         onClick={() => setRecording(true)}
         onBlur={() => setRecording(false)}
         onKeyDown={handleKeyDown}
       >
-        {recording ? recordingLabel : value}
+        {checking ? checkingLabel : recording ? recordingLabel : value}
       </button>
       <small className="room-automation-field-hint">{captureHint}</small>
+      {error && <small id={errorId} role="alert" className="room-automation-field-error">{error}</small>}
     </label>
   );
 }

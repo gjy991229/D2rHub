@@ -160,7 +160,7 @@ export function OverlayPanel({
             <span className="text-sm font-semibold text-text-secondary">场景统计窗口</span>
             <p className="text-2xs text-text-muted">
               {statisticsModuleInstalled
-                ? "正常模式显示账号、计时与掉落；迷你模式保持鼠标穿透，可拖拽边缘缩放并用中键移动"
+                ? "正常模式显示账号、计时与掉落；双击或按 Enter 切换迷你模式，可拖动位置和边缘缩放"
                 : "添加“识别与统计”模块后可用；统计窗口与识别数据保持同一生命周期"}
             </p>
           </div>

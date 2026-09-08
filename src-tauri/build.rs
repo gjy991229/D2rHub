@@ -126,8 +126,8 @@ const APP_COMMANDS: &[&str] = &[
     "check_path_exists",
     "write_log",
     "set_bongo_cat_input_visible",
-    "set_stats_overlay_mini_input_region",
     "set_shortcut_capture_active",
+    "validate_shortcut_availability",
 ];
 
 fn main() {

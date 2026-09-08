@@ -351,7 +351,7 @@ const textMap: Record<string, string> = {
   "独立显示当前与下一轮 TZ；支持迷你模式和贴边隐藏": "Shows the current and next Terror Zone; supports mini mode and edge auto-hide.",
   "显示邪恶区域播报悬浮窗": "Show Terror Zone broadcast overlay",
   "场景统计窗口": "Run Statistics",
-  "正常模式显示账号、计时与掉落；迷你模式保持鼠标穿透，可拖拽边缘缩放并用中键移动": "Normal mode shows accounts, timing, and drops; mini mode stays click-through, with edge resizing and middle-drag movement.",
+  "正常模式显示账号、计时与掉落；双击或按 Enter 切换迷你模式，可拖动位置和边缘缩放": "Normal mode shows accounts, timing, and drops; double-click or press Enter to switch to mini mode, with dragging and edge resizing.",
   "显示场景统计悬浮窗": "Show run statistics overlay",
   "定位": "Locate",
   "全部移回": "Move All Here",

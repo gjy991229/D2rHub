@@ -873,6 +873,33 @@ pub(crate) fn install_main_window_lifecycle(app: &AppHandle) {
     }
 }
 
+pub fn toggle_main_window(app: &AppHandle) {
+    // Shortcut actions run on workers. Serialize rapid presses so each one
+    // observes the previous window operation before choosing show or hide.
+    static OPERATION: parking_lot::Mutex<()> = parking_lot::Mutex::new(());
+    let _operation = OPERATION.lock();
+    let Some(window) = app.get_webview_window("main") else {
+        crate::logger::log_msg("WARN", "Shortcut", "切换主面板失败：主窗口不存在");
+        return;
+    };
+    let visible = window.is_visible().unwrap_or(false);
+    let minimized = window.is_minimized().unwrap_or(true);
+    #[cfg(target_os = "windows")]
+    let focused = window.hwnd().is_ok_and(|hwnd| unsafe {
+        windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 == hwnd.0
+    });
+    #[cfg(not(target_os = "windows"))]
+    let focused = window.is_focused().unwrap_or(false);
+
+    if focused && visible && !minimized {
+        crate::logger::log_msg("INFO", "Shortcut", "主面板位于前台，隐藏到托盘");
+        hide_main_window_to_tray(app);
+    } else {
+        crate::logger::log_msg("INFO", "Shortcut", "主面板未聚焦或已隐藏/最小化，恢复并聚焦");
+        show_main_window_safely(app);
+    }
+}
+
 pub fn show_main_window_safely(app: &AppHandle) {
     ensure_main_window_visible(app);
     let Some(window) = app.get_webview_window("main") else {
@@ -886,7 +913,19 @@ pub fn show_main_window_safely(app: &AppHandle) {
 pub fn hide_main_window_to_tray(app: &AppHandle) {
     crate::input_listener::cancel_shortcut_capture();
     if let Some(window) = app.get_webview_window("main") {
-        let _ = window.hide();
+        if let Err(error) = window.hide() {
+            crate::logger::log_msg(
+                "ERROR",
+                "WindowPlacement",
+                &format!("隐藏主面板到托盘失败: {error}"),
+            );
+        }
+    } else {
+        crate::logger::log_msg(
+            "WARN",
+            "WindowPlacement",
+            "隐藏主面板到托盘失败：主窗口不存在",
+        );
     }
 
     crate::capabilities::restore_after_main_hidden(app);

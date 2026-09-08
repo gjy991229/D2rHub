@@ -1,52 +1,29 @@
-use std::sync::Mutex;
+//! Shared shortcut routes and the desktop pet's passive input subscription.
+use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::collections::{HashMap, HashSet};
 use tauri::{AppHandle, Emitter, Manager};
-
 use crate::application::multi_instance::{GameWindowPort, WindowMatch};
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::infrastructure::system;
 use crate::state::{CoreShortcutAction, SharedState};
 
-use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::{AtomicI32, AtomicPtr, AtomicU32, AtomicU64, Ordering};
-use std::sync::OnceLock;
-
+pub(crate) mod hotkeys;
 mod runtime;
 
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
-static KEYBOARD_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
-static MOUSE_HOOK: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 static BONGO_CAT_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 static BONGO_CAT_INPUT_VISIBLE: AtomicBool = AtomicBool::new(false);
-static STATS_OVERLAY_MINI_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
-static STATS_OVERLAY_MINI_LEFT: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_MINI_TOP: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_MINI_RIGHT: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_MINI_BOTTOM: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_LAST_CLICK_TIME: AtomicU32 = AtomicU32::new(0);
-static STATS_OVERLAY_LAST_CLICK_X: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_LAST_CLICK_Y: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_POINTER_INSIDE: AtomicBool = AtomicBool::new(false);
-static STATS_OVERLAY_MINI_HWND: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
-static STATS_OVERLAY_MINI_GESTURE: AtomicU32 = AtomicU32::new(0);
 static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static OPTIONAL_SHORTCUTS_ALLOWED: AtomicBool = AtomicBool::new(false);
-static STATS_OVERLAY_MINI_RESIZE_EDGE: AtomicU32 = AtomicU32::new(0);
-static STATS_OVERLAY_GESTURE_START_CURSOR_X: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_GESTURE_START_CURSOR_Y: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_GESTURE_START_LEFT: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_GESTURE_START_TOP: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_GESTURE_START_RIGHT: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_GESTURE_START_BOTTOM: AtomicI32 = AtomicI32::new(0);
-static STATS_OVERLAY_MIN_WIDTH: AtomicU32 = AtomicU32::new(240);
-static STATS_OVERLAY_MIN_HEIGHT: AtomicU32 = AtomicU32::new(48);
-static STATS_OVERLAY_RESIZE_INSET: AtomicI32 = AtomicI32::new(6);
-static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
-    OnceLock::new();
+static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> = OnceLock::new();
 static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
-static ACTIVE_HANDLED_SHORTCUT_KEYS: OnceLock<parking_lot::Mutex<HashSet<u32>>> = OnceLock::new();
 static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
+fn refresh_input_services() {
+    hotkeys::refresh();
+    runtime::request_refresh();
+}
 #[derive(Clone)]
 enum CapabilityShortcutSender {
     #[cfg(test)]
@@ -76,10 +53,6 @@ pub(crate) struct CapabilityShortcutRegistration {
 
 fn capability_shortcuts() -> &'static parking_lot::RwLock<CapabilityShortcutRegistry> {
     CAPABILITY_SHORTCUTS.get_or_init(|| parking_lot::RwLock::new(Default::default()))
-}
-
-fn active_handled_shortcut_keys() -> &'static parking_lot::Mutex<HashSet<u32>> {
-    ACTIVE_HANDLED_SHORTCUT_KEYS.get_or_init(|| parking_lot::Mutex::new(HashSet::new()))
 }
 
 /// Serializes durable core-shortcut commits with optional route registration.
@@ -114,9 +87,8 @@ pub(crate) fn replace_core_shortcut_routes(
             (!shortcut.is_empty()).then_some((shortcut, action))
         })
         .collect();
-    runtime::set_core_input_needed(!routes.is_empty());
     capability_shortcuts().write().core = routes;
-    runtime::request_refresh();
+    refresh_input_services();
 }
 
 /// Rejects a core multi-instance shortcut that would be shadowed by an
@@ -155,7 +127,7 @@ pub(crate) fn validate_core_shortcut_reservations_for_modules<'a>(
     let shortcuts: Vec<_> = shortcuts.into_iter().collect();
     validate_core_shortcut_reservations(shortcuts.iter().copied())?;
     let registry = capability_shortcuts().read();
-    for shortcut in shortcuts {
+    for shortcut in &shortcuts {
         let shortcut = shortcut.trim().to_ascii_lowercase();
         if !shortcut.is_empty() && registry.saved_owners.iter().any(|(owner, saved)| {
             installed_modules.iter().any(|module| module.as_str() == *owner) && saved.contains(&shortcut)
@@ -163,7 +135,8 @@ pub(crate) fn validate_core_shortcut_reservations_for_modules<'a>(
             return Err(format!("快捷键 {shortcut} 已被原配置保留，请选择其他组合"));
         }
     }
-    Ok(())
+    drop(registry);
+    hotkeys::validate(shortcuts.into_iter().map(str::to_string).collect())
 }
 
 pub(crate) fn replace_saved_capability_shortcuts<'a>(
@@ -183,20 +156,32 @@ pub(crate) fn validate_saved_capability_shortcuts<'a>(
     shortcuts: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), String> {
     let registry = capability_shortcuts().read();
+    let mut normalized = Vec::new();
     for shortcut in shortcuts {
         let Ok(shortcut) = crate::capabilities::room_automation::canonicalize_shortcut(shortcut) else {
             continue; // Disabled module drafts may contain incomplete shortcuts.
         };
         let shortcut = shortcut.to_ascii_lowercase();
-        if registry.core.contains_key(&shortcut)
-            || registry.owners.iter().any(|(other, (_, routes))| {
+        if normalized.contains(&shortcut) {
+            return Err(format!("快捷键 {shortcut} 同时用于主号建房和跟随入房，请为两个动作设置不同组合"));
+        }
+        if let Some(action) = registry.core.get(&shortcut) {
+            let label = match action {
+                CoreShortcutAction::FocusAccount(position) => format!("账号位置 #{position}"),
+                CoreShortcutAction::ToggleMainWindow => "切换主面板".to_string(),
+            };
+            return Err(format!("快捷键 {shortcut} 已用于{label}，配置未保存"));
+        }
+        if registry.owners.iter().any(|(other, (_, routes))| {
                 *other != owner && routes.contains_key(&shortcut)
             })
         {
             return Err(format!("快捷键 {shortcut} 已被其他动作使用，配置未保存"));
         }
+        normalized.push(shortcut);
     }
-    Ok(())
+    drop(registry);
+    hotkeys::validate(normalized)
 }
 
 #[cfg(test)]
@@ -306,8 +291,7 @@ fn install_capability_shortcuts_in_transaction(
                 CoreShortcutAction::FocusAccount(position) => {
                     format!("多开核心账号位置 {position}")
                 }
-                CoreShortcutAction::ShowMainWindow => "D2RHub 主面板呼出动作".to_string(),
-                CoreShortcutAction::HideMainWindow => "D2RHub 主面板最小化动作".to_string(),
+                CoreShortcutAction::ToggleMainWindow => "D2RHub 主面板切换动作".to_string(),
             };
             return Err(format!(
                 "快捷键 {shortcut} 已由{owner}使用"
@@ -324,11 +308,11 @@ fn install_capability_shortcuts_in_transaction(
             ));
         }
     }
+    hotkeys::validate(normalized.keys().cloned().collect())?;
     let generation = CAPABILITY_SHORTCUT_GENERATION.fetch_add(1, Ordering::Relaxed);
     registry.owners.insert(owner_id, (generation, normalized));
-    runtime::set_capability_input_needed(true);
     drop(registry);
-    runtime::request_refresh();
+    refresh_input_services();
     Ok(CapabilityShortcutRegistration {
         owner_id,
         generation,
@@ -371,20 +355,19 @@ impl Drop for CapabilityShortcutRegistration {
         {
             registry.owners.remove(self.owner_id);
         }
-        runtime::set_capability_input_needed(!registry.owners.is_empty());
         drop(registry);
-        runtime::request_refresh();
+        refresh_input_services();
     }
 }
 
 pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
-    runtime::request_refresh();
+    refresh_input_services();
 }
 
 pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
-    runtime::request_refresh();
+    refresh_input_services();
 }
 
 #[tauri::command]
@@ -407,461 +390,8 @@ pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), 
     Ok(())
 }
 
-pub(crate) fn set_stats_overlay_mini_input_region_state(
-    enabled: bool,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-) {
-    STATS_OVERLAY_MINI_LEFT.store(x, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_TOP.store(y, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_RIGHT.store(x.saturating_add_unsigned(width), Ordering::Relaxed);
-    STATS_OVERLAY_MINI_BOTTOM.store(y.saturating_add_unsigned(height), Ordering::Relaxed);
-    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-    STATS_OVERLAY_POINTER_INSIDE.store(false, Ordering::Relaxed);
-    if !enabled {
-        STATS_OVERLAY_MINI_GESTURE.store(0, Ordering::Release);
-        STATS_OVERLAY_MINI_RESIZE_EDGE.store(0, Ordering::Relaxed);
-        STATS_OVERLAY_MINI_HWND.store(std::ptr::null_mut(), Ordering::Release);
-    }
-    STATS_OVERLAY_MINI_INPUT_ENABLED.store(enabled, Ordering::Release);
-    runtime::request_refresh();
-}
 
-#[tauri::command]
-// Tauri exposes command parameters as named IPC fields; keeping them flat
-// preserves the existing frontend command contract.
-#[allow(clippy::too_many_arguments)]
-pub fn set_stats_overlay_mini_input_region(
-    app: AppHandle,
-    enabled: bool,
-    x: i32,
-    y: i32,
-    width: u32,
-    height: u32,
-    min_width: u32,
-    min_height: u32,
-    resize_inset: u32,
-) -> Result<(), String> {
-    let state = app.state::<SharedState>();
-    let _operation = state.optional_window_operations.try_lock()
-        .ok_or_else(|| "辅助窗口操作进行中，请稍后重试".to_string())?;
-    if enabled {
-        let installed = state.optional_runtime_ready() && state
-            .configuration()
-            .snapshot()
-            .is_some_and(|config| {
-                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                    && config.optional_module_runtime_allowed(
-                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                    )
-            });
-        if !installed {
-            return Err("识别与统计模块尚未安装".to_string());
-        }
-
-        let window = app
-            .get_webview_window("stats-overlay")
-            .ok_or_else(|| "统计悬浮窗尚未创建".to_string())?;
-        let hwnd = window
-            .hwnd()
-            .map_err(|error| format!("获取统计悬浮窗句柄失败: {error}"))?;
-        let scale_factor = window.scale_factor().unwrap_or(1.0).max(0.1);
-        let physical_min_width = (f64::from(min_width) * scale_factor).round().max(1.0) as u32;
-        let physical_min_height = (f64::from(min_height) * scale_factor).round().max(1.0) as u32;
-        let physical_resize_inset =
-            (f64::from(resize_inset) * scale_factor).round().max(1.0) as i32;
-
-        STATS_OVERLAY_MIN_WIDTH.store(physical_min_width, Ordering::Relaxed);
-        STATS_OVERLAY_MIN_HEIGHT.store(physical_min_height, Ordering::Relaxed);
-        STATS_OVERLAY_RESIZE_INSET.store(physical_resize_inset, Ordering::Relaxed);
-        STATS_OVERLAY_MINI_HWND.store(hwnd.0, Ordering::Release);
-    }
-    set_stats_overlay_mini_input_region_state(enabled, x, y, width, height);
-    Ok(())
-}
-
-/// RAII guard：Drop 时自动调用 UnhookWindowsHookEx 并清空对应的全局钩子指针，
-/// 确保线程 panic 或提前退出时释放钩子且不留悬空指针。
-struct HookGuard {
-    hook: *mut std::ffi::c_void,
-    slot: &'static AtomicPtr<std::ffi::c_void>,
-}
-
-impl HookGuard {
-    unsafe fn new(hook: *mut std::ffi::c_void, slot: &'static AtomicPtr<std::ffi::c_void>) -> Self {
-        Self { hook, slot }
-    }
-}
-
-impl Drop for HookGuard {
-    fn drop(&mut self) {
-        if !self.hook.is_null() {
-            unsafe {
-                UnhookWindowsHookEx(self.hook);
-            }
-        }
-        self.slot.store(std::ptr::null_mut(), Ordering::SeqCst);
-    }
-}
-
-// Low-level Windows Hook types and constants
-// These aliases mirror Win32 SDK names; preserving them makes FFI review less error-prone.
-#[allow(clippy::upper_case_acronyms)]
-type LRESULT = isize;
-#[allow(clippy::upper_case_acronyms)]
-type WPARAM = usize;
-#[allow(clippy::upper_case_acronyms)]
-type LPARAM = isize;
-#[allow(clippy::upper_case_acronyms)]
-type HOOKPROC = Option<
-    unsafe extern "system" fn(code: std::os::raw::c_int, wparam: WPARAM, lparam: LPARAM) -> LRESULT,
->;
-
-const WH_KEYBOARD_LL: std::os::raw::c_int = 13;
-const WH_MOUSE_LL: std::os::raw::c_int = 14;
-
-const WM_KEYDOWN: usize = 0x0100;
-const WM_KEYUP: usize = 0x0101;
-const WM_SYSKEYDOWN: usize = 0x0104;
-const WM_SYSKEYUP: usize = 0x0105;
-const WM_MOUSEMOVE: usize = 0x0200;
-const WM_LBUTTONDOWN: usize = 0x0201;
-const WM_LBUTTONUP: usize = 0x0202;
-const WM_RBUTTONDOWN: usize = 0x0204;
-const WM_MBUTTONDOWN: usize = 0x0207;
-const WM_MBUTTONUP: usize = 0x0208;
-
-const STATS_OVERLAY_GESTURE_NONE: u32 = 0;
-const STATS_OVERLAY_GESTURE_MOVE: u32 = 1;
-const STATS_OVERLAY_GESTURE_RESIZE: u32 = 2;
-const STATS_OVERLAY_RESIZE_LEFT: u32 = 1 << 0;
-const STATS_OVERLAY_RESIZE_RIGHT: u32 = 1 << 1;
-const STATS_OVERLAY_RESIZE_TOP: u32 = 1 << 2;
-const STATS_OVERLAY_RESIZE_BOTTOM: u32 = 1 << 3;
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-#[allow(clippy::upper_case_acronyms)]
-struct POINT {
-    x: i32,
-    y: i32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-#[allow(clippy::upper_case_acronyms)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-#[allow(clippy::upper_case_acronyms)]
-struct MSG {
-    hwnd: *mut std::ffi::c_void,
-    message: u32,
-    w_param: usize,
-    l_param: isize,
-    time: u32,
-    pt: POINT,
-    l_private: u32,
-}
-
-/// KBDLLHOOKSTRUCT — 键盘低级钩子数据结构
-#[repr(C)]
-#[allow(clippy::upper_case_acronyms)]
-struct KBDLLHOOKSTRUCT {
-    vk_code: u32,
-    scan_code: u32,
-    flags: u32,
-    time: u32,
-    dw_extra_info: usize,
-}
-
-#[repr(C)]
-#[allow(clippy::upper_case_acronyms)]
-struct MSLLHOOKSTRUCT {
-    pt: POINT,
-    mouse_data: u32,
-    flags: u32,
-    time: u32,
-    dw_extra_info: usize,
-}
-
-extern "system" {
-    fn SetWindowsHookExW(
-        idHook: std::os::raw::c_int,
-        lpfn: HOOKPROC,
-        hmod: *mut std::ffi::c_void,
-        dwThreadId: u32,
-    ) -> *mut std::ffi::c_void;
-
-    fn UnhookWindowsHookEx(hhk: *mut std::ffi::c_void) -> std::os::raw::c_int;
-
-    fn CallNextHookEx(
-        hhk: *mut std::ffi::c_void,
-        nCode: std::os::raw::c_int,
-        wParam: WPARAM,
-        lParam: LPARAM,
-    ) -> LRESULT;
-
-    fn GetMessageW(
-        lpMsg: *mut std::ffi::c_void,
-        hWnd: *mut std::ffi::c_void,
-        wMsgFilterMin: u32,
-        wMsgFilterMax: u32,
-    ) -> std::os::raw::c_int;
-
-    fn TranslateMessage(lpMsg: *const std::ffi::c_void) -> std::os::raw::c_int;
-    fn DispatchMessageW(lpMsg: *const std::ffi::c_void) -> LRESULT;
-
-    fn GetKeyState(nVirtKey: i32) -> i16;
-
-    fn GetDoubleClickTime() -> u32;
-    fn GetSystemMetrics(nIndex: i32) -> i32;
-
-    fn GetWindowRect(hWnd: isize, lpRect: *mut std::ffi::c_void) -> std::os::raw::c_int;
-    fn SetWindowPos(
-        hWnd: isize,
-        hWndInsertAfter: isize,
-        X: i32,
-        Y: i32,
-        cx: i32,
-        cy: i32,
-        uFlags: u32,
-    ) -> std::os::raw::c_int;
-}
-
-fn stats_overlay_resize_edge(x: i32, y: i32) -> u32 {
-    let left = STATS_OVERLAY_MINI_LEFT.load(Ordering::Relaxed);
-    let top = STATS_OVERLAY_MINI_TOP.load(Ordering::Relaxed);
-    let right = STATS_OVERLAY_MINI_RIGHT.load(Ordering::Relaxed);
-    let bottom = STATS_OVERLAY_MINI_BOTTOM.load(Ordering::Relaxed);
-    let inset = STATS_OVERLAY_RESIZE_INSET.load(Ordering::Relaxed).max(1);
-    let mut edge = 0;
-
-    if x - left < inset {
-        edge |= STATS_OVERLAY_RESIZE_LEFT;
-    } else if right - x <= inset {
-        edge |= STATS_OVERLAY_RESIZE_RIGHT;
-    }
-    if y - top < inset {
-        edge |= STATS_OVERLAY_RESIZE_TOP;
-    } else if bottom - y <= inset {
-        edge |= STATS_OVERLAY_RESIZE_BOTTOM;
-    }
-    edge
-}
-
-unsafe fn begin_stats_overlay_mini_gesture(
-    mouse: &MSLLHOOKSTRUCT,
-    gesture: u32,
-    resize_edge: u32,
-) -> bool {
-    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire)
-        || STATS_OVERLAY_MINI_GESTURE.load(Ordering::Acquire) != STATS_OVERLAY_GESTURE_NONE
-        || !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y)
-    {
-        return false;
-    }
-
-    let hwnd = STATS_OVERLAY_MINI_HWND.load(Ordering::Acquire);
-    if hwnd.is_null() {
-        return false;
-    }
-    let mut rect = RECT {
-        left: 0,
-        top: 0,
-        right: 0,
-        bottom: 0,
-    };
-    if GetWindowRect(hwnd as isize, (&mut rect as *mut RECT).cast()) == 0 {
-        return false;
-    }
-
-    STATS_OVERLAY_GESTURE_START_CURSOR_X.store(mouse.pt.x, Ordering::Relaxed);
-    STATS_OVERLAY_GESTURE_START_CURSOR_Y.store(mouse.pt.y, Ordering::Relaxed);
-    STATS_OVERLAY_GESTURE_START_LEFT.store(rect.left, Ordering::Relaxed);
-    STATS_OVERLAY_GESTURE_START_TOP.store(rect.top, Ordering::Relaxed);
-    STATS_OVERLAY_GESTURE_START_RIGHT.store(rect.right, Ordering::Relaxed);
-    STATS_OVERLAY_GESTURE_START_BOTTOM.store(rect.bottom, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_RESIZE_EDGE.store(resize_edge, Ordering::Relaxed);
-    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_GESTURE.store(gesture, Ordering::Release);
-    true
-}
-
-unsafe fn begin_stats_overlay_mini_resize(mouse: &MSLLHOOKSTRUCT) -> bool {
-    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire)
-        || !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y)
-    {
-        return false;
-    }
-    let edge = stats_overlay_resize_edge(mouse.pt.x, mouse.pt.y);
-    edge != 0 && begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_RESIZE, edge)
-}
-
-unsafe fn update_stats_overlay_mini_gesture(mouse: &MSLLHOOKSTRUCT) -> bool {
-    let gesture = STATS_OVERLAY_MINI_GESTURE.load(Ordering::Acquire);
-    if gesture == STATS_OVERLAY_GESTURE_NONE {
-        return false;
-    }
-
-    let hwnd = STATS_OVERLAY_MINI_HWND.load(Ordering::Acquire);
-    if hwnd.is_null() {
-        STATS_OVERLAY_MINI_GESTURE.store(STATS_OVERLAY_GESTURE_NONE, Ordering::Release);
-        return false;
-    }
-
-    let delta_x = mouse
-        .pt
-        .x
-        .saturating_sub(STATS_OVERLAY_GESTURE_START_CURSOR_X.load(Ordering::Relaxed));
-    let delta_y = mouse
-        .pt
-        .y
-        .saturating_sub(STATS_OVERLAY_GESTURE_START_CURSOR_Y.load(Ordering::Relaxed));
-    let start_left = STATS_OVERLAY_GESTURE_START_LEFT.load(Ordering::Relaxed);
-    let start_top = STATS_OVERLAY_GESTURE_START_TOP.load(Ordering::Relaxed);
-    let start_right = STATS_OVERLAY_GESTURE_START_RIGHT.load(Ordering::Relaxed);
-    let start_bottom = STATS_OVERLAY_GESTURE_START_BOTTOM.load(Ordering::Relaxed);
-    let mut left = start_left;
-    let mut top = start_top;
-    let mut right = start_right;
-    let mut bottom = start_bottom;
-
-    if gesture == STATS_OVERLAY_GESTURE_MOVE {
-        left = start_left.saturating_add(delta_x);
-        top = start_top.saturating_add(delta_y);
-        right = start_right.saturating_add(delta_x);
-        bottom = start_bottom.saturating_add(delta_y);
-    } else {
-        let edge = STATS_OVERLAY_MINI_RESIZE_EDGE.load(Ordering::Relaxed);
-        let min_width = STATS_OVERLAY_MIN_WIDTH.load(Ordering::Relaxed).max(1) as i32;
-        let min_height = STATS_OVERLAY_MIN_HEIGHT.load(Ordering::Relaxed).max(1) as i32;
-        if edge & STATS_OVERLAY_RESIZE_LEFT != 0 {
-            left = start_left
-                .saturating_add(delta_x)
-                .min(start_right.saturating_sub(min_width));
-        } else if edge & STATS_OVERLAY_RESIZE_RIGHT != 0 {
-            right = start_right
-                .saturating_add(delta_x)
-                .max(start_left.saturating_add(min_width));
-        }
-        if edge & STATS_OVERLAY_RESIZE_TOP != 0 {
-            top = start_top
-                .saturating_add(delta_y)
-                .min(start_bottom.saturating_sub(min_height));
-        } else if edge & STATS_OVERLAY_RESIZE_BOTTOM != 0 {
-            bottom = start_bottom
-                .saturating_add(delta_y)
-                .max(start_top.saturating_add(min_height));
-        }
-    }
-
-    let width = right.saturating_sub(left).max(1);
-    let height = bottom.saturating_sub(top).max(1);
-    const SWP_NOZORDER: u32 = 0x0004;
-    const SWP_NOACTIVATE: u32 = 0x0010;
-    if SetWindowPos(
-        hwnd as isize,
-        0,
-        left,
-        top,
-        width,
-        height,
-        SWP_NOZORDER | SWP_NOACTIVATE,
-    ) == 0
-    {
-        return true;
-    }
-
-    STATS_OVERLAY_MINI_LEFT.store(left, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_TOP.store(top, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_RIGHT.store(right, Ordering::Relaxed);
-    STATS_OVERLAY_MINI_BOTTOM.store(bottom, Ordering::Relaxed);
-    STATS_OVERLAY_POINTER_INSIDE.store(true, Ordering::Relaxed);
-    true
-}
-
-fn finish_stats_overlay_mini_gesture(expected_gesture: u32) -> bool {
-    STATS_OVERLAY_MINI_GESTURE
-        .compare_exchange(
-            expected_gesture,
-            STATS_OVERLAY_GESTURE_NONE,
-            Ordering::AcqRel,
-            Ordering::Acquire,
-        )
-        .is_ok()
-}
-
-unsafe fn handle_stats_overlay_mini_double_click(mouse: &MSLLHOOKSTRUCT) -> bool {
-    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
-        return false;
-    }
-
-    if !is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y) {
-        STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-        return false;
-    }
-
-    let previous_time = STATS_OVERLAY_LAST_CLICK_TIME.swap(mouse.time, Ordering::Relaxed);
-    let previous_x = STATS_OVERLAY_LAST_CLICK_X.swap(mouse.pt.x, Ordering::Relaxed);
-    let previous_y = STATS_OVERLAY_LAST_CLICK_Y.swap(mouse.pt.y, Ordering::Relaxed);
-    const SM_CXDOUBLECLK: i32 = 36;
-    const SM_CYDOUBLECLK: i32 = 37;
-    let max_delta_x = GetSystemMetrics(SM_CXDOUBLECLK).max(1) / 2;
-    let max_delta_y = GetSystemMetrics(SM_CYDOUBLECLK).max(1) / 2;
-    if !is_stats_overlay_double_click(
-        previous_time,
-        mouse.time,
-        previous_x,
-        previous_y,
-        mouse.pt.x,
-        mouse.pt.y,
-        GetDoubleClickTime(),
-        max_delta_x,
-        max_delta_y,
-    ) {
-        return false;
-    }
-
-    STATS_OVERLAY_LAST_CLICK_TIME.store(0, Ordering::Relaxed);
-    runtime::emit_input_event("StatsOverlayMiniToggle")
-}
-
-fn handle_stats_overlay_mini_pointer_move(mouse: &MSLLHOOKSTRUCT) {
-    if !STATS_OVERLAY_MINI_INPUT_ENABLED.load(Ordering::Acquire) {
-        return;
-    }
-
-    let inside = is_inside_stats_overlay_mini_region(mouse.pt.x, mouse.pt.y);
-    if STATS_OVERLAY_POINTER_INSIDE.swap(inside, Ordering::Relaxed) == inside {
-        return;
-    }
-    if !runtime::emit_input_event(if inside {
-        "StatsOverlayMiniHoverEnter"
-    } else {
-        "StatsOverlayMiniHoverLeave"
-    }) {
-        // Retry the transition on the next move if the queue was unavailable.
-        STATS_OVERLAY_POINTER_INSIDE.store(!inside, Ordering::Relaxed);
-    }
-}
-
-fn is_inside_stats_overlay_mini_region(x: i32, y: i32) -> bool {
-    let left = STATS_OVERLAY_MINI_LEFT.load(Ordering::Relaxed);
-    let top = STATS_OVERLAY_MINI_TOP.load(Ordering::Relaxed);
-    let right = STATS_OVERLAY_MINI_RIGHT.load(Ordering::Relaxed);
-    let bottom = STATS_OVERLAY_MINI_BOTTOM.load(Ordering::Relaxed);
-    x >= left && x < right && y >= top && y < bottom
-}
-
+#[allow(dead_code)]
 #[allow(clippy::too_many_arguments)]
 fn is_stats_overlay_double_click(
     previous_time: u32,
@@ -930,104 +460,6 @@ fn vk_to_key_string(vk: u32) -> String {
     }
 }
 
-/// 根据当前修饰键和主键构造快捷键字符串，如 "Ctrl+1"、"Alt+F"、"F5"
-fn build_shortcut_string(ctrl: bool, alt: bool, shift: bool, key: &str) -> String {
-    let mut parts: Vec<&str> = Vec::new();
-    if ctrl {
-        parts.push("Ctrl");
-    }
-    if alt {
-        parts.push("Alt");
-    }
-    if shift {
-        parts.push("Shift");
-    }
-    parts.push(key);
-    parts.join("+")
-}
-
-/// 检查当前按键组合是否匹配某个已配置的快捷键，若匹配则聚焦对应账号窗口
-/// 返回 true 表示已处理（应吞掉该按键事件）
-unsafe fn try_handle_shortcut(kbd: &KBDLLHOOKSTRUCT) -> bool {
-    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::Acquire) {
-        return false;
-    }
-    // 忽略修饰键本身的按下
-    let vk = kbd.vk_code;
-    if vk == 0x10 || vk == 0x11 || vk == 0x12 {
-        return false;
-    }
-
-    // 使用 GetKeyState（与消息队列同步）而非 GetAsyncKeyState（异步物理状态），
-    // 避免快速按键序列中修饰键状态与钩子消息不匹配的竞态
-    let ctrl = GetKeyState(0x11) < 0;
-    let alt = GetKeyState(0x12) < 0;
-    let shift = GetKeyState(0x10) < 0;
-    let key_name = vk_to_key_string(vk);
-    let combo = build_shortcut_string(ctrl, alt, shift, &key_name);
-
-    // Read from cached shortcut memory map (non-blocking: skip if lock held)
-    if let Ok(guard) = APP_HANDLE.try_lock() {
-        if let Some(app) = &*guard {
-            if let Some(state) = app.try_state::<SharedState>() {
-                let combo_lower = combo.to_lowercase();
-                // Do not hold the shortcut-map lock while reading the
-                // configuration snapshot. Configuration updates rebuild the
-                // shortcut map, so overlapping both locks would invert that
-                // writer's lock order.
-                let action = {
-                    let Some(shortcut_map) = state.shortcut_map.try_read() else {
-                        return false;
-                    };
-                    shortcut_map.get(&combo_lower).copied()
-                };
-                if let Some(action) = action {
-                    match action {
-                        CoreShortcutAction::FocusAccount(position) => {
-                            let state = state.inner().clone();
-                            let app_clone = app.clone();
-                            let combo_clone = combo.clone();
-                            std::thread::spawn(move || {
-                                if let Some(cfg) = state.configuration().snapshot() {
-                                    focus_account_at_position(
-                                        &app_clone,
-                                        &cfg.accounts_dir,
-                                        position,
-                                        &combo_clone,
-                                    );
-                                }
-                            });
-                        }
-                        CoreShortcutAction::ShowMainWindow => {
-                            let app = app.clone();
-                            std::thread::spawn(move || {
-                                crate::window_placement::show_main_window_safely(&app);
-                            });
-                        }
-                        CoreShortcutAction::HideMainWindow => {
-                            let app = app.clone();
-                            std::thread::spawn(move || {
-                                crate::window_placement::hide_main_window_to_tray(&app);
-                            });
-                        }
-                    }
-                    return true; // 已处理，吞掉按键
-                }
-                // Multi-instance account focus is a core action and therefore
-                // always wins if a legacy or concurrently edited optional
-                // module happens to claim the same key. Module configuration
-                // validation still prevents new conflicts at rest.
-                if OPTIONAL_SHORTCUTS_ALLOWED.load(Ordering::Acquire)
-                    && dispatch_capability_shortcut(&combo_lower)
-                {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
 /// 加载账号列表，找到指定位置的账号，聚焦其游戏窗口
 /// 优先通过实例注册表中的 PID 查找，降级使用兼容窗口标题匹配。
 fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usize, _combo: &str) {
@@ -1088,133 +520,101 @@ fn focus_account_at_position(app: &AppHandle, accounts_dir: &str, position: usiz
     }
 }
 
-unsafe extern "system" fn keyboard_hook_proc(
-    code: std::os::raw::c_int,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    #[cfg(target_os = "windows")]
-    if code >= 0 {
-        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        if kbd.dw_extra_info == crate::infrastructure::physical_input::INPUT_TAG {
-            return CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam);
-        }
+fn registered_shortcuts() -> Vec<String> {
+    let registry = capability_shortcuts().read();
+    let mut keys: Vec<_> = registry.core.keys().cloned().collect();
+    if OPTIONAL_SHORTCUTS_ALLOWED.load(Ordering::Acquire) {
+        keys.extend(registry.owners.values().flat_map(|(_, routes)| routes.keys().cloned()));
     }
-    if code >= 0 && (wparam == WM_KEYUP || wparam == WM_SYSKEYUP) {
-        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        let handled = active_handled_shortcut_keys().lock().remove(&kbd.vk_code);
-        if handled {
-            if !runtime::keyboard_accepts_shortcuts() { runtime::request_refresh(); }
-            // The matching key-down was a global shortcut and was swallowed.
-            // Swallow its key-up as well so D2R never receives an orphan event.
-            return 1;
-        }
-    } else if code >= 0 && (wparam == WM_KEYDOWN || wparam == WM_SYSKEYDOWN) {
-        // ── 快捷键检测 ──
-        let kbd = &*(lparam as *const KBDLLHOOKSTRUCT);
-        let mut handled_keys = active_handled_shortcut_keys().lock();
-        if handled_keys.contains(&kbd.vk_code) {
-            // Windows emits repeated key-down messages while a key is held.
-            // The first event already dispatched this shortcut; consume repeats
-            // without enqueueing duplicate room workflows.
-            return 1;
-        }
-        // 仅处理按下事件（非抬起），flags bit 7 (LLKHF_UP) = 0 表示按下
-        if runtime::keyboard_accepts_shortcuts() && (kbd.flags & 0x80) == 0 && try_handle_shortcut(kbd) {
-            handled_keys.insert(kbd.vk_code);
-            // 快捷键已处理，吞掉该按键，不传递给其他应用
-            return 1;
-        }
-        drop(handled_keys);
-
-        if BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
-            && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
-        {
-            runtime::emit_input_event("Keyboard");
-        }
-    }
-    CallNextHookEx(KEYBOARD_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
+    keys.sort();
+    keys.dedup();
+    keys
 }
 
-unsafe extern "system" fn mouse_hook_proc(
-    code: std::os::raw::c_int,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    #[cfg(target_os = "windows")]
-    if code >= 0 {
-        let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
-        if mouse.dw_extra_info == crate::infrastructure::physical_input::INPUT_TAG {
-            return CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam);
+fn dispatch_registered_shortcut(app: &AppHandle, shortcut: &str) {
+    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::Acquire) || hotkeys::is_suspended() { return; }
+    let action = capability_shortcuts().read().core.get(shortcut).copied();
+    match action {
+        Some(CoreShortcutAction::ToggleMainWindow) => {
+            crate::logger::log_msg("INFO", "Shortcut", &format!("系统热键触发：{shortcut} → 切换主面板"));
+            crate::window_placement::toggle_main_window(app);
         }
-    }
-    if code >= 0 {
-        let mouse = &*(lparam as *const MSLLHOOKSTRUCT);
-        match wparam {
-            WM_MOUSEMOVE => {
-                if !update_stats_overlay_mini_gesture(mouse) {
-                    handle_stats_overlay_mini_pointer_move(mouse);
+        Some(CoreShortcutAction::FocusAccount(position)) => {
+            if let Some(state) = app.try_state::<SharedState>() {
+                if let Some(config) = state.configuration().snapshot() {
+                    focus_account_at_position(app, &config.accounts_dir, position, shortcut);
                 }
             }
-            WM_LBUTTONDOWN => {
-                if begin_stats_overlay_mini_resize(mouse) {
-                    // The narrow edge region is the only part of mini mode that
-                    // claims a normal left drag; its content remains click-through.
-                    return 1;
-                }
-                if handle_stats_overlay_mini_double_click(mouse) {
-                    // The first click remains click-through. Swallow the confirming
-                    // second press so the foreground game cannot also interpret the
-                    // gesture as a double-click action.
-                    return 1;
-                }
-            }
-            WM_LBUTTONUP if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_RESIZE) => {
-                return 1;
-            }
-            WM_MBUTTONDOWN => {
-                if begin_stats_overlay_mini_gesture(mouse, STATS_OVERLAY_GESTURE_MOVE, 0) {
-                    return 1;
-                }
-            }
-            WM_MBUTTONUP if finish_stats_overlay_mini_gesture(STATS_OVERLAY_GESTURE_MOVE) => {
-                return 1;
-            }
-            _ => {}
         }
-    }
-    if code >= 0
-        && (wparam == WM_LBUTTONDOWN || wparam == WM_RBUTTONDOWN)
-        && BONGO_CAT_INPUT_ENABLED.load(Ordering::Relaxed)
-        && BONGO_CAT_INPUT_VISIBLE.load(Ordering::Relaxed)
-    {
-        runtime::emit_input_event(if wparam == WM_LBUTTONDOWN { "MouseLeft" } else { "MouseRight" });
-    }
-    CallNextHookEx(MOUSE_HOOK.load(Ordering::SeqCst), code, wparam, lparam)
-}
-
-pub fn start_input_listener(app_handle: AppHandle) {
-    if let Ok(mut guard) = APP_HANDLE.lock() {
-        *guard = Some(app_handle);
-        drop(guard);
-        runtime::initialize();
+        None if OPTIONAL_SHORTCUTS_ALLOWED.load(Ordering::Acquire) => {
+            dispatch_capability_shortcut(shortcut);
+        }
+        None => {}
     }
 }
 
-#[tauri::command]
-pub fn set_shortcut_capture_active(active: bool) {
+pub fn start_input_listener(app: AppHandle) {
+    if let Ok(mut handle) = APP_HANDLE.lock() { *handle = Some(app.clone()); }
+    if let Err(error) = hotkeys::initialize(app) {
+        crate::logger::log_msg("ERROR", "Shortcut", &error);
+    }
+    runtime::initialize();
+    refresh_input_services();
+}
+
+#[tauri::command(async)]
+pub fn validate_shortcut_availability(
+    app: AppHandle,
+    shortcut: String,
+    check_module_conflicts: Option<bool>,
+) -> Result<(), String> {
+    if shortcut.trim().is_empty() {
+        return Err("请先输入快捷键".into());
+    }
+    hotkeys::initialize(app.clone())?;
+    if check_module_conflicts.unwrap_or(false) {
+        let state = app.state::<SharedState>();
+        let config = state.configuration().snapshot()
+            .ok_or_else(|| "配置尚未加载，请稍后重新录入快捷键".to_string())?;
+        let normalized = crate::capabilities::room_automation::canonicalize_shortcut(&shortcut)
+            .map_err(|error| format!("快捷键 {shortcut} 无效：{error}"))?;
+        if config.optional_module_installed("room-automation") {
+            // Read the saved projection even when Pure mode has no module runtime.
+            let reserved = crate::capabilities::room_automation_config::persisted_shortcuts(
+                &state.app_data_dir, config.preserved_unknown_fields.get("room_rotation"),
+            ).map_err(|error| error.to_string())?;
+            if reserved.iter().any(|key| key.eq_ignore_ascii_case(&normalized)) {
+                return Err(format!("快捷键 {normalized} 已用于自动跟房模块，原设置保持不变"));
+            }
+        }
+        return validate_core_shortcut_reservations_for_modules(
+            [normalized.as_str()], &config.installed_optional_modules,
+        );
+    }
+    hotkeys::validate(vec![shortcut])
+}
+
+#[tauri::command(async)]
+pub fn set_shortcut_capture_active(active: bool) -> Result<(), String> {
     SHORTCUT_CAPTURE_ACTIVE.store(active, Ordering::Release);
+    hotkeys::refresh_sync()
+}
+
+pub(crate) fn cancel_shortcut_capture() {
+    SHORTCUT_CAPTURE_ACTIVE.store(false, Ordering::Release);
+    hotkeys::refresh();
 }
 
 pub(crate) fn set_optional_shortcuts_allowed(allowed: bool) {
     OPTIONAL_SHORTCUTS_ALLOWED.store(allowed, Ordering::Release);
-    runtime::request_refresh();
+    refresh_input_services();
 }
 
-pub(crate) fn cancel_shortcut_capture() {
-    set_shortcut_capture_active(false);
+pub(crate) fn shutdown() {
+    BONGO_CAT_INPUT_ENABLED.store(false, Ordering::Release);
+    runtime::shutdown();
+    hotkeys::shutdown();
 }
-
 #[cfg(test)]
 mod tests {
     use super::{

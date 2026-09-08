@@ -1149,6 +1149,12 @@
           "markdownDescription": "Enables the upgrade_audio_mod command without any pre-configured scope."
         },
         {
+          "description": "Enables the validate_shortcut_availability command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-validate-shortcut-availability",
+          "markdownDescription": "Enables the validate_shortcut_availability command without any pre-configured scope."
+        },
+        {
           "description": "Enables the wait_for_new_process command without any pre-configured scope.",
           "type": "string",
           "const": "allow-wait-for-new-process",
@@ -1921,6 +1927,12 @@
           "type": "string",
           "const": "deny-upgrade-audio-mod",
           "markdownDescription": "Denies the upgrade_audio_mod command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the validate_shortcut_availability command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-validate-shortcut-availability",
+          "markdownDescription": "Denies the validate_shortcut_availability command without any pre-configured scope."
         },
         {
           "description": "Denies the wait_for_new_process command without any pre-configured scope.",

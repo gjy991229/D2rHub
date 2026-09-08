@@ -70,7 +70,9 @@ export interface GlobalConfig {
   rune_audio_min_gem_level?: number;
   rune_audio_tracked_charm_codes?: string[];
   shortcut_bindings_json: string;
+  /** Main-window toggle; retain the stored name for older configurations. */
   show_main_window_shortcut?: string;
+  /** Legacy fallback, cleared when migrated to the single toggle shortcut. */
   hide_main_window_shortcut?: string;
   overlay_opacity: number;
   main_opacity: number;

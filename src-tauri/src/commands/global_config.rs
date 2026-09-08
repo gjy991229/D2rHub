@@ -138,10 +138,7 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
                 let reserved = crate::capabilities::room_automation_config::persisted_shortcuts(
                     &self.state.app_data_dir, prepared.preserved_unknown_fields.get("room_rotation"),
                 ).map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-                for key in bindings.values().map(String::as_str).chain([
-                    prepared.show_main_window_shortcut.as_str(),
-                    prepared.hide_main_window_shortcut.as_str(),
-                ]) {
+                for key in bindings.values().map(String::as_str).chain([prepared.main_window_shortcut()]) {
                     if let Ok(key) = crate::capabilities::room_automation::canonicalize_shortcut(key) {
                         if reserved.iter().any(|saved| saved.eq_ignore_ascii_case(&key)) {
                             return Err(AppError::ConfigWriteError(format!(
@@ -155,10 +152,7 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
                 bindings
                     .values()
                     .map(String::as_str)
-                    .chain([
-                        prepared.show_main_window_shortcut.as_str(),
-                        prepared.hide_main_window_shortcut.as_str(),
-                    ]),
+                    .chain([prepared.main_window_shortcut()]),
                 &prepared.installed_optional_modules,
             )
             .map_err(AppError::ConfigWriteError)?;
@@ -178,9 +172,6 @@ impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
         if !config.optional_features_runtime_allowed() {
             crate::input_listener::set_bongo_cat_input_enabled(false);
             crate::input_listener::set_bongo_cat_input_visible_state(false);
-            crate::input_listener::set_stats_overlay_mini_input_region_state(
-                false, 0, 0, 0, 0,
-            );
         }
         if !config.optional_module_runtime_allowed(OPTIONAL_MODULE_AUTOMATION) {
             crate::stats::stop_stats_api();
@@ -272,42 +263,32 @@ fn normalize_and_validate_main_window_shortcuts(
         Ok(shortcut)
     };
 
+    config.normalize_main_window_shortcut();
     config.show_main_window_shortcut = normalize(
         &config.show_main_window_shortcut,
-        "呼出主面板",
-    )?;
-    config.hide_main_window_shortcut = normalize(
-        &config.hide_main_window_shortcut,
-        "最小化主面板",
+        "切换主面板",
     )?;
 
-    if !config.show_main_window_shortcut.is_empty()
-        && config
-            .show_main_window_shortcut
-            .eq_ignore_ascii_case(&config.hide_main_window_shortcut)
-    {
-        return Err(AppError::ConfigWriteError(
-            "呼出主面板和最小化主面板不能使用同一个快捷键".to_string(),
-        ));
-    }
-
-    let account_bindings = serde_json::from_str::<std::collections::HashMap<String, String>>(
+    let account_bindings = serde_json::from_str::<std::collections::BTreeMap<String, String>>(
         &config.shortcut_bindings_json,
     )
     .unwrap_or_default();
-    for (label, shortcut) in [
-        ("呼出主面板", &config.show_main_window_shortcut),
-        ("最小化主面板", &config.hide_main_window_shortcut),
-    ] {
-        if shortcut.is_empty() {
-            continue;
-        }
-        if let Some((position, _)) = account_bindings
-            .iter()
-            .find(|(_, account_shortcut)| account_shortcut.eq_ignore_ascii_case(shortcut))
-        {
+    let mut assigned = std::collections::HashMap::new();
+    for (position, value) in &account_bindings {
+        if value.trim().is_empty() { continue; }
+        let normalized = crate::capabilities::room_automation::canonicalize_shortcut(value)
+            .map_err(|error| AppError::ConfigWriteError(format!("账号位置 #{position} 的快捷键无效：{error}")))?;
+        if let Some(previous) = assigned.insert(normalized.to_ascii_lowercase(), position) {
             return Err(AppError::ConfigWriteError(format!(
-                "{label}快捷键 {shortcut} 与账号位置 #{position} 的快捷键冲突"
+                "快捷键 {normalized} 同时用于账号位置 #{previous} 和 #{position}，请选择不同组合"
+            )));
+        }
+    }
+    let shortcut = &config.show_main_window_shortcut;
+    if !shortcut.is_empty() {
+        if let Some(position) = assigned.get(&shortcut.to_ascii_lowercase()) {
+            return Err(AppError::ConfigWriteError(format!(
+                "切换主面板快捷键 {shortcut} 与账号位置 #{position} 的快捷键冲突"
             )));
         }
     }
@@ -2421,6 +2402,9 @@ impl GlobalConfig {
             config.version = CURRENT_CONFIG_VERSION;
             migrated = true;
         }
+        if config.normalize_main_window_shortcut() {
+            migrated = true;
+        }
         if config.normalize_feature_profile() {
             migrated = true;
         }
@@ -2928,19 +2912,10 @@ pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
                 })
         })
         .collect::<std::collections::HashMap<_, _>>();
-    for (shortcut, action) in [
-        (
-            cfg.show_main_window_shortcut.trim(),
-            crate::state::CoreShortcutAction::ShowMainWindow,
-        ),
-        (
-            cfg.hide_main_window_shortcut.trim(),
-            crate::state::CoreShortcutAction::HideMainWindow,
-        ),
-    ] {
-        if !shortcut.is_empty() {
-            normalized.entry(shortcut.to_ascii_lowercase()).or_insert(action);
-        }
+    let shortcut = cfg.main_window_shortcut();
+    if !shortcut.is_empty() {
+        normalized.entry(shortcut.to_ascii_lowercase())
+            .or_insert(crate::state::CoreShortcutAction::ToggleMainWindow);
     }
     crate::input_listener::replace_core_shortcut_routes(
         normalized

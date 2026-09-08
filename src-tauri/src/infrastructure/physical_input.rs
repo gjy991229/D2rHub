@@ -24,6 +24,7 @@ pub(crate) struct DesktopInput {
     clipboard_dirty: bool,
     releases: Vec<INPUT>,
     blocked: bool,
+    hotkeys: Option<crate::input_listener::hotkeys::Pause>,
 }
 
 pub(crate) fn modifiers_released() -> bool {
@@ -48,6 +49,7 @@ impl DesktopInput {
             clipboard_dirty: false,
             releases: Vec::new(),
             blocked: false,
+            hotkeys: None,
         };
         unsafe { GetCursorPos(&mut session.cursor) }.map_err(|e| e.to_string())?;
         // Capture all clipboard formats, including images and files, before writing.
@@ -57,6 +59,7 @@ impl DesktopInput {
         }
         session.clipboard_sequence = Some(sequence);
         session.check_clipboard()?;
+        session.hotkeys = Some(crate::input_listener::hotkeys::suspend()?);
         unsafe { BlockInput(true) }.map_err(|e| format!("无法接管键鼠：{e}"))?;
         session.blocked = true;
         super::system::bring_window_to_foreground_raw(hwnd);

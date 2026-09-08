@@ -252,7 +252,7 @@ const baseConfig: GlobalConfig = {
   rune_audio_tracked_charm_codes: ["cm1", "cm3"],
   shortcut_bindings_json: JSON.stringify({ "1": "Ctrl+Alt+1", "2": "Ctrl+Alt+2" }),
   show_main_window_shortcut: "Ctrl+Alt+Home",
-  hide_main_window_shortcut: "Ctrl+Alt+End",
+  hide_main_window_shortcut: "",
   overlay_opacity: 94,
   main_opacity: 96,
   font_scale: "default",

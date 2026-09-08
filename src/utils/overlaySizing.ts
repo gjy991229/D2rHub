@@ -34,6 +34,7 @@ export function calculateMiniOverlayResizeBounds(
   edge: MiniOverlayResizeEdge,
   deltaX: number,
   deltaY: number,
+  minimum: OverlaySize = { width: MINI_OVERLAY_MIN_WIDTH, height: MINI_OVERLAY_MIN_HEIGHT },
 ): MiniOverlayResizeBounds {
   const resizeWest = edge.includes("w");
   const resizeEast = edge.includes("e");
@@ -50,10 +51,10 @@ export function calculateMiniOverlayResizeBounds(
     : resizeSouth
       ? startSize.height + deltaY
       : startSize.height;
-  const normalized = normalizeMiniOverlaySize({
-    width: requestedWidth,
-    height: requestedHeight,
-  });
+  const normalized = {
+    width: Math.max(minimum.width, Math.round(requestedWidth)),
+    height: Math.max(minimum.height, Math.round(requestedHeight)),
+  };
 
   return {
     ...normalized,
