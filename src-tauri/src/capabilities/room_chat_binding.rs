@@ -1,7 +1,7 @@
 //! Lifecycle-owned one-shot scanner for the room-automation Pause/F13 binding.
 //!
 //! This adapter deliberately owns no global configuration or Tauri state. A
-//! capability driver supplies the save directories and the process probe, and
+//! capability driver supplies paired save/Mod directories and the process probe, and
 //! must retain this service for exactly as long as the capability is alive.
 
 use serde::{Deserialize, Serialize};
@@ -22,6 +22,7 @@ const CHAT_ACTION_INDEX: usize = 5;
 const CHAT_ACTION_ID: u32 = 5;
 const CHAT_RECORD_OFFSET: usize = KEY_FILE_HEADER_SIZE + CHAT_ACTION_INDEX * KEY_RECORD_SIZE;
 const SECONDARY_SLOT_OFFSET: usize = CHAT_RECORD_OFFSET + 10;
+#[cfg(test)]
 const VK_RETURN: u16 = 0x000D;
 #[cfg(test)]
 const VK_F13: u16 = 0x007C;
@@ -31,6 +32,7 @@ const BACKUP_SUFFIX: &str = ".d2rhub-chat-f13.bak";
 const STAGING_SUFFIX: &str = ".d2rhub-chat-f13.stage";
 const ROLLBACK_SUFFIX: &str = ".d2rhub-chat-f13.rollback";
 const JOURNAL_SUFFIX: &str = ".d2rhub-chat-f13.journal";
+const IMPORT_SUFFIX: &str = ".d2rhub-chat-f13.import";
 const REPLACE_JOURNAL_VERSION: u8 = 1;
 #[cfg(test)]
 const UNBOUND_KEY: u16 = 0xFFFF;
@@ -85,6 +87,7 @@ enum BindingState {
 struct InspectedFile {
     path: PathBuf,
     bytes: Vec<u8>,
+    modified: std::time::SystemTime,
     state: Result<BindingState, String>,
     backup: Option<Result<Vec<u8>, String>>,
 }
@@ -124,6 +127,23 @@ struct FilesystemSnapshot {
     files: Vec<InspectedFile>,
     orphan_backups: Vec<PathBuf>,
     transaction_artifacts: Vec<PathBuf>,
+    keyo_groups: Vec<KeyoGroup>,
+}
+
+#[derive(Debug)]
+struct KeyoGroup {
+    system_path: PathBuf,
+    members: Vec<usize>,
+    newest: usize,
+}
+
+struct InstallEntry {
+    path: PathBuf,
+    original: Option<Vec<u8>>,
+    replacement: Vec<u8>,
+    backup: Vec<u8>,
+    original_modified: Option<std::time::SystemTime>,
+    modified: std::time::SystemTime,
 }
 
 #[derive(Debug)]
@@ -145,6 +165,16 @@ impl FilesystemSnapshot {
                 .files
                 .iter()
                 .all(|file| file.state == Ok(BindingState::Installed))
+            && self.keyo_groups.iter().all(|group| {
+                group
+                    .members
+                    .iter()
+                    .any(|&index| same_path(&self.files[index].path, &group.system_path))
+                    && group
+                        .members
+                        .iter()
+                        .all(|&index| self.files[index].bytes == self.files[group.newest].bytes)
+            })
     }
 }
 
@@ -179,8 +209,15 @@ struct ReplaceJournal {
     replacement_checksum: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChatBindingModRoot {
+    pub save_directory: PathBuf,
+    pub mods_directory: PathBuf,
+}
+
 struct ServiceInner {
     directories: Vec<PathBuf>,
+    mod_roots: Vec<ChatBindingModRoot>,
     chat_key: ChatKey,
     d2r_running: Arc<dyn Fn() -> bool + Send + Sync + 'static>,
     operation: Mutex<()>,
@@ -214,10 +251,45 @@ impl ChatF13BindingService {
     where
         F: Fn() -> bool + Send + Sync + 'static,
     {
+        Self::new_with_mod_roots(directories, Vec::new(), d2r_running, chat_key)
+    }
+
+    pub(crate) fn new_with_mod_roots<F>(
+        directories: Vec<PathBuf>,
+        mod_roots: Vec<ChatBindingModRoot>,
+        d2r_running: F,
+        chat_key: ChatKey,
+    ) -> Result<Self, String>
+    where
+        F: Fn() -> bool + Send + Sync + 'static,
+    {
         let directories = validate_and_canonicalize_directories(directories)?;
+        let mut resolved_mod_roots = Vec::new();
+        for root in mod_roots {
+            let save_directory = validate_directory_path(&root.save_directory)?;
+            if !directories
+                .iter()
+                .any(|path| same_path(path, &save_directory))
+            {
+                return Err(format!(
+                    "Mod 目录未配对到已配置的存档目录：{}",
+                    root.mods_directory.display()
+                ));
+            }
+            let game_directory = root
+                .mods_directory
+                .parent()
+                .ok_or_else(|| "Mod 目录缺少游戏安装目录".to_string())?;
+            let game_directory = validate_directory_path(game_directory)?;
+            resolved_mod_roots.push(ChatBindingModRoot {
+                save_directory,
+                mods_directory: game_directory.join("mods"),
+            });
+        }
         Ok(Self {
             inner: Arc::new(ServiceInner {
                 directories,
+                mod_roots: resolved_mod_roots,
                 chat_key,
                 d2r_running: Arc::new(d2r_running),
                 operation: Mutex::new(()),
@@ -240,8 +312,11 @@ impl ChatF13BindingService {
     fn scan_once(&self) -> Result<ChatF13BindingStatus, String> {
         {
             let _operation = lock(&self.inner.operation);
-            let snapshot =
-                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
+            let snapshot = inspect_filesystem_for_key(
+                &self.inner.directories,
+                &self.inner.mod_roots,
+                self.inner.chat_key,
+            )?;
             if snapshot.ready() {
                 self.inner.consent_granted.store(true, Ordering::Release);
                 return Ok(build_status(&self.inner, &snapshot));
@@ -253,29 +328,52 @@ impl ChatF13BindingService {
 
         let verified = (|| {
             let _operation = lock(&self.inner.operation);
-            recover_interrupted_transactions(&self.inner.directories)?;
-            let snapshot =
-                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
+            recover_interrupted_transactions(&self.inner.directories, &self.inner.mod_roots)?;
+            let snapshot = inspect_filesystem_for_key(
+                &self.inner.directories,
+                &self.inner.mod_roots,
+                self.inner.chat_key,
+            )?;
             preflight_install(&snapshot)?;
+            let plan = build_install_plan(&snapshot, self.inner.chat_key)?;
 
             // Finish every backup before changing the first live key file.
-            for file in &snapshot.files {
-                if file.state == Ok(BindingState::Eligible) && file.backup.is_none() {
-                    create_backup(&file.path, &file.bytes)?;
-                }
+            for entry in &plan {
+                create_backup(&entry.path, &entry.backup)?;
             }
 
-            let mut changed: Vec<(&Path, Vec<u8>)> = Vec::new();
+            // Recheck all sources, including an already-patched newest copy
+            // that does not itself need a write.
             for file in &snapshot.files {
-                if file.state == Ok(BindingState::Installed) {
-                    continue;
+                if read_regular_file(&file.path)? != file.bytes {
+                    return Err(format!(
+                        "键位文件在预检后发生变化，请重新扫描：{}",
+                        file.path.display()
+                    ));
                 }
-                let patched = match self.inner.chat_key {
-                    ChatKey::F13 => patch_f13(&file.bytes)?,
-                    key => patch_chat_key(&file.bytes, key)?,
-                };
-                if let Err(error) = atomic_replace_bytes(&file.path, &file.bytes, &patched) {
-                    let rollback_errors = rollback_changed_files(&changed);
+            }
+            let mut changed = Vec::new();
+            for entry in &plan {
+                let mut imported = false;
+                let result = match &entry.original {
+                    Some(original) => {
+                        atomic_replace_bytes(&entry.path, original, &entry.replacement)
+                    }
+                    None => atomic_import_bytes(&entry.path, &entry.replacement, &mut imported),
+                }
+                .and_then(|_| set_file_modified(&entry.path, entry.modified));
+                if let Err(error) = result {
+                    // A publish can succeed before a later flush fails. If
+                    // this entry reached disk, include it in the rollback.
+                    let _ = recover_interrupted_transaction(&entry.path);
+                    if imported
+                        || (entry.original.is_some()
+                            && read_regular_file(&entry.path)
+                                .is_ok_and(|bytes| bytes == entry.replacement))
+                    {
+                        changed.push(entry);
+                    }
+                    let rollback_errors = rollback_install_entries(&changed);
                     let suffix = if rollback_errors.is_empty() {
                         "；本轮已修改文件已回滚".to_string()
                     } else {
@@ -283,13 +381,29 @@ impl ChatF13BindingService {
                     };
                     return Err(format!("{error}{suffix}"));
                 }
-                changed.push((&file.path, file.bytes.clone()));
+                changed.push(entry);
             }
 
-            let verified =
-                inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
-            require_scan_ready(&verified)?;
-            Ok::<FilesystemSnapshot, String>(verified)
+            let verified = inspect_filesystem_for_key(
+                &self.inner.directories,
+                &self.inner.mod_roots,
+                self.inner.chat_key,
+            )
+            .and_then(|snapshot| {
+                require_scan_ready(&snapshot)?;
+                Ok(snapshot)
+            });
+            match verified {
+                Ok(snapshot) => Ok(snapshot),
+                Err(error) => {
+                    let rollback_errors = rollback_install_entries(&changed);
+                    if rollback_errors.is_empty() {
+                        Err(format!("{error}；本轮已修改文件已回滚"))
+                    } else {
+                        Err(format!("{error}；回滚失败：{}", rollback_errors.join("；")))
+                    }
+                }
+            }
         })()?;
 
         self.inner.consent_granted.store(true, Ordering::Release);
@@ -320,7 +434,11 @@ impl ChatF13BindingService {
     /// consent, backups or live key files.
     pub(crate) fn preflight_restore(&self) -> Result<(), String> {
         let _operation = lock(&self.inner.operation);
-        let snapshot = inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
+        let snapshot = inspect_filesystem_for_key(
+            &self.inner.directories,
+            &self.inner.mod_roots,
+            self.inner.chat_key,
+        )?;
         if snapshot.transaction_artifacts.is_empty() {
             if !build_restore_plan(&snapshot)?.is_empty() {
                 ensure_d2r_closed(&self.inner)?;
@@ -337,56 +455,63 @@ impl ChatF13BindingService {
         // Invalid or absent backups must not revoke valid scan consent.
         self.preflight_restore()?;
 
-        let restore_result =
-            (|| {
-                let _operation = lock(&self.inner.operation);
-                let before_recovery =
-                    inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
-                if !before_recovery.transaction_artifacts.is_empty() {
-                    ensure_d2r_closed(&self.inner)?;
-                    recover_interrupted_transactions(&self.inner.directories)?;
-                }
-                let snapshot =
-                    inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
-                let restore_plan = build_restore_plan(&snapshot)?;
-                if !restore_plan.is_empty() {
-                    ensure_d2r_closed(&self.inner)?;
-                }
-                let restored_any = !restore_plan.is_empty();
+        let restore_result = (|| {
+            let _operation = lock(&self.inner.operation);
+            let before_recovery = inspect_filesystem_for_key(
+                &self.inner.directories,
+                &self.inner.mod_roots,
+                self.inner.chat_key,
+            )?;
+            if !before_recovery.transaction_artifacts.is_empty() {
+                ensure_d2r_closed(&self.inner)?;
+                recover_interrupted_transactions(&self.inner.directories, &self.inner.mod_roots)?;
+            }
+            let snapshot = inspect_filesystem_for_key(
+                &self.inner.directories,
+                &self.inner.mod_roots,
+                self.inner.chat_key,
+            )?;
+            let restore_plan = build_restore_plan(&snapshot)?;
+            if !restore_plan.is_empty() {
+                ensure_d2r_closed(&self.inner)?;
+            }
+            let restored_any = !restore_plan.is_empty();
 
-                let mut changed: Vec<(&Path, Vec<u8>)> = Vec::new();
-                for entry in &restore_plan {
-                    let path = entry.path.as_path();
-                    let current = &entry.current;
-                    let restored = &entry.restored;
-                    if current != restored {
-                        if let Err(error) = atomic_replace_bytes(path, current, restored) {
-                            let rollback_errors = rollback_changed_files(&changed);
-                            let suffix = if rollback_errors.is_empty() {
-                                "；本轮已恢复文件已回滚".to_string()
-                            } else {
-                                format!("；回滚失败：{}", rollback_errors.join("；"))
-                            };
-                            return Err(format!("{error}{suffix}"));
-                        }
-                        changed.push((path, current.clone()));
+            let mut changed: Vec<(&Path, Vec<u8>)> = Vec::new();
+            for entry in &restore_plan {
+                let path = entry.path.as_path();
+                let current = &entry.current;
+                let restored = &entry.restored;
+                if current != restored {
+                    if let Err(error) = atomic_replace_bytes(path, current, restored) {
+                        let rollback_errors = rollback_changed_files(&changed);
+                        let suffix = if rollback_errors.is_empty() {
+                            "；本轮已恢复文件已回滚".to_string()
+                        } else {
+                            format!("；回滚失败：{}", rollback_errors.join("；"))
+                        };
+                        return Err(format!("{error}{suffix}"));
                     }
+                    changed.push((path, current.clone()));
                 }
+            }
 
-                self.inner.consent_granted.store(false, Ordering::Release);
-                let mut cleanup_warnings = Vec::new();
-                for entry in restore_plan {
-                    let backup = backup_path(&entry.path)?;
-                    if let Err(error) = remove_regular_if_exists(&backup).and_then(|_| {
+            self.inner.consent_granted.store(false, Ordering::Release);
+            let mut cleanup_warnings = Vec::new();
+            for entry in restore_plan {
+                let backup = backup_path(&entry.path)?;
+                if let Err(error) =
+                    remove_regular_if_exists(&backup).and_then(|_| {
                         sync_directory(entry.path.parent().ok_or_else(|| {
                             format!("键位文件缺少父目录：{}", entry.path.display())
                         })?)
-                    }) {
-                        cleanup_warnings.push(format!("{}：{error}", backup.display()));
-                    }
+                    })
+                {
+                    cleanup_warnings.push(format!("{}：{error}", backup.display()));
                 }
-                Ok::<(Vec<String>, bool), String>((cleanup_warnings, restored_any))
-            })();
+            }
+            Ok::<(Vec<String>, bool), String>((cleanup_warnings, restored_any))
+        })();
         let (cleanup_warnings, restored_any) = restore_result?;
         let mut status = self.status()?;
         if !restored_any {
@@ -407,9 +532,109 @@ impl ChatF13BindingService {
     pub(crate) fn status(&self) -> Result<ChatF13BindingStatus, String> {
         let _operation = lock(&self.inner.operation);
         validate_configured_directories(&self.inner.directories)?;
-        let snapshot = inspect_filesystem_for_key(&self.inner.directories, self.inner.chat_key)?;
+        let snapshot = inspect_filesystem_for_key(
+            &self.inner.directories,
+            &self.inner.mod_roots,
+            self.inner.chat_key,
+        )?;
         Ok(build_status(&self.inner, &snapshot))
     }
+}
+
+fn build_install_plan(
+    snapshot: &FilesystemSnapshot,
+    chat_key: ChatKey,
+) -> Result<Vec<InstallEntry>, String> {
+    let mut sources: Vec<usize> = (0..snapshot.files.len()).collect();
+    for group in &snapshot.keyo_groups {
+        for &member in &group.members {
+            sources[member] = group.newest;
+        }
+    }
+    let patched = |file: &InspectedFile| match file.state {
+        Ok(BindingState::Installed) => Ok(file.bytes.clone()),
+        _ => match chat_key {
+            ChatKey::F13 => patch_f13(&file.bytes),
+            key => patch_chat_key(&file.bytes, key),
+        },
+    };
+    let mut plan = Vec::new();
+    for (index, file) in snapshot.files.iter().enumerate() {
+        let replacement = patched(&snapshot.files[sources[index]])?;
+        if replacement != file.bytes {
+            // Even a copy already bound to the selected key needs its own
+            // original preserved when a newer sibling replaces its contents.
+            if let Some(backup) = &file.backup {
+                let backup = backup.as_ref().map_err(|error| error.clone())?;
+                inspect_key_bytes_for(backup, None)?;
+            }
+            plan.push(InstallEntry {
+                path: file.path.clone(),
+                original: Some(file.bytes.clone()),
+                replacement,
+                backup: file.bytes.clone(),
+                original_modified: Some(file.modified),
+                modified: snapshot.files[sources[index]].modified,
+            });
+        }
+    }
+    for group in &snapshot.keyo_groups {
+        if group
+            .members
+            .iter()
+            .any(|&index| same_path(&snapshot.files[index].path, &group.system_path))
+        {
+            continue;
+        }
+        let source = &snapshot.files[group.newest];
+        // An imported, already-managed file inherits the original Chat slot
+        // so that restoring the new system copy does not retain Pause/F13.
+        let backup = match &source.backup {
+            Some(Ok(original)) => restore_chat_secondary_slot(&source.bytes, original)?,
+            Some(Err(error)) => return Err(error.clone()),
+            None => source.bytes.clone(),
+        };
+        let existing_backup = backup_path(&group.system_path)?;
+        if regular_file_exists_no_follow(&existing_backup)? {
+            inspect_key_bytes_for(&read_regular_file(&existing_backup)?, None)?;
+        }
+        plan.push(InstallEntry {
+            path: group.system_path.clone(),
+            original: None,
+            replacement: patched(source)?,
+            backup,
+            original_modified: None,
+            modified: source.modified,
+        });
+    }
+    Ok(plan)
+}
+
+fn rollback_install_entries(changed: &[&InstallEntry]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for entry in changed.iter().rev() {
+        let result = (|| {
+            if read_regular_file(&entry.path)? != entry.replacement {
+                return Err("文件在同步后被外部修改，保留当前文件及备份".to_string());
+            }
+            match &entry.original {
+                Some(original) => {
+                    atomic_replace_bytes(&entry.path, &entry.replacement, original)?;
+                    if let Some(modified) = entry.original_modified {
+                        set_file_modified(&entry.path, modified)?;
+                    }
+                    Ok(())
+                }
+                None => {
+                    remove_regular_if_exists(&entry.path).and_then(|_| sync_parent(&entry.path))
+                }
+            }
+        })();
+        if let Err(error) = result {
+            errors.push(format!("{}：{error}", entry.path.display()));
+        }
+    }
+    errors
 }
 
 fn preflight_install(snapshot: &FilesystemSnapshot) -> Result<(), String> {
@@ -506,6 +731,8 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         format!("发现 {transaction_artifacts} 个待恢复的安全写入事务")
     } else if conflicted_files > 0 {
         format!("发现 {conflicted_files} 个格式、键位、备份或路径冲突；未自动覆盖")
+    } else if eligible_files == 0 {
+        "聊天第二快捷键已设置，系统与 Mod 的同名 .keyo 文件尚待同步".to_string()
     } else {
         format!("尚有 {eligible_files}/{total_files} 个键位文件可以安全安装 {key_label}")
     };
@@ -513,7 +740,7 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
         message.push_str("；D2R 正在运行，仍可扫描更新绑定，更改在游戏下次启动时生效");
     }
     if consent_granted {
-        message.push_str("；自动跟房配置变更时会扫描一次，新建角色后请手动扫描");
+        message.push_str("；自动跟房配置变更时会扫描一次，并同步对应游戏目录 mods/<Mod名> 中的同名 .keyo，新建角色后请手动扫描");
     }
     let managed_installed_files = snapshot
         .files
@@ -557,20 +784,25 @@ fn build_status(inner: &ServiceInner, snapshot: &FilesystemSnapshot) -> ChatF13B
 
 fn inspect_filesystem_for_key(
     directories: &[PathBuf],
+    mod_roots: &[ChatBindingModRoot],
     chat_key: ChatKey,
 ) -> Result<FilesystemSnapshot, String> {
     validate_configured_directories(directories)?;
     let mut snapshot = FilesystemSnapshot::default();
     let mut key_files = Vec::new();
     let mut backup_targets = HashMap::<PathBuf, PathBuf>::new();
+    let scan_directories = discover_scan_directories(directories, mod_roots)?;
 
-    for directory in directories {
+    for (system_directory, directory) in &scan_directories {
         for entry in std::fs::read_dir(directory)
             .map_err(|error| format!("无法读取存档目录 {}：{error}", directory.display()))?
         {
             let entry = entry
                 .map_err(|error| format!("读取存档目录项失败 {}：{error}", directory.display()))?;
             let path = entry.path();
+            if !same_path(system_directory, directory) && !is_mod_keyo_path(&path) {
+                continue;
+            }
             let Some(kind) = relevant_path_kind(&path) else {
                 continue;
             };
@@ -608,6 +840,9 @@ fn inspect_filesystem_for_key(
     snapshot.orphan_backups.sort();
 
     for path in key_files {
+        let modified = std::fs::metadata(&path)
+            .and_then(|metadata| metadata.modified())
+            .map_err(|error| format!("无法读取键位修改时间 {}：{error}", path.display()))?;
         let bytes = read_regular_file(&path)?;
         let state = match chat_key {
             ChatKey::F13 => inspect_key_bytes(&bytes),
@@ -619,11 +854,172 @@ fn inspect_filesystem_for_key(
         snapshot.files.push(InspectedFile {
             path,
             bytes,
+            modified,
             state,
             backup,
         });
     }
+    snapshot.keyo_groups = build_keyo_groups(&snapshot.files, &scan_directories)?;
     Ok(snapshot)
+}
+
+// Each save root remains an independent namespace (CN/Global never merge).
+// Only the paired game installation's mods/<name> is visited; deeper folders
+// and links are not followed. Save-directory mods folders are not scanned.
+fn discover_scan_directories(
+    roots: &[PathBuf],
+    mod_roots: &[ChatBindingModRoot],
+) -> Result<Vec<(PathBuf, PathBuf)>, String> {
+    let mut directories: Vec<_> = roots
+        .iter()
+        .map(|root| (root.clone(), root.clone()))
+        .collect();
+    let mut owners: HashMap<String, PathBuf> = roots
+        .iter()
+        .map(|root| (path_identity(root), root.clone()))
+        .collect();
+    for mod_root in mod_roots {
+        let root = &mod_root.save_directory;
+        // The transaction existence helper accepts regular files only.
+        // A missing mods directory is optional; an existing one must pass
+        // directory validation, including the link/reparse checks below.
+        match std::fs::symlink_metadata(&mod_root.mods_directory) {
+            Ok(_) => {}
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "无法读取 Mod 目录元数据 {}：{error}",
+                    mod_root.mods_directory.display()
+                ));
+            }
+        }
+        let mods = validate_directory_path(&mod_root.mods_directory)?;
+        if !same_path(&mods, &mod_root.mods_directory) {
+            return Err(format!(
+                "Mod 目录解析结果发生变化，请重新配置：{}",
+                mod_root.mods_directory.display()
+            ));
+        }
+        let mut children = Vec::new();
+        for entry in std::fs::read_dir(&mods)
+            .map_err(|error| format!("无法读取 Mod 存档目录 {}：{error}", mods.display()))?
+        {
+            let path = entry
+                .map_err(|error| format!("读取 Mod 存档目录失败：{error}"))?
+                .path();
+            let metadata = std::fs::symlink_metadata(&path)
+                .map_err(|error| format!("无法读取 Mod 目录元数据 {}：{error}", path.display()))?;
+            reject_link_or_reparse(&path, &metadata)?;
+            if metadata.is_dir() {
+                children.push(validate_directory_path(&path)?);
+            }
+        }
+        children.sort();
+        for path in children {
+            if let Some(owner) = owners.get(&path_identity(&path)) {
+                if !same_path(owner, root) {
+                    return Err(format!(
+                        "同一 Mod 目录对应多个存档目录，无法确定同步目标：{}",
+                        path.display()
+                    ));
+                }
+                continue;
+            }
+            owners.insert(path_identity(&path), root.clone());
+            directories.push((root.clone(), path));
+        }
+    }
+    Ok(directories)
+}
+
+fn is_keyo_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("keyo"))
+}
+
+fn is_mod_keyo_path(path: &Path) -> bool {
+    if is_keyo_file(path) {
+        return true;
+    }
+    [
+        BACKUP_SUFFIX,
+        STAGING_SUFFIX,
+        ROLLBACK_SUFFIX,
+        JOURNAL_SUFFIX,
+        IMPORT_SUFFIX,
+    ]
+    .into_iter()
+    .any(|suffix| target_from_suffixed_path(path, suffix).is_ok_and(|target| is_keyo_file(&target)))
+}
+
+fn build_keyo_groups(
+    files: &[InspectedFile],
+    directories: &[(PathBuf, PathBuf)],
+) -> Result<Vec<KeyoGroup>, String> {
+    let roots_by_directory: HashMap<String, &PathBuf> = directories
+        .iter()
+        .map(|(root, directory)| (path_identity(directory), root))
+        .collect();
+    let mut members_by_name = HashMap::<(String, String), (PathBuf, Vec<usize>)>::new();
+    for (index, file) in files.iter().enumerate() {
+        if !is_keyo_file(&file.path) {
+            continue;
+        }
+        let parent = file
+            .path
+            .parent()
+            .ok_or_else(|| "键位文件缺少父目录".to_string())?;
+        let root = roots_by_directory
+            .get(&path_identity(parent))
+            .ok_or_else(|| format!("键位文件不属于扫描目录：{}", file.path.display()))?;
+        let name = file
+            .path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or_else(|| format!("键位文件名不是有效 Unicode：{}", file.path.display()))?;
+        members_by_name
+            .entry((path_identity(root), name.to_lowercase()))
+            .or_insert_with(|| (root.to_path_buf(), Vec::new()))
+            .1
+            .push(index);
+    }
+    let mut groups = Vec::new();
+    for (_, (root, members)) in members_by_name {
+        let system_member = members.iter().copied().find(|&index| {
+            files[index]
+                .path
+                .parent()
+                .is_some_and(|parent| same_path(parent, &root))
+        });
+        // Start with the system copy so equal timestamps prefer it; otherwise
+        // file paths are already sorted, providing a stable Mod-name tie break.
+        let mut newest = system_member.unwrap_or(members[0]);
+        let mut newest_time = files[newest].modified;
+        for &member in &members {
+            let time = files[member].modified;
+            if time > newest_time {
+                newest = member;
+                newest_time = time;
+            }
+        }
+        let system_path = match system_member {
+            Some(index) => files[index].path.clone(),
+            None => root.join(
+                files[newest]
+                    .path
+                    .file_name()
+                    .ok_or_else(|| "键位文件缺少文件名".to_string())?,
+            ),
+        };
+        groups.push(KeyoGroup {
+            system_path,
+            members,
+            newest,
+        });
+    }
+    groups.sort_by(|left, right| left.system_path.cmp(&right.system_path));
+    Ok(groups)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -640,9 +1036,14 @@ fn relevant_path_kind(path: &Path) -> Option<RelevantPathKind> {
     let name = path.file_name()?.to_str()?;
     if name.ends_with(BACKUP_SUFFIX) {
         Some(RelevantPathKind::Backup)
-    } else if [STAGING_SUFFIX, ROLLBACK_SUFFIX, JOURNAL_SUFFIX]
-        .iter()
-        .any(|suffix| name.ends_with(suffix))
+    } else if [
+        STAGING_SUFFIX,
+        ROLLBACK_SUFFIX,
+        JOURNAL_SUFFIX,
+        IMPORT_SUFFIX,
+    ]
+    .iter()
+    .any(|suffix| name.ends_with(suffix))
     {
         Some(RelevantPathKind::Transaction)
     } else {
@@ -663,19 +1064,36 @@ fn rollback_changed_files(changed: &[(&Path, Vec<u8>)]) -> Vec<String> {
     errors
 }
 
-fn recover_interrupted_transactions(directories: &[PathBuf]) -> Result<(), String> {
+fn recover_interrupted_transactions(
+    directories: &[PathBuf],
+    mod_roots: &[ChatBindingModRoot],
+) -> Result<(), String> {
     validate_configured_directories(directories)?;
     let mut targets = HashSet::new();
-    for directory in directories {
-        for entry in std::fs::read_dir(directory)
+    for (system_directory, directory) in discover_scan_directories(directories, mod_roots)? {
+        for entry in std::fs::read_dir(&directory)
             .map_err(|error| format!("无法读取存档目录 {}：{error}", directory.display()))?
         {
             let entry = entry
                 .map_err(|error| format!("读取存档目录项失败 {}：{error}", directory.display()))?;
             let path = entry.path();
+            if !same_path(&system_directory, &directory) && !is_mod_keyo_path(&path) {
+                continue;
+            }
             let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
                 continue;
             };
+            if name.ends_with(IMPORT_SUFFIX) {
+                let target = target_from_suffixed_path(&path, IMPORT_SUFFIX)?;
+                if !is_keyo_file(&target) {
+                    return Err(format!("聊天键导入临时文件名无效：{}", path.display()));
+                }
+                // Imports never remove their source. An unpublished partial
+                // copy can be discarded and rebuilt on the next scan.
+                remove_regular_if_exists(&path)?;
+                sync_parent(&path)?;
+                continue;
+            }
             let suffix = [STAGING_SUFFIX, ROLLBACK_SUFFIX, JOURNAL_SUFFIX]
                 .into_iter()
                 .find(|suffix| name.ends_with(suffix));
@@ -701,10 +1119,10 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
     let stage = sibling_with_suffix(target, STAGING_SUFFIX)?;
     let rollback = sibling_with_suffix(target, ROLLBACK_SUFFIX)?;
     let journal_path = sibling_with_suffix(target, JOURNAL_SUFFIX)?;
-    let target_exists = path_exists_no_follow(target)?;
-    let stage_exists = path_exists_no_follow(&stage)?;
-    let rollback_exists = path_exists_no_follow(&rollback)?;
-    let journal_exists = path_exists_no_follow(&journal_path)?;
+    let target_exists = regular_file_exists_no_follow(target)?;
+    let stage_exists = regular_file_exists_no_follow(&stage)?;
+    let rollback_exists = regular_file_exists_no_follow(&rollback)?;
+    let journal_exists = regular_file_exists_no_follow(&journal_path)?;
 
     if !journal_exists {
         if rollback_exists {
@@ -827,6 +1245,45 @@ fn recover_interrupted_transaction(target: &Path) -> Result<(), String> {
     sync_parent(target)
 }
 
+fn set_file_modified(path: &Path, modified: std::time::SystemTime) -> Result<(), String> {
+    validate_regular_file(path)?;
+    let file = OpenOptions::new()
+        .write(true)
+        .open(path)
+        .map_err(|error| format!("无法打开键位文件以保留修改时间 {}：{error}", path.display()))?;
+    file.set_times(std::fs::FileTimes::new().set_modified(modified))
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("无法保留键位修改时间 {}：{error}", path.display()))
+}
+
+fn atomic_import_bytes(target: &Path, bytes: &[u8], imported: &mut bool) -> Result<(), String> {
+    validate_safe_parent(target)?;
+    if regular_file_exists_no_follow(target)? {
+        return Err(format!(
+            "系统键位文件在预检后出现，请重新扫描：{}",
+            target.display()
+        ));
+    }
+    let stage = sibling_with_suffix(target, IMPORT_SUFFIX)?;
+    create_synced_new_file(&stage, bytes)?;
+    // Publish a complete file without replacing a file created by another
+    // process since preflight. Windows MoveFileEx omits REPLACE_EXISTING.
+    #[cfg(windows)]
+    let published = durable_fs::durable_sibling_rename(&stage, target);
+    #[cfg(not(windows))]
+    let published = std::fs::hard_link(&stage, target);
+    if let Err(error) = published {
+        let _ = remove_regular_if_exists(&stage);
+        return Err(format!(
+            "无法导入系统键位文件 {}：{error}",
+            target.display()
+        ));
+    }
+    *imported = true;
+    remove_regular_if_exists(&stage)?;
+    sync_parent(target)
+}
+
 fn atomic_replace_bytes(
     target: &Path,
     expected_original: &[u8],
@@ -848,9 +1305,9 @@ fn atomic_replace_bytes(
     let stage = sibling_with_suffix(target, STAGING_SUFFIX)?;
     let rollback = sibling_with_suffix(target, ROLLBACK_SUFFIX)?;
     let journal_path = sibling_with_suffix(target, JOURNAL_SUFFIX)?;
-    if path_exists_no_follow(&stage)?
-        || path_exists_no_follow(&rollback)?
-        || path_exists_no_follow(&journal_path)?
+    if regular_file_exists_no_follow(&stage)?
+        || regular_file_exists_no_follow(&rollback)?
+        || regular_file_exists_no_follow(&journal_path)?
     {
         return Err(format!("键位文件仍有未清理事务：{}", target.display()));
     }
@@ -938,7 +1395,7 @@ fn create_backup(path: &Path, bytes: &[u8]) -> Result<(), String> {
         ));
     }
     let backup = backup_path(path)?;
-    if path_exists_no_follow(&backup)? {
+    if regular_file_exists_no_follow(&backup)? {
         let existing = read_regular_file(&backup)?;
         if inspect_key_bytes_for(&existing, None).is_err() {
             return Err(format!("已有备份不可安全恢复：{}", backup.display()));
@@ -981,17 +1438,11 @@ fn inspect_key_bytes_for(bytes: &[u8], chat_key: Option<ChatKey>) -> Result<Bind
     }
 
     let primary_id = read_u32(bytes, CHAT_RECORD_OFFSET)?;
-    let primary_key = read_u16(bytes, CHAT_RECORD_OFFSET + 4)?;
-    let primary_type = read_u32(bytes, CHAT_RECORD_OFFSET + 6)?;
     let secondary_id = read_u32(bytes, SECONDARY_SLOT_OFFSET)?;
     let secondary_key = read_u16(bytes, SECONDARY_SLOT_OFFSET + 4)?;
     let secondary_type = read_u32(bytes, SECONDARY_SLOT_OFFSET + 6)?;
-    if primary_id != CHAT_ACTION_ID
-        || primary_key != VK_RETURN
-        || primary_type != BOUND_KEY_TYPE
-        || secondary_id != CHAT_ACTION_ID
-    {
-        return Err("动作 5 不是“Enter 主键 + 同动作次键”的原生 Chat 记录".to_string());
+    if primary_id != CHAT_ACTION_ID || secondary_id != CHAT_ACTION_ID {
+        return Err("动作 5 不是同动作主键和次键组成的原生 Chat 记录".to_string());
     }
 
     let record_count = (bytes.len() - KEY_FILE_HEADER_SIZE) / KEY_RECORD_SIZE;
@@ -1005,7 +1456,10 @@ fn inspect_key_bytes_for(bytes: &[u8], chat_key: Option<ChatKey>) -> Result<Bind
             let key = read_u16(bytes, slot_offset + 4)?;
             let key_type = read_u32(bytes, slot_offset + 6)?;
             if let Some(selected) = chat_key {
-                if key == selected.virtual_key() && key_type != UNBOUND_KEY_TYPE {
+                if record != CHAT_ACTION_INDEX
+                    && key == selected.virtual_key()
+                    && key_type != UNBOUND_KEY_TYPE
+                {
                     return Err(format!(
                         "{} 已被动作 {record} 的第 {} 键位占用",
                         selected.label(),
@@ -1262,7 +1716,7 @@ fn is_reparse_point(_metadata: &Metadata) -> bool {
     false
 }
 
-fn path_exists_no_follow(path: &Path) -> Result<bool, String> {
+fn regular_file_exists_no_follow(path: &Path) -> Result<bool, String> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) => {
             reject_link_or_reparse(path, &metadata)?;
@@ -1278,7 +1732,7 @@ fn path_exists_no_follow(path: &Path) -> Result<bool, String> {
 }
 
 fn remove_regular_if_exists(path: &Path) -> Result<(), String> {
-    if !path_exists_no_follow(path)? {
+    if !regular_file_exists_no_follow(path)? {
         return Ok(());
     }
     std::fs::remove_file(path).map_err(|error| format!("无法删除文件 {}：{error}", path.display()))

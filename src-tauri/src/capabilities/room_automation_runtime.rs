@@ -13,8 +13,8 @@ use super::room_automation_config::{
     RoomAutomationConfigSnapshot, ROOM_AUTOMATION_MODULE_ID,
 };
 use super::room_chat_binding::{
-    validate_and_canonicalize_directories, ChatF13BindingService, ChatF13BindingStatus,
-    ExplicitChatBindingConsent,
+    validate_and_canonicalize_directories, ChatBindingModRoot, ChatF13BindingService,
+    ChatF13BindingStatus, ExplicitChatBindingConsent,
 };
 use super::supervisor::CapabilitySupervisor;
 use crate::application::capability::{
@@ -407,24 +407,42 @@ struct LazyChatBinding {
 
 struct CachedChatBinding {
     directories: Vec<PathBuf>,
+    mod_roots: Vec<ChatBindingModRoot>,
     service: Arc<ChatF13BindingService>,
 }
 
 impl LazyChatBinding {
-    fn configured_directories(&self) -> Result<Vec<PathBuf>, String> {
+    fn configured_directories(&self) -> Result<(Vec<PathBuf>, Vec<ChatBindingModRoot>), String> {
         let config = self
             .state
             .configuration()
             .snapshot()
             .ok_or_else(|| "尚未加载全局配置".to_string())?;
-        let directories = [&config.cn_saved_games_path, &config.global_saved_games_path]
-            .into_iter()
-            .map(|path| path.trim())
-            .filter(|path| !path.is_empty())
-            .map(PathBuf::from)
-            .filter(|path| path.is_dir())
-            .collect::<Vec<_>>();
-        validate_and_canonicalize_directories(directories)
+        let mut directories = Vec::new();
+        let mut mod_roots = Vec::new();
+        // Use the same per-edition game paths as Mod management, keeping each
+        // installation paired with its own system save directory.
+        for (save_path, game_path) in [
+            (&config.cn_saved_games_path, &config.cn_game_path),
+            (&config.global_saved_games_path, &config.global_game_path),
+        ] {
+            if save_path.trim().is_empty() {
+                continue;
+            }
+            let save_directory = PathBuf::from(save_path.trim());
+            if !save_directory.is_dir() {
+                continue;
+            }
+            directories.push(save_directory.clone());
+            let game_path = game_path.trim();
+            if !game_path.is_empty() && std::path::Path::new(game_path).is_dir() {
+                mod_roots.push(ChatBindingModRoot {
+                    save_directory,
+                    mods_directory: PathBuf::from(game_path).join("mods"),
+                });
+            }
+        }
+        Ok((validate_and_canonicalize_directories(directories)?, mod_roots))
     }
 
     /// Must be called while `operation` is held. A directory change replaces
@@ -434,14 +452,16 @@ impl LazyChatBinding {
     }
 
     fn service_for_key(&self, key: ChatKey) -> Result<Arc<ChatF13BindingService>, String> {
-        let directories = match self.configured_directories() {
-            Ok(directories) => directories,
+        let (directories, mod_roots) = match self.configured_directories() {
+            Ok(paths) => paths,
             Err(error) => {
                 self.clear_cached_service()?;
                 return Err(error);
             }
         };
-        if key == ChatKey::F13 {
+        if !mod_roots.is_empty() {
+            self.service_for_directories_and_mod_roots(directories, mod_roots, key)
+        } else if key == ChatKey::F13 {
             self.service_for_directories(directories)
         } else {
             self.service_for_directories_and_key(directories, key)
@@ -460,10 +480,22 @@ impl LazyChatBinding {
         directories: Vec<PathBuf>,
         key: ChatKey,
     ) -> Result<Arc<ChatF13BindingService>, String> {
+        self.service_for_directories_and_mod_roots(directories, Vec::new(), key)
+    }
+
+    fn service_for_directories_and_mod_roots(
+        &self,
+        directories: Vec<PathBuf>,
+        mod_roots: Vec<ChatBindingModRoot>,
+        key: ChatKey,
+    ) -> Result<Arc<ChatF13BindingService>, String> {
         let previous = {
             let mut current = self.service.lock();
             if let Some(cached) = current.as_ref() {
-                if cached.directories == directories && cached.service.chat_key() == key {
+                if cached.directories == directories
+                    && cached.mod_roots == mod_roots
+                    && cached.service.chat_key() == key
+                {
                     return Ok(Arc::clone(&cached.service));
                 }
             }
@@ -480,7 +512,14 @@ impl LazyChatBinding {
             cached.service.shutdown()?;
         }
         let probe = || !crate::infrastructure::system::get_d2r_pids().is_empty();
-        let service = Arc::new(if key == ChatKey::F13 {
+        let service = Arc::new(if !mod_roots.is_empty() {
+            ChatF13BindingService::new_with_mod_roots(
+                directories.clone(),
+                mod_roots.clone(),
+                probe,
+                key,
+            )?
+        } else if key == ChatKey::F13 {
             ChatF13BindingService::new(directories.clone(), probe)?
         } else {
             ChatF13BindingService::new_with_key(directories.clone(), probe, key)?
@@ -491,12 +530,13 @@ impl LazyChatBinding {
                 crate::logger::log_msg(
                     "WARN",
                     "RoomAutomation",
-                    &format!("存档目录变化后聊天键一次性扫描失败：{error}"),
+                    &format!("存档或游戏 Mod 目录变化后聊天键一次性扫描失败：{error}"),
                 );
             }
         }
         *self.service.lock() = Some(CachedChatBinding {
             directories,
+            mod_roots,
             service: Arc::clone(&service),
         });
         Ok(service)
