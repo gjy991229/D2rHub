@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
-<title>D2RHub v0.9.12 使用手册</title>
+<title>D2RHub v0.9.96 使用手册</title>
 <style>
   :root {
     --bg: #090a0c;
@@ -227,7 +227,7 @@
   <aside class="sidebar">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.12</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.96</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -240,6 +240,7 @@
       <a class="nav-link" href="#settings">设置中心</a>
       <a class="nav-link" href="#overlay">性能悬浮窗</a>
       <a class="nav-link" href="#audio-telemetry">声纹自动化</a>
+      <a class="nav-link" href="#room-automation">自动跟房</a>
       <a class="nav-link" href="#stats">统计分析</a>
       <a class="nav-link" href="#pet">Bongo Cat</a>
       <div class="nav-title">维护</div>
@@ -252,15 +253,26 @@
   <main>
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
-      <h1>D2RHub v0.9.12<br>使用手册</h1>
-      <p class="lede">面向 v0.9.12 桌面版本的完整操作说明，覆盖首次披露、国服/国际服双客户端、多账号认证、按需模块、音频声纹、悬浮窗与本地统计。</p>
+      <h1>D2RHub v0.9.96<br>使用手册</h1>
+      <p class="lede">面向 v0.9.96 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.12</span>
+        <span class="badge accent">适用版本 v0.9.96</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
       </div>
     </header>
+
+    <section>
+      <h2>v0.9.96 更新速览</h2>
+      <ul>
+        <li>首次窗口尺寸按屏幕宽度的 <strong>59.4%</strong>、高度的 <strong>65.3%</strong> 计算，适配 Windows 缩放；已有窗口记录继续恢复。</li>
+        <li>账号列表刷新保留当前账号未保存的草稿，小键盘数字可独立录制；程序隐藏到托盘后，再次启动即可唤回原窗口。</li>
+        <li>快捷键改用 Windows 原生热键；正常 / 纯净模式通过重启切换，保留账号、模块配置和本地统计。</li>
+        <li>前台自动跟房统一主号 / 小号操作时序，完成跟随后返回主号；后台方案可同步 Pause / F13 聊天第二键位。</li>
+        <li>内置 <a href="https://github.com/gjy991229/d2r-audio-mod">d2r-audio-mod v1.3.3</a>，生成器与 v7 协议源码按 MIT 许可公开；局内房间工具更新至 r26。</li>
+      </ul>
+    </section>
 
     <section>
       <h2>统一桌面版本</h2>
@@ -283,9 +295,10 @@
       <p class="eyebrow">01 · FIRST RUN</p>
       <h2>快速开始</h2>
       <div class="steps">
-        <div class="step"><strong>下载并安装</strong><p>从项目 Releases 下载 MSI / NSIS 安装包，完成安装后启动 D2RHub。</p></div>
+        <div class="step"><strong>下载并安装</strong><p>从 <a href="https://github.com/gjy991229/D2RHub/releases">项目 Releases</a> 下载 Windows 安装包，完成安装后启动 D2RHub。</p></div>
         <div class="step"><strong>阅读应用级说明</strong><p>当前版本首次打开时必须阅读并确认应用级说明。接受后才会激活全局输入监听、声纹监控、可选能力监督器和 Mod 启动扫描；选择退出不会启动这些运行服务。</p></div>
-        <div class="step"><strong>至少配置一套客户端档案</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。使用战网认证时，再填写该客户端的 Battle.net.exe。</p></div>
+        <div class="step"><strong>选择使用模式</strong><p>“正常模式”按配置启用可选模块；“纯净模式”保留多开与 Mod 管理，不创建扩展运行实例。之后可在“设置 → 维护与迁移”切换，程序会保存设置并重启，保留账号和模块数据。</p></div>
+        <div class="step"><strong>至少配置一套客户端档案</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。战网客户端认证仅供国服兼容使用，需要额外填写国服 Battle.net.exe；国际服使用网页 Token。</p></div>
         <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
         <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，使用“启动全部”依次处理所有可用账号，或创建并复用命名启动方案。常用方案可以固定在主界面直接启动；启动进度和错误会显示在卡片及运行日志中。</p></div>
         <div class="step"><strong>一键准备并开启识别</strong><p>如需声纹功能，先在“设置中心 → 可选功能 → 模块管理”添加“识别与统计”并确认模块说明，再选择已初始化账号、“我玩原版”或一个现有 Mod，并为生成的新 Mod 输入名称，点击“一键准备并开启”。无论是否使用源 Mod，名称都为必填，仅可使用英文字母、数字、短横线和下划线。D2RHub 会生成并复核新的识别 Mod，同时为该账号配置 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>；游戏已运行时需重启该账号一次。</p></div>
@@ -299,13 +312,13 @@
       <p>“设置中心 → 连接”把本机环境分为两套互不混用的安装档案。</p>
       <div class="grid">
         <div class="card"><span class="label">CN PROFILE</span><h3>国服</h3><p>供国服账号使用。存档目录通常带有 <code>Diablo II Resurrected (CN)</code> 标识。</p></div>
-        <div class="card"><span class="label">GLOBAL PROFILE</span><h3>国际服</h3><p>亚服、 美服和欧服共用同一套国际服游戏、战网和存档路径。</p></div>
+        <div class="card"><span class="label">GLOBAL PROFILE</span><h3>国际服</h3><p>亚服、美服和欧服共用同一套国际服游戏与存档路径，通过网页 Token 认证。</p></div>
       </div>
       <h3>每套档案需要什么</h3>
       <ul>
         <li><strong>游戏安装目录：</strong>包含 <code>D2R.exe</code>，任何认证方式都需要。</li>
         <li><strong>存档目录：</strong>包含或将包含 <code>Settings.json</code>，任何认证方式都需要。</li>
-        <li><strong>Battle.net.exe：</strong>仅战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
+        <li><strong>Battle.net.exe：</strong>仅国服战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
       </ul>
       <p>如果存档目录暂时没有 <code>Settings.json</code>，账号创建、登录和多开仍可用，但画质编辑、账号独立游戏配置和系统配置快照不可用。先用对应客户端正常进入一次游戏，通常会生成该文件。</p>
       <h3>辅助路径</h3>
@@ -321,7 +334,7 @@
         <table>
           <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
           <tbody>
-            <tr><td>所需路径</td><td>游戏 + 存档；获取时需 Edge/Chrome</td><td>游戏 + 存档 + 对应版本 Battle.net.exe</td></tr>
+            <tr><td>所需路径</td><td>国服或国际服游戏 + 存档；获取时需 Edge/Chrome</td><td>国服游戏 + 存档 + 国服 Battle.net.exe</td></tr>
             <tr><td>启动路径</td><td>使用本机 DPAPI 加密保存的 Token 直启</td><td>恢复账号的 Battle.net / UnifiedAuth 本地快照后启动</td></tr>
             <tr><td>特点</td><td>启动快，不依赖战网客户端常驻</td><td>适合无法使用网页 Token 的账号，流程更长</td></tr>
             <tr><td>失效处理</td><td>服务端判定失效时，在账号操作中更新 Token</td><td>界面按 30 天提示有效状态；过期或登录失败时重新初始化</td></tr>
@@ -372,7 +385,12 @@
       <h3>可选模块</h3>
       <p>进入“设置中心 → 可选功能 → 模块管理”添加真正需要的模块。添加后模块才出现在可选功能导航；卸载会立即停止对应运行能力，但保留原设置供再次添加时恢复。“识别与统计”依赖“桌面悬浮窗”：添加识别模块会自动补齐依赖并开启场景统计与 TZ 播报，卸载悬浮窗时也会一并移除识别模块。桌宠和自动跟房可以独立管理。带有进程控制、输入或自动化风险的模块首次启用前会显示独立说明，未确认不会启用。</p>
       <h3>账号独立游戏设置</h3>
-      <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。修改会自动保存。选择“系统配置”时跟随当前存档目录的 <code>Settings.json</code>；选择独立配置后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置到当前账号”。</p>
+      <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。切换账号、离开设置页或关闭设置中心时会保存待提交的修改；保存失败时停留在当前页面。刷新账号列表或切换其他账号的“覆盖游戏配置”开关，不会清空当前账号的编辑草稿。</p>
+      <p>未开启“覆盖游戏配置”时跟随当前存档目录的 <code>Settings.json</code>；开启后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置”。此操作会用系统值替换当前游戏设置草稿。</p>
+      <h3>窗口与快捷键</h3>
+      <p>首次运行且没有窗口记录时，主面板按屏幕宽度的 59.4%、高度的 65.3% 居中显示，并适配 Windows 缩放。之后优先恢复你调整过的尺寸和位置。关闭按钮将主面板收起到托盘；再次双击程序快捷方式、使用托盘菜单或主面板快捷键，都可唤回原窗口。</p>
+      <p>在“窗口快捷键”中点击录制框并按下组合键。主面板使用同一个快捷键：位于前台时收起，否则恢复并聚焦。账号快捷键按账号卡片顺序对应，拖动排序后位置随之变化。小键盘数字显示为 <code>Num0</code>–<code>Num9</code>，与上方数字行独立；如果旧版本已录制成普通数字，请重新录制。小键盘数字建议保持 NumLock 开启。F12 和 Win 组合键不可用。</p>
+      <p>录制期间 Hub 暂停自身热键，录制结束或窗口失焦后恢复。系统占用或模块冲突会在保存时提示，失败时保留原绑定。快捷键由 Windows 原生热键服务处理；桌宠的键鼠响应仅在对应功能开启且可见时运行。</p>
     </section>
 
     <section id="overlay">
@@ -400,7 +418,8 @@
     <section id="audio-telemetry">
       <p class="eyebrow">07 · AUDIO TELEMETRY</p>
       <h2>独立 Mod 工具与实时识别</h2>
-      <p>识别 Mod 由无界面的 <code>d2r-audio-mod.exe</code> 独立生成，D2RHub 负责调用生成器、复核输出、配置目标账号，并接收和统计 v7 声纹。生成器不读取 D2RHub 的账号、配置或数据库，也不修改源 Mod。“设置中心 → 自动化”选择一个<strong>已初始化</strong>账号后，捕获器只监听该账号的 D2R 进程及其子进程。</p>
+      <p>识别 Mod 由内置的 <code>d2r-audio-mod.exe v1.3.3</code> 独立生成，D2RHub 负责调用生成器、复核输出、配置目标账号，并接收和统计 v7 声纹。生成器不读取 D2RHub 的账号、配置或数据库，也不修改源 Mod。“设置中心 → 可选功能 → 识别与统计”选择一个<strong>已初始化</strong>账号后，捕获器只监听该账号的 D2R 进程及其子进程。</p>
+      <p>生成器已在 <a href="https://github.com/gjy991229/d2r-audio-mod">独立开源仓库</a> 按 MIT 许可公开，可从其 <a href="https://github.com/gjy991229/d2r-audio-mod/releases">Releases</a> 单独下载。独立运行支持图形界面和命令行；使用 D2RHub 时无需额外安装或手动运行。</p>
       <ul>
         <li><strong>两种准备方式：</strong>选择“我玩原版”时从本机游戏资源创建识别 Mod；选择“我使用 Mod”时复制并加工所选现有 Mod，保留其功能且不修改源目录。两种方式都需要为输出的新 Mod 输入名称。</li>
         <li><strong>兼容处理：</strong>每个所选掉落克隆自己的世界实体与 <code>Flippy ↔ Ground</code> 状态机；原动画、模型、VFX、依赖和原声音均保留，背包/仓库 <code>usesound</code> 与表格 <code>dropsound</code> 不改。</li>
@@ -412,6 +431,23 @@
       </ul>
       <div class="callout"><strong>启动方式：</strong>点击“一键准备并开启”后，工具默认生成全区域和全部支持类别；D2RHub 会复核协议清单，在保留其他无关启动参数的前提下，将目标账号的 Mod 参数固定为 <code>-mod &lt;新 Mod 名&gt; -txt -assettestmode 1</code> 并开启识别。不要同时启用源 Mod；若游戏已经运行，请重启该账号使新参数生效。</div>
       <p>不同代码的掉落同时播放可以分别识别；同一代码在完全相同时间重叠时，只能视为一次事件。护身符、珠宝等只能识别基础代码，无法仅凭声音判断暗金、套装、品质、词缀或鉴定结果。</p>
+    </section>
+
+    <section id="room-automation">
+      <p class="eyebrow">ROOM AUTOMATION</p>
+      <h2>自动建房与小号跟随</h2>
+      <p>在正常模式下添加“自动跟房”模块，阅读模块说明后，选择一个主号和需要跟随的小号。账号需已初始化并正在运行，且使用包含局内房间工具的 Mod。设置房名前缀、密码、下一房序号及创建 / 加入快捷键；每次主号建房会产生新房号，小号使用最近一组房号和密码。</p>
+      <h3>先准备房间工具</h3>
+      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r26 将大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。升级旧成品会生成新 Mod，请确认账号已选用新产物。</p>
+      <p>每个 Mod 条目的“显示游戏内右上角按钮”可控制工具栏，无需重新加工。关闭使用该 Mod 的游戏后切换，下次启动生效；共享该 Mod 的账号一起变化。隐藏工具栏后，后台方案的暂停菜单键盘入口仍可使用，但前台方案要求工具栏保持显示。</p>
+      <h3>方案一：后台按键</h3>
+      <p>选择聊天第二键位 Pause（默认）或 F13，关闭游戏后扫描并同步绑定，再重新进入游戏。扫描会处理对应客户端系统存档目录与游戏 <code>mods/</code> 下已有的键位副本，并保留首次备份；第一聊天键位无需改为回车。主号与小号可在后台接收按键流程。按住时间默认 50ms，可与松开间隔分别调整。</p>
+      <h3>方案二：前台键鼠接管</h3>
+      <p>在“建房 / 入房操作方案”选择前台键鼠接管。此方案无需 Pause / F13 绑定，要求游戏使用 <strong>16:9 高清键鼠界面</strong>、工具栏可见，且操作开始时位于局内。程序依次切换到目标窗口，打开创建 / 加入表单，全选并粘贴房名，按需更新密码，最后回车；主号首次建房会选择地狱难度。</p>
+      <p>主号与小号共用一套时序设置。各小号串行接管；间隔模式还会保留设定的最小开始间隔。所有可用小号完成后自动将焦点切回主号，中途失败或取消则不切回；主号已退出或无法获得焦点时仅记录原因，不重复提交小号。</p>
+      <p>操作期间短暂接管键鼠并暂停 Hub 热键。完成、失败或取消后会释放按键、恢复鼠标位置；剪贴板没有被其他程序改动时恢复原内容。窗口被遮挡、最小化、失去前台、工具栏隐藏或布局无法识别时会停止操作并报告原因。开始操作前请松开触发快捷键。</p>
+      <h3>跟随、取消与升级</h3>
+      <p>可手动触发小号跟随，或设置建房后自动跟随延时；小号可同时派发或按固定间隔派发，前台方案仍串行操作。任务面板支持取消与查看错误。修改 Mod、聊天键或操作方案后，按提示重启游戏或重新初始化；日常切换方案会保留各方案独立设置。</p>
     </section>
 
     <section id="stats">
@@ -484,13 +520,17 @@
       <p class="eyebrow">11 · TROUBLESHOOTING</p>
       <h2>疑难解答</h2>
       <h3>账号无法创建或对应区服不可选</h3>
-      <p>检查该客户端的游戏目录和存档目录是否成组配置。战网认证还需对应客户端的 Battle.net.exe；亚/美/欧服统一检查国际服档案。</p>
+      <p>检查该客户端的游戏目录和存档目录是否成组配置。国服战网认证还需国服 Battle.net.exe；亚 / 美 / 欧服统一检查国际服档案并使用网页 Token。</p>
       <h3>战网初始化超时或快照失效</h3>
       <p>确认 Battle.net 已实际登录完成、路径对应正确客户端，并避免同时执行另一个战网认证操作。账号卡片显示过期、<code>runtime/</code> 快照缺失/损坏或启动失败时，执行重新初始化；不要手工复制顶层旧认证文件来绕过快照校验。</p>
       <h3>网页 Token 获取页打不开</h3>
       <p>在“连接”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
       <h3>画质设置无法读取</h3>
       <p>确认存档路径正确且包含 <code>Settings.json</code>。先用对应国服/国际服客户端正常进入游戏一次，再回到设置中心加载。</p>
+      <h3>窗口默认大小没有变化</h3>
+      <p>新比例只用于没有有效窗口记录的首次布局，升级会保留旧尺寸。可直接拖动窗口边缘调整，之后会记住你的选择。</p>
+      <h3>小键盘快捷键没有反应</h3>
+      <p>保持 NumLock 开启，在“窗口快捷键”中重新录制，确认显示 <code>Num1</code> 等小键盘名称，而非普通 <code>1</code>。若出现占用提示，换用其他组合键；录制期间和自动输入期间 Hub 热键会暂时停用。</p>
       <h3>悬浮窗吸附后找不到</h3>
       <p>沿最近使用的屏幕边缘缓慢移动鼠标，触发边会让窗口抽出。仍无法找到时，在“显示”中关闭再开启悬浮窗，或重启应用。</p>
       <h3>迷你窗无法变成单行</h3>
@@ -502,7 +542,7 @@
     </section>
 
     <footer class="footer">
-      D2RHub v0.9.12 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.96 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>

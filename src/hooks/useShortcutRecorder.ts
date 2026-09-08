@@ -44,7 +44,9 @@ export function parseShortcutFromKeyEvent(
 
   // 完整按键名映射（与后端 vk_to_key_string 保持一致）
   let keyName: string;
-  if (e.code === "NumpadAdd") {
+  if (/^Numpad[0-9]$/.test(e.code)) {
+    keyName = `Num${e.code.slice(-1)}`;
+  } else if (e.code === "NumpadAdd") {
     keyName = "Num+";
   } else if (e.code === "NumpadMultiply") {
     keyName = "Num*";

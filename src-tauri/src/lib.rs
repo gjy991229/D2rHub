@@ -86,7 +86,6 @@ pub fn run() {
             fn FindWindowW(lpClassName: *const u16, lpWindowName: *const u16) -> isize;
             fn ShowWindow(hWnd: isize, nCmdShow: i32) -> i32;
             fn SetForegroundWindow(hWnd: isize) -> i32;
-            fn IsIconic(hWnd: isize) -> i32;
         }
         const ERROR_ALREADY_EXISTS: u32 = 183;
         const SW_RESTORE: i32 = 9;
@@ -99,9 +98,8 @@ pub fn run() {
                 let title: Vec<u16> = "D2RHub\0".encode_utf16().collect();
                 let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
                 if hwnd != 0 {
-                    if IsIconic(hwnd) != 0 {
-                        ShowWindow(hwnd, SW_RESTORE);
-                    }
+                    // A tray-hidden window is not iconic; show it before focusing.
+                    ShowWindow(hwnd, SW_RESTORE);
                     SetForegroundWindow(hwnd);
                 }
                 std::process::exit(0);
@@ -175,9 +173,8 @@ pub fn run() {
                     if let Ok(Some(monitor)) = win.current_monitor() {
                         let scale_factor = monitor.scale_factor();
                         let size = monitor.size();
-                        let logical_width = (size.width as f64) / scale_factor;
-                        let default_width = logical_width * 0.618;
-                        let default_height = default_width * 0.618;
+                        let default_width = (size.width as f64 / scale_factor) * 0.594;
+                        let default_height = (size.height as f64 / scale_factor) * 0.653;
                         use tauri::LogicalSize;
                         let _ = win.set_size(LogicalSize::new(default_width, default_height));
                         let _ = win.center();

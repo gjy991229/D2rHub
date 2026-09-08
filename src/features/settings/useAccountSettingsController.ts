@@ -30,6 +30,7 @@ export function useAccountSettingsController({
   const [accountWinXDraft, setAccountWinXDraft] = useState<number | null>(null);
   const [accountWinYDraft, setAccountWinYDraft] = useState<number | null>(null);
   const gameSettingsRequestRef = useRef(0);
+  const previousAccountRef = useRef<AccountMeta | undefined>(undefined);
 
   const loadGameSettings = useCallback(async (accountId: string) => {
     const requestId = ++gameSettingsRequestRef.current;
@@ -52,9 +53,28 @@ export function useAccountSettingsController({
   }, []);
 
   useEffect(() => {
-    if (!selectedAccountId) return;
     const account = accounts.find((candidate) => candidate.id === selectedAccountId);
-    if (!account) return;
+    const previous = previousAccountRef.current;
+    previousAccountRef.current = account;
+    if (!account) {
+      ++gameSettingsRequestRef.current;
+      setGameSettings({});
+      setGameSettingsChanged(false);
+      setGameSettingsLoading(false);
+      setGameSettingsLoadError(null);
+      return;
+    }
+    if (previous?.id === account.id) {
+      // Refresh saved metadata without replacing fields the user has edited.
+      setAccountNicknameDraft((draft) => draft === (previous.display_name || previous.id)
+        ? (account.display_name || account.id) : draft);
+      setAccountWinXDraft((draft) => draft === (previous.window_x ?? null)
+        ? (account.window_x ?? null) : draft);
+      setAccountWinYDraft((draft) => draft === (previous.window_y ?? null)
+        ? (account.window_y ?? null) : draft);
+      // Other accounts' changes must not reload this account's game settings.
+      return;
+    }
     setAccountNicknameDraft(account.display_name || account.id);
     setAccountWinXDraft(account.window_x ?? null);
     setAccountWinYDraft(account.window_y ?? null);
@@ -66,7 +86,7 @@ export function useAccountSettingsController({
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     void listenEvent<{ accountId: string }>("account-settings-updated", (event) => {
-      if (event.payload.accountId === selectedAccountId && !gameSettingsSaving) {
+      if (event.payload.accountId === selectedAccountId && !gameSettingsSaving && !gameSettingsChanged) {
         void loadGameSettings(selectedAccountId);
       }
     }).then((stopListening) => {
@@ -77,7 +97,7 @@ export function useAccountSettingsController({
       cancelled = true;
       unlisten?.();
     };
-  }, [gameSettingsSaving, loadGameSettings, selectedAccountId]);
+  }, [gameSettingsChanged, gameSettingsSaving, loadGameSettings, selectedAccountId]);
 
   const updateGameSetting = (key: string, value: unknown) => {
     if (gameSettingsLoadError) return;

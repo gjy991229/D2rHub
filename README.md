@@ -3,7 +3,7 @@
   <h1>D2RHub</h1>
   <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.9.95-d5a85a" alt="Version 0.9.95" />
+    <img src="https://img.shields.io/badge/version-0.9.96-d5a85a" alt="Version 0.9.96" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
@@ -17,6 +17,16 @@
 D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重制版》的多个账号、国服/国际服客户端配置和多开流程，并通过 mod 音频声纹记录符文掉落和本地统计数据。
 
 当前只维护一个桌面发行版：多开核心始终可用，桌面悬浮窗、识别与统计、桌宠和自动跟房作为内置可选模块按需添加。MSI 与 NSIS 只是安装格式不同，不是两个功能版本。
+
+### v0.9.96 更新
+
+- 主窗口首次打开时，宽度为当前屏幕的 **59.4%**、高度为 **65.3%**，适配 Windows 显示缩放；已有窗口尺寸与位置继续恢复。关闭到托盘后，再次启动程序也能唤回原窗口。
+- 账号列表刷新或切换其他账号的“覆盖游戏配置”开关，不再清空正在编辑的账号草稿；未编辑字段仍会同步已保存值。
+- 全局快捷键使用 Windows 原生热键服务，录制时检查占用并暂时停用 Hub 热键；小键盘数字按 `Num0`–`Num9` 保存，与主键盘数字区分。F12 和 Win 组合键不可用。
+- 自动跟房新增前台键鼠方案、统一主号与小号的输入时序，并在小号完成后切回主号；后台方案支持 Pause / F13 聊天第二键位同步。正常模式与纯净模式通过重启切换运行服务。
+- 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r26，大厅与局内表单分离，保留工具栏显示选择。
+
+完整操作说明见 [v0.9.96 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
 
 ### 当前能力
 
@@ -86,6 +96,8 @@ npm run build
 npm run build:desktop
 ```
 
+需要更新安装包内的生成器时，将 [d2r-audio-mod](https://github.com/gjy991229/d2r-audio-mod) 克隆到 D2RHub 的同级目录，运行 `npm run sync:audio-mod`，再构建桌面安装包。音频协议约定见生成器的 [protocol 目录](https://github.com/gjy991229/d2r-audio-mod/tree/main/protocol)。
+
 环境要求、项目结构和 Windows 构建细节见 [开发指南](docs/DEVELOPMENT.md)。核心、平台服务、可选能力与配置兼容边界见 [架构决策 ADR 0002](docs/adr/0002-core-and-capability-module-architecture.md)。提交修改前请阅读 [贡献指南](CONTRIBUTING.md)。
 
 ---
@@ -98,6 +110,10 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 
 ### Current features
 
+- Version 0.9.96 sizes a new main window to 59.4% of screen width and 65.3% of screen height, with Windows scaling applied. Saved geometry is retained, and launching the app again restores a tray-hidden window.
+- Account refreshes preserve unsaved settings drafts. Shortcut recording distinguishes `Num0`–`Num9` from the main number row; Windows-native hotkeys are suspended during recording and automated input, with conflict checks when assigning bindings.
+- Normal and Pure modes switch through an application restart. Foreground room automation uses a shared input sequence for primary and follower accounts, then restores primary focus after followers complete.
+- Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r26 and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
 - A version-scoped application disclosure that must be accepted before global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning are activated. Risk-bearing optional modules have their own disclosures.
