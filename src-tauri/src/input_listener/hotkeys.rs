@@ -44,7 +44,7 @@ pub(super) fn initialize(app: AppHandle) -> Result<(), String> {
     let stop = cancelled.clone();
     let handle = std::thread::Builder::new().name("global-hotkeys".into()).spawn(move || {
         let mut msg = MSG::default();
-        unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_NOREMOVE); }
+        unsafe { let _ = PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_NOREMOVE); }
         id.store(unsafe { GetCurrentThreadId() }, Ordering::Release);
         if stop.load(Ordering::Acquire) || ready_tx.send(()).is_err() { return; }
         let mut registrations = Registrations::default();

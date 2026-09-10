@@ -129,7 +129,7 @@ fn reconcile() -> Result<(), String> {
     let handle = std::thread::Builder::new().name("pet-input-listener".into()).spawn(move || {
         let _done = Completion(done_tx);
         let mut msg = MSG::default();
-        unsafe { PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_NOREMOVE); }
+        unsafe { let _ = PeekMessageW(&mut msg, HWND::default(), 0, 0, PM_NOREMOVE); }
         id.store(unsafe { GetCurrentThreadId() }, Ordering::Release);
         if stop.load(Ordering::Acquire) { return; }
         let install = || -> Result<(Hook, Hook), String> {
@@ -146,7 +146,7 @@ fn reconcile() -> Result<(), String> {
         if stop.load(Ordering::Acquire) || ready_tx.send(Ok(())).is_err() { return; }
         while unsafe { GetMessageW(&mut msg, HWND::default(), 0, 0) }.0 > 0 {
             if stop.load(Ordering::Acquire) { break; }
-            unsafe { TranslateMessage(&msg); DispatchMessageW(&msg); }
+            unsafe { let _ = TranslateMessage(&msg); let _ = DispatchMessageW(&msg); }
         }
     });
     let handle = match handle {

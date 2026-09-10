@@ -3325,15 +3325,6 @@ pub fn load_window_geometry(
     Ok(GlobalConfig::load_geometry(&state.app_data_dir))
 }
 
-/// 供非命令函数（如 tray）获取全局配置
-pub fn get_global_config_ext(app: &tauri::AppHandle) -> Option<GlobalConfig> {
-    use tauri::Manager;
-    if let Some(state) = app.try_state::<SharedState>() {
-        return state.configuration().snapshot();
-    }
-    None
-}
-
 /// 保存悬浮窗几何信息（位置+尺寸）
 #[tauri::command(async)]
 pub fn save_overlay_geometry(

@@ -229,6 +229,9 @@ impl AccountCatalogLeaseManager {
         Ok(CatalogRestartReservation(self))
     }
 
+    /// Non-blocking ownership probe, used by tests to observe catalog lease state
+    /// without deadlocking on the same thread the way `acquire` would.
+    #[cfg(test)]
     pub fn try_acquire(&self) -> Option<AccountCatalogLease<'_>> {
         self.state
             .try_lock()

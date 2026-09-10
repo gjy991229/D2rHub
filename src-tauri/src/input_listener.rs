@@ -64,19 +64,9 @@ pub(crate) fn with_shortcut_routing_transaction<T>(operation: impl FnOnce() -> T
     operation()
 }
 
-/// Replaces the committed core reservation projection. The caller must hold
+/// Replaces the committed core shortcut projection. The caller must hold
 /// `with_shortcut_routing_transaction` whenever the values may differ from the
 /// previous commit.
-pub(crate) fn replace_core_shortcut_reservations(
-    shortcuts: impl IntoIterator<Item = (String, usize)>,
-) {
-    replace_core_shortcut_routes(
-        shortcuts
-            .into_iter()
-            .map(|(shortcut, position)| (shortcut, CoreShortcutAction::FocusAccount(position))),
-    );
-}
-
 pub(crate) fn replace_core_shortcut_routes(
     shortcuts: impl IntoIterator<Item = (String, CoreShortcutAction)>,
 ) {
@@ -390,26 +380,6 @@ pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), 
     Ok(())
 }
 
-
-#[allow(dead_code)]
-#[allow(clippy::too_many_arguments)]
-fn is_stats_overlay_double_click(
-    previous_time: u32,
-    current_time: u32,
-    previous_x: i32,
-    previous_y: i32,
-    current_x: i32,
-    current_y: i32,
-    max_delay: u32,
-    max_delta_x: i32,
-    max_delta_y: i32,
-) -> bool {
-    previous_time != 0
-        && current_time.wrapping_sub(previous_time) <= max_delay
-        && (current_x - previous_x).abs() <= max_delta_x
-        && (current_y - previous_y).abs() <= max_delta_y
-}
-
 /// 将虚拟键码转换为可读键名
 fn vk_to_key_string(vk: u32) -> String {
     match vk {
@@ -618,25 +588,13 @@ pub(crate) fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch_capability_shortcut, is_stats_overlay_double_click, register_capability_shortcuts,
-        replace_capability_shortcuts, replace_core_shortcut_reservations,
+        dispatch_capability_shortcut, register_capability_shortcuts,
+        replace_capability_shortcuts, replace_core_shortcut_routes,
         validate_core_shortcut_reservations, with_shortcut_routing_transaction,
     };
+    use crate::state::CoreShortcutAction;
 
     static SHORTCUT_TEST_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-    #[test]
-    fn stats_overlay_click_through_double_click_keeps_time_and_position_limits() {
-        assert!(is_stats_overlay_double_click(
-            1_000, 1_240, 300, 200, 302, 201, 500, 2, 2,
-        ));
-        assert!(!is_stats_overlay_double_click(
-            1_000, 1_501, 300, 200, 302, 201, 500, 2, 2,
-        ));
-        assert!(!is_stats_overlay_double_click(
-            1_000, 1_240, 300, 200, 303, 201, 500, 2, 2,
-        ));
-    }
 
     #[test]
     fn capability_shortcuts_are_bounded_unique_and_owned_by_a_guard() {
@@ -722,7 +680,10 @@ mod tests {
     fn committed_core_shortcut_rejects_a_later_capability_route() {
         let _serial = SHORTCUT_TEST_SERIAL.lock().unwrap();
         with_shortcut_routing_transaction(|| {
-            replace_core_shortcut_reservations([("Ctrl+F23".to_string(), 2)]);
+            replace_core_shortcut_routes([(
+                "Ctrl+F23".to_string(),
+                CoreShortcutAction::FocusAccount(2),
+            )]);
         });
         let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
 
@@ -736,7 +697,7 @@ mod tests {
         assert!(error.contains("多开核心账号位置 2"));
 
         with_shortcut_routing_transaction(|| {
-            replace_core_shortcut_reservations(std::iter::empty());
+            replace_core_shortcut_routes(std::iter::empty());
         });
     }
 }
