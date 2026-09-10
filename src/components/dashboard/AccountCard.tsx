@@ -63,6 +63,7 @@ export interface GridItemProps {
   onOpenModManager?: (action?: "add", edition?: string | null) => void;
   getPositionSchemeUsage?: (id: string, positionId: string) => string[];
   onUpdateToken?: (a: AccountMeta) => void;
+  onReinitialize?: (a: AccountMeta) => void;
   config?: GlobalConfig | null;
 }
 
@@ -165,7 +166,7 @@ export function AccountGridItem({
   isSelectionMode, selected, onToggleSelect, schemeMember, onSchemeMemberChange,
   modCapsulePool, modCapsuleAssigningAccountId, onAssignModCapsule, onOpenModManager,
   modCapsuleLoading, modCapsuleError, onRequestModCapsules,
-  getPositionSchemeUsage, onUpdateToken, config,
+  getPositionSchemeUsage, onUpdateToken, onReinitialize, config,
 }: GridItemProps) {
   const display = account.display_name || account.id;
   const [editingName, setEditingName] = useState(false);
@@ -314,6 +315,10 @@ export function AccountGridItem({
       onUpdateToken(account);
       return;
     }
+    if (onReinitialize) {
+      onReinitialize(account);
+      return;
+    }
     setReinit(true);
     try { await reinitializeAccount(account.id); showToast("success", "已重新初始化"); }
     catch (e) { /* Error is handled and toasted in store */ }
@@ -374,6 +379,15 @@ export function AccountGridItem({
     : [effectiveResolution, ...resOptions];
   const fpsOptions = [0, 30, 60, 120, 144, 240];
   const stop = (e: React.MouseEvent) => e.stopPropagation();
+  // “重置”按钮同时是未完成账号的补全入口：待完成 Token 账号在这里补 Token，
+  // 尚未跑完首次初始化的战网账号在这里重新进入初始化事务。
+  const reinitializeTitle = tokenMigrationRequired
+    ? "迁移为 Token 直启"
+    : account.initialized
+      ? "重置"
+      : account.auth_mode === "token"
+        ? "补全 Token 完成初始化"
+        : "初始化账号";
 
   return (
     <div
@@ -526,11 +540,13 @@ export function AccountGridItem({
                   <button onClick={handleOpenFolder} className="mini-action icon-btn" title="打开配置目录">
                     <FolderOpen size={12} strokeWidth={1.8} />
                   </button>
-                  <button onClick={handleReinit} disabled={reinit} className="mini-action icon-btn disabled:opacity-40" title={tokenMigrationRequired ? "迁移为 Token 直启" : "重置"}>
-                    <RotateCw size={12} strokeWidth={1.8} className={reinit ? "animate-spin" : ""} />
-                  </button>
                 </>
               )}
+              {/* 未初始化账号同样需要这个入口：待完成 Token 账号可以在这里补 Token，
+                  尚未完成首次初始化的战网账号可以在这里重新走初始化事务。 */}
+              <button onClick={handleReinit} disabled={reinit} className="mini-action icon-btn disabled:opacity-40" title={reinitializeTitle}>
+                <RotateCw size={12} strokeWidth={1.8} className={reinit ? "animate-spin" : ""} />
+              </button>
               <button onClick={handleDelete} className={`mini-action icon-btn ${confirmDel ? "!bg-error/10 !text-error" : "hover:!bg-error/10 hover:!text-error"}`} title={confirmDel ? "确认删除" : "删除"}>
                 <Trash2 size={12} strokeWidth={1.8} />
               </button>

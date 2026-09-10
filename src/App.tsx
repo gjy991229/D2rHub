@@ -123,6 +123,7 @@ function App() {
   };
 
   const [tokenUpdateAccount, setTokenUpdateAccount] = useState<AccountMeta | null>(null);
+  const [reinitializeAccount, setReinitializeAccount] = useState<AccountMeta | null>(null);
   const launchGroups = useLaunchGroupController();
   const launchGroupDraft = launchGroups.draft;
   const launchGroupPendingDelete = launchGroups.pendingDelete;
@@ -527,6 +528,7 @@ function App() {
                         && member.position_preset_id === positionId))
                       .map(group => group.name)}
                     onUpdateToken={setTokenUpdateAccount}
+                    onReinitialize={setReinitializeAccount}
                     config={config}
                   />;
                 })}
@@ -569,10 +571,11 @@ function App() {
       </AppShell>
 
       <AccountInitDialog
-        open={showInit || !!tokenUpdateAccount}
-        onClose={() => { setShowInit(false); setTokenUpdateAccount(null); }}
-        onDone={() => { setShowInit(false); setTokenUpdateAccount(null); }}
+        open={showInit || !!tokenUpdateAccount || !!reinitializeAccount}
+        onClose={() => { setShowInit(false); setTokenUpdateAccount(null); setReinitializeAccount(null); }}
+        onDone={() => { setShowInit(false); setTokenUpdateAccount(null); setReinitializeAccount(null); }}
         updateAccount={tokenUpdateAccount}
+        reinitializeAccount={reinitializeAccount}
       />
       <AboutModal open={showAbout} onClose={() => setShowAbout(false)} />
       <Modal

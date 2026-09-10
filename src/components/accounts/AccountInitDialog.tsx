@@ -17,7 +17,8 @@ import {
 } from "../../utils/regionPaths";
 import {
   accountIdToDeleteOnCancel,
-  shouldCleanupOnDialogClose,
+  resolveTokenAuthStepAction,
+  shouldCancelInitializationOnClose,
   shouldStartBnetInitialization,
 } from "../../utils/accountInitLifecycle";
 import { extractBattleNetToken } from "../../utils/battleNetToken";
@@ -27,6 +28,7 @@ interface Props {
   onClose: () => void;
   onDone: (accountId: string) => void;
   updateAccount?: AccountMeta | null;
+  reinitializeAccount?: AccountMeta | null;
 }
 
 type InitStep =
@@ -73,7 +75,7 @@ const getTokenPrefix = (region: string): string => {
   }
 };
 
-export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Props) {
+export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinitializeAccount }: Props) {
   const { config } = useGlobalConfig();
   const migratingToToken = Boolean(updateAccount
     && requiresTokenMigration(updateAccount.auth_mode, updateAccount.region, config));
@@ -93,6 +95,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   // Token wizard state
   const [tokenWizard, setTokenWizard] = useState<TokenWizardStep>("token_nick");
   const [tokenGuideLoading, setTokenGuideLoading] = useState(false);
+  const [tokenAccountCreating, setTokenAccountCreating] = useState(false);
   const [tokenSubmitting, setTokenSubmitting] = useState(false);
 
   const cancelledRef = useRef(false);
@@ -100,8 +103,19 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   const createdAccountIdRef = useRef("");
   const activeInitializationRef = useRef<Promise<void> | null>(null);
   const cancellingRef = useRef(false);
+  // 待完成账号的创建与提交都是异步的：ref 守卫保证同一帧内的重复点击不会创建第二个账号。
+  const tokenAccountCreatingRef = useRef(false);
+  const tokenSubmittingRef = useRef(false);
+  // 向导会话号：取消或重新打开都会作废旧会话，迟到的创建结果必须由创建方回收。
+  const wizardSessionRef = useRef(0);
+  const wizardOpenRef = useRef(false);
 
-  const { createAccount, initializeBnetAccount } = useAccounts();
+  const {
+    createAccount,
+    deleteAccount,
+    initializeBnetAccount,
+    reinitializeAccount: reinitializeExistingAccount,
+  } = useAccounts();
   const cnBattleNetModeAvailable = hasConfiguredPathsForRegion(config, "CN", "bnet");
 
   const markDone = (step: InitStep) => setCompletedSteps(prev => new Set([...prev, step]));
@@ -130,6 +144,19 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
         setVoicelanguage(updateAccount.voicelanguage || initialLocale);
         setNicknameLocked(true);
         setTokenWizard("token_guide");
+      } else if (reinitializeAccount) {
+        // 重新初始化以 Battle.net 客户端事务为主；若调用方误把 Token 账号交进来，
+        // 则退化为“更新 Token”的登录页步骤，而不是渲染出空白向导。
+        const reinitializeIsToken = reinitializeAccount.auth_mode === "token";
+        setAccountId(reinitializeAccount.id);
+        accountIdRef.current = reinitializeAccount.id;
+        setNickname(reinitializeAccount.display_name || reinitializeAccount.id);
+        setAuthMode(reinitializeIsToken ? "token" : "bnet");
+        setRegion(reinitializeAccount.region === "Global" ? "KR" : (reinitializeAccount.region as AccountRegion) || "CN");
+        setLanguage(reinitializeAccount.language || "zhCN");
+        setVoicelanguage(reinitializeAccount.voicelanguage || "zhCN");
+        setNicknameLocked(!reinitializeIsToken);
+        setTokenWizard(reinitializeIsToken ? "token_guide" : "token_nick");
       } else {
         setAccountId("");
         accountIdRef.current = "";
@@ -146,13 +173,17 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       }
       setShowGuide(false);
       setTokenGuideLoading(false);
+      setTokenAccountCreating(false);
       setTokenSubmitting(false);
       cancelledRef.current = false;
       createdAccountIdRef.current = "";
       activeInitializationRef.current = null;
       cancellingRef.current = false;
     }
-  }, [open, updateAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_game_path, config?.global_saved_games_path]);
+    // 只在“打开向导”这一刻开启新会话：后续配置变化导致的本体重置不应作废在途创建。
+    if (open && !wizardOpenRef.current) wizardSessionRef.current += 1;
+    wizardOpenRef.current = open;
+  }, [open, updateAccount, reinitializeAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_game_path, config?.global_saved_games_path]);
 
   useEffect(() => {
     if (!shouldStartBnetInitialization({
@@ -171,7 +202,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       }
     };
     void initialization.then(clearActive, clearActive);
-  }, [open, config, nicknameLocked, currentStep, authMode, updateAccount]);
+  }, [open, config, nicknameLocked, currentStep, authMode, updateAccount, reinitializeAccount]);
 
   useEffect(() => {
     let disposed = false;
@@ -236,7 +267,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     try {
       const activeInitialization = activeInitializationRef.current;
       const id = accountIdToDeleteOnCancel({
-        isUpdating: Boolean(updateAccount),
+        isUpdating: Boolean(updateAccount || reinitializeAccount),
         createdAccountId: createdAccountIdRef.current,
       });
       const cleanupAfterInitialization = async () => {
@@ -244,7 +275,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
           await invokeCommand("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
         }
         if (id) {
-          await invokeCommand("delete_account", { accountId: id });
+          await deleteAccount(id);
         }
       };
 
@@ -271,11 +302,23 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       accountIdRef.current = "";
       createdAccountIdRef.current = "";
       cancellingRef.current = false;
+      // 回到向导首步：既避免取消后仍触发 Token 登录页自动打开，也让下次打开重新初始化。
+      setTokenWizard("token_nick");
+      setShowGuide(false);
+      setTokenAccountCreating(false);
+      setTokenSubmitting(false);
+      // 作废当前会话：在途的创建结果会自行回收账号，不再推进向导。
+      wizardSessionRef.current += 1;
     }
   };
 
   const handleClose = () => {
-    if (shouldCleanupOnDialogClose({ authMode, tokenWizard, currentStep })) {
+    if (shouldCancelInitializationOnClose({
+      authMode,
+      tokenWizard,
+      currentStep,
+      isReinitialize: Boolean(reinitializeAccount),
+    })) {
       void handleCancel().finally(onClose);
       return;
     }
@@ -287,26 +330,28 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     if (cancelledRef.current) return;
 
     setCurrentStep("creating");
-    let id: string;
-    try {
-      id = await createAccount(
-        nickname.trim(),
-        authMode,
-        region,
-        undefined,
-        language || undefined,
-        voicelanguage || undefined,
-      );
-    } catch (accountCreationError) {
-      if (!cancelledRef.current) {
-        setError(`创建账号失败: ${String(accountCreationError)}`);
+    let id = reinitializeAccount?.id || "";
+    if (!id) {
+      try {
+        id = await createAccount(
+          nickname.trim(),
+          authMode,
+          region,
+          undefined,
+          language || undefined,
+          voicelanguage || undefined,
+        );
+      } catch (accountCreationError) {
+        if (!cancelledRef.current) {
+          setError(`创建账号失败: ${String(accountCreationError)}`);
+        }
+        return;
       }
-      return;
-    }
 
-    accountIdRef.current = id;
-    createdAccountIdRef.current = id;
-    setAccountId(id);
+      accountIdRef.current = id;
+      createdAccountIdRef.current = id;
+      setAccountId(id);
+    }
     markDone("creating");
 
     if (cancelledRef.current) return;
@@ -314,7 +359,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
 
     try {
       // 清理、启动、登录检测、快照采集和最终清理由一个后端事务完成。
-      await initializeBnetAccount(id);
+      if (reinitializeAccount) {
+        await reinitializeExistingAccount(id);
+      } else {
+        await initializeBnetAccount(id);
+      }
       if (cancelledRef.current) return;
 
       // 事件监听负责实时推进；这里补齐完成态，兼容事件监听初始化失败。
@@ -348,7 +397,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     setTokenWizard("token_auth");
   };
 
-  const tokenStepAuthNext = () => {
+  const tokenStepAuthNext = async () => {
     if (authMode === "bnet") {
       if (region !== "CN") {
         setError("国际服仅支持 Token 直启");
@@ -360,8 +409,51 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       }
       // Bnet mode: lock and proceed to old flow
       handleConfirmNickname();
-    } else {
+      return;
+    }
+
+    const action = resolveTokenAuthStepAction({
+      hasAccount: Boolean(accountIdRef.current),
+      isCreating: tokenAccountCreatingRef.current,
+    });
+    if (action === "open-guide") {
       setTokenWizard("token_guide");
+      return;
+    }
+    if (action === "ignore") return;
+
+    // Token 账号必须先落盘，登录页才能复用该账号的独立浏览器 Profile。
+    // 账号此刻仍是待完成状态（initialized=false），取消时由这里负责回收。
+    tokenAccountCreatingRef.current = true;
+    setTokenAccountCreating(true);
+    setError(null);
+    const session = wizardSessionRef.current;
+    try {
+      const id = await createAccount(
+        nickname.trim(),
+        "token",
+        region,
+        undefined,
+        language || undefined,
+        voicelanguage || undefined,
+        true,
+      );
+      if (session !== wizardSessionRef.current) {
+        // 用户在创建期间取消（或已重新打开向导）：不推进流程，立即回收刚创建的待完成账号。
+        await deleteAccount(id);
+        return;
+      }
+      accountIdRef.current = id;
+      createdAccountIdRef.current = id;
+      setAccountId(id);
+      setTokenWizard("token_guide");
+    } catch (accountCreationError) {
+      if (session === wizardSessionRef.current) {
+        setError(`创建 Token 账号失败: ${String(accountCreationError)}`);
+      }
+    } finally {
+      tokenAccountCreatingRef.current = false;
+      setTokenAccountCreating(false);
     }
   };
 
@@ -379,7 +471,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     setError(null);
     try {
       if (config?.browser_path && config?.browser_type) {
-        await invokeCommand("open_token_login_url", { url: getTokenUrl(region) });
+        const accountId = accountIdRef.current;
+        if (!accountId) throw new Error("Token 账号尚未创建");
+        await invokeCommand("open_token_login_url", { accountId, url: getTokenUrl(region) });
         await sleep(1200);
         await invokeCommand("bring_self_to_foreground").catch(() => {});
       } else {
@@ -405,7 +499,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     const tokenUrl = getTokenUrl(region);
     try {
       if (config?.browser_path && config?.browser_type) {
-        await invokeCommand("open_token_login_url", { url: tokenUrl });
+        const accountId = accountIdRef.current;
+        if (!accountId) throw new Error("Token 账号尚未创建");
+        await invokeCommand("open_token_login_url", { accountId, url: tokenUrl });
       } else {
         const { open: openUrl } = await import("@tauri-apps/plugin-shell");
         await openUrl(tokenUrl);
@@ -417,18 +513,21 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
   };
 
   const tokenStepPasteNext = async () => {
-    if (tokenSubmitting) return;
+    if (tokenSubmittingRef.current) return;
     const extractedToken = extractBattleNetToken(token);
     if (!extractedToken) {
       setError("未找到完整 Token，请粘贴包含 ST=...& 的完整链接");
       return;
     }
+    tokenSubmittingRef.current = true;
     setError(null);
     setTokenSubmitting(true);
     const updatingExistingAccount = Boolean(accountIdRef.current);
+    const session = wizardSessionRef.current;
     try {
       let id = accountIdRef.current;
       if (id) {
+        // 昵称在向导中不可编辑，这里只提交认证与区服/语言字段。
         await invokeCommand("update_account_meta", {
           accountId: id,
           authMode: "token",
@@ -446,9 +545,15 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
           language || undefined,
           voicelanguage || undefined,
         );
+        if (session !== wizardSessionRef.current) {
+          // 与待完成账号同一规则：作废会话里创建的账号由创建方回收。
+          await deleteAccount(id);
+          return;
+        }
         accountIdRef.current = id;
         createdAccountIdRef.current = id;
         setAccountId(id);
+
       }
       onDone(id);
       onClose();
@@ -461,6 +566,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
       const action = updatingExistingAccount ? "更新账号配置" : "创建账号";
       setError(`${action}失败: ${String(e)}`);
     } finally {
+      tokenSubmittingRef.current = false;
       setTokenSubmitting(false);
     }
   };
@@ -471,13 +577,19 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
     <Modal
       open={open}
       onClose={handleClose}
-      title={migratingToToken ? "迁移为 Token 直启" : updateAccount ? "更新账号 Token" : "初始化新账号"}
+      title={migratingToToken
+        ? "迁移为 Token 直启"
+        : updateAccount
+          ? "更新账号 Token"
+          : reinitializeAccount
+            ? "重新初始化战网账号"
+            : "初始化新账号"}
       width="max-w-md"
       footer={
         currentStep === "done" ? (
           <Button variant="primary" size="sm" onClick={() => { onDone(accountId); onClose(); }}>完成</Button>
         ) : (currentStep !== "input_nickname" || tokenWizard !== "token_nick") ? (
-          <Button variant="secondary" size="sm" onClick={handleCancel}>取消</Button>
+          <Button variant="secondary" size="sm" onClick={() => void handleCancel().then(onClose)}>取消</Button>
         ) : null
       }
     >
@@ -656,7 +768,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                   </p>
                 )}
               </div>
-              <Button variant="primary" size="sm" onClick={tokenStepAuthNext}>下一步</Button>
+              <Button variant="primary" size="sm" onClick={tokenStepAuthNext} disabled={tokenAccountCreating}>
+                {tokenAccountCreating ? "正在创建账号..." : "下一步"}
+              </Button>
             </>
           )}
 
@@ -705,6 +819,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
             style={{ background: "var(--border-default)" }} />
           <div className="space-y-0.5">
             {bnetSteps.filter(s => s.id !== "input_nickname").map(s => {
+              const displayedStep = reinitializeAccount && s.id === "creating"
+                ? { ...s, label: "恢复配置", desc: "恢复账号 Battle.net 快照" }
+                : s;
               const done = completedSteps.has(s.id);
               const active = s.id === currentStep;
               return (
@@ -722,8 +839,8 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount }: Prop
                   <div>
                     <p className={"text-md font-medium transition-colors " + (
                       done ? "text-success" : active ? "text-text-primary" : "text-text-muted"
-                    )}>{s.label}</p>
-                    {s.desc && active && <p className="text-xs text-text-muted mt-0.5">{s.desc}</p>}
+                    )}>{displayedStep.label}</p>
+                    {displayedStep.desc && active && <p className="text-xs text-text-muted mt-0.5">{displayedStep.desc}</p>}
                   </div>
                 </div>
               );
