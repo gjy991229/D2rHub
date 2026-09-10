@@ -48,21 +48,22 @@ export function runTests() {
     "statistics mini mode persists independently and keeps only scene, timer, and run count",
   );
   assert(
-    overlaySource.includes("await win.setIgnoreCursorEvents(true)")
-      && overlaySource.includes("await win.setIgnoreCursorEvents(false)")
+    overlaySource.includes("await win.setIgnoreCursorEvents(false)")
       && overlaySource.includes("await applyStatsMiniOverlaySize(win, miniSize)")
       && overlaySource.includes("STATS_OVERLAY_MINI_SIZE_STORAGE_KEY")
-      && overlaySource.includes("STATS_MINI_OVERLAY_RESIZE_INSET")
+      && !overlaySource.includes("setIgnoreCursorEvents(true)")
+      && !overlaySource.includes("syncStatsMiniInputRegion")
+      && !overlaySource.includes("STATS_MINI_OVERLAY_RESIZE_INSET")
       && overlaySource.includes('reportOverlayIssue("WARN", "persist moved stats mini overlay failed", err)'),
-    "statistics mini mode remains click-through while persisting its movable and resizable layout",
+    "statistics mini mode stays interactive and persists its movable and resizable layout without native input regions",
   );
   assert(
-    overlaySource.includes('event.payload !== "StatsOverlayMiniToggle"')
-      && overlaySource.includes('event.payload === "StatsOverlayMiniHoverEnter"')
-      && overlaySource.includes("statsMiniHovered")
-      && overlaySource.includes('syncStatsMiniInputRegion(win, true)')
-      && overlaySource.includes('syncStatsMiniInputRegion(win, false)'),
-    "click-through mini mode keeps native hover guidance and a double-click recovery path",
+    overlaySource.includes("void toggleOverlayDisplayMode();")
+      && overlaySource.includes('target.closest(\'[data-overlay-interactive="true"]\')')
+      && !overlaySource.includes("StatsOverlayMiniToggle")
+      && !overlaySource.includes("StatsOverlayMiniHoverEnter")
+      && !overlaySource.includes("statsMiniHovered"),
+    "mini mode toggles through local pointer and keyboard events while interactive regions stay clickable",
   );
   assert(
     overlaySource.includes('className="tz-expanded-layout')
@@ -86,7 +87,7 @@ export function runTests() {
   );
   assert(
     overlaySource.includes('await restoreWindowPlacement("stats-overlay", saved);')
-      && overlaySource.includes('if (displayModeRef.current === "mini") {\n            await syncStatsMiniInputRegion(win, true);')
+      && overlaySource.includes('if (displayModeRef.current === "mini") {\n            await applyStatsMiniOverlaySize(win, miniSize);\n            await win.setIgnoreCursorEvents(false);')
       && overlaySource.includes("if (!cancelled) void evaluateOverlayDocking();")
       && overlaySource.includes("if (dockStateRef.current) {\n                  await refreshDockPlacementAfterResize(true);"),
     "statistics overlay restores its active mode and refreshes edge docking in normal mode",
