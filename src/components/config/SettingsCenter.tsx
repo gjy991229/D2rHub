@@ -5,8 +5,6 @@ import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
 import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
-import { parseShortcutFromKeyEvent, useShortcutRecorder, validateShortcutAvailability } from "../../hooks/useShortcutRecorder";
-import { normalizeShortcut } from "../../utils/shortcut";
 import { flushWindowGeometrySaves } from "../../hooks/useWindowGeometrySave";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
@@ -20,7 +18,12 @@ import { ShortcutsPanel } from "../../features/settings/panels/ShortcutsPanel";
 import { MaintenancePanel } from "../../features/settings/panels/MaintenancePanel";
 import { PetPanel } from "../../features/settings/panels/PetPanel";
 import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
-import { AppearancePanel, type AppearanceSettingsDraft } from "../../features/settings/panels/AppearancePanel";
+import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
+import {
+  appearanceFromConfig,
+  appearanceSettingsEqual,
+  useAppearanceSettingsController,
+} from "../../features/settings/useAppearanceSettingsController";
 import { OverlayPanel } from "../../features/settings/panels/OverlayPanel";
 import { AutomationPanel } from "../../features/settings/panels/AutomationPanel";
 import { ModProcessingPanel } from "../../features/settings/panels/ModProcessingPanel";
@@ -34,6 +37,7 @@ import { useModCapsulePool } from "../../features/modCapsules/useModCapsulePool"
 import { useModFeatureCoordination } from "../../features/settings/useModFeatureCoordination";
 import { useAccountSettingsController } from "../../features/settings/useAccountSettingsController";
 import { useOptionalModuleController } from "../../features/settings/useOptionalModuleController";
+import { useShortcutBindingController } from "../../features/settings/useShortcutBindingController";
 import {
   isOptionalModuleTab,
   isSettingsTabAvailableInMinimal,
@@ -59,20 +63,6 @@ interface Props {
   initialAccountId?: string | null;
 }
 
-function appearanceFromConfig(config: GlobalConfig): AppearanceSettingsDraft {
-  return {
-    app_language: config.app_language,
-    theme: config.theme === "onyx" ? "onyx" : "light",
-    main_opacity: config.main_opacity ?? 95,
-    font_scale: config.font_scale || "default",
-    separate_game_taskbar_icons: !!config.separate_game_taskbar_icons,
-  };
-}
-
-function appearanceSettingsEqual(config: GlobalConfig | null, draft: AppearanceSettingsDraft | null): boolean {
-  return !!config && !!draft && JSON.stringify(appearanceFromConfig(config)) === JSON.stringify(draft);
-}
-
 export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount } = useAccounts();
@@ -95,9 +85,26 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   const [originalConfig, setOriginalConfig] = useState<GlobalConfig | null>(null);
   const navigationSaveRef = useRef(false);
   const [navigationSaving, setNavigationSaving] = useState(false);
-  const [appearanceDraft, setAppearanceDraft] = useState<AppearanceSettingsDraft | null>(null);
-  const [appearanceApplying, setAppearanceApplying] = useState(false);
   const [profileChanging, setProfileChanging] = useState(false);
+
+  // Local Config Mutation helper
+  const updateConfig = (updater: (c: GlobalConfig) => void) => {
+    if (config) {
+      const clone = { ...config };
+      updater(clone);
+      useGlobalConfig.setState({ config: clone });
+    }
+  };
+
+  // 快捷键录入、冲突校验与写回由控制器持有；shell 只负责渲染与保存编排。
+  const {
+    recordingPos,
+    setRecordingPos,
+    shortcutErrors,
+    checkingShortcut,
+    handleShortcutKeyDown,
+    handleClearShortcut,
+  } = useShortcutBindingController({ open, activeTab, config, updateConfig });
 
   useEffect(() => {
     let active = true;
@@ -119,17 +126,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       active = false;
     };
   }, [open, config?.cn_saved_games_path, config?.global_saved_games_path]);
-
-  const { recordingPos, setRecordingPos } = useShortcutRecorder();
-  const [shortcutErrors, setShortcutErrors] = useState<Record<string, string>>({});
-  const [checkingShortcut, setCheckingShortcut] = useState<string | null>(null);
-  const shortcutRequest = useRef(0);
-
-  useEffect(() => {
-    setCheckingShortcut(null);
-    setShortcutErrors({});
-    return () => { shortcutRequest.current += 1; };
-  }, [open, activeTab]);
 
   const [detectedPaths, setDetectedPaths] = useState<Record<string, string | null>>({});
   const {
@@ -175,7 +171,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
   useEffect(() => {
     if (open && config) {
       setOriginalConfig(JSON.parse(JSON.stringify(config)));
-      setAppearanceDraft(appearanceFromConfig(config));
     }
   }, [open]);
 
@@ -287,35 +282,18 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setActiveTab,
   });
 
-  const applyAppearanceDraft = async (quiet = false) => {
-    const current = useGlobalConfig.getState().config;
-    if (!current || !appearanceDraft) return true;
-    const next: GlobalConfig = {
-      ...current,
-      app_language: appearanceDraft.app_language,
-      theme: appearanceDraft.theme,
-      main_opacity: appearanceDraft.main_opacity,
-      font_scale: appearanceDraft.font_scale,
-      separate_game_taskbar_icons: appearanceDraft.separate_game_taskbar_icons,
-    };
-
-    setAppearanceApplying(true);
-    useGlobalConfig.setState({ config: next });
-    previewTheme(appearanceDraft.theme);
-    document.documentElement.dataset.fontScale = appearanceDraft.font_scale;
-    try { localStorage.setItem("d2rhub-font-scale", appearanceDraft.font_scale); } catch {}
-    const saved = await persistGlobalDraft(next, quiet);
-    setAppearanceApplying(false);
-    if (!saved) {
-      useGlobalConfig.setState({ config: current });
-      previewTheme(current.theme === "onyx" ? "onyx" : "light");
-      document.documentElement.dataset.fontScale = current.font_scale || "default";
-      try { localStorage.setItem("d2rhub-font-scale", current.font_scale || "default"); } catch {}
-      return false;
-    }
-    setAppearanceDraft(appearanceFromConfig(saved));
-    return true;
-  };
+  const {
+    draft: appearanceDraft,
+    setDraft: setAppearanceDraft,
+    applying: appearanceApplying,
+    hasChanges: appearanceHasChanges,
+    apply: applyAppearanceDraft,
+  } = useAppearanceSettingsController({
+    open,
+    config,
+    persistConfig: persistGlobalDraft,
+    previewTheme,
+  });
 
   const commitPendingSettings = async () => {
     const appearanceDirtyNow = !appearanceSettingsEqual(
@@ -332,15 +310,6 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
     if (accountHasChanges && !(await handleSaveAccount(true))) return false;
     return true;
-  };
-
-  // Local Config Mutation helper
-  const updateConfig = (updater: (c: GlobalConfig) => void) => {
-    if (config) {
-      const clone = { ...config };
-      updater(clone);
-      useGlobalConfig.setState({ config: clone });
-    }
   };
 
   const handleChangeFeatureProfile = async (profile: FeatureProfile) => {
@@ -489,127 +458,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  // Keyboard shortcut listener
-  const handleShortcutKeyDown = async (e: React.KeyboardEvent<HTMLInputElement>, target: string) => {
-    if (checkingShortcut || e.repeat) return;
-    if (e.key === "Tab") {
-      setRecordingPos(null);
-      return;
-    }
-    if (e.key === "Escape") {
-      e.preventDefault();
-      e.stopPropagation();
-      setRecordingPos(null);
-      e.currentTarget.blur();
-      return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-
-    if (e.metaKey) return;
-    const combo = parseShortcutFromKeyEvent(e);
-    if (!combo) return;
-    const isEnglish = config?.app_language === "en-US";
-    const rejectShortcut = (message: string) => {
-      setShortcutErrors(current => ({ ...current, [target]: message }));
-      showToast("error", message);
-    };
-    setRecordingPos(null);
-    e.currentTarget.blur();
-    setShortcutErrors(current => ({ ...current, [target]: "" }));
-    if (/(?:^|\+)F12$/i.test(combo)) {
-      rejectShortcut(isEnglish ? "F12 is reserved by Windows. Choose another shortcut." : "F12 是 Windows 调试器保留键，请选择其他快捷键");
-      return;
-    }
-
-    if (target.startsWith("app:")
-      && !/^(Ctrl|Alt|Shift)\+/.test(combo)
-      && !/^F(?:[1-9]|1\d|2[0-4])$/.test(combo)) {
-      rejectShortcut(isEnglish ? "Use Ctrl, Alt, Shift, or a function key for the main window shortcut." : "主面板快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
-      return;
-    }
-
-    if (config) {
-      let bindings: Record<string, string> = {};
-      try {
-        bindings = config.shortcut_bindings_json ? JSON.parse(config.shortcut_bindings_json) : {};
-      } catch {
-        bindings = {};
-      }
-
-      const assigned = [
-        ...Object.entries(bindings).map(([position, shortcut]) => ({
-          target: `account:${position}`,
-          shortcut,
-          label: isEnglish ? `account position #${position}` : `账号位置 #${position}`,
-        })),
-        { target: "app:toggle", shortcut: config.show_main_window_shortcut || config.hide_main_window_shortcut || "", label: isEnglish ? "Toggle main window" : "切换主面板" },
-      ];
-      const conflict = assigned.find((entry) => entry.target !== target
-        && normalizeShortcut(entry.shortcut).toLowerCase() === combo.toLowerCase());
-      if (conflict) {
-        rejectShortcut(isEnglish ? `${combo} is already assigned to ${conflict.label}. Previous binding kept.` : `快捷键 ${combo} 已用于${conflict.label}，原设置保持不变`);
-        return;
-      }
-
-      const request = ++shortcutRequest.current;
-      setCheckingShortcut(target);
-      try {
-        await validateShortcutAvailability(combo, true);
-        if (request !== shortcutRequest.current) return;
-        if (useGlobalConfig.getState().config !== config) {
-          throw new Error(isEnglish ? "Settings changed during the check. Record the shortcut again." : "检查期间设置已变化，请重新录入快捷键");
-        }
-        updateConfig(c => {
-          if (target === "app:toggle") {
-            c.show_main_window_shortcut = combo;
-            c.hide_main_window_shortcut = "";
-          } else if (target.startsWith("account:")) {
-            bindings[target.slice("account:".length)] = combo;
-            c.shortcut_bindings_json = JSON.stringify(bindings);
-          }
-        });
-        showToast("success", isEnglish ? `Shortcut available: ${combo}. Save settings to apply.` : `快捷键 ${combo} 可用，保存设置后生效`);
-      } catch (error) {
-        if (request === shortcutRequest.current) {
-          rejectShortcut(error instanceof Error ? error.message : String(error));
-        }
-      } finally {
-        if (request === shortcutRequest.current) setCheckingShortcut(null);
-      }
-    }
-  };
-
-  const handleClearShortcut = (target: string) => {
-    shortcutRequest.current += 1;
-    setCheckingShortcut(null);
-    setShortcutErrors(current => ({ ...current, [target]: "" }));
-    if (config) {
-      let bindings: Record<string, string> = {};
-      try {
-        bindings = config.shortcut_bindings_json ? JSON.parse(config.shortcut_bindings_json) : {};
-      } catch {
-        bindings = {};
-      }
-      updateConfig(c => {
-        if (target === "app:toggle") {
-          c.show_main_window_shortcut = "";
-          c.hide_main_window_shortcut = "";
-        } else if (target.startsWith("account:")) {
-          delete bindings[target.slice("account:".length)];
-          c.shortcut_bindings_json = JSON.stringify(bindings);
-        }
-      });
-      showToast("info", "快捷键已清除");
-    }
-  };
-
   // Check if global config has changes compared to original
   const globalHasChanges = config && originalConfig && JSON.stringify(config) !== JSON.stringify(originalConfig);
 
-  const appearanceHasChanges = !!config && !!appearanceDraft
-    && !appearanceSettingsEqual(config, appearanceDraft);
   const hasAnyUnsavedChanges = !!globalHasChanges || !!accountHasChanges || appearanceHasChanges;
 
   const accountRegionLabel = (region?: string | null) =>
