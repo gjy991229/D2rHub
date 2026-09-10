@@ -56,7 +56,9 @@ mod windows {
     use std::sync::{Arc, Mutex};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::{Duration, Instant};
+    use std::ffi::c_void;
     use tauri::Manager;
+    use windows::Win32::Foundation::FILETIME;
 
     const ARGUMENT: &str = "--d2rhub-restart";
     const SYNCHRONIZE: u32 = 0x0010_0000;
@@ -75,17 +77,23 @@ mod windows {
 
     #[link(name = "kernel32")]
     extern "system" {
-        fn CreateEventW(attributes: *const std::ffi::c_void, manual: i32, initial: i32, name: *const u16) -> isize;
-        fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> isize;
-        fn SetEvent(event: isize) -> i32;
-        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> isize;
-        fn WaitForSingleObject(handle: isize, millis: u32) -> u32;
-        fn CloseHandle(handle: isize) -> i32;
-        fn GetProcessTimes(process: isize, created: *mut u64, exited: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
-        fn CancelSynchronousIo(thread: isize) -> i32;
+        fn CreateEventW(attributes: *mut c_void, manual: i32, initial: i32, name: *const u16) -> *mut c_void;
+        fn OpenEventW(access: u32, inherit: i32, name: *const u16) -> *mut c_void;
+        fn SetEvent(event: *mut c_void) -> i32;
+        fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+        fn WaitForSingleObject(handle: *mut c_void, millis: u32) -> u32;
+        fn CloseHandle(handle: *mut c_void) -> i32;
+        fn GetProcessTimes(
+            process: *mut c_void,
+            created: *mut FILETIME,
+            exited: *mut FILETIME,
+            kernel: *mut FILETIME,
+            user: *mut FILETIME,
+        ) -> i32;
+        fn CancelSynchronousIo(thread: *mut c_void) -> i32;
     }
 
-    struct Handle(isize);
+    struct Handle(*mut c_void);
     impl Drop for Handle {
         fn drop(&mut self) { unsafe { CloseHandle(self.0); } }
     }
@@ -94,10 +102,15 @@ mod windows {
 
     fn process_creation_time(pid: u32) -> Option<u64> {
         let process = Handle(unsafe { OpenProcess(SYNCHRONIZE | 0x1000, 0, pid) });
-        if process.0 == 0 || unsafe { WaitForSingleObject(process.0, 0) } != 258 { return None; }
-        let (mut created, mut exited, mut kernel, mut user) = (0, 0, 0, 0);
+        if process.0.is_null() || unsafe { WaitForSingleObject(process.0, 0) } != 258 { return None; }
+        let (mut created, mut exited, mut kernel, mut user) = (
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+        );
         (unsafe { GetProcessTimes(process.0, &mut created, &mut exited, &mut kernel, &mut user) } != 0)
-            .then_some(created)
+            .then_some((u64::from(created.dwHighDateTime) << 32) | u64::from(created.dwLowDateTime))
     }
 
     pub(crate) fn restore_instances(state: &crate::state::SharedState) {
@@ -162,7 +175,7 @@ mod windows {
                 Ok(result) => result?,
                 Err(error) => {
                     prepared.child.cancel();
-                    unsafe { CancelSynchronousIo(worker.as_raw_handle() as isize); }
+                    unsafe { CancelSynchronousIo(worker.as_raw_handle()); }
                     return Err(format!("重启准备未能按时完成，原模式已保留: {error}"));
                 }
             }
@@ -210,8 +223,8 @@ mod windows {
             return Err("重启准备已超时".to_string());
         }
         let event_name = format!("Local\\D2RHub_Restart_{}", uuid::Uuid::new_v4());
-        let event = Handle(unsafe { CreateEventW(std::ptr::null(), 1, 0, wide(&event_name).as_ptr()) });
-        if event.0 == 0 { return Err(format!("无法准备重启交接: {}", std::io::Error::last_os_error())); }
+        let event = Handle(unsafe { CreateEventW(std::ptr::null_mut(), 1, 0, wide(&event_name).as_ptr()) });
+        if event.0.is_null() { return Err(format!("无法准备重启交接: {}", std::io::Error::last_os_error())); }
         let executable = std::env::current_exe().map_err(|error| format!("无法定位 D2RHub: {error}"))?;
         let child = Command::new(executable)
             .arg(ARGUMENT).arg(std::process::id().to_string()).arg(&event_name)
@@ -258,7 +271,7 @@ mod windows {
             .filter(|value| value.starts_with("Local\\D2RHub_Restart_"))
             .ok_or_else(|| "重启交接标识无效".to_string())?;
         let parent = Handle(unsafe { OpenProcess(SYNCHRONIZE, 0, pid) });
-        if parent.0 == 0 { return Err("无法等待原进程退出".to_string()); }
+        if parent.0.is_null() { return Err("无法等待原进程退出".to_string()); }
         let mut payload = Vec::new();
         std::io::stdin().take(MAX_SNAPSHOT_BYTES as u64 + 1).read_to_end(&mut payload)
             .map_err(|error| format!("无法接收游戏运行状态: {error}"))?;
@@ -267,7 +280,7 @@ mod windows {
             .map_err(|error| format!("游戏运行状态无效: {error}"))?;
         *INHERITED_INSTANCES.lock().unwrap_or_else(|error| error.into_inner()) = Some(instances);
         let ready = Handle(unsafe { OpenEventW(EVENT_MODIFY_STATE, 0, wide(&name).as_ptr()) });
-        if ready.0 == 0 || unsafe { SetEvent(ready.0) } == 0 {
+        if ready.0.is_null() || unsafe { SetEvent(ready.0) } == 0 {
             return Err("无法确认重启准备完成".to_string());
         }
         if unsafe { WaitForSingleObject(parent.0, u32::MAX) } != WAIT_OBJECT_0 {

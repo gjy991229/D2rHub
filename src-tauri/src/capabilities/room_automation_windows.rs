@@ -8,6 +8,7 @@
 use crate::capabilities::room_automation::{ChatKey, FlowStrategy, ForegroundTiming, InputMethod};
 use parking_lot::Mutex;
 use std::collections::HashMap;
+use std::ffi::c_void;
 use std::sync::OnceLock;
 use std::time::Duration;
 use windows::Win32::Foundation::FILETIME;
@@ -49,21 +50,21 @@ static ENTERED_PASSWORDS: OnceLock<Mutex<HashMap<u32, EnteredPassword>>> = OnceL
 
 #[link(name = "kernel32")]
 extern "system" {
-    fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> isize;
+    fn OpenProcess(access: u32, inherit_handle: i32, pid: u32) -> *mut c_void;
     fn GetProcessTimes(
-        process: isize,
+        process: *mut c_void,
         creation: *mut FILETIME,
         exit: *mut FILETIME,
         kernel: *mut FILETIME,
         user: *mut FILETIME,
     ) -> i32;
-    fn CloseHandle(handle: isize) -> i32;
+    fn CloseHandle(handle: *mut c_void) -> i32;
 }
 
 pub(super) fn process_creation_time(pid: u32) -> Option<u64> {
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if process == 0 {
+        if process.is_null() {
             return None;
         }
         let mut creation = FILETIME::default();
