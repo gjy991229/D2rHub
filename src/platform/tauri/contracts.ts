@@ -55,6 +55,7 @@ export const TAURI_COMMANDS = [
   "kill_browser_processes",
   "launch_accounts",
   "launch_battle_net_only",
+  "launch_browser_for_account",
   "list_accounts",
   "load_overlay_geometry",
   "load_stats_overlay_geometry",

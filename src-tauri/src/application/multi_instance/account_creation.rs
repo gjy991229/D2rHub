@@ -11,6 +11,7 @@ pub struct CreateAccountRequest {
     pub display_name: String,
     pub auth_mode: Option<String>,
     pub token: Option<String>,
+    pub allow_pending_token: bool,
     pub region: Option<String>,
     pub language: Option<String>,
     pub voice_language: Option<String>,
@@ -69,18 +70,22 @@ impl<'a> AccountCreationService<'a> {
                 let plaintext = request
                     .token
                     .as_deref()
-                    .filter(|value| !value.trim().is_empty())
-                    .ok_or_else(|| {
-                        AppError::ConfigReadError("Token 认证账号必须提供 Token".to_string())
-                    })?;
+                    .filter(|value| !value.trim().is_empty());
+                if plaintext.is_none() && !request.allow_pending_token {
+                    return Err(AppError::ConfigReadError(
+                        "Token 认证账号必须提供 Token".to_string(),
+                    ));
+                }
                 account.language = request
                     .language
                     .or_else(|| Some(resolved.default_locale.to_string()));
                 account.voicelanguage = request
                     .voice_language
                     .or_else(|| Some(resolved.default_locale.to_string()));
-                account.initialized = true;
-                account.token = Some(self.tokens.protect(plaintext)?);
+                account.initialized = plaintext.is_some();
+                if let Some(plaintext) = plaintext {
+                    account.token = Some(self.tokens.protect(plaintext)?);
+                }
             }
             AuthMode::BattleNet => {
                 if request
@@ -311,5 +316,66 @@ mod tests {
         let created = repository.created.lock().unwrap();
         assert!(!created[0].initialized);
         assert!(created[0].token.is_none());
+    }
+
+    #[test]
+    fn pending_token_account_is_reserved_without_a_credential() {
+        let repository = FakeRepository::new(None);
+        let catalog_leases = AccountCatalogLeaseManager::default();
+        let account_leases = AccountLeaseManager::default();
+
+        let id = service(&repository, &catalog_leases, &account_leases)
+            .create(CreateAccountRequest {
+                display_name: "Pending Token".to_string(),
+                auth_mode: Some("token".to_string()),
+                allow_pending_token: true,
+                region: Some("CN".to_string()),
+                ..CreateAccountRequest::default()
+            })
+            .unwrap();
+
+        let created = repository.created.lock().unwrap();
+        let account = &created[0];
+        assert_eq!(id, account.id);
+        // 待完成账号必须先于 Token 存在，因此它未初始化、无凭据，但仍占用昵称与区服。
+        assert!(!account.initialized);
+        assert!(account.token.is_none());
+        assert_eq!(account.auth_mode.as_deref(), Some("token"));
+        assert_eq!(account.region.as_deref(), Some("CN"));
+        assert_eq!(account.language.as_deref(), Some("zhCN"));
+        assert_eq!(account.voicelanguage.as_deref(), Some("zhCN"));
+        assert!(account.last_reset_at.is_some());
+        assert!(account_leases.is_empty());
+    }
+
+    #[test]
+    fn pending_token_permission_does_not_relax_battle_net_rules() {
+        let repository = FakeRepository::new(None);
+        let catalog_leases = AccountCatalogLeaseManager::default();
+        let account_leases = AccountLeaseManager::default();
+        let service = service(&repository, &catalog_leases, &account_leases);
+
+        assert!(service
+            .create(CreateAccountRequest {
+                display_name: "Battle Net Pending".to_string(),
+                auth_mode: Some("bnet".to_string()),
+                token: Some("credential".to_string()),
+                allow_pending_token: true,
+                region: Some("CN".to_string()),
+                ..CreateAccountRequest::default()
+            })
+            .is_err());
+        assert!(service
+            .create(CreateAccountRequest {
+                display_name: "Empty Token".to_string(),
+                auth_mode: Some("token".to_string()),
+                token: Some("   ".to_string()),
+                allow_pending_token: false,
+                region: Some("CN".to_string()),
+                ..CreateAccountRequest::default()
+            })
+            .is_err());
+        assert!(repository.created.lock().unwrap().is_empty());
+        assert!(account_leases.is_empty());
     }
 }

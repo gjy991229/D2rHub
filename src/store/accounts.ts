@@ -10,7 +10,7 @@ interface AccountsState {
   error: string | null;
 
   loadAccounts: () => Promise<void>;
-  createAccount: (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => Promise<string>;
+  createAccount: (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string, allowPendingToken?: boolean) => Promise<string>;
   deleteAccount: (id: string) => Promise<void>;
   renameAccount: (id: string, newName: string) => Promise<boolean>;
   updateAccountPositions: (id: string, activePositionId: string | null, positionPresets: WindowPositionPreset[]) => Promise<boolean>;
@@ -37,13 +37,14 @@ export const useAccounts = create<AccountsState>((set, get) => ({
     }
   },
 
-  createAccount: async (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string) => {
+  createAccount: async (nickname: string, authMode?: string, region?: string, token?: string, language?: string, voicelanguage?: string, allowPendingToken?: boolean) => {
     try {
       const id = await invokeCommand<string>("create_account", {
         nickname,
         authMode: authMode || null,
         region: region || null,
         token: token || null,
+        allowPendingToken: allowPendingToken || false,
         language: language || null,
         voicelanguage: voicelanguage || null
       });

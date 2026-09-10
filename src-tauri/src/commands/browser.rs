@@ -1,11 +1,10 @@
 use crate::commands::account::AccountManager;
 use crate::commands::utils::{sanitize_folder_name, shared_system, silent_cmd};
-use crate::domain::account::AuthMode;
 use crate::domain::config::GlobalConfig;
 use crate::error::AppError;
 use crate::launch_context::paths_have_same_identity;
 use crate::state::{AccountLifecycleLease, SharedState};
-use sysinfo::ProcessesToUpdate;
+use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, UpdateKind};
 
 fn paths_match_config(config_path: &str, requested_path: &str) -> bool {
     if config_path.trim().is_empty() || requested_path.trim().is_empty() {
@@ -87,50 +86,14 @@ fn browser_is_edge(config: &GlobalConfig, browser_path: &str) -> bool {
     }
 }
 
-fn private_browser_arguments(
-    config: &GlobalConfig,
-    browser_path: &str,
-    url: Option<&str>,
-) -> Vec<String> {
-    let mut args = vec![
-        if browser_is_edge(config, browser_path) {
-            "--inprivate".to_string()
-        } else {
-            "--incognito".to_string()
-        },
-        "--new-window".to_string(),
-        "--no-first-run".to_string(),
-        "--no-default-browser-check".to_string(),
-    ];
-    if let Some(url) = url {
-        args.push(url.to_string());
-    }
-    args
-}
-
-fn launch_private_browser_impl(
-    config: &GlobalConfig,
-    browser_path: &str,
-    url: Option<&str>,
-) -> Result<(), AppError> {
-    ensure_browser_path_allowed(config, browser_path)?;
-    let args = private_browser_arguments(config, browser_path, url);
-    let _ = silent_cmd(browser_path)
-        .args(&args)
-        .spawn()
-        .map_err(|e| AppError::FileError(format!("启动无痕浏览器失败: {}", e)))?;
-    Ok(())
-}
-
-fn prepare_browser_profile(
+fn browser_profile_location(
     config: &GlobalConfig,
     browser_path: &str,
     account_id: &str,
 ) -> Result<(std::path::PathBuf, String), AppError> {
     AccountManager::validate_account_id(account_id)?;
-    let display_name = AccountManager::load_meta(&config.accounts_dir, account_id)?.display_name;
     let stable_profile_name = browser_profile_name(account_id);
-    let (user_data_dir, profile_name) = if let Some(local_dir) = dirs::data_local_dir() {
+    Ok(if let Some(local_dir) = dirs::data_local_dir() {
         if browser_is_edge(config, browser_path) {
             (
                 local_dir.join("Microsoft").join("Edge").join("User Data"),
@@ -145,11 +108,112 @@ fn prepare_browser_profile(
     } else {
         let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, account_id)?;
         (account_dir.join("BrowserProfile"), "Default".to_string())
+    })
+}
+
+/// 判断该账号的浏览器 Profile 是否正被运行中的浏览器占用。
+///
+/// 读取命令行需要逐个打开进程，代价明显高于读取进程名，因此先用一次廉价的名字扫描
+/// 短路掉“根本没有目标浏览器”的常见情况，避免长时间占用共享 `System` 互斥锁。
+fn browser_profile_is_running(
+    config: &GlobalConfig,
+    browser_path: &str,
+    user_data_dir: &std::path::Path,
+    profile_name: &str,
+) -> bool {
+    let expected_browser = if browser_is_edge(config, browser_path) {
+        "msedge"
+    } else {
+        "chrome"
     };
+    let expected_user_data_prefix = "--user-data-dir=";
+    let expected_profile_prefix = "--profile-directory=";
+    let mut system = shared_system().lock().unwrap_or_else(|e| e.into_inner());
+    system.refresh_processes(ProcessesToUpdate::All);
+    let browser_is_running = system.processes().values().any(|process| {
+        process
+            .name()
+            .to_string_lossy()
+            .to_ascii_lowercase()
+            .contains(expected_browser)
+    });
+    if !browser_is_running {
+        return false;
+    }
+
+    system.refresh_processes_specifics(
+        ProcessesToUpdate::All,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    );
+    system.processes().values().any(|process| {
+        let process_name = process.name().to_string_lossy().to_ascii_lowercase();
+        if !process_name.contains(expected_browser) {
+            return false;
+        }
+
+        let user_data_matches = process.cmd().iter().any(|argument| {
+            let argument = argument.to_string_lossy();
+            argument
+                .strip_prefix(expected_user_data_prefix)
+                .map(|value| value.trim_matches('"'))
+                .is_some_and(|value| {
+                    paths_have_same_identity(std::path::Path::new(value), user_data_dir)
+                })
+        });
+        let profile_matches = process.cmd().iter().any(|argument| {
+            argument
+                .to_string_lossy()
+                .strip_prefix(expected_profile_prefix)
+                .is_some_and(|value| value.eq_ignore_ascii_case(profile_name))
+        });
+        user_data_matches && profile_matches
+    })
+}
+
+/// 把账号昵称同步到浏览器 Profile 的可见名称。
+///
+/// 显示名只是界面观感：Profile 目录始终由稳定 account_id 决定，写失败不应阻断浏览器启动。
+fn sync_profile_display_name(
+    config: &GlobalConfig,
+    browser_path: &str,
+    user_data_dir: &std::path::Path,
+    profile_name: &str,
+    account_id: &str,
+) -> Result<(), AppError> {
+    if profile_name == "Default" {
+        return Ok(());
+    }
+    if browser_profile_is_running(config, browser_path, user_data_dir, profile_name) {
+        log::info!(
+            "账号 {} 的浏览器 Profile 正在运行，跳过显示名同步以免覆盖浏览器写入",
+            account_id
+        );
+        return Ok(());
+    }
+    let display_name = AccountManager::load_meta(&config.accounts_dir, account_id)?.display_name;
+    set_profile_name(user_data_dir, profile_name, &display_name)
+}
+
+fn prepare_browser_profile(
+    config: &GlobalConfig,
+    browser_path: &str,
+    account_id: &str,
+) -> Result<(std::path::PathBuf, String), AppError> {
+    let (user_data_dir, profile_name) = browser_profile_location(config, browser_path, account_id)?;
 
     std::fs::create_dir_all(user_data_dir.join(&profile_name))?;
-    if profile_name != "Default" {
-        set_profile_name(&user_data_dir, &profile_name, &display_name)?;
+    if let Err(error) = sync_profile_display_name(
+        config,
+        browser_path,
+        &user_data_dir,
+        &profile_name,
+        account_id,
+    ) {
+        log::warn!(
+            "账号 {} 的浏览器 Profile 显示名同步失败，继续启动浏览器: {}",
+            account_id,
+            error
+        );
     }
     Ok((user_data_dir, profile_name))
 }
@@ -206,7 +270,17 @@ fn set_profile_name(
     }
 
     let serialized = serde_json::to_string_pretty(&prefs)?;
-    std::fs::write(&pref_path, serialized)?;
+    let temp_path = pref_path.with_file_name(format!(
+        "Preferences.d2rhub.{}.tmp",
+        std::process::id()
+    ));
+    std::fs::write(&temp_path, serialized)?;
+    if let Err(error) = std::fs::rename(&temp_path, &pref_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(AppError::IoError(format!(
+            "替换浏览器 Profile Preferences 失败: {error}"
+        )));
+    }
     Ok(())
 }
 
@@ -236,7 +310,7 @@ pub fn launch_browser_for_account_impl(
     Ok(())
 }
 
-/// 启动浏览器。Token 账号使用无痕窗口；Battle.net 账号使用独立 Profile。
+/// 启动浏览器并打开账号对应的独立 Profile。
 #[tauri::command]
 pub fn launch_browser_for_account(
     state: tauri::State<'_, SharedState>,
@@ -253,12 +327,8 @@ pub fn launch_browser_for_account(
     #[cfg(target_os = "windows")]
     let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
-    let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
-    if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
-        launch_private_browser_impl(&config, &browser_path, None)?;
-    } else {
-        launch_browser_for_account_impl(&config, &browser_path, &account_id)?;
-    }
+    AccountManager::load_meta(&config.accounts_dir, &account_id)?;
+    launch_browser_for_account_impl(&config, &browser_path, &account_id)?;
 
     // 启动后台监测线程，自动将新打开的浏览器空白窗口置顶并激活
     #[cfg(target_os = "windows")]
@@ -323,7 +393,7 @@ fn open_url_for_account_impl(
     Ok(())
 }
 
-/// 打开登录 URL。Token 账号不创建或指定用户 Profile；Battle.net 账号保持隔离 Profile。
+/// 打开登录 URL，并复用账号对应的隔离 Profile。
 #[tauri::command]
 pub fn open_url_in_browser(
     state: tauri::State<'_, SharedState>,
@@ -343,12 +413,8 @@ pub fn open_url_in_browser(
     ensure_browser_path_allowed(&config, &browser_path)?;
     ensure_allowed_bnet_login_url(&url)?;
 
-    let meta = AccountManager::load_meta(&config.accounts_dir, &account_id)?;
-    if AuthMode::parse(meta.auth_mode.as_deref())? == AuthMode::Token {
-        launch_private_browser_impl(&config, &config.browser_path, Some(&url))?;
-    } else {
-        open_url_for_account_impl(&config, &config.browser_path, &account_id, &url)?;
-    }
+    AccountManager::load_meta(&config.accounts_dir, &account_id)?;
+    open_url_for_account_impl(&config, &config.browser_path, &account_id, &url)?;
 
     #[cfg(target_os = "windows")]
     crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
@@ -356,15 +422,40 @@ pub fn open_url_in_browser(
     Ok(())
 }
 
-/// 使用已配置的浏览器在无痕窗口中打开 Token 登录页。
+/// 仅同步浏览器 Profile 的可见名称，不启动浏览器、也不创建任何浏览器数据。
 ///
-/// 获取 Token 发生在账号正式创建之前，因此这里不能依赖账号目录或账号租约。
-/// URL 仍受 Battle.net 登录页白名单约束，浏览器也只能使用全局配置中的路径。
+/// 账号改名不应该在用户的 Chrome/Edge `User Data` 下凭空生成 Profile 目录，
+/// 因此这里只在 Profile 已经存在（说明该账号确实用过浏览器）时才写入显示名。
+pub fn sync_browser_profile_name(config: &GlobalConfig, account_id: &str) -> Result<(), AppError> {
+    // 缺少浏览器配置时无从判断 Profile 归属，直接跳过。
+    if config.browser_path.trim().is_empty() || config.browser_type.trim().is_empty() {
+        return Ok(());
+    }
+    let (user_data_dir, profile_name) =
+        browser_profile_location(config, &config.browser_path, account_id)?;
+    if profile_name == "Default" || !user_data_dir.join(&profile_name).exists() {
+        return Ok(());
+    }
+    sync_profile_display_name(
+        config,
+        &config.browser_path,
+        &user_data_dir,
+        &profile_name,
+        account_id,
+    )
+}
+
+/// 使用账号对应的独立浏览器 Profile 打开 Token 登录页。
+///
+/// Token 向导会先创建一个待完成的账号，因此这里和 Battle.net 登录流程一样，
+/// 可以依赖稳定的账号 ID 选择 Profile。URL 仍受 Battle.net 登录页白名单约束。
 #[tauri::command]
 pub fn open_token_login_url(
     state: tauri::State<'_, SharedState>,
+    account_id: String,
     url: String,
 ) -> Result<(), AppError> {
+    let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
     let config = state
         .configuration()
         .snapshot()
@@ -380,7 +471,8 @@ pub fn open_token_login_url(
     #[cfg(target_os = "windows")]
     let before_hwnds = crate::infrastructure::system::collect_chrome_windows();
 
-    launch_private_browser_impl(&config, &config.browser_path, Some(&url))?;
+    AccountManager::load_meta(&config.accounts_dir, &account_id)?;
+    open_url_for_account_impl(&config, &config.browser_path, &account_id, &url)?;
 
     #[cfg(target_os = "windows")]
     crate::infrastructure::system::bring_browser_login_to_foreground(before_hwnds);
@@ -391,8 +483,8 @@ pub fn open_token_login_url(
 #[cfg(test)]
 mod tests {
     use super::{
-        browser_profile_name, browser_profile_paths, ensure_allowed_bnet_login_url,
-        private_browser_arguments,
+        browser_profile_location, browser_profile_name, browser_profile_paths,
+        ensure_allowed_bnet_login_url,
     };
     use crate::domain::config::GlobalConfig;
     use std::path::Path;
@@ -420,37 +512,13 @@ mod tests {
     }
 
     #[test]
-    fn token_browser_arguments_use_private_mode_without_a_profile() {
-        for (browser_type, browser_path, private_flag) in [
-            ("edge", r"C:\Program Files\Edge\msedge.exe", "--inprivate"),
-            (
-                "chrome",
-                r"C:\Program Files\Chrome\chrome.exe",
-                "--incognito",
-            ),
-        ] {
-            let config = GlobalConfig {
-                browser_type: browser_type.to_string(),
-                ..GlobalConfig::default()
-            };
-            let args = private_browser_arguments(
-                &config,
-                browser_path,
-                Some("https://example.invalid/login"),
-            );
-
-            assert!(args.iter().any(|argument| argument == private_flag));
-            assert!(args.iter().any(|argument| argument == "--new-window"));
-            assert!(args
-                .iter()
-                .any(|argument| argument == "https://example.invalid/login"));
-            assert!(!args
-                .iter()
-                .any(|argument| argument.starts_with("--user-data-dir=")));
-            assert!(!args
-                .iter()
-                .any(|argument| argument.starts_with("--profile-directory=")));
-        }
+    fn browser_profile_location_rejects_path_like_account_ids() {
+        let config = GlobalConfig {
+            browser_type: "chrome".to_string(),
+            ..GlobalConfig::default()
+        };
+        assert!(browser_profile_location(&config, r"C:\Chrome\chrome.exe", "../escape").is_err());
+        assert!(browser_profile_location(&config, r"C:\Chrome\chrome.exe", "acount1").is_ok());
     }
 
     #[test]

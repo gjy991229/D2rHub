@@ -906,6 +906,7 @@ pub fn create_account(
     auth_mode: Option<String>,
     region: Option<String>,
     token: Option<String>,
+    allow_pending_token: Option<bool>,
     language: Option<String>,
     voicelanguage: Option<String>,
 ) -> Result<String, AppError> {
@@ -931,6 +932,7 @@ pub fn create_account(
         display_name: nickname,
         auth_mode,
         token,
+        allow_pending_token: allow_pending_token.unwrap_or(false),
         region,
         language,
         voice_language: voicelanguage,
@@ -1039,12 +1041,23 @@ pub fn rename_account(
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
 
     let repository = AccountManagerCatalog::new(&cfg);
-    AccountNamingService::new(
+    let renamed = AccountNamingService::new(
         &repository,
         state.multi_instance().catalog_leases(),
         state.multi_instance().account_leases(),
     )
-    .rename(&account_id, &new_name)
+    .rename(&account_id, &new_name)?;
+
+    // 昵称只影响浏览器 Profile 的可见名称，Profile 目录始终由稳定 account_id 决定。
+    // 同步失败不影响改名结果，只记录警告；未用浏览器的账号不会被创建出 Profile。
+    if let Err(error) = crate::commands::browser::sync_browser_profile_name(&cfg, &renamed.id) {
+        log::warn!(
+            "账号 {} 昵称已更新，但浏览器 Profile 名称同步失败: {}",
+            renamed.id,
+            error
+        );
+    }
+    Ok(renamed)
 }
 
 fn persist_account_mod_configuration(
