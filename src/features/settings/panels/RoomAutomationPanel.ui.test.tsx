@@ -252,7 +252,7 @@ describe("RoomAutomationPanel", () => {
 
     expect(await screen.findByText(/旧版配置中的自动授权已被撤销/)).toBeTruthy();
     expect(gateway.installChatBinding).not.toHaveBeenCalled();
-    await userEvent.click(screen.getAllByRole("button", { name: "扫描并补装 F13" })[0]);
+    await userEvent.click(screen.getAllByRole("button", { name: "扫描并更新绑定" })[0]);
     await waitFor(() => expect(gateway.installChatBinding).toHaveBeenCalledTimes(1));
   });
 
@@ -318,11 +318,11 @@ describe("RoomAutomationPanel", () => {
     await user.click(shortcut);
     expect(shortcut.textContent).toBe("Press a key combination…");
     fireEvent.keyDown(shortcut, { key: "F12", ctrlKey: true, shiftKey: true });
-    expect(shortcut.textContent).toBe("Ctrl+Shift+F12");
+    await waitFor(() => expect(shortcut.textContent).toBe("Ctrl+Shift+F12"));
 
     await user.click(shortcut);
     fireEvent.keyDown(shortcut, { key: "+", code: "NumpadAdd", ctrlKey: true });
-    expect(shortcut.textContent).toBe("Ctrl+Num+");
+    await waitFor(() => expect(shortcut.textContent).toBe("Ctrl+Num+"));
     await waitFor(() => expect(saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1].shortcut).toBe("Ctrl+Num+"));
   });
 
