@@ -1,12 +1,12 @@
 //! Shared shortcut routes and the desktop pet's passive input subscription.
-use std::sync::{Mutex, OnceLock};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::collections::{HashMap, HashSet};
-use tauri::{AppHandle, Emitter, Manager};
 use crate::application::multi_instance::{GameWindowPort, WindowMatch};
 use crate::commands::account::{AccountManager, AccountMeta};
 use crate::infrastructure::system;
 use crate::state::{CoreShortcutAction, SharedState};
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
+use tauri::{AppHandle, Emitter, Manager};
 
 pub(crate) mod hotkeys;
 mod runtime;
@@ -16,7 +16,8 @@ static BONGO_CAT_INPUT_ENABLED: AtomicBool = AtomicBool::new(false);
 static BONGO_CAT_INPUT_VISIBLE: AtomicBool = AtomicBool::new(false);
 static SHORTCUT_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
 static OPTIONAL_SHORTCUTS_ALLOWED: AtomicBool = AtomicBool::new(false);
-static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> = OnceLock::new();
+static CAPABILITY_SHORTCUTS: OnceLock<parking_lot::RwLock<CapabilityShortcutRegistry>> =
+    OnceLock::new();
 static SHORTCUT_ROUTING_TRANSACTION: OnceLock<parking_lot::Mutex<()>> = OnceLock::new();
 static CAPABILITY_SHORTCUT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
@@ -119,9 +120,14 @@ pub(crate) fn validate_core_shortcut_reservations_for_modules<'a>(
     let registry = capability_shortcuts().read();
     for shortcut in &shortcuts {
         let shortcut = shortcut.trim().to_ascii_lowercase();
-        if !shortcut.is_empty() && registry.saved_owners.iter().any(|(owner, saved)| {
-            installed_modules.iter().any(|module| module.as_str() == *owner) && saved.contains(&shortcut)
-        }) {
+        if !shortcut.is_empty()
+            && registry.saved_owners.iter().any(|(owner, saved)| {
+                installed_modules
+                    .iter()
+                    .any(|module| module.as_str() == *owner)
+                    && saved.contains(&shortcut)
+            })
+        {
             return Err(format!("快捷键 {shortcut} 已被原配置保留，请选择其他组合"));
         }
     }
@@ -133,11 +139,18 @@ pub(crate) fn replace_saved_capability_shortcuts<'a>(
     owner: &'static str,
     shortcuts: impl IntoIterator<Item = &'a str>,
 ) {
-    let saved = shortcuts.into_iter().filter_map(|shortcut| {
-        crate::capabilities::room_automation::canonicalize_shortcut(shortcut).ok()
-            .map(|shortcut| shortcut.to_ascii_lowercase())
-    }).collect();
-    capability_shortcuts().write().saved_owners.insert(owner, saved);
+    let saved = shortcuts
+        .into_iter()
+        .filter_map(|shortcut| {
+            crate::capabilities::room_automation::canonicalize_shortcut(shortcut)
+                .ok()
+                .map(|shortcut| shortcut.to_ascii_lowercase())
+        })
+        .collect();
+    capability_shortcuts()
+        .write()
+        .saved_owners
+        .insert(owner, saved);
 }
 
 /// Caller holds the routing transaction until the module sidecar is committed.
@@ -148,12 +161,15 @@ pub(crate) fn validate_saved_capability_shortcuts<'a>(
     let registry = capability_shortcuts().read();
     let mut normalized = Vec::new();
     for shortcut in shortcuts {
-        let Ok(shortcut) = crate::capabilities::room_automation::canonicalize_shortcut(shortcut) else {
+        let Ok(shortcut) = crate::capabilities::room_automation::canonicalize_shortcut(shortcut)
+        else {
             continue; // Disabled module drafts may contain incomplete shortcuts.
         };
         let shortcut = shortcut.to_ascii_lowercase();
         if normalized.contains(&shortcut) {
-            return Err(format!("快捷键 {shortcut} 同时用于主号建房和跟随入房，请为两个动作设置不同组合"));
+            return Err(format!(
+                "快捷键 {shortcut} 同时用于主号建房和跟随入房，请为两个动作设置不同组合"
+            ));
         }
         if let Some(action) = registry.core.get(&shortcut) {
             let label = match action {
@@ -162,9 +178,10 @@ pub(crate) fn validate_saved_capability_shortcuts<'a>(
             };
             return Err(format!("快捷键 {shortcut} 已用于{label}，配置未保存"));
         }
-        if registry.owners.iter().any(|(other, (_, routes))| {
-                *other != owner && routes.contains_key(&shortcut)
-            })
+        if registry
+            .owners
+            .iter()
+            .any(|(other, (_, routes))| *other != owner && routes.contains_key(&shortcut))
         {
             return Err(format!("快捷键 {shortcut} 已被其他动作使用，配置未保存"));
         }
@@ -283,9 +300,7 @@ fn install_capability_shortcuts_in_transaction(
                 }
                 CoreShortcutAction::ToggleMainWindow => "D2RHub 主面板切换动作".to_string(),
             };
-            return Err(format!(
-                "快捷键 {shortcut} 已由{owner}使用"
-            ));
+            return Err(format!("快捷键 {shortcut} 已由{owner}使用"));
         }
         if let Some(conflicting_owner) = registry
             .owners
@@ -313,14 +328,11 @@ fn dispatch_capability_shortcut(shortcut: &str) -> bool {
     let Some(registry) = capability_shortcuts().try_read() else {
         return false;
     };
-    let delivery = registry
-        .owners
-        .values()
-        .find_map(|(_, routes)| {
-            routes
-                .get(shortcut)
-                .map(|route| (route.sender.clone(), route.action))
-        });
+    let delivery = registry.owners.values().find_map(|(_, routes)| {
+        routes
+            .get(shortcut)
+            .map(|route| (route.sender.clone(), route.action))
+    });
     drop(registry);
     let Some((sender, action)) = delivery else {
         return false;
@@ -363,13 +375,13 @@ pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
 #[tauri::command]
 pub fn set_bongo_cat_input_visible(app: AppHandle, visible: bool) -> Result<(), String> {
     let state = app.state::<SharedState>();
-    let _operation = state.optional_window_operations.try_lock()
+    let _operation = state
+        .optional_window_operations
+        .try_lock()
         .ok_or_else(|| "辅助窗口操作进行中，请稍后重试".to_string())?;
     if visible {
-        let installed = state.optional_runtime_ready() && state
-            .configuration()
-            .snapshot()
-            .is_some_and(|config| {
+        let installed = state.optional_runtime_ready()
+            && state.configuration().snapshot().is_some_and(|config| {
                 config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
             });
         if !installed {
@@ -494,7 +506,12 @@ fn registered_shortcuts() -> Vec<String> {
     let registry = capability_shortcuts().read();
     let mut keys: Vec<_> = registry.core.keys().cloned().collect();
     if OPTIONAL_SHORTCUTS_ALLOWED.load(Ordering::Acquire) {
-        keys.extend(registry.owners.values().flat_map(|(_, routes)| routes.keys().cloned()));
+        keys.extend(
+            registry
+                .owners
+                .values()
+                .flat_map(|(_, routes)| routes.keys().cloned()),
+        );
     }
     keys.sort();
     keys.dedup();
@@ -502,11 +519,17 @@ fn registered_shortcuts() -> Vec<String> {
 }
 
 fn dispatch_registered_shortcut(app: &AppHandle, shortcut: &str) {
-    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::Acquire) || hotkeys::is_suspended() { return; }
+    if SHORTCUT_CAPTURE_ACTIVE.load(Ordering::Acquire) || hotkeys::is_suspended() {
+        return;
+    }
     let action = capability_shortcuts().read().core.get(shortcut).copied();
     match action {
         Some(CoreShortcutAction::ToggleMainWindow) => {
-            crate::logger::log_msg("INFO", "Shortcut", &format!("系统热键触发：{shortcut} → 切换主面板"));
+            crate::logger::log_msg(
+                "INFO",
+                "Shortcut",
+                &format!("系统热键触发：{shortcut} → 切换主面板"),
+            );
             crate::window_placement::toggle_main_window(app);
         }
         Some(CoreShortcutAction::FocusAccount(position)) => {
@@ -524,7 +547,9 @@ fn dispatch_registered_shortcut(app: &AppHandle, shortcut: &str) {
 }
 
 pub fn start_input_listener(app: AppHandle) {
-    if let Ok(mut handle) = APP_HANDLE.lock() { *handle = Some(app.clone()); }
+    if let Ok(mut handle) = APP_HANDLE.lock() {
+        *handle = Some(app.clone());
+    }
     if let Err(error) = hotkeys::initialize(app) {
         crate::logger::log_msg("ERROR", "Shortcut", &error);
     }
@@ -544,21 +569,31 @@ pub fn validate_shortcut_availability(
     hotkeys::initialize(app.clone())?;
     if check_module_conflicts.unwrap_or(false) {
         let state = app.state::<SharedState>();
-        let config = state.configuration().snapshot()
+        let config = state
+            .configuration()
+            .snapshot()
             .ok_or_else(|| "配置尚未加载，请稍后重新录入快捷键".to_string())?;
         let normalized = crate::capabilities::room_automation::canonicalize_shortcut(&shortcut)
             .map_err(|error| format!("快捷键 {shortcut} 无效：{error}"))?;
         if config.optional_module_installed("room-automation") {
             // Read the saved projection even when Pure mode has no module runtime.
             let reserved = crate::capabilities::room_automation_config::persisted_shortcuts(
-                &state.app_data_dir, config.preserved_unknown_fields.get("room_rotation"),
-            ).map_err(|error| error.to_string())?;
-            if reserved.iter().any(|key| key.eq_ignore_ascii_case(&normalized)) {
-                return Err(format!("快捷键 {normalized} 已用于自动跟房模块，原设置保持不变"));
+                &state.app_data_dir,
+                config.preserved_unknown_fields.get("room_rotation"),
+            )
+            .map_err(|error| error.to_string())?;
+            if reserved
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(&normalized))
+            {
+                return Err(format!(
+                    "快捷键 {normalized} 已用于自动跟房模块，原设置保持不变"
+                ));
             }
         }
         return validate_core_shortcut_reservations_for_modules(
-            [normalized.as_str()], &config.installed_optional_modules,
+            [normalized.as_str()],
+            &config.installed_optional_modules,
         );
     }
     hotkeys::validate(vec![shortcut])
@@ -588,9 +623,9 @@ pub(crate) fn shutdown() {
 #[cfg(test)]
 mod tests {
     use super::{
-        dispatch_capability_shortcut, register_capability_shortcuts,
-        replace_capability_shortcuts, replace_core_shortcut_routes,
-        validate_core_shortcut_reservations, with_shortcut_routing_transaction,
+        dispatch_capability_shortcut, register_capability_shortcuts, replace_capability_shortcuts,
+        replace_core_shortcut_routes, validate_core_shortcut_reservations,
+        with_shortcut_routing_transaction,
     };
     use crate::state::CoreShortcutAction;
 

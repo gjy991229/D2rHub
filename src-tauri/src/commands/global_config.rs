@@ -86,7 +86,10 @@ struct GlobalConfigPolicy<'a> {
 
 impl<'a> GlobalConfigPolicy<'a> {
     fn new(state: &'a SharedState) -> Self {
-        Self { state, profile_transition: false }
+        Self {
+            state,
+            profile_transition: false,
+        }
     }
 }
 
@@ -109,13 +112,23 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
             // Unrelated stale paths/module drafts must not block a safe pause.
             return Ok(candidate);
         }
-        if self.state.restart_pending.load(std::sync::atomic::Ordering::Acquire) {
-            return Err(AppError::ConfigWriteError("模式已保存，D2RHub 正在重新启动".to_string()));
-        }
-        if previous.is_some_and(|previous| previous.feature_profile != candidate.feature_profile
-            || previous.feature_profile_prompt_revision != candidate.feature_profile_prompt_revision)
+        if self
+            .state
+            .restart_pending
+            .load(std::sync::atomic::Ordering::Acquire)
         {
-            return Err(AppError::ConfigWriteError("使用模式已变化，请使用模式切换操作并重新加载设置".to_string()));
+            return Err(AppError::ConfigWriteError(
+                "模式已保存，D2RHub 正在重新启动".to_string(),
+            ));
+        }
+        if previous.is_some_and(|previous| {
+            previous.feature_profile != candidate.feature_profile
+                || previous.feature_profile_prompt_revision
+                    != candidate.feature_profile_prompt_revision
+        }) {
+            return Err(AppError::ConfigWriteError(
+                "使用模式已变化，请使用模式切换操作并重新加载设置".to_string(),
+            ));
         }
         let retired_account_ids = self.state.retired_account_ids_snapshot();
         let prepared = prepare_global_config_with_retired_accounts(
@@ -128,19 +141,33 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
             &prepared.shortcut_bindings_json,
         )
         .unwrap_or_default();
-        if previous.is_none_or(|previous| previous.shortcut_bindings_json != prepared.shortcut_bindings_json
-            || previous.show_main_window_shortcut != prepared.show_main_window_shortcut
-            || previous.hide_main_window_shortcut != prepared.hide_main_window_shortcut)
-        {
+        if previous.is_none_or(|previous| {
+            previous.shortcut_bindings_json != prepared.shortcut_bindings_json
+                || previous.show_main_window_shortcut != prepared.show_main_window_shortcut
+                || previous.hide_main_window_shortcut != prepared.hide_main_window_shortcut
+        }) {
             // In Pure mode no room manager has populated the in-memory route
             // registry. Read only its persisted key projection on key edits.
-            if previous.is_some() && prepared.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION) {
+            if previous.is_some()
+                && prepared.optional_module_installed(OPTIONAL_MODULE_ROOM_AUTOMATION)
+            {
                 let reserved = crate::capabilities::room_automation_config::persisted_shortcuts(
-                    &self.state.app_data_dir, prepared.preserved_unknown_fields.get("room_rotation"),
-                ).map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
-                for key in bindings.values().map(String::as_str).chain([prepared.main_window_shortcut()]) {
-                    if let Ok(key) = crate::capabilities::room_automation::canonicalize_shortcut(key) {
-                        if reserved.iter().any(|saved| saved.eq_ignore_ascii_case(&key)) {
+                    &self.state.app_data_dir,
+                    prepared.preserved_unknown_fields.get("room_rotation"),
+                )
+                .map_err(|error| AppError::ConfigWriteError(error.to_string()))?;
+                for key in bindings
+                    .values()
+                    .map(String::as_str)
+                    .chain([prepared.main_window_shortcut()])
+                {
+                    if let Ok(key) =
+                        crate::capabilities::room_automation::canonicalize_shortcut(key)
+                    {
+                        if reserved
+                            .iter()
+                            .any(|saved| saved.eq_ignore_ascii_case(&key))
+                        {
                             return Err(AppError::ConfigWriteError(format!(
                                 "快捷键 {key} 已被自动跟房的原配置保留，请选择其他组合"
                             )));
@@ -238,9 +265,7 @@ fn should_validate_installation_paths(
         || previous.global_saved_games_path != next.global_saved_games_path
 }
 
-fn normalize_and_validate_main_window_shortcuts(
-    config: &mut GlobalConfig,
-) -> Result<(), AppError> {
+fn normalize_and_validate_main_window_shortcuts(config: &mut GlobalConfig) -> Result<(), AppError> {
     let normalize = |value: &str, label: &str| -> Result<String, AppError> {
         if value.trim().is_empty() {
             return Ok(String::new());
@@ -264,10 +289,7 @@ fn normalize_and_validate_main_window_shortcuts(
     };
 
     config.normalize_main_window_shortcut();
-    config.show_main_window_shortcut = normalize(
-        &config.show_main_window_shortcut,
-        "切换主面板",
-    )?;
+    config.show_main_window_shortcut = normalize(&config.show_main_window_shortcut, "切换主面板")?;
 
     let account_bindings = serde_json::from_str::<std::collections::BTreeMap<String, String>>(
         &config.shortcut_bindings_json,
@@ -275,9 +297,13 @@ fn normalize_and_validate_main_window_shortcuts(
     .unwrap_or_default();
     let mut assigned = std::collections::HashMap::new();
     for (position, value) in &account_bindings {
-        if value.trim().is_empty() { continue; }
+        if value.trim().is_empty() {
+            continue;
+        }
         let normalized = crate::capabilities::room_automation::canonicalize_shortcut(value)
-            .map_err(|error| AppError::ConfigWriteError(format!("账号位置 #{position} 的快捷键无效：{error}")))?;
+            .map_err(|error| {
+                AppError::ConfigWriteError(format!("账号位置 #{position} 的快捷键无效：{error}"))
+            })?;
         if let Some(previous) = assigned.insert(normalized.to_ascii_lowercase(), position) {
             return Err(AppError::ConfigWriteError(format!(
                 "快捷键 {normalized} 同时用于账号位置 #{previous} 和 #{position}，请选择不同组合"
@@ -1908,8 +1934,11 @@ impl GlobalConfig {
         for (key, value) in patch {
             if matches!(
                 key.as_str(),
-                "version" | "accounts_dir" | "legacy_path_migration"
-                    | "feature_profile" | "feature_profile_prompt_revision"
+                "version"
+                    | "accounts_dir"
+                    | "legacy_path_migration"
+                    | "feature_profile"
+                    | "feature_profile_prompt_revision"
             ) {
                 return Err(AppError::ConfigWriteError(format!(
                     "配置字段 {key} 由程序管理，不能通过补丁修改"
@@ -2914,7 +2943,8 @@ pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
         .collect::<std::collections::HashMap<_, _>>();
     let shortcut = cfg.main_window_shortcut();
     if !shortcut.is_empty() {
-        normalized.entry(shortcut.to_ascii_lowercase())
+        normalized
+            .entry(shortcut.to_ascii_lowercase())
             .or_insert(crate::state::CoreShortcutAction::ToggleMainWindow);
     }
     crate::input_listener::replace_core_shortcut_routes(
@@ -3016,11 +3046,17 @@ struct ProfileSuspension<'a> {
 
 impl Drop for ProfileSuspension<'_> {
     fn drop(&mut self) {
-        if self.state.restart_pending.load(std::sync::atomic::Ordering::Acquire) {
+        if self
+            .state
+            .restart_pending
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
             return;
         }
         self.state.configuration().project_current(|config| {
-            self.state.optional_features_suspended.store(false, std::sync::atomic::Ordering::Release);
+            self.state
+                .optional_features_suspended
+                .store(false, std::sync::atomic::Ordering::Release);
             if let Some(config) = config {
                 crate::capabilities::apply_configuration(self.state, Some(self.app), config);
             }
@@ -3042,14 +3078,19 @@ struct ProfileConfigurationObserver<'a> {
 
 impl ConfigurationObserver for ProfileConfigurationObserver<'_> {
     fn apply(&self, config: &GlobalConfig) {
-        if !self.restarting { self.runtime.apply(config); }
+        if !self.restarting {
+            self.runtime.apply(config);
+        }
     }
 
     fn publish(&self, config: &GlobalConfig) {
         if self.restarting {
             // Do not publish the next process's mode to the old WebViews.
             // It would mount optional consumers before their runtime exists.
-            self.runtime.state.restart_pending.store(true, std::sync::atomic::Ordering::Release);
+            self.runtime
+                .state
+                .restart_pending
+                .store(true, std::sync::atomic::Ordering::Release);
         } else {
             self.runtime.publish(config);
         }
@@ -3064,18 +3105,29 @@ fn commit_feature_profile(
 ) -> Result<FeatureProfileSwitchOutcome, AppError> {
     crate::input_listener::with_shortcut_routing_transaction(|| {
         let repository = GlobalConfigRepository::new(&state.app_data_dir);
-        let policy = GlobalConfigPolicy { state, profile_transition: true };
+        let policy = GlobalConfigPolicy {
+            state,
+            profile_transition: true,
+        };
         let observer = ProfileConfigurationObserver {
-            runtime: RuntimeConfigurationObserver { state, app: Some(app) },
+            runtime: RuntimeConfigurationObserver {
+                state,
+                app: Some(app),
+            },
             restarting,
         };
-        state.configuration().mutate_if_loaded(&repository, &policy, &observer, |config| {
-            config.feature_profile = profile;
-            config.feature_profile_prompt_revision = config.feature_profile_prompt_revision
-                .max(crate::domain::config::CURRENT_FEATURE_PROFILE_PROMPT_REVISION);
-            Ok(true)
-        })?;
-        let config = state.configuration().snapshot()
+        state
+            .configuration()
+            .mutate_if_loaded(&repository, &policy, &observer, |config| {
+                config.feature_profile = profile;
+                config.feature_profile_prompt_revision = config
+                    .feature_profile_prompt_revision
+                    .max(crate::domain::config::CURRENT_FEATURE_PROFILE_PROMPT_REVISION);
+                Ok(true)
+            })?;
+        let config = state
+            .configuration()
+            .snapshot()
             .ok_or_else(|| AppError::ConfigWriteError("全局配置尚未加载".to_string()))?;
         Ok(FeatureProfileSwitchOutcome { config, restarting })
     })
@@ -3087,50 +3139,72 @@ pub fn switch_feature_profile(
     state: tauri::State<'_, SharedState>,
     profile: String,
 ) -> Result<FeatureProfileSwitchOutcome, AppError> {
-    use crate::domain::config::{
-        FEATURE_PROFILE_MINIMAL, FEATURE_PROFILE_NORMAL,
-    };
+    use crate::domain::config::{FEATURE_PROFILE_MINIMAL, FEATURE_PROFILE_NORMAL};
     use std::sync::atomic::Ordering;
-    if !matches!(profile.as_str(), FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL) {
+    if !matches!(
+        profile.as_str(),
+        FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL
+    ) {
         return Err(AppError::ConfigWriteError("不支持的使用模式".to_string()));
     }
-    let _transition = state.runtime_activation_lock.try_lock()
-        .ok_or_else(|| AppError::ConfigWriteError("正在激活服务或切换模式，请稍后重试".to_string()))?;
+    let _transition = state.runtime_activation_lock.try_lock().ok_or_else(|| {
+        AppError::ConfigWriteError("正在激活服务或切换模式，请稍后重试".to_string())
+    })?;
     if state.restart_pending.load(Ordering::Acquire) {
-        return Err(AppError::ConfigWriteError("D2RHub 正在重新启动，请稍候".to_string()));
+        return Err(AppError::ConfigWriteError(
+            "D2RHub 正在重新启动，请稍候".to_string(),
+        ));
     }
-    let current = state.configuration().snapshot()
+    let current = state
+        .configuration()
+        .snapshot()
         .ok_or_else(|| AppError::ConfigWriteError("全局配置尚未加载".to_string()))?;
     if current.legacy_path_migration.is_some() {
-        return Err(AppError::ConfigWriteError("请先完成旧版路径迁移".to_string()));
+        return Err(AppError::ConfigWriteError(
+            "请先完成旧版路径迁移".to_string(),
+        ));
     }
     if current.feature_profile == profile && current.feature_profile_decided() {
-        return Ok(FeatureProfileSwitchOutcome { config: current, restarting: false });
+        return Ok(FeatureProfileSwitchOutcome {
+            config: current,
+            restarting: false,
+        });
     }
     // First choice happens before runtime activation; nothing needs unloading.
     if !state.runtime_activated.load(Ordering::Acquire) {
         return commit_feature_profile(state.inner(), &app, profile, false);
     }
-    let _suspension = ProfileSuspension { state: state.inner(), app: &app };
+    let _suspension = ProfileSuspension {
+        state: state.inner(),
+        app: &app,
+    };
     state.configuration().project_current(|config| {
-        state.optional_features_suspended.store(true, Ordering::Release);
+        state
+            .optional_features_suspended
+            .store(true, Ordering::Release);
         crate::input_listener::set_optional_shortcuts_allowed(false);
         if let Some(config) = config {
             crate::capabilities::apply_configuration(state.inner(), Some(&app), config);
         }
     });
     if state.runtime_activated.load(Ordering::Acquire) {
-        crate::capabilities::wait_until_disabled(&app)
-            .map_err(|error| AppError::ConfigWriteError(format!(
+        crate::capabilities::wait_until_disabled(&app).map_err(|error| {
+            AppError::ConfigWriteError(format!(
                 "模式未修改，模块未能安全停止：{error}。原配置已保留；已取消的跟房任务不会自动重跑"
-            )))?;
+            ))
+        })?;
     }
-    crate::capabilities::stop_explicit_optional_activity(&app)
-        .map_err(|error| AppError::ConfigWriteError(format!("模式未修改，附加任务清理失败：{error}")))?;
+    crate::capabilities::stop_explicit_optional_activity(&app).map_err(|error| {
+        AppError::ConfigWriteError(format!("模式未修改，附加任务清理失败：{error}"))
+    })?;
     // Drain manual window/API operations that passed their gate before us.
     // Never hold this lock while waiting for capability lifecycle hooks.
-    let _windows = state.optional_window_operations.try_lock_for(std::time::Duration::from_secs(5))
-        .ok_or_else(|| AppError::ConfigWriteError("窗口操作尚未结束，模式未修改，请稍后重试".to_string()))?;
+    let _windows = state
+        .optional_window_operations
+        .try_lock_for(std::time::Duration::from_secs(5))
+        .ok_or_else(|| {
+            AppError::ConfigWriteError("窗口操作尚未结束，模式未修改，请稍后重试".to_string())
+        })?;
     crate::stats::stop_stats_api_and_wait().map_err(AppError::ConfigWriteError)?;
     for label in [
         crate::auxiliary_windows::TERROR_ZONE_OVERLAY_LABEL,
@@ -3141,14 +3215,24 @@ pub fn switch_feature_profile(
     }
     // Preserve the established catalog -> account -> configuration lock order.
     // A failed preparation drops every guard; the old process remains usable.
-    let mod_catalog = crate::mod_catalog::freeze_for_restart().map_err(AppError::ConfigWriteError)?;
-    let catalog = state.multi_instance().catalog_leases().freeze_for_restart()
+    let mod_catalog =
+        crate::mod_catalog::freeze_for_restart().map_err(AppError::ConfigWriteError)?;
+    let catalog = state
+        .multi_instance()
+        .catalog_leases()
+        .freeze_for_restart()
         .map_err(AppError::ConfigWriteError)?;
-    let accounts = state.multi_instance().account_leases().freeze_for_restart()
+    let accounts = state
+        .multi_instance()
+        .account_leases()
+        .freeze_for_restart()
         .map_err(AppError::ConfigWriteError)?;
     let writers = crate::runtime_restart::RuntimeWriteReservation::acquire(state.inner())
         .map_err(AppError::ConfigWriteError)?;
-    let tasks = state.tasks().freeze_for_restart().map_err(AppError::ConfigWriteError)?;
+    let tasks = state
+        .tasks()
+        .freeze_for_restart()
+        .map_err(AppError::ConfigWriteError)?;
     let geometry = crate::runtime_restart::WindowWriteReservation::acquire(state.inner())
         .map_err(AppError::ConfigWriteError)?;
     let replacement = crate::runtime_restart::PreparedRestart::prepare(&app)
@@ -3313,7 +3397,12 @@ pub fn save_window_geometry(
     geometry: WindowGeometry,
 ) -> Result<(), AppError> {
     let _geometry = state.window_placement_io.lock();
-    if state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) { return Ok(()); }
+    if state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Ok(());
+    }
     GlobalConfig::save_geometry(&state.app_data_dir, &geometry)
 }
 
@@ -3332,7 +3421,12 @@ pub fn save_overlay_geometry(
     geometry: WindowGeometry,
 ) -> Result<(), AppError> {
     let _geometry = state.window_placement_io.lock();
-    if state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) { return Ok(()); }
+    if state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Ok(());
+    }
     GlobalConfig::save_overlay_geometry_fn(&state.app_data_dir, &geometry)
 }
 
@@ -3350,7 +3444,12 @@ pub fn save_stats_overlay_geometry(
     geometry: WindowGeometry,
 ) -> Result<(), AppError> {
     let _geometry = state.window_placement_io.lock();
-    if state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) { return Ok(()); }
+    if state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Ok(());
+    }
     GlobalConfig::save_stats_overlay_geometry_fn(&state.app_data_dir, &geometry)
 }
 

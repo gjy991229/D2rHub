@@ -28,18 +28,23 @@ pub(crate) fn persisted_shortcuts(
     legacy: Option<&Value>,
 ) -> Result<Vec<String>, RoomAutomationConfigControllerError> {
     let store = ModuleConfigStore::new(
-        app_data_dir, ROOM_AUTOMATION_MODULE_ID, ROOM_AUTOMATION_CONFIG_SCHEMA_VERSION,
+        app_data_dir,
+        ROOM_AUTOMATION_MODULE_ID,
+        ROOM_AUTOMATION_CONFIG_SCHEMA_VERSION,
     )?;
     let config = match store.load::<RoomAutomationConfig>()? {
         Some(envelope) => envelope.payload,
         None => match legacy {
             Some(value) => serde_json::from_value(value.clone()).map_err(|error| {
-                RoomAutomationConfigControllerError::InvalidLegacyPayload { message: error.to_string() }
+                RoomAutomationConfigControllerError::InvalidLegacyPayload {
+                    message: error.to_string(),
+                }
             })?,
             None => return Ok(Vec::new()),
         },
     };
-    Ok([config.shortcut, config.join_shortcut].into_iter()
+    Ok([config.shortcut, config.join_shortcut]
+        .into_iter()
         .filter_map(|key| crate::capabilities::room_automation::canonicalize_shortcut(&key).ok())
         .collect())
 }

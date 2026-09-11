@@ -33,8 +33,7 @@ pub(super) fn focus_game(pid: u32, cancel: &dyn CancellationCheck) -> Result<(),
         }
         wait(cancel, 25)?;
     };
-    let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
-        .ok_or("无法找到主号 D2R 窗口")?;
+    let hwnd = crate::infrastructure::system::find_game_hwnd(pid).ok_or("无法找到主号 D2R 窗口")?;
     let created = process_creation_time(pid).ok_or("无法确认主号进程身份")?;
     cancel.check()?;
     crate::infrastructure::system::bring_window_to_foreground_raw(hwnd);

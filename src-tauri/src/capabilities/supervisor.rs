@@ -55,7 +55,8 @@ impl CapabilitySupervisor {
                             reconcile_and_publish(&app, &registry);
                         }
                         SupervisorMessage::ReconcileAndReply(reply) => {
-                            let result = registry.reconcile_all().map_err(|error| error.to_string());
+                            let result =
+                                registry.reconcile_all().map_err(|error| error.to_string());
                             if let Ok(snapshot) = &result {
                                 publish_snapshot(&app, snapshot);
                             }
@@ -113,7 +114,8 @@ impl CapabilitySupervisor {
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-        result.recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
+        result
+            .recv_timeout(deadline.saturating_duration_since(std::time::Instant::now()))
             .map_err(|error| format!("等待模块停止失败，模式未修改：{error}"))?
     }
 

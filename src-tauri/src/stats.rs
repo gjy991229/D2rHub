@@ -446,9 +446,11 @@ fn migrate_legacy_drops(drops_json: &str) -> Vec<DropEntry> {
 }
 
 fn ensure_stats_module_installed(state: &SharedState) -> Result<(), String> {
-    let installed = state.optional_runtime_ready() && state.configuration().snapshot().is_some_and(|config| {
-        config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
-    });
+    let installed = state.optional_runtime_ready()
+        && state.configuration().snapshot().is_some_and(|config| {
+            config
+                .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        });
     installed
         .then_some(())
         .ok_or_else(|| "识别与统计模块尚未安装".to_string())
@@ -1005,7 +1007,8 @@ static STATS_API_RUNTIME: std::sync::OnceLock<std::sync::Mutex<Option<StatsApiRu
     std::sync::OnceLock::new();
 static STATS_API_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static STATS_API_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-static STATS_API_ACTIVE_WORKERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static STATS_API_ACTIVE_WORKERS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 struct StatsApiWorkerLifetime;
 
@@ -1053,7 +1056,9 @@ fn reap_stats_api_worker(worker: std::thread::JoinHandle<()>, reason: &'static s
 pub(crate) fn stop_stats_api() {
     STATS_API_GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     STATS_API_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-    let Some(runtime_slot) = STATS_API_RUNTIME.get() else { return; };
+    let Some(runtime_slot) = STATS_API_RUNTIME.get() else {
+        return;
+    };
     let runtime = runtime_slot
         .lock()
         .unwrap_or_else(|error| error.into_inner())
@@ -1587,7 +1592,8 @@ pub fn open_stats_page(
         .snapshot()
         .ok_or_else(|| "全局配置尚未加载".to_string())?;
     if !state.optional_runtime_ready()
-        || !config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        || !config
+            .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
     {
         return Err("识别与统计模块尚未安装".to_string());
     }

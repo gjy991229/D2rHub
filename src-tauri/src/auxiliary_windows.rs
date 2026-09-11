@@ -58,11 +58,14 @@ pub(crate) fn ensure_window(app: &AppHandle, label: &str) -> Result<WebviewWindo
     validate_label(label)?;
     let state = app.state::<crate::state::SharedState>();
     if !state.optional_runtime_ready()
-        || !state.configuration().snapshot().is_some_and(|config| {
-            config.optional_features_runtime_allowed()
-        })
+        || !state
+            .configuration()
+            .snapshot()
+            .is_some_and(|config| config.optional_features_runtime_allowed())
     {
-        return Err(AppError::Unknown("当前使用模式不允许创建辅助窗口".to_string()));
+        return Err(AppError::Unknown(
+            "当前使用模式不允许创建辅助窗口".to_string(),
+        ));
     }
     if let Some(window) = app.get_webview_window(label) {
         return Ok(window);

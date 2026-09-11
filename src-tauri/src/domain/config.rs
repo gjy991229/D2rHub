@@ -349,7 +349,10 @@ impl GlobalConfig {
 
     pub(crate) fn feature_profile_decided(&self) -> bool {
         self.feature_profile_prompt_revision >= CURRENT_FEATURE_PROFILE_PROMPT_REVISION
-            && matches!(self.feature_profile.as_str(), FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL)
+            && matches!(
+                self.feature_profile.as_str(),
+                FEATURE_PROFILE_NORMAL | FEATURE_PROFILE_MINIMAL
+            )
     }
 
     /// Runtime projection of optional-module intent. Raw installation and
@@ -360,8 +363,7 @@ impl GlobalConfig {
     }
 
     pub(crate) fn optional_module_runtime_allowed(&self, module_id: &str) -> bool {
-        self.optional_features_runtime_allowed()
-            && self.optional_module_installed(module_id)
+        self.optional_features_runtime_allowed() && self.optional_module_installed(module_id)
     }
 
     pub(crate) fn normalize_feature_profile(&mut self) -> bool {

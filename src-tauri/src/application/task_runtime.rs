@@ -216,13 +216,22 @@ impl Default for TaskRuntime {
 
 impl TaskRuntime {
     pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
-        let mut inner = self.shared.inner.try_lock()
+        let mut inner = self
+            .shared
+            .inner
+            .try_lock()
             .ok_or_else(|| "任务状态更新中，请稍后切换模式".to_string())?;
-        if inner.records.values().any(|record| !record.snapshot.state.is_terminal()) {
+        if inner
+            .records
+            .values()
+            .any(|record| !record.snapshot.state.is_terminal())
+        {
             return Err("仍有任务进行中，请等待完成或取消后再切换模式".to_string());
         }
         inner.restart_reserved = true;
-        Ok(TaskRestartReservation { shared: Arc::clone(&self.shared) })
+        Ok(TaskRestartReservation {
+            shared: Arc::clone(&self.shared),
+        })
     }
 
     pub fn new(max_completed: usize) -> Self {

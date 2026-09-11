@@ -8,13 +8,13 @@ mod bongo_cat;
 mod overlay_windows;
 pub(crate) mod room_automation;
 pub(crate) mod room_automation_config;
-pub(crate) mod room_automation_runtime;
-#[cfg(target_os = "windows")]
-mod room_automation_windows;
 #[cfg(target_os = "windows")]
 mod room_automation_foreground;
 #[cfg(target_os = "windows")]
 mod room_automation_layout;
+pub(crate) mod room_automation_runtime;
+#[cfg(target_os = "windows")]
+mod room_automation_windows;
 pub(crate) mod room_chat_binding;
 mod rune_audio;
 mod supervisor;
@@ -59,7 +59,13 @@ impl CapabilityDriver for UnavailableCapability {
 
 /// Install capability-owned policies and register concrete lifecycle drivers.
 pub(crate) fn install(app: &tauri::AppHandle) {
-    if !app.state::<SharedState>().capabilities().snapshot().capabilities.is_empty() {
+    if !app
+        .state::<SharedState>()
+        .capabilities()
+        .snapshot()
+        .capabilities
+        .is_empty()
+    {
         return;
     }
     crate::input_listener::set_bongo_cat_input_enabled(false);
@@ -93,7 +99,9 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         .state::<SharedState>()
         .configuration()
         .snapshot()
-        .is_some_and(|config| config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION));
+        .is_some_and(|config| {
+            config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION)
+        });
     let (room_driver, room_requested, room_command_state): (
         Arc<dyn CapabilityDriver>,
         bool,
@@ -225,7 +233,9 @@ pub(crate) fn install(app: &tauri::AppHandle) {
 /// reconciles the latest committed configuration snapshot.
 pub(crate) fn start(app: &tauri::AppHandle) -> Result<(), String> {
     let state = app.state::<SharedState>();
-    if !state.configuration().snapshot()
+    if !state
+        .configuration()
+        .snapshot()
         .is_some_and(|config| config.optional_features_runtime_allowed())
     {
         return Ok(());
@@ -259,7 +269,10 @@ pub(crate) fn apply_configuration(
         runtime_ready && config.optional_features_runtime_allowed(),
     );
     for (id, requested, name) in configured_capabilities(config) {
-        match state.capabilities().set_requested(id, runtime_ready && requested) {
+        match state
+            .capabilities()
+            .set_requested(id, runtime_ready && requested)
+        {
             Ok(_) => {}
             // Initial global config loading happens before Tauri adapters are
             // registered. Setup replays the cached snapshot after registration.
@@ -350,13 +363,26 @@ pub(crate) fn wait_until_disabled(app: &tauri::AppHandle) -> Result<(), String> 
         return Ok(());
     };
     let snapshot = supervisor.reconcile_and_wait()?;
-    let failures: Vec<_> = snapshot.capabilities.iter()
-        .filter(|status| status.requested_enabled
-            || status.state != crate::application::capability::CapabilityState::Disabled)
-        .map(|status| format!("{}：{}", status.id,
-            status.last_error.as_deref().unwrap_or("尚未停止完成")))
+    let failures: Vec<_> = snapshot
+        .capabilities
+        .iter()
+        .filter(|status| {
+            status.requested_enabled
+                || status.state != crate::application::capability::CapabilityState::Disabled
+        })
+        .map(|status| {
+            format!(
+                "{}：{}",
+                status.id,
+                status.last_error.as_deref().unwrap_or("尚未停止完成")
+            )
+        })
         .collect();
-    if failures.is_empty() { Ok(()) } else { Err(failures.join("；")) }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("；"))
+    }
 }
 
 /// Some tools can be explicitly started without enabling their capability
@@ -365,7 +391,9 @@ pub(crate) fn wait_until_disabled(app: &tauri::AppHandle) -> Result<(), String> 
 pub(crate) fn stop_explicit_optional_activity(app: &tauri::AppHandle) -> Result<(), String> {
     crate::rune_audio::monitor::stop_blocking()?;
     crate::rune_audio::monitor::stop_rune_audio_diagnostic_recording()?;
-    if let Some(command_state) = app.try_state::<room_automation_runtime::RoomAutomationCommandState>() {
+    if let Some(command_state) =
+        app.try_state::<room_automation_runtime::RoomAutomationCommandState>()
+    {
         if let Ok(manager) = command_state.manager() {
             manager.stop().map_err(|error| error.message)?;
         }

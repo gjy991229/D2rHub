@@ -9,11 +9,11 @@ mod model;
 mod status;
 
 pub use foreground_timing::ForegroundTiming;
-pub use model::CURRENT_STRATEGY_VERSION;
 pub(crate) use model::canonicalize_shortcut;
+pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
-    ChatKey, FlowStrategy, FollowerJoinMode, InputMethod, NormalizationReport, RoomAutomationConfig,
-    RoomAutomationConfigError,
+    ChatKey, FlowStrategy, FollowerJoinMode, InputMethod, NormalizationReport,
+    RoomAutomationConfig, RoomAutomationConfigError,
 };
 pub use status::{
     WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus,

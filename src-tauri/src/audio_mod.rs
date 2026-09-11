@@ -1269,17 +1269,17 @@ fn validate_in_game_room_tool_layouts_for_version(
                 &commit,
                 "PausePanelMessage:ExitGame",
                 ROOM_TRANSITION_EXIT_DELAY_SECONDS,
-            ) || !layout_has_timed_child_message(
-                &commit,
-                native_message,
-                commit_delay,
-            ) {
+            ) || !layout_has_timed_child_message(&commit, native_message, commit_delay)
+            {
                 return Err(format!("局内房间提交控制器无效：{name}"));
             }
             if requires_input_safety
                 && !layout_has_timed_child_message(
                     &commit,
-                    &format!("PanelManager:ClosePanel:{}", name.trim_end_matches("hd.json")),
+                    &format!(
+                        "PanelManager:ClosePanel:{}",
+                        name.trim_end_matches("hd.json")
+                    ),
                     close_delay,
                 )
             {
@@ -2327,7 +2327,9 @@ pub(crate) fn set_room_toolbar_visible(
                 && group.recipe_version == IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
         })
     {
-        return Err(format!("Mod“{mod_name}”不含当前版本局内房间工具，请先加工更新"));
+        return Err(format!(
+            "Mod“{mod_name}”不含当前版本局内房间工具，请先加工更新"
+        ));
     }
     // A display toggle only needs the feature credential and room UI layouts;
     // avoid traversing or decoding the unrelated audio assets.
@@ -2341,10 +2343,10 @@ pub(crate) fn set_room_toolbar_visible(
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY)
         .join("HudWarningshd.json");
-    let original = std::fs::read(&layout_path)
-        .map_err(|error| format!("无法读取游戏 HUD 布局：{error}"))?;
-    let mut document: serde_json::Value = serde_json::from_slice(&original)
-        .map_err(|_| "游戏 HUD 布局已损坏".to_string())?;
+    let original =
+        std::fs::read(&layout_path).map_err(|error| format!("无法读取游戏 HUD 布局：{error}"))?;
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&original).map_err(|_| "游戏 HUD 布局已损坏".to_string())?;
     let children = document
         .get_mut("children")
         .and_then(serde_json::Value::as_array_mut)
@@ -4380,9 +4382,8 @@ pub(crate) fn emit_runtime_compatibility_warning(
     pid: u32,
     launch_arguments: &str,
 ) {
-    if !config.optional_module_runtime_allowed(
-        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-    ) || !config.rune_audio_enabled
+    if !config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
+        || !config.rune_audio_enabled
         || config.rune_audio_target_account != account.id
     {
         return;

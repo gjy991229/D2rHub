@@ -13,7 +13,13 @@ fn build_menu(app: &AppHandle, optional_visible: bool) -> tauri::Result<Menu<tau
     let show_i = MenuItem::with_id(app, "show", "显示面板", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "退出 D2RHub", true, None::<&str>)?;
     if optional_visible {
-        let recover_i = MenuItem::with_id(app, "recover-overlays", "找回所有悬浮窗", true, None::<&str>)?;
+        let recover_i = MenuItem::with_id(
+            app,
+            "recover-overlays",
+            "找回所有悬浮窗",
+            true,
+            None::<&str>,
+        )?;
         Menu::with_items(app, &[&show_i, &recover_i, &quit_i])
     } else {
         Menu::with_items(app, &[&show_i, &quit_i])
@@ -24,21 +30,35 @@ fn build_menu(app: &AppHandle, optional_visible: bool) -> tauri::Result<Menu<tau
 /// snapshot on a worker, never inline or on the UI thread from that observer.
 pub(crate) fn schedule_menu_update(app: &AppHandle) {
     let app = app.clone();
-    if let Err(error) = std::thread::Builder::new().name("tray-menu-update".to_string()).spawn(move || {
-        let Some(menu_state) = app.try_state::<TrayMenuState>() else { return; };
-        // Serialize updates and read *after* acquiring the lock. An old update
-        // cannot restore an obsolete menu after a newer mode commit.
-        let mut previous = menu_state.0.lock();
-        let state = app.state::<crate::state::SharedState>();
-        let visible = state.optional_runtime_ready() && state.configuration().snapshot()
-            .is_some_and(|config| config.optional_features_runtime_allowed());
-        if visible == *previous { return; }
-        let Some(tray) = app.tray_by_id(TRAY_ID) else { return; };
-        match build_menu(&app, visible).and_then(|menu| tray.set_menu(Some(menu))) {
-            Ok(()) => *previous = visible,
-            Err(error) => crate::logger::log_msg("WARN", "Tray", &format!("更新托盘菜单失败：{error}")),
-        }
-    }) {
+    if let Err(error) = std::thread::Builder::new()
+        .name("tray-menu-update".to_string())
+        .spawn(move || {
+            let Some(menu_state) = app.try_state::<TrayMenuState>() else {
+                return;
+            };
+            // Serialize updates and read *after* acquiring the lock. An old update
+            // cannot restore an obsolete menu after a newer mode commit.
+            let mut previous = menu_state.0.lock();
+            let state = app.state::<crate::state::SharedState>();
+            let visible = state.optional_runtime_ready()
+                && state
+                    .configuration()
+                    .snapshot()
+                    .is_some_and(|config| config.optional_features_runtime_allowed());
+            if visible == *previous {
+                return;
+            }
+            let Some(tray) = app.tray_by_id(TRAY_ID) else {
+                return;
+            };
+            match build_menu(&app, visible).and_then(|menu| tray.set_menu(Some(menu))) {
+                Ok(()) => *previous = visible,
+                Err(error) => {
+                    crate::logger::log_msg("WARN", "Tray", &format!("更新托盘菜单失败：{error}"))
+                }
+            }
+        })
+    {
         crate::logger::log_msg("WARN", "Tray", &format!("启动托盘菜单更新失败：{error}"));
     }
 }

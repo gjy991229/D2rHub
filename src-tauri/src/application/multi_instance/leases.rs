@@ -1,7 +1,7 @@
 use parking_lot::{Mutex, MutexGuard};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use crate::error::AppError;
 
@@ -68,7 +68,9 @@ pub(crate) struct AccountCatalogLease<'a> {
 struct CatalogRestartReservation<'a>(&'a AccountCatalogLeaseManager);
 
 impl Drop for CatalogRestartReservation<'_> {
-    fn drop(&mut self) { *self.0.state.lock() = false; }
+    fn drop(&mut self) {
+        *self.0.state.lock() = false;
+    }
 }
 
 fn account_key(account_id: &str) -> String {
@@ -79,13 +81,18 @@ impl AccountLeaseManager {
     /// Holds admission closed until restart; existing operations must finish
     /// first. Dropping the guard on preparation failure reopens admission.
     pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
-        let active = self.state.active.try_lock()
+        let active = self
+            .state
+            .active
+            .try_lock()
             .ok_or_else(|| "账号操作进行中，请完成后再切换模式".to_string())?;
         if !active.is_empty() {
             return Err("账号启动或保存进行中，请完成后再切换模式".to_string());
         }
         self.state.restart_reserved.store(true, Ordering::Release);
-        Ok(AccountRestartReservation { state: Arc::clone(&self.state) })
+        Ok(AccountRestartReservation {
+            state: Arc::clone(&self.state),
+        })
     }
 
     pub fn try_acquire(&self, account_id: &str) -> Result<AccountOperationLease, AppError> {
@@ -218,13 +225,20 @@ impl AccountLeaseManager {
 impl AccountCatalogLeaseManager {
     pub fn acquire(&self) -> Result<AccountCatalogLease<'_>, AppError> {
         let guard = self.state.lock();
-        if *guard { return Err(AppError::Unknown("模式切换准备中，请稍候".to_string())); }
+        if *guard {
+            return Err(AppError::Unknown("模式切换准备中，请稍候".to_string()));
+        }
         Ok(AccountCatalogLease { _guard: guard })
     }
 
     pub(crate) fn freeze_for_restart(&self) -> Result<impl Sized + '_, String> {
-        let mut guard = self.state.try_lock().ok_or("账号目录更新中，请完成后再切换模式")?;
-        if *guard { return Err("模式切换已经开始".to_string()); }
+        let mut guard = self
+            .state
+            .try_lock()
+            .ok_or("账号目录更新中，请完成后再切换模式")?;
+        if *guard {
+            return Err("模式切换已经开始".to_string());
+        }
         *guard = true;
         Ok(CatalogRestartReservation(self))
     }

@@ -166,9 +166,8 @@ pub(crate) fn fill_room_form(
     let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));
     let enter_password = {
         let mut passwords = passwords.lock();
-        passwords.retain(|pid, entry| {
-            process_creation_time(*pid) == Some(entry.process_created_at)
-        });
+        passwords
+            .retain(|pid, entry| process_creation_time(*pid) == Some(entry.process_created_at));
         !passwords.get(&request.pid).is_some_and(|entry| {
             Some(entry.process_created_at) == process_created_at
                 && entry.hwnd == hwnd

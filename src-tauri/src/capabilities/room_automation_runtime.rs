@@ -461,7 +461,10 @@ impl LazyChatBinding {
                 });
             }
         }
-        Ok((validate_and_canonicalize_directories(directories)?, mod_roots))
+        Ok((
+            validate_and_canonicalize_directories(directories)?,
+            mod_roots,
+        ))
     }
 
     /// Must be called while `operation` is held. A directory change replaces
@@ -938,13 +941,16 @@ impl RoomAutomationManager {
             let mut validated = snapshot.config.clone();
             match host.canonicalize_and_validate_accounts(&mut validated) {
                 Ok(()) if validated != snapshot.config => {
-                    snapshot = controller.save(snapshot.generation, validated, &shortcuts)
+                    snapshot = controller
+                        .save(snapshot.generation, validated, &shortcuts)
                         .map_err(config_failure)?;
                 }
                 Ok(()) => {}
-                Err(error) => crate::logger::log_msg("WARN", "RoomAutomation", &format!(
-                    "配置需要修正，保留设置入口；启动时将阻止无效配置：{error}"
-                )),
+                Err(error) => crate::logger::log_msg(
+                    "WARN",
+                    "RoomAutomation",
+                    &format!("配置需要修正，保留设置入口；启动时将阻止无效配置：{error}"),
+                ),
             }
 
             let chat_binding: Arc<dyn ChatBindingPort> = Arc::new(LazyChatBinding {
@@ -1764,13 +1770,10 @@ impl RoomAutomationManager {
                 return;
             }
             previous_dispatch = Some(Instant::now());
-            if let Err(error) = self.host.run_follower(
-                &config,
-                &account_id,
-                instance.pid,
-                &room_name,
-                &cancel,
-            ) {
+            if let Err(error) =
+                self.host
+                    .run_follower(&config, &account_id, instance.pid, &room_name, &cancel)
+            {
                 self.fail_and_release(task_id, &format!("{account_id}: {error}"));
                 return;
             }
@@ -1781,10 +1784,7 @@ impl RoomAutomationManager {
                 // Return focus only after the whole available follower queue
                 // has submitted. Keep the lease until this final action ends.
                 // A focus failure must not replay already-submitted followers.
-                match self
-                    .host
-                    .focus_primary(&config.primary_account_id, &cancel)
-                {
+                match self.host.focus_primary(&config.primary_account_id, &cancel) {
                     Ok(()) => crate::logger::log_msg(
                         "INFO",
                         "RoomAutomation",

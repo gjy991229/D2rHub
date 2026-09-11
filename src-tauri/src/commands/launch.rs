@@ -820,7 +820,8 @@ async fn launch_battle_net_only_task(
     account_ids: Vec<String>,
     retry_of: Option<u64>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    crate::mod_catalog::recover_before_launch(state.inner(), &app).map_err(AppError::ConfigReadError)?;
+    crate::mod_catalog::recover_before_launch(state.inner(), &app)
+        .map_err(AppError::ConfigReadError)?;
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let cancel_state = state.inner().clone();
     let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::BattleNetOnly {
@@ -1467,7 +1468,8 @@ async fn launch_accounts_task(
     entries: Option<Vec<LaunchAccountEntry>>,
     retry_of: Option<u64>,
 ) -> Result<Vec<LaunchResult>, AppError> {
-    crate::mod_catalog::recover_before_launch(state.inner(), &app).map_err(AppError::ConfigReadError)?;
+    crate::mod_catalog::recover_before_launch(state.inner(), &app)
+        .map_err(AppError::ConfigReadError)?;
     let cancellation_ticket = state.multi_instance().facade().cancellation_ticket();
     let cancel_state = state.inner().clone();
     let retry_payload = serde_json::to_string(&LaunchTaskRetryPayload::Accounts {

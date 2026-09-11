@@ -556,7 +556,9 @@ fn restore_impl(
     let _io_guard = state.window_placement_io.lock();
     let path = placement_path(&state.app_data_dir, label);
     let saved = load_placement(&path);
-    let writes_allowed = !state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire);
+    let writes_allowed = !state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire);
 
     if let Some(saved) = saved {
         let current = window_rect(&window)?;
@@ -659,7 +661,12 @@ fn save_current_impl(
 
     let state = state_from_app(app)?;
     let _io_guard = state.window_placement_io.lock();
-    if state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) { return Ok(false); }
+    if state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
+        return Ok(false);
+    }
     let path = placement_path(&state.app_data_dir, label);
     let existing = load_placement(&path);
     let same_preferred_monitor = existing
@@ -703,7 +710,10 @@ fn force_to_target_impl(
     let state = state_from_app(app)?;
     let _io_guard = state.window_placement_io.lock();
     let path = placement_path(&state.app_data_dir, label);
-    if !state.window_writes_suspended.load(std::sync::atomic::Ordering::Acquire) {
+    if !state
+        .window_writes_suspended
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
         save_placement(
             &path,
             &capture_preferred(rect, &monitors[monitor_index], None),
@@ -746,25 +756,26 @@ pub fn set_auxiliary_window_visible_for_app(
     let state = state_from_app(app)?;
     let _window_operation = state.optional_window_operations.lock();
     let config = state.configuration().snapshot();
-    let allowed = state.optional_runtime_ready() && config.as_ref().is_some_and(|config| match label {
-        "overlay" => {
-            config.optional_module_runtime_allowed(
-                crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-            ) && config.enable_tz_overlay
-        }
-        "stats-overlay" => {
-            config.optional_module_runtime_allowed(
-                crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
-            ) && config.optional_module_runtime_allowed(
-                crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-            ) && config.enable_stats_overlay
-        }
-        "bongo-cat" => {
-            config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
-                && config.enable_bongo_cat
-        }
-        _ => false,
-    });
+    let allowed = state.optional_runtime_ready()
+        && config.as_ref().is_some_and(|config| match label {
+            "overlay" => {
+                config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.enable_tz_overlay
+            }
+            "stats-overlay" => {
+                config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                ) && config.enable_stats_overlay
+            }
+            "bongo-cat" => {
+                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_PET)
+                    && config.enable_bongo_cat
+            }
+            _ => false,
+        });
     if !allowed {
         return Err(AppError::Unknown(
             "当前使用模式或模块设置不允许显示此辅助窗口".to_string(),
@@ -796,18 +807,19 @@ pub fn recover_auxiliary_windows_for_app(
         "overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                    && config.enable_tz_overlay
+                config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.enable_tz_overlay
             })
             .unwrap_or(false),
         "stats-overlay" => config
             .as_ref()
             .map(|config| {
-                config.optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                    && config.optional_module_runtime_allowed(
-                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                    )
-                    && config.enable_stats_overlay
+                config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                ) && config.optional_module_runtime_allowed(
+                    crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                ) && config.enable_stats_overlay
             })
             .unwrap_or(false),
         "bongo-cat" => config
@@ -895,7 +907,11 @@ pub fn toggle_main_window(app: &AppHandle) {
         crate::logger::log_msg("INFO", "Shortcut", "主面板位于前台，隐藏到托盘");
         hide_main_window_to_tray(app);
     } else {
-        crate::logger::log_msg("INFO", "Shortcut", "主面板未聚焦或已隐藏/最小化，恢复并聚焦");
+        crate::logger::log_msg(
+            "INFO",
+            "Shortcut",
+            "主面板未聚焦或已隐藏/最小化，恢复并聚焦",
+        );
         show_main_window_safely(app);
     }
 }

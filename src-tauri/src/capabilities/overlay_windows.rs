@@ -126,19 +126,18 @@ impl OverlayVisibility {
         Self {
             terror_zone: config
                 .map(|config| {
-                    config
-                        .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                        && config.enable_tz_overlay
+                    config.optional_module_runtime_allowed(
+                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                    ) && config.enable_tz_overlay
                 })
                 .unwrap_or(false),
             stats: config
                 .map(|config| {
-                    config
-                        .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_OVERLAYS)
-                        && config.optional_module_runtime_allowed(
-                            crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
-                        )
-                        && config.enable_stats_overlay
+                    config.optional_module_runtime_allowed(
+                        crate::domain::config::OPTIONAL_MODULE_OVERLAYS,
+                    ) && config.optional_module_runtime_allowed(
+                        crate::domain::config::OPTIONAL_MODULE_AUTOMATION,
+                    ) && config.enable_stats_overlay
                 })
                 .unwrap_or(false),
         }
@@ -146,7 +145,8 @@ impl OverlayVisibility {
 }
 
 pub(crate) fn restore_after_main_hidden(app: &tauri::AppHandle) {
-    let config = app.try_state::<SharedState>()
+    let config = app
+        .try_state::<SharedState>()
         .filter(|state| state.optional_runtime_ready())
         .and_then(|state| state.configuration().snapshot());
     let visibility = OverlayVisibility::from_config(config.as_ref());

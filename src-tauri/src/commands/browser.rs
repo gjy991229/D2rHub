@@ -270,10 +270,8 @@ fn set_profile_name(
     }
 
     let serialized = serde_json::to_string_pretty(&prefs)?;
-    let temp_path = pref_path.with_file_name(format!(
-        "Preferences.d2rhub.{}.tmp",
-        std::process::id()
-    ));
+    let temp_path =
+        pref_path.with_file_name(format!("Preferences.d2rhub.{}.tmp", std::process::id()));
     std::fs::write(&temp_path, serialized)?;
     if let Err(error) = std::fs::rename(&temp_path, &pref_path) {
         let _ = std::fs::remove_file(&temp_path);

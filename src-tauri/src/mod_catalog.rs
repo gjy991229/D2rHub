@@ -6,7 +6,8 @@
 
 use crate::audio_mod::{
     active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
-    read_room_toolbar_visible, set_auto_exit_on_death_enabled, set_room_toolbar_visible, InstalledMod,
+    read_room_toolbar_visible, set_auto_exit_on_death_enabled, set_room_toolbar_visible,
+    InstalledMod,
 };
 use crate::commands::account::{
     update_account_mods_inner, update_account_mods_with_lease_held, AccountManager, AccountMeta,
@@ -31,11 +32,15 @@ static RESTART_RESERVED: std::sync::atomic::AtomicBool = std::sync::atomic::Atom
 struct CatalogRestartReservation;
 
 impl Drop for CatalogRestartReservation {
-    fn drop(&mut self) { RESTART_RESERVED.store(false, std::sync::atomic::Ordering::Release); }
+    fn drop(&mut self) {
+        RESTART_RESERVED.store(false, std::sync::atomic::Ordering::Release);
+    }
 }
 
 fn lock_catalog() -> Result<std::sync::MutexGuard<'static, ()>, String> {
-    let guard = CATALOG_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let guard = CATALOG_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if RESTART_RESERVED.load(std::sync::atomic::Ordering::Acquire) {
         return Err("模式切换准备中，请稍候".to_string());
     }
@@ -43,7 +48,8 @@ fn lock_catalog() -> Result<std::sync::MutexGuard<'static, ()>, String> {
 }
 
 pub(crate) fn freeze_for_restart() -> Result<impl Sized, String> {
-    let _guard = CATALOG_LOCK.try_lock()
+    let _guard = CATALOG_LOCK
+        .try_lock()
         .map_err(|_| "Mod 扫描或写入进行中，请完成后再切换模式".to_string())?;
     if RESTART_RESERVED.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return Err("模式切换已经开始".to_string());
@@ -460,7 +466,11 @@ fn recover_argument_update(
         return Ok((generation, payload));
     };
 
-    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire().map_err(|error| error.to_string())?;
+    let _account_catalog_lease = state
+        .multi_instance()
+        .catalog_leases()
+        .acquire()
+        .map_err(|error| error.to_string())?;
     let _account_leases = state
         .multi_instance()
         .account_leases()
@@ -488,15 +498,25 @@ fn recover_argument_update(
 
 /// Required core recovery, deliberately independent of installation scanning
 /// and legacy catalog initialization. A missing sidecar stays missing.
-pub(crate) fn recover_before_launch(state: &SharedState, app: &tauri::AppHandle) -> Result<(), String> {
-    if state.core_recovery_complete.load(std::sync::atomic::Ordering::Acquire) {
+pub(crate) fn recover_before_launch(
+    state: &SharedState,
+    app: &tauri::AppHandle,
+) -> Result<(), String> {
+    if state
+        .core_recovery_complete
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
         return Ok(());
     }
     let _catalog = lock_catalog()?;
-    if state.core_recovery_complete.load(std::sync::atomic::Ordering::Acquire) {
+    if state
+        .core_recovery_complete
+        .load(std::sync::atomic::Ordering::Acquire)
+    {
         return Ok(());
     }
-    if let Some(envelope) = catalog_store(state)?.load::<ModCatalogPayload>()
+    if let Some(envelope) = catalog_store(state)?
+        .load::<ModCatalogPayload>()
         .map_err(|error| error.to_string())?
     {
         if envelope.payload.pending_argument_update.is_some() {
@@ -504,7 +524,9 @@ pub(crate) fn recover_before_launch(state: &SharedState, app: &tauri::AppHandle)
             recover_argument_update(state, app, &config, envelope.generation, envelope.payload)?;
         }
     }
-    state.core_recovery_complete.store(true, std::sync::atomic::Ordering::Release);
+    state
+        .core_recovery_complete
+        .store(true, std::sync::atomic::Ordering::Release);
     Ok(())
 }
 
@@ -1154,7 +1176,11 @@ pub fn update_mod_capsule(
             .ok_or_else(|| "自定义 Mod 参数已不存在".to_string())?;
         entry.launch_arguments = launch_arguments.clone();
     }
-    let _account_catalog_lease = state.multi_instance().catalog_leases().acquire().map_err(|error| error.to_string())?;
+    let _account_catalog_lease = state
+        .multi_instance()
+        .catalog_leases()
+        .acquire()
+        .map_err(|error| error.to_string())?;
     let account_changes = plan_catalog_argument_replacements(
         &config,
         current.launch_arguments.trim(),
@@ -1185,7 +1211,9 @@ pub fn update_mod_capsule(
     };
     let mut prepared_payload = payload.clone();
     prepared_payload.pending_argument_update = Some(pending);
-    state.core_recovery_complete.store(false, std::sync::atomic::Ordering::Release);
+    state
+        .core_recovery_complete
+        .store(false, std::sync::atomic::Ordering::Release);
     let (prepared_generation, _) = save_payload(state.inner(), generation, prepared_payload)?;
 
     if let Err(error) = apply_account_mod_replacements(&config, &account_changes) {

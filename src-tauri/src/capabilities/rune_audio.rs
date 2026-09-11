@@ -6,9 +6,7 @@ pub(crate) struct RuneAudioCapability {
 
 impl RuneAudioCapability {
     pub(crate) fn install(app: &tauri::AppHandle) -> std::sync::Arc<Self> {
-        std::sync::Arc::new(Self {
-            app: app.clone(),
-        })
+        std::sync::Arc::new(Self { app: app.clone() })
     }
 }
 
