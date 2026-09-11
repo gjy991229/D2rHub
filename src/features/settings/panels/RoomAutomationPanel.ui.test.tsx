@@ -12,6 +12,15 @@ import type {
 import { RoomAutomationPanel } from "./RoomAutomationPanel";
 import type { ModCapsulePool } from "../../../store/types";
 
+const { invokeCommand } = vi.hoisted(() => ({
+  invokeCommand: vi.fn(async () => undefined),
+}));
+
+vi.mock("../../../platform/tauri", async () => {
+  const actual = await vi.importActual<typeof import("../../../platform/tauri")>("../../../platform/tauri");
+  return { ...actual, invokeCommand };
+});
+
 const config: RoomAutomationConfig = {
   enabled: true,
   chat_f13_auto_patch_enabled: false,
