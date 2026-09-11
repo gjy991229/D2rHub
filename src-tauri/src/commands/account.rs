@@ -900,6 +900,7 @@ pub fn get_account(
 
 /// 创建新账号目录并返回 ID
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn create_account(
     state: tauri::State<'_, SharedState>,
     nickname: String,

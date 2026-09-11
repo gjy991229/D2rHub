@@ -237,13 +237,11 @@ impl Drop for DesktopInput {
                 && self
                     .clipboard_sequence
                     .is_some_and(|sequence| sequence == GetClipboardSequenceNumber())
-            {
-                if OleSetClipboard(self.clipboard.as_ref())
+                && OleSetClipboard(self.clipboard.as_ref())
                     .and_then(|()| OleFlushClipboard())
                     .is_err()
-                {
-                    crate::logger::log_msg("WARN", "PhysicalInput", "恢复剪贴板失败");
-                }
+            {
+                crate::logger::log_msg("WARN", "PhysicalInput", "恢复剪贴板失败");
             }
             self.clipboard.take();
             SetThreadDpiAwarenessContext(self.dpi);
