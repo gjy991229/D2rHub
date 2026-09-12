@@ -176,6 +176,8 @@ mod tests {
     #[test]
     fn overlay_switches_are_evaluated_independently() {
         let mut config = GlobalConfig {
+            feature_profile_prompt_revision:
+                crate::domain::config::CURRENT_FEATURE_PROFILE_PROMPT_REVISION,
             enable_tz_overlay: false,
             enable_stats_overlay: true,
             installed_optional_modules: vec![

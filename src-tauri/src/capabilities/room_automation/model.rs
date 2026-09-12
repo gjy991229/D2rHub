@@ -788,7 +788,7 @@ mod tests {
 
         config.normalize_legacy().unwrap();
 
-        assert_eq!(config.strategy_version, 17);
+        assert_eq!(config.strategy_version, CURRENT_STRATEGY_VERSION);
         assert!(config.auto_followers_enabled);
         assert_eq!(config.auto_followers_delay_secs, 2);
         assert_eq!(config.flow.step_delay_ms, 200);
@@ -825,15 +825,15 @@ mod tests {
     #[test]
     fn future_strategy_fails_closed() {
         let mut config = RoomAutomationConfig {
-            strategy_version: 18,
+            strategy_version: CURRENT_STRATEGY_VERSION + 1,
             ..RoomAutomationConfig::default()
         };
 
         assert_eq!(
             config.normalize_legacy(),
             Err(RoomAutomationConfigError::UnsupportedStrategyVersion {
-                found: 18,
-                supported: 17,
+                found: CURRENT_STRATEGY_VERSION + 1,
+                supported: CURRENT_STRATEGY_VERSION,
             })
         );
     }

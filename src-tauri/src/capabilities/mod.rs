@@ -408,6 +408,8 @@ mod tests {
     #[test]
     fn global_configuration_projects_every_supervised_optional_capability() {
         let config = GlobalConfig {
+            feature_profile_prompt_revision:
+                crate::domain::config::CURRENT_FEATURE_PROFILE_PROMPT_REVISION,
             enable_bongo_cat: true,
             rune_audio_enabled: false,
             enable_tz_overlay: true,

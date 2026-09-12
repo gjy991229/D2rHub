@@ -149,6 +149,8 @@ mod tests {
     #[test]
     fn startup_selection_follows_each_feature_switch_independently() {
         let config = GlobalConfig {
+            feature_profile_prompt_revision:
+                crate::domain::config::CURRENT_FEATURE_PROFILE_PROMPT_REVISION,
             enable_tz_overlay: true,
             enable_stats_overlay: false,
             enable_bongo_cat: true,

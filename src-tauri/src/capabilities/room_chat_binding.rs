@@ -1952,20 +1952,30 @@ mod tests {
     }
 
     #[test]
-    fn install_while_d2r_runs_changes_nothing() {
+    fn install_while_d2r_runs_patches_and_backs_up_for_next_launch() {
         let directory = TestDirectory::new("running");
         let original = sample_key_file();
         let path = directory.key("hero.key", &original);
         let service =
             ChatF13BindingService::new(vec![directory.path().to_path_buf()], || true).unwrap();
-        assert!(service.install().unwrap_err().contains("关闭全部 D2R"));
-        assert_eq!(std::fs::read(&path).unwrap(), original);
-        assert!(!backup_path(&path).unwrap().exists());
-        assert!(!service.status().unwrap().consent_granted);
+        let status = service.install().unwrap();
+        assert!(status.ready);
+        assert!(status.d2r_running);
+        assert!(status.consent_granted);
+        assert_eq!(
+            inspect_key_bytes(&std::fs::read(&path).unwrap()),
+            Ok(BindingState::Installed)
+        );
+        assert_eq!(
+            std::fs::read(backup_path(&path).unwrap()).unwrap(),
+            original
+        );
+        assert!(service.restore().unwrap_err().contains("关闭全部 D2R"));
+        assert!(service.status().unwrap().consent_granted);
     }
 
     #[test]
-    fn a_panicking_process_probe_fails_closed() {
+    fn a_panicking_process_probe_reports_running_and_blocks_restore() {
         let directory = TestDirectory::new("probe_panic");
         let original = sample_key_file();
         let path = directory.key("hero.key", &original);
@@ -1974,8 +1984,17 @@ mod tests {
                 panic!("probe failed")
             })
             .unwrap();
-        assert!(service.install().unwrap_err().contains("关闭全部 D2R"));
-        assert_eq!(std::fs::read(path).unwrap(), original);
+        let status = service.install().unwrap();
+        assert!(status.ready);
+        assert!(status.d2r_running);
+        let patched = std::fs::read(&path).unwrap();
+        assert_eq!(inspect_key_bytes(&patched), Ok(BindingState::Installed));
+        assert!(service.restore().unwrap_err().contains("关闭全部 D2R"));
+        assert_eq!(std::fs::read(&path).unwrap(), patched);
+        assert_eq!(
+            std::fs::read(backup_path(&path).unwrap()).unwrap(),
+            original
+        );
     }
 
     #[test]

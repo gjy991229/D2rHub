@@ -4513,17 +4513,22 @@ mod tests {
                 "children": [
                     {"type": "ButtonWidget", "name": "D2RHubKeyboardGatewayHub", "fields": {
                         "acceptsReturnKey": false,
+                        "acceptsEscKeyEverywhere": false,
                         "navigation": {
                             "left": {"name": "D2RHubKeyboardCreateGateway"},
                             "right": {"name": "D2RHubKeyboardJoinGateway"}
                         }
                     }},
-                    {"type": "ButtonWidget", "name": "ReturnToGame", "fields": {"navigation": {
+                    {"type": "ButtonWidget", "name": "ReturnToGame", "fields": {
+                        "acceptsEscKeyEverywhere": true,
+                        "onClickMessage": "PausePanelMessage:Close",
+                        "navigation": {
                         "left": {"name": "D2RHubKeyboardCreateGateway"},
                         "right": {"name": "D2RHubKeyboardJoinGateway"}
                     }}},
                     {"type": "ButtonWidget", "name": "D2RHubKeyboardCreateGateway", "fields": {
                         "acceptsReturnKey": true,
+                        "acceptsEscKeyEverywhere": false,
                         "navigation": {
                             "left": {"name": "D2RHubKeyboardCreateGateway"},
                             "right": {"name": "D2RHubKeyboardGatewayHub"}
@@ -4532,6 +4537,7 @@ mod tests {
                     }},
                     {"type": "ButtonWidget", "name": "D2RHubKeyboardJoinGateway", "fields": {
                         "acceptsReturnKey": true,
+                        "acceptsEscKeyEverywhere": false,
                         "navigation": {
                             "left": {"name": "D2RHubKeyboardGatewayHub"},
                             "right": {"name": "D2RHubKeyboardJoinGateway"}
@@ -4585,7 +4591,8 @@ mod tests {
                 serde_json::json!({"children": [
                     {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
                     {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
-                    {"fields": {"time": 0.05, "message": "CharacterSelect:LoadCharacter:2"}}
+                    {"fields": {"time": 0.05, "message": "CharacterSelect:LoadCharacter:2"}},
+                    {"fields": {"time": 0.05, "message": "PanelManager:ClosePanel:D2RHubQuickRecreate"}}
                 ]}),
             ),
             (
@@ -4593,7 +4600,8 @@ mod tests {
                 serde_json::json!({"children": [
                     {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
                     {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
-                    {"fields": {"time": 0.05, "message": "CreateGame:CreateGame"}}
+                    {"fields": {"time": 0.05, "message": "CreateGame:CreateGame"}},
+                    {"fields": {"time": 0.05, "message": "PanelManager:ClosePanel:D2RHubCommitCreateGame"}}
                 ]}),
             ),
             (
@@ -4601,22 +4609,23 @@ mod tests {
                 serde_json::json!({"children": [
                     {"fields": {"time": 0.01, "message": "PanelManager:OpenPanel:PauseLayoutGarden"}},
                     {"fields": {"time": 0.05, "message": "PausePanelMessage:ExitGame"}},
-                    {"fields": {"time": 0.05, "message": "JoinGame:JoinGame"}}
+                    {"fields": {"time": 0.05, "message": "JoinGame:JoinGame"}},
+                    {"fields": {"time": 0.05, "message": "PanelManager:ClosePanel:D2RHubCommitJoinGame"}}
                 ]}),
             ),
             (
                 "D2RHubOpenCreateGamehd.json",
                 serde_json::json!({"children": [
-                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:D2RHubInGameCreateGame"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubInGameJoinGame"}},
                     {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenCreateGame"}}
                 ]}),
             ),
             (
                 "D2RHubOpenJoinGamehd.json",
                 serde_json::json!({"children": [
-                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:D2RHubInGameJoinGame"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubInGameCreateGame"}},
                     {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubOpenJoinGame"}}
                 ]}),
             ),
@@ -4624,8 +4633,8 @@ mod tests {
                 "D2RHubKeyboardOpenCreatehd.json",
                 serde_json::json!({"children": [
                     {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:CreateGamePanel"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:JoinGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:D2RHubInGameCreateGame"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubInGameJoinGame"}},
                     {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenCreate"}}
                 ]}),
             ),
@@ -4633,14 +4642,15 @@ mod tests {
                 "D2RHubKeyboardOpenJoinhd.json",
                 serde_json::json!({"children": [
                     {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:JoinGamePanel"}},
-                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:CreateGamePanel"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:TogglePanel:D2RHubInGameJoinGame"}},
+                    {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubInGameCreateGame"}},
                     {"fields": {"time": 0.1, "message": "PanelManager:ClosePanel:D2RHubKeyboardOpenJoin"}}
                 ]}),
             ),
             (
-                "creategamepanelhd.json",
+                "D2RHubInGameCreateGamehd.json",
                 serde_json::json!({
+                    "type": "CreateGamePanel", "name": "D2RHubInGameCreateGame",
                     "fields": {"defaultWidget": "GameNameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
                     "children": [
                         {"name": "GameNameInput", "fields": {
@@ -4649,13 +4659,14 @@ mod tests {
                         }},
                         {"name": "PasswordInput", "fields": {"imeEnabled": true}},
                         {"name": "DescriptionInput", "fields": {"imeEnabled": true}},
-                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:CreateGamePanel"}}
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:D2RHubInGameCreateGame"}}
                     ]
                 }),
             ),
             (
-                "joingamepanelhd.json",
+                "D2RHubInGameJoinGamehd.json",
                 serde_json::json!({
+                    "type": "JoinGamePanel", "name": "D2RHubInGameJoinGame",
                     "fields": {"defaultWidget": "NameInput", "isDismissable": true, "acceptsEscKeyEverywhere": true},
                     "children": [
                         {"name": "NameInput", "fields": {
@@ -4663,13 +4674,64 @@ mod tests {
                             "onReturnInputMessage": "PanelManager:OpenPanel:D2RHubCommitJoinGame"
                         }},
                         {"name": "PasswordInput", "fields": {"imeEnabled": true}},
-                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:JoinGamePanel"}}
+                        {"name": "D2RHubCloseRoomForm", "fields": {"onClickMessage": "PanelManager:ClosePanel:D2RHubInGameJoinGame"}}
                     ]
                 }),
             ),
         ] {
             std::fs::write(layouts.join(name), serde_json::to_vec(&document).unwrap()).unwrap();
         }
+        // r26 keeps native lobby submissions separate from the in-game exit chain.
+        for (source, target, native_panel, routed_submit, native_submit) in [
+            (
+                "D2RHubInGameCreateGamehd.json",
+                "creategamepanelhd.json",
+                "CreateGamePanel",
+                "PanelManager:OpenPanel:D2RHubCommitCreateGame",
+                "CreateGame:CreateGame",
+            ),
+            (
+                "D2RHubInGameJoinGamehd.json",
+                "joingamepanelhd.json",
+                "JoinGamePanel",
+                "PanelManager:OpenPanel:D2RHubCommitJoinGame",
+                "JoinGame:JoinGame",
+            ),
+        ] {
+            let mut lobby: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(layouts.join(source)).unwrap()).unwrap();
+            lobby["name"] = serde_json::json!(native_panel);
+            lobby["children"][0]["fields"]["onReturnInputMessage"] =
+                serde_json::json!(native_submit);
+            let close = lobby["children"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap();
+            close["fields"]["onClickMessage"] =
+                serde_json::json!(format!("PanelManager:ClosePanel:{native_panel}"));
+            let serialized = serde_json::to_vec(&lobby).unwrap();
+            assert!(!String::from_utf8_lossy(&serialized).contains(routed_submit));
+            std::fs::write(layouts.join(target), serialized).unwrap();
+        }
+        std::fs::write(
+            layouts.join("lobbybackgroundpanelhd.json"),
+            serde_json::to_vec(&serde_json::json!({"children": [{
+                "type": "TextBoxWidget",
+                "name": "D2RHubLobbyReturnHint",
+                "fields": {
+                    "rect": {"x": -50, "y": 0},
+                    "text": "按 Esc 键返回",
+                    "style": {
+                        "alignment": {"h": "center", "v": "center"},
+                        "fontColor": "$FontColorDarkGold",
+                        "pointSize": 120
+                    }
+                }
+            }]}))
+            .unwrap(),
+        )
+        .unwrap();
     }
 
     fn write_test_auto_exit_on_death_layouts(
