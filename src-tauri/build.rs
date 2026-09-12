@@ -159,6 +159,30 @@ fn main() {
 
     windows = windows.app_manifest(manifest);
 
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        // tauri-winres links its manifest only into binary targets. The library
+        // harness also imports Common Controls v6 (e.g. TaskDialogIndirect), so
+        // embed that dependency in every linked artifact to avoid 0xc0000139.
+        // See https://github.com/tauri-apps/tauri/issues/13419.
+        windows = tauri_build::WindowsAttributes::new_without_app_manifest();
+        let common_controls_manifest = std::path::PathBuf::from(
+            std::env::var_os("CARGO_MANIFEST_DIR").expect("missing CARGO_MANIFEST_DIR"),
+        )
+        .join("windows-common-controls.manifest");
+        println!("cargo:rerun-if-changed=windows-common-controls.manifest");
+        println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+        println!(
+            "cargo:rustc-link-arg=/MANIFESTINPUT:{}",
+            common_controls_manifest.display()
+        );
+        // Only the application requires elevation; library harnesses do not.
+        println!(
+            "cargo:rustc-link-arg-bin=d2rhub=/MANIFESTUAC:level='requireAdministrator' uiAccess='false'"
+        );
+    }
+
     let app_manifest = tauri_build::AppManifest::new().commands(APP_COMMANDS);
     tauri_build::try_build(
         tauri_build::Attributes::new()

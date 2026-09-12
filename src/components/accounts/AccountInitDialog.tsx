@@ -113,6 +113,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   const {
     createAccount,
     deleteAccount,
+    loadAccounts,
     initializeBnetAccount,
     reinitializeAccount: reinitializeExistingAccount,
   } = useAccounts();
@@ -262,6 +263,8 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
     if (cancellingRef.current) return;
     cancellingRef.current = true;
     cancelledRef.current = true;
+    // 先作废会话，再等待清理：期间返回的创建结果必须自行回收。
+    wizardSessionRef.current += 1;
     setError("已取消初始化流程");
 
     try {
@@ -307,8 +310,6 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       setShowGuide(false);
       setTokenAccountCreating(false);
       setTokenSubmitting(false);
-      // 作废当前会话：在途的创建结果会自行回收账号，不再推进向导。
-      wizardSessionRef.current += 1;
     }
   };
 
@@ -536,6 +537,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
           language,
           voicelanguage,
         });
+        await loadAccounts();
       } else {
         id = await createAccount(
           nickname.trim(),
@@ -555,6 +557,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
         setAccountId(id);
 
       }
+      if (session !== wizardSessionRef.current) return;
       onDone(id);
       onClose();
       if (updateAccount) {
@@ -563,6 +566,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
         showToast("success", "Token 账号 " + nickname.trim() + " 初始化完成！");
       }
     } catch (e) {
+      if (session !== wizardSessionRef.current) return;
       const action = updatingExistingAccount ? "更新账号配置" : "创建账号";
       setError(`${action}失败: ${String(e)}`);
     } finally {
