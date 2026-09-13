@@ -153,8 +153,10 @@ fn battle_net_readiness_source(
     }
 }
 
-fn stop_optional_web_token_monitor(monitor: &mut Option<WebTokenReadMonitor>, account_id: &str) {
+fn stop_optional_web_token_monitor(monitor: &mut Option<WebTokenReadMonitor>, account_id: &str, reason: &str) {
     if let Some(monitor) = monitor.take() {
+        crate::logger::log_msg("INFO", "TokenETW", &format!(
+            "[Account {account_id}] 停止原因={reason}；{}", monitor.diagnostics()));
         if let Err(error) = monitor.stop() {
             crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
         }
@@ -1860,12 +1862,12 @@ async fn launch_single(
     };
     let expected_game_path = context.installation.game_executable.clone();
 
-    // Battle.net 模式并行使用 ETW 与 TCP 1119/443 联网连接。ETW 是增强信号而非硬依赖：
+    // Battle.net 模式并行使用 ETW 与 TCP 1119 联网连接。ETW 是增强信号而非硬依赖：
     // 权限不足或监听启动失败时继续使用 TCP，不阻断游戏启动。
     emit(
         "connect",
         "running",
-        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119/443 并行）...",
+        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119 并行）...",
     );
     let mut token_read_monitor = match WebTokenReadMonitor::start() {
         Ok(monitor) => Some(monitor),
@@ -1873,7 +1875,7 @@ async fn launch_single(
             emit(
                 "connect",
                 "warning",
-                &format!("{error}；将继续使用 TCP 1119/443 联网检测"),
+                &format!("{error}；将继续使用 TCP 1119 联网检测"),
             );
             None
         }
@@ -2291,11 +2293,11 @@ async fn launch_single(
         })
     };
 
-    // ── Step 8: ETW 与 TCP 1119/443 联网检测并行竞争，任一命中即停止另一检测 ──
+    // ── Step 8: ETW 与 TCP 1119 联网检测并行竞争，任一命中即停止另一检测 ──
     emit(
         "connect",
         "running",
-        "正在跳过动画，并行等待 ETW 或 TCP 1119/443 联网连接就绪...",
+        "正在跳过动画，并行等待 ETW 或 TCP 1119 联网连接就绪...",
     );
     emit("mutex", "running", "后台监控互斥句柄中...");
 
@@ -2316,7 +2318,7 @@ async fn launch_single(
         if is_cancelled(state, cancellation_ticket) {
             emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
             return cancel_with_cleanup(
                 config,
                 &context,
@@ -2352,7 +2354,7 @@ async fn launch_single(
                 BattleNetReadinessSource::Tcp => emit(
                     "connect",
                     "ok",
-                    "TCP 1119/443 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
+                    "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
                 ),
             }
             break;
@@ -2378,11 +2380,15 @@ async fn launch_single(
         .as_ref()
         .map(WebTokenReadMonitor::diagnostics)
         .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+    stop_optional_web_token_monitor(&mut token_read_monitor, account_id, match readiness_source {
+        Some(BattleNetReadinessSource::Etw) => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
+        Some(BattleNetReadinessSource::Tcp) => "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）",
+        None => "登录信号等待超时，保留 ETW 诊断",
+    });
 
     if readiness_source.is_none() {
         let error = format!(
-            "等待游戏登录就绪超时：ETW 未命中（{etw_diagnostics}）；TCP 1119/443 未连续两次检测到目标 D2R 联网连接"
+            "等待游戏登录就绪超时：ETW 未命中（{etw_diagnostics}）；TCP 1119 未连续两次检测到目标 D2R 联网连接"
         );
         emit("connect", "error", &error);
         mutex_task.abort();
@@ -2650,7 +2656,7 @@ async fn launch_single_token(
     emit(
         "connect",
         "running",
-        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119/443 并行）...",
+        "正在启动 WEB_TOKEN ETW 监听（与 TCP 1119 并行）...",
     );
     let mut token_read_monitor = match WebTokenReadMonitor::start() {
         Ok(monitor) => Some(monitor),
@@ -2658,7 +2664,7 @@ async fn launch_single_token(
             emit(
                 "connect",
                 "warning",
-                &format!("{error}；将继续使用 TCP 1119/443 联网检测"),
+                &format!("{error}；将继续使用 TCP 1119 联网检测"),
             );
             None
         }
@@ -2684,7 +2690,7 @@ async fn launch_single_token(
                 cmd.args(args);
             }
             Err(error) => {
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
                 return account_path_error(account_id, AppError::ConfigReadError(error));
             }
         }
@@ -2694,7 +2700,7 @@ async fn launch_single_token(
     match spawn_res {
         Ok(Ok(_)) => {}
         _ => {
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
@@ -2713,7 +2719,7 @@ async fn launch_single_token(
 
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state, cancellation_ticket) {
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
             return cancelled();
         }
 
@@ -2742,7 +2748,7 @@ async fn launch_single_token(
         let (d2r_pids, sys_ret) = match process_refresh {
             Ok(result) => result,
             Err(error) => {
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
                 return LaunchResult {
                     account_id: account_id.to_string(),
                     success: false,
@@ -2829,7 +2835,7 @@ async fn launch_single_token(
         }
         None => {
             emit("game", "error", "等待游戏进程启动超时");
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
@@ -2888,11 +2894,11 @@ async fn launch_single_token(
         })
     };
 
-    // ── ETW 与 TCP 1119/443 任一命中后停止检测和跳过按键，继续等待互斥句柄清除 ──
+    // ── ETW 与 TCP 1119 任一命中后停止检测和跳过按键，继续等待互斥句柄清除 ──
     emit(
         "connect",
         "running",
-        "正在跳过动画，并行等待 ETW 或 TCP 1119/443 联网连接就绪...",
+        "正在跳过动画，并行等待 ETW 或 TCP 1119 联网连接就绪...",
     );
     emit("mutex", "running", "后台监控互斥句柄中...");
 
@@ -2911,7 +2917,7 @@ async fn launch_single_token(
     loop {
         if is_cancelled(state, cancellation_ticket) {
             mutex_task.abort();
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
             return cancelled();
         }
 
@@ -2939,7 +2945,10 @@ async fn launch_single_token(
                 etw_diagnostics = token_read_monitor
                     .as_ref()
                     .map(WebTokenReadMonitor::diagnostics);
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, match source {
+                    BattleNetReadinessSource::Etw => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
+                    BattleNetReadinessSource::Tcp => "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）",
+                });
                 match source {
                     BattleNetReadinessSource::Etw => emit(
                         "connect",
@@ -2949,7 +2958,7 @@ async fn launch_single_token(
                     BattleNetReadinessSource::Tcp => emit(
                         "connect",
                         "ok",
-                        "TCP 1119/443 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
+                        "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
                     ),
                 }
             } else if !auto_keys_stopped && now >= next_key_send {
@@ -2978,11 +2987,11 @@ async fn launch_single_token(
                 .map(WebTokenReadMonitor::diagnostics)
         })
         .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(&mut token_read_monitor, account_id);
+    stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "登录信号等待超时，保留 ETW 诊断");
 
     if !launch_ready {
         let error = format!(
-            "等待游戏登录就绪与互斥句柄清除超时：ETW {}（{}）；TCP 1119/443 {}；互斥句柄 {}",
+            "等待游戏登录就绪与互斥句柄清除超时：ETW {}（{}）；TCP 1119 {}；互斥句柄 {}",
             if readiness_source == Some(BattleNetReadinessSource::Etw) {
                 "已命中"
             } else {

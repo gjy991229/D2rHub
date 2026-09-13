@@ -533,8 +533,8 @@ const AF_INET: u32 = 2;
 const AF_INET6: u32 = 23;
 const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
 const MIB_TCP_STATE_ESTAB: u32 = 5;
-// 443 作为兼容性兜底；端口命中仅表示联网信号，不保证服务端认证已完成。
-const BATTLE_NET_READINESS_PORTS: &[u16] = &[1119, 443];
+// 仅使用 1119 作为 TCP 兜底；443 建连过早，不能用于推进下一账号启动。
+const BATTLE_NET_READINESS_PORTS: &[u16] = &[1119];
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
 fn tcp_connection_indicates_online_readiness(
@@ -652,8 +652,8 @@ fn tcp6_indicates_online_readiness(pid: u32) -> bool {
     })
 }
 
-/// 检查目标进程是否已建立 TCP 1119 或 443 连接，作为启动流程的联网就绪信号。
-/// 同时覆盖 IPv4 和 IPv6；443 为兼容性兜底，不能单凭连接证明登录完成。
+/// 检查目标进程是否已建立 TCP 1119 连接，作为启动流程的联网就绪信号。
+/// 同时覆盖 IPv4 和 IPv6；ETW WEB_TOKEN 读取确认保持为独立的就绪信号。
 pub fn check_game_connected(pid: u32) -> bool {
     tcp4_indicates_online_readiness(pid) || tcp6_indicates_online_readiness(pid)
 }
