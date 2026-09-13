@@ -291,7 +291,7 @@
 <div class="shell">
   <aside class="sidebar guide-sidebar">
     <div id="guideNav">
-      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.97</span></div></div>
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.98</span></div></div>
       <div class="nav-title">你想做什么</div>
       <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
       <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
@@ -304,7 +304,7 @@
     <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.97</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.98</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -370,10 +370,10 @@
 
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
-      <h1>D2RHub v0.9.97<br>使用手册</h1>
-      <p class="lede">面向 v0.9.97 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
+      <h1>D2RHub v0.9.98<br>使用手册</h1>
+      <p class="lede">面向 v0.9.98 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.97</span>
+        <span class="badge accent">适用版本 v0.9.98</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -381,7 +381,14 @@
     </header>
 
     <section>
-      <h2>v0.9.97 更新速览</h2>
+      <h2>v0.9.98 更新速览</h2>
+      <ul>
+        <li>新增午夜蓝、森林绿、暖砂主题，以及带标注截图的分步上手路线。</li>
+        <li>后台跟房同步预填主号与小号，跟随阶段只提交回车；修复 Tab 长按、长等待导致重复粘贴、表单密码缓存及小号离线阻止主号建房的问题。</li>
+        <li>用户操作前台游戏后停止自动跳过按键；登录就绪继续使用 ETW 与 TCP 1119，补充 ETW 超时诊断。</li>
+        <li>Token 更新后刷新账号状态，取消初始化后回收迟到的创建结果。</li>
+      </ul>
+      <h3>延续 v0.9.97 的功能</h3>
       <ul>
         <li>首次窗口尺寸按屏幕宽度的 <strong>59.4%</strong>、高度的 <strong>65.3%</strong> 计算，适配 Windows 缩放；已有窗口记录继续恢复。</li>
         <li>账号列表刷新保留当前账号未保存的草稿，小键盘数字可独立录制；程序隐藏到托盘后，再次启动即可唤回原窗口。</li>
@@ -755,7 +762,7 @@
 
     </div>
     <footer class="footer">
-      D2RHub v0.9.97 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.98 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>
@@ -830,7 +837,7 @@
   };
   const methodCopy = {
     foreground: { actions: ['在软件中选择“前台键鼠”。无需设置 Pause / F13 聊天键。', '游戏使用 16:9 高清键鼠界面，并保持游戏内右上角工具栏显示。', '操作会依次切换游戏窗口、短暂接管键鼠；开始前要处于局内。'], done: '软件已选择前台键鼠方案，参与账号将使用 16:9 高清键鼠界面与可见工具栏。', help: '工具栏可在 Mod 条目中设置显示，修改后重启游戏。窗口被遮挡、最小化或失去前台时会停止；首次创建选择地狱难度。' },
-    background: { actions: ['在软件中选择“后台按键”。', '关闭游戏，阅读聊天键绑定说明，选择默认 Pause 或 F13 作为聊天第二键位。', '点击“扫描并更新绑定”，确认键位已就绪；下一步启动游戏后生效，第一聊天键位不用改。'], done: '后台按键方案已保存，聊天第二键位扫描完成且没有待处理冲突。', help: '新建角色后要重新扫描。切换聊天键或恢复原绑定前关闭所有游戏；已有的游戏进程需要重启才能加载新键位。' },
+    background: { actions: ['在软件中选择“后台同步粘贴”；创建时主号保持前台，系统预填所有可用账号，小号随后只提交回车。', '关闭游戏，阅读聊天键绑定说明，选择默认 Pause 或 F13 作为聊天第二键位。', '点击“扫描并更新绑定”，确认键位已就绪；下一步启动游戏后生效，第一聊天键位不用改。'], done: '后台同步粘贴方案已保存，聊天第二键位扫描完成且没有待处理冲突。', help: '新建角色后要重新扫描。切换聊天键或恢复原绑定前关闭所有游戏；已有的游戏进程需要重启才能加载新键位。' },
   };
   const states = Object.fromEntries(Object.keys(routes).map(key => [key, { index: 0, done: new Set(), method: 'foreground' }]));
   let currentRoute = null;

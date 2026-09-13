@@ -157,6 +157,16 @@ impl DesktopInput {
         send(down)
     }
 
+    /// Release the latest press while retaining earlier modifiers. Failed
+    /// releases stay registered so scope cleanup can retry them.
+    pub(crate) fn release_last(&mut self) -> Result<(), String> {
+        if let Some(input) = self.releases.last().copied() {
+            send(input)?;
+            self.releases.pop();
+        }
+        Ok(())
+    }
+
     pub(crate) fn release_all(&mut self) -> Result<(), String> {
         let mut failure = None;
         let mut retry = Vec::new();

@@ -3,7 +3,7 @@
   <h1>D2RHub</h1>
   <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.9.97-d5a85a" alt="Version 0.9.97" />
+    <img src="https://img.shields.io/badge/version-0.9.98-d5a85a" alt="Version 0.9.98" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
@@ -18,6 +18,13 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 
 当前只维护一个桌面发行版：多开核心始终可用，桌面悬浮窗、识别与统计、桌宠和自动跟房作为内置可选模块按需添加。MSI 与 NSIS 只是安装格式不同，不是两个功能版本。
 
+### v0.9.98 更新
+
+- 登录期间检测到用户操作前台游戏后停止自动跳过按键；保留 ETW 与 TCP 1119 就绪判断，补充 ETW 超时诊断。
+- 后台自动跟房同步预填主号与小号，跟随阶段只提交回车；修复主号 Tab 长按、长等待导致重复粘贴、主小号切换后的密码缓存，以及小号离线阻止主号建房的问题。
+- 修复 Token 更新后的账号列表刷新，以及取消初始化时在途创建结果的回收。
+- 新增午夜蓝、森林绿、暖砂主题，主窗口与信息悬浮窗独立选择；帮助页新增分步路线和标注截图。
+
 ### v0.9.97 更新
 
 - 主窗口首次打开时，宽度为当前屏幕的 **59.4%**、高度为 **65.3%**，适配 Windows 显示缩放；已有窗口尺寸与位置继续恢复。关闭到托盘后，再次启动程序也能唤回原窗口。
@@ -27,7 +34,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - 账号初始化统一由向导驱动，支持已有账号重新初始化；Token 账号使用隔离的浏览器 Profile，避免登录状态互相污染。
 - 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r26，大厅与局内表单分离，保留工具栏显示选择。
 
-完整操作说明见 [v0.9.97 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
+完整操作说明见 [v0.9.98 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
 
 ### 当前能力
 

@@ -1208,7 +1208,7 @@ impl RoomAutomationManager {
         let (config, primary, followers, primary_lease) =
             if raw_config.input_method == InputMethod::BackgroundKeys {
                 let ((config, primary, followers), leases) =
-                    self.prepare_and_reserve_workflow(raw_config, true)?;
+                    self.prepare_and_reserve_workflow(raw_config, true, false)?;
                 (config, primary, followers, leases)
             } else {
                 let lease = self.acquire_primary_lease(&raw_config)?;
@@ -1287,7 +1287,10 @@ impl RoomAutomationManager {
         raw_config.password = pending_password;
         if raw_config.input_method == InputMethod::BackgroundKeys {
             raw_config.follower_account_ids.retain(|account| {
-                snapshot.follower_account_ids.iter().any(|prepared| prepared.eq_ignore_ascii_case(account))
+                snapshot
+                    .follower_account_ids
+                    .iter()
+                    .any(|prepared| prepared.eq_ignore_ascii_case(account))
             });
         }
         if self.lifecycle.lock().leases.is_some() {
@@ -1296,7 +1299,7 @@ impl RoomAutomationManager {
         // 快捷键执行只解析当前窗口并取得实际参与账号的租约。Mod 兼容性
         // 在加工和配置阶段报告，不能阻断运行中的原生输入序列。
         let ((config, _primary, mut followers), acquired_leases) =
-            self.prepare_and_reserve_workflow(raw_config, true)?;
+            self.prepare_and_reserve_workflow(raw_config, true, true)?;
         let (task_id, room) = match snapshot.phase {
             WorkflowPhase::Waiting => {
                 let task_id = snapshot
@@ -1522,6 +1525,7 @@ impl RoomAutomationManager {
         &self,
         config: RoomAutomationConfig,
         require_primary_foreground: bool,
+        require_followers: bool,
     ) -> Result<PreparedWorkflow, String> {
         let (config, primary) =
             self.prepare_primary_workflow(config, require_primary_foreground)?;
@@ -1542,16 +1546,20 @@ impl RoomAutomationManager {
                 }
             }
         }
-        if followers.is_empty() {
+        if followers.is_empty() && require_followers {
             return Err(format!(
                 "没有可加入房间的运行中跟随账号：{}",
                 skipped.join("；")
             ));
         }
-        config.follower_account_ids = followers
-            .iter()
-            .map(|(account_id, _)| account_id.clone())
-            .collect();
+        // Preserve configured participants when only the primary is online so
+        // the primary task remains valid. Joining still requires prepared forms.
+        if !followers.is_empty() {
+            config.follower_account_ids = followers
+                .iter()
+                .map(|(account_id, _)| account_id.clone())
+                .collect();
+        }
         Ok((config, primary, followers))
     }
 
@@ -1580,12 +1588,27 @@ impl RoomAutomationManager {
         &self,
         config: RoomAutomationConfig,
         require_primary_foreground: bool,
+        require_followers: bool,
     ) -> Result<(PreparedWorkflow, AccountOperationLeases), String> {
         // 第一次解析筛掉当前没有可用窗口的跟随号，避免它们无意义地参与锁竞争；
         // 取得实际参与者租约后再解析一次，关闭窗口/账号状态变化的竞态。
-        let (candidate_config, _, _) = self.prepare_workflow(config, require_primary_foreground)?;
-        let leases = self.acquire_participant_leases(&candidate_config)?;
-        let prepared = self.prepare_workflow(candidate_config, require_primary_foreground)?;
+        let (candidate_config, _, followers) =
+            self.prepare_workflow(config, require_primary_foreground, require_followers)?;
+        let mut leased_config = candidate_config.clone();
+        leased_config.follower_account_ids = followers
+            .iter()
+            .map(|(account_id, _)| account_id.clone())
+            .collect();
+        let leases = self.acquire_participant_leases(&leased_config)?;
+        if followers.is_empty() {
+            let (config, primary) =
+                self.prepare_primary_workflow(candidate_config, require_primary_foreground)?;
+            return Ok(((config, primary, Vec::new()), leases));
+        }
+        // Only resolve participants whose leases were acquired, even if an
+        // offline follower appeared between the two snapshots.
+        let prepared =
+            self.prepare_workflow(leased_config, require_primary_foreground, require_followers)?;
         Ok((prepared, leases))
     }
 
@@ -1613,10 +1636,15 @@ impl RoomAutomationManager {
             return;
         }
         let result = if config.input_method == InputMethod::BackgroundKeys {
-            let pids = followers.iter().map(|(_, instance)| instance.pid).collect::<Vec<_>>();
-            self.host.prepare_background_room(&config, primary.pid, &pids, &room_name, &cancel)
+            let pids = followers
+                .iter()
+                .map(|(_, instance)| instance.pid)
+                .collect::<Vec<_>>();
+            self.host
+                .prepare_background_room(&config, primary.pid, &pids, &room_name, &cancel)
         } else {
-            self.host.run_primary(&config, primary.pid, &room_name, retrying, &cancel)
+            self.host
+                .run_primary(&config, primary.pid, &room_name, retrying, &cancel)
         };
         if let Err(error) = result {
             self.fail_and_release(task_id, &error);
@@ -1661,11 +1689,14 @@ impl RoomAutomationManager {
         raw_config.password = room_password;
         if config.input_method == InputMethod::BackgroundKeys {
             raw_config.follower_account_ids.retain(|account| {
-                config.follower_account_ids.iter().any(|prepared| prepared.eq_ignore_ascii_case(account))
+                config
+                    .follower_account_ids
+                    .iter()
+                    .any(|prepared| prepared.eq_ignore_ascii_case(account))
             });
         }
         let ((fresh_config, _primary, followers), leases) =
-            match self.prepare_and_reserve_workflow(raw_config, false) {
+            match self.prepare_and_reserve_workflow(raw_config, false, true) {
                 Ok(prepared) => prepared,
                 Err(error) => {
                     self.fail_and_release(task_id, &error);

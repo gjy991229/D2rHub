@@ -5,7 +5,9 @@
 //! window messages. Every wait and key boundary consults the caller's cancel
 //! signal so capability shutdown never leaves detached input work behind.
 
-use crate::capabilities::room_automation::{ChatKey, FlowStrategy, ForegroundTiming, InputMethod, RoomAutomationConfig};
+use crate::capabilities::room_automation::{
+    ChatKey, FlowStrategy, ForegroundTiming, InputMethod, RoomAutomationConfig,
+};
 use crate::infrastructure::physical_input::{modifiers_released, DesktopInput};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -42,6 +44,7 @@ const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 struct EnteredPassword {
     process_created_at: u64,
     hwnd: isize,
+    create: bool,
     password: String,
 }
 
@@ -102,7 +105,9 @@ pub(crate) fn prepare_background_room(
         let cached = passwords.lock();
         targets.iter().any(|(pid, hwnd, created)| {
             !cached.get(pid).is_some_and(|entry| {
-                entry.hwnd == *hwnd && entry.process_created_at == *created
+                entry.hwnd == *hwnd
+                    && entry.process_created_at == *created
+                    && entry.create == (*pid == primary_pid)
                     && entry.password == config.password
             })
         })
@@ -115,57 +120,121 @@ pub(crate) fn prepare_background_room(
         }
     }
     let results = std::thread::scope(|scope| {
-        let handles = targets.iter().map(|&(pid, hwnd, created)| {
-            scope.spawn(move || -> Result<(), String> {
-                super::room_automation_foreground::invalidate(pid);
-                let previous = forms.lock().remove(&pid);
-                if previous.is_some_and(|entry| entry.created == created && entry.hwnd == hwnd) {
-                    // A second create during manual waiting replaces the open
-                    // join form, instead of navigating inside that old form.
-                    deliver_key(hwnd, VK_ESCAPE, false, strategy, flow.key_hold_ms, 120, cancel)?;
-                }
-                open_room_form(hwnd, pid == primary_pid, strategy, flow, cancel)?;
-                forms.lock().insert(pid, PreparedForm { created, hwnd, room_name: String::new() });
-                enter_native_chat_mode(hwnd, strategy, config.chat_key, flow, cancel)
+        let handles = targets
+            .iter()
+            .map(|&(pid, hwnd, created)| {
+                scope.spawn(move || -> Result<(), String> {
+                    super::room_automation_foreground::invalidate(pid);
+                    let previous = forms.lock().remove(&pid);
+                    if previous.is_some_and(|entry| entry.created == created && entry.hwnd == hwnd)
+                    {
+                        // A second create during manual waiting replaces the open
+                        // join form, instead of navigating inside that old form.
+                        deliver_key(
+                            hwnd,
+                            VK_ESCAPE,
+                            false,
+                            strategy,
+                            flow.key_hold_ms,
+                            120,
+                            cancel,
+                        )?;
+                    }
+                    open_room_form(hwnd, pid == primary_pid, strategy, flow, cancel)?;
+                    forms.lock().insert(
+                        pid,
+                        PreparedForm {
+                            created,
+                            hwnd,
+                            room_name: String::new(),
+                        },
+                    );
+                    enter_native_chat_mode(hwnd, strategy, config.chat_key, flow, cancel)
+                })
             })
-        }).collect::<Vec<_>>();
-        handles.into_iter().map(|handle| {
-            handle.join().unwrap_or_else(|_| Err("同步呼出房间表单线程异常退出".to_string()))
-        }).collect::<Vec<_>>()
+            .collect::<Vec<_>>();
+        handles
+            .into_iter()
+            .map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|_| Err("同步呼出房间表单线程异常退出".to_string()))
+            })
+            .collect::<Vec<_>>()
     });
-    for result in results { result?; }
-    let background = targets.iter().skip(1).map(|(_, hwnd, _)| *hwnd).collect::<Vec<_>>();
+    for result in results {
+        result?;
+    }
+    let background = targets
+        .iter()
+        .skip(1)
+        .map(|(_, hwnd, _)| *hwnd)
+        .collect::<Vec<_>>();
     paste_group(&mut input, &background, room_name, strategy, flow, cancel)?;
     if password_needed {
         // Every participant uses the same password; refresh the group when any
         // participant lacks a valid cache, otherwise leave all passwords alone.
         input.key_down(VK_TAB)?;
+        // Release the physical Tab before visiting followers: their cumulative
+        // message waits must not turn the primary's single Tab into key repeat.
+        wait(
+            cancel,
+            Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
+        )?;
+        input.release_all()?;
         for &hwnd in &background {
             deliver_key(hwnd, VK_TAB, false, strategy, flow.key_hold_ms, 20, cancel)?;
         }
-        wait(cancel, Duration::from_millis(flow.key_hold_ms.clamp(10, 250)))?;
-        input.release_all()?;
         wait(cancel, Duration::from_millis(flow.step_delay_ms.max(120)))?;
-        paste_group(&mut input, &background, &config.password, strategy, flow, cancel)?;
+        paste_group(
+            &mut input,
+            &background,
+            &config.password,
+            strategy,
+            flow,
+            cancel,
+        )?;
     }
     input.check_target()?;
     for &(pid, hwnd, created) in &targets {
         if process_creation_time(pid) != Some(created)
-            || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd) {
+            || crate::infrastructure::system::find_game_hwnd(pid) != Some(hwnd)
+        {
             return Err("同步粘贴期间游戏进程或窗口已变化".to_string());
         }
     }
     // Consume the primary's prepared marker before the externally visible submit.
     forms.lock().remove(&primary_pid);
-    deliver_key(targets[0].1, VK_RETURN, false, strategy, flow.key_hold_ms, 20, cancel)?;
+    deliver_key(
+        targets[0].1,
+        VK_RETURN,
+        false,
+        strategy,
+        flow.key_hold_ms,
+        20,
+        cancel,
+    )?;
     for &(pid, hwnd, created) in &targets {
         if password_needed {
-            passwords.lock().insert(pid, EnteredPassword {
-                process_created_at: created, hwnd, password: config.password.clone(),
-            });
+            passwords.lock().insert(
+                pid,
+                EnteredPassword {
+                    process_created_at: created,
+                    hwnd,
+                    password: config.password.clone(),
+                    create: pid == primary_pid,
+                },
+            );
         }
         if pid != primary_pid {
-            forms.lock().insert(pid, PreparedForm { created, hwnd, room_name: room_name.to_string() });
+            forms.lock().insert(
+                pid,
+                PreparedForm {
+                    created,
+                    hwnd,
+                    room_name: room_name.to_string(),
+                },
+            );
         }
     }
     Ok(())
@@ -179,7 +248,9 @@ fn paste_group(
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    if !value.is_empty() { input.clipboard_text(value)?; }
+    if !value.is_empty() {
+        input.clipboard_text(value)?;
+    }
     group_chord(input, background, 0x41, true, strategy, flow, cancel)?;
     if value.is_empty() {
         group_chord(input, background, VK_BACK, false, strategy, flow, cancel)
@@ -204,9 +275,18 @@ fn group_chord(
         if ctrl {
             input.key_down(0x11)?;
             wait(cancel, Duration::from_millis(flow.step_delay_ms.max(120)))?;
-            for &hwnd in background { deliver_key_message(hwnd, 0x11, true, strategy)?; }
+            for &hwnd in background {
+                deliver_key_message(hwnd, 0x11, true, strategy)?;
+            }
         }
         input.key_down(key)?;
+        wait(
+            cancel,
+            Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
+        )?;
+        // Keep physical Ctrl active for background consumers, but release A/V
+        // before their waits so long delays cannot paste repeatedly up front.
+        input.release_last()?;
         for &hwnd in background {
             validate_target(hwnd)?;
             deliver_key_message(hwnd, key, true, strategy)?;
@@ -217,9 +297,13 @@ fn group_chord(
     })();
     let mut cleanup = Ok(());
     for &hwnd in background {
-        if let Err(error) = deliver_key_message(hwnd, key, false, strategy) { cleanup = Err(error); }
+        if let Err(error) = deliver_key_message(hwnd, key, false, strategy) {
+            cleanup = Err(error);
+        }
         if ctrl {
-            if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) { cleanup = Err(error); }
+            if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
+                cleanup = Err(error);
+            }
         }
     }
     let release = input.release_all();
@@ -245,9 +329,13 @@ pub(crate) fn submit_prepared_follower(
     }
     let forms = PREPARED_FORMS.get_or_init(|| Mutex::new(HashMap::new()));
     let mut cached = forms.lock();
-    let entry = cached.get(&pid).ok_or("该小号没有预填表单，请重新触发创建快捷键")?;
-    if entry.room_name != room_name || process_creation_time(pid) != Some(entry.created)
-        || crate::infrastructure::system::find_game_hwnd(pid) != Some(entry.hwnd) {
+    let entry = cached
+        .get(&pid)
+        .ok_or("该小号没有预填表单，请重新触发创建快捷键")?;
+    if entry.room_name != room_name
+        || process_creation_time(pid) != Some(entry.created)
+        || crate::infrastructure::system::find_game_hwnd(pid) != Some(entry.hwnd)
+    {
         return Err("小号预填表单与当前房间或进程不匹配，请重新触发创建快捷键".to_string());
     }
     validate_target(entry.hwnd)?;
@@ -256,9 +344,15 @@ pub(crate) fn submit_prepared_follower(
     // potentially submitted form or fall back to opening/refilling another one.
     cached.remove(&pid);
     drop(cached);
-    deliver_key(hwnd, VK_RETURN, false,
+    deliver_key(
+        hwnd,
+        VK_RETURN,
+        false,
         BackgroundTextStrategy::from_value(&config.background_text_strategy),
-        config.flow().key_hold_ms, 20, cancel)
+        config.flow().key_hold_ms,
+        20,
+        cancel,
+    )
 }
 
 #[link(name = "kernel32")]
@@ -388,6 +482,7 @@ pub(crate) fn fill_room_form(
         !passwords.get(&request.pid).is_some_and(|entry| {
             Some(entry.process_created_at) == process_created_at
                 && entry.hwnd == hwnd
+                && entry.create == request.create
                 && entry.password == request.password
         })
     };
@@ -433,6 +528,7 @@ pub(crate) fn fill_room_form(
                 EnteredPassword {
                     process_created_at,
                     hwnd,
+                    create: request.create,
                     password: request.password.to_string(),
                 },
             );
