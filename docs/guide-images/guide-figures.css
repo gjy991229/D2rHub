@@ -1,0 +1,22 @@
+
+.guide-figure { margin: 0 0 24px; border: 1px solid var(--border-strong, #d6d9df); border-radius: 12px; overflow: hidden; background: var(--surface, #fff); }
+.guide-figure figcaption { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 6px; padding: 12px 16px; }
+.guide-figure figcaption strong { font-size: 15px; }
+.guide-figure figcaption span { font-size: 12px; color: var(--muted, #616976); }
+.guide-picture { display: block; width: 100%; height: auto; background: #f8f9fa; }
+.guide-mark rect { fill: none; stroke: #0867de; stroke-width: 3; }
+.guide-mark circle { fill: #0867de; stroke: white; stroke-width: 2; }
+.guide-mark text { fill: white; text-anchor: middle; dominant-baseline: middle; font: 700 14px "Segoe UI",sans-serif; }
+.guide-mark.is-muted { opacity: .3; }
+.guide-image-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; padding: 10px 16px; font-size: 12px; color: var(--muted, #616976); }
+.guide-image-actions button { padding: 3px 8px; cursor: pointer; border: 1px solid var(--border-strong, #d6d9df); border-radius: 5px; background: transparent; color: inherit; }
+.guide-legend { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 16px 12px; }
+.guide-legend button { display: flex; align-items: center; gap: 9px; padding: 9px; text-align: left; font: inherit; font-size: 13px; border: 1px solid var(--border-strong, #d6d9df); border-radius: 8px; color: var(--text, #202226); background: transparent; cursor: pointer; }
+.guide-legend button[aria-pressed="true"] { border-color: #0867de; background: rgba(8,103,222,.09); }
+.guide-legend b { display: grid; place-items: center; flex: 0 0 23px; height: 23px; border-radius: 50%; color: #fff; background: #0867de; }
+.guide-image-note { margin: 0 !important; padding: 0 16px 14px; font-size: 12px; color: var(--muted, #616976); }
+@media (max-width:560px) { .guide-legend { grid-template-columns: 1fr; } }
+
+.guide-gallery-picker { display:flex; flex-wrap:wrap; gap:8px; margin:0 0 10px; }
+.guide-gallery-picker button { padding:8px 11px; border:1px solid var(--border-strong,#d6d9df); border-radius:8px; color:var(--text,#202226); background:var(--surface,#fff); font:inherit; font-size:13px; cursor:pointer; text-align:left; }
+.guide-gallery-picker button[aria-pressed="true"] { border-color:#0867de; background:rgba(8,103,222,.09); }

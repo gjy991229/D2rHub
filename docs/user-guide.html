@@ -4,7 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
-<title>D2RHub v0.9.97 使用手册</title>
+<title>D2RHub · 快速上手与参考手册</title>
+<link rel="stylesheet" href="guide-images/guide-figures.css">
 <style>
   :root {
     --bg: #090a0c;
@@ -220,11 +221,87 @@
     body { background: #fff; color: #111; }
     section { break-inside: avoid; }
   }
+
+  [hidden] { display: none !important; }
+  button, a, input, summary { -webkit-tap-highlight-color: transparent; }
+  :is(button, a, input, summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+  .help-modes { display: flex; gap: 8px; margin-bottom: 24px; }
+  .help-modes a, .guide-button { display: inline-flex; justify-content: center; align-items: center; padding: 10px 16px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
+  .help-modes a[aria-current="page"], .guide-button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+  .guide-button:disabled { opacity: .4; cursor: default; }
+  .guide-heading h1 { font-size: clamp(30px, 4vw, 46px); line-height: 1.18; }
+  .guide-heading p { margin: 14px 0 24px; }
+  .goal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .goal-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) 20px; align-items: start; gap: 12px; padding: 20px; text-align: left; border: 1px solid var(--border-strong); border-radius: 14px; background: var(--surface); cursor: pointer; }
+  .goal-card:hover { border-color: var(--accent); }
+  .goal-card[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .goal-number { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: var(--surface-soft); color: var(--accent); font-weight: 800; }
+  .goal-card strong { display: block; font-size: 18px; }
+  .goal-card small { display: block; color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .goal-arrow { color: var(--accent); font-size: 22px; }
+  .guide-workspace { padding-top: 32px; }
+  #stepTitle, #referenceView :is(h2, h3), #routeWorkspace { scroll-margin-top: 84px; }
+  .route-intro { padding: 16px 20px; border-left: 3px solid var(--accent); background: var(--accent-soft); border-radius: 8px; }
+  .route-intro p { margin: 4px 0 0; font-size: 14px; }
+  .flow-label { margin: 24px 0 10px; font-size: 13px; color: var(--muted); }
+  .route-flow { display: flex; gap: 22px; overflow-x: auto; padding: 5px 4px 16px; margin: 0; list-style: none; }
+  .route-flow li { position: relative; flex: 1 0 94px; margin: 0; padding: 0; }
+  .route-flow li:not(:last-child)::after { content: "→"; position: absolute; top: 22px; right: -18px; color: var(--muted); }
+  .route-node { width: 100%; height: 100%; padding: 10px 7px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 9px; cursor: pointer; font-size: 13px; }
+  .route-node span { display: block; color: var(--accent); font-weight: 750; }
+  .route-node[aria-current="step"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+  .route-node[data-complete="true"] span { color: var(--green); }
+  .step-panel { margin-top: 12px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--surface); overflow: hidden; }
+  .step-panel header { padding: 24px 26px 18px; border-bottom: 1px solid var(--border); }
+  .step-panel h2 { font-size: 25px; line-height: 1.35; }
+  .step-panel header p { margin: 5px 0 0; }
+  .step-body { padding: 22px 26px; }
+  .step-label { display: block; color: var(--accent); font-size: 12px; font-weight: 750; margin-bottom: 6px; }
+  .entry-path { padding: 12px 15px; background: var(--surface-soft); border-radius: 8px; margin-bottom: 20px; color: var(--text); }
+  .step-actions { margin: 0 0 22px; padding-left: 22px; }
+  .step-actions li { color: var(--text); padding: 4px 0 4px 5px; }
+  .success-check { padding: 14px 16px; border: 1px solid color-mix(in srgb, var(--green) 35%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--green) 7%, var(--surface)); }
+  .success-check strong { display: block; color: var(--green); margin-bottom: 4px; }
+  .step-help { margin-top: 18px; color: var(--muted); }
+  .step-help summary { cursor: pointer; color: var(--blue); }
+  .step-help p { margin-top: 10px; }
+  .step-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+  .progress-note { font-size: 12px; margin: 12px 0 0; }
+  .method-picker { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 14px; }
+  .method-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .guide-finish { padding: 28px; border: 1px solid var(--green); border-radius: 14px; background: var(--surface); }
+  .guide-finish h2 { color: var(--green); }
+  .reference-search { padding: 22px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); margin-bottom: 28px; }
+  .reference-search label { display: block; font-weight: 700; margin-bottom: 8px; }
+  .reference-search input { width: 100%; border: 1px solid var(--border-strong); border-radius: 8px; padding: 12px; color: var(--text); background: var(--bg); }
+  .search-results { padding: 0; list-style: none; max-height: 440px; overflow-y: auto; }
+  .search-results li { margin: 0; padding: 12px 0; border-top: 1px solid var(--border); }
+  .search-results a { display: block; font-weight: 700; }
+  .search-results p { font-size: 13px; margin: 4px 0 0; }
+  .search-results mark { color: var(--text); background: var(--accent-soft); }
+  .reference-topics { display: flex; gap: 8px; flex-wrap: wrap; }
+  .reference-topics a { padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px; }
+  @media (max-width: 1100px) { main { padding-left: 28px; padding-right: 28px; } .goal-card { padding: 16px; gap: 9px; } }
+  @media (max-width: 820px) { .guide-sidebar { display: none; } .help-modes { position: sticky; top: 0; z-index: 12; padding: 12px 0; background: var(--bg); } }
+  @media (max-width: 560px) { .goal-grid { grid-template-columns: 1fr; } .step-panel header, .step-body { padding: 18px; } .step-footer .guide-button { flex: 1; } main { padding: 20px 16px 50px; } }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
 </style>
 </head>
 <body>
 <div class="shell">
-  <aside class="sidebar">
+  <aside class="sidebar guide-sidebar">
+    <div id="guideNav">
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.97</span></div></div>
+      <div class="nav-title">你想做什么</div>
+      <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
+      <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
+      <a class="nav-link" href="#guide-room">主号建房，小号跟随</a>
+      <a class="nav-link" href="#guide-all">三个功能一起用</a>
+      <div class="nav-title">按需查阅</div>
+      <a class="nav-link" href="#reference">搜索详细说明</a>
+      <a class="nav-link" href="#troubleshooting">遇到问题</a>
+    </div>
+    <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
       <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.97</span></div>
@@ -232,14 +309,16 @@
     <nav id="nav">
       <div class="nav-title">开始</div>
       <a class="nav-link active" href="#overview">版本与功能</a>
-      <a class="nav-link" href="#quick-start">快速开始</a>
+      <a class="nav-link" href="#concepts">先懂概念与关联</a>
+      <a class="nav-link" href="#quick-start">三条上手路线</a>
       <a class="nav-link" href="#connections">路径配置</a>
       <div class="nav-title">日常使用</div>
       <a class="nav-link" href="#accounts">账号与认证</a>
       <a class="nav-link" href="#launch">启动与多开</a>
       <a class="nav-link" href="#settings">设置中心</a>
       <a class="nav-link" href="#overlay">性能悬浮窗</a>
-      <a class="nav-link" href="#audio-telemetry">声纹自动化</a>
+      <a class="nav-link" href="#mod-processing">Mod 加工与选用</a>
+      <a class="nav-link" href="#audio-telemetry">识别与统计上手</a>
       <a class="nav-link" href="#room-automation">自动跟房</a>
       <a class="nav-link" href="#stats">统计分析</a>
       <a class="nav-link" href="#pet">Bongo Cat</a>
@@ -247,10 +326,48 @@
       <a class="nav-link" href="#data">数据与隐私</a>
       <a class="nav-link" href="#troubleshooting">疑难解答</a>
     </nav>
+    </div>
     <button class="theme-button" id="themeToggle" type="button">切换明暗主题</button>
   </aside>
 
   <main>
+    <div class="help-modes" aria-label="帮助阅读方式">
+      <a href="#guide" id="guideMode">快速上手</a>
+      <a href="#reference" id="referenceMode">详细手册 · 搜索</a>
+    </div>
+    <div id="guideView" hidden>
+      <header class="guide-heading">
+        <p class="eyebrow">选好目标，跟着做</p>
+        <h1>今天想用上什么功能？</h1>
+        <p>选一条路线，每次只看当前要做的事。已经准备好的步骤，可以直接点流程节点跳过。</p>
+      </header>
+      <div class="goal-grid" aria-label="选择上手目标">
+        <button type="button" class="goal-card" data-route="multi" aria-pressed="false"><span class="goal-number">01</span><span><strong>我要多开</strong><small>让两个账号各自进入游戏<br>从路径配置开始，无需加工 Mod</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="audio" aria-pressed="false"><span class="goal-number">02</span><span><strong>我要自动记掉落、记用时</strong><small>让软件记录一个账号的刷图过程<br>适合已有可启动账号的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="room" aria-pressed="false"><span class="goal-number">03</span><span><strong>我要小号自动跟房</strong><small>主号创建新房，小号按顺序加入<br>适合已能多开的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="all" aria-pressed="false"><span class="goal-number">04</span><span><strong>三个功能，我都要</strong><small>从零配好多开、识别和跟房<br>合并加工步骤，少走重复流程</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+      </div>
+      <div id="routeWorkspace" class="guide-workspace" hidden>
+        <div class="route-intro"><strong id="routeTitle"></strong><p id="routePrerequisite"></p></div>
+        <p class="flow-label">你的操作路线 · 点击任意节点查看该步，横向滚动可查看后续步骤</p>
+        <ol id="routeFlow" class="route-flow" aria-label="操作流程"></ol>
+        <div id="stepContent"></div>
+        <p class="progress-note">这里是操作指引，不会替你修改软件配置；进度由你确认，仅在当前页面停留期间保留。</p>
+      </div>
+      <p style="margin-top:24px">只想查一个设置？<a href="#reference">搜索详细手册</a> · <a href="#concepts">查看模块与 Mod 的区别</a></p>
+    </div>
+    <div id="referenceView">
+      <div class="reference-search" id="reference">
+        <a id="resumeGuide" class="guide-button" href="#guide" hidden>← 返回刚才的上手步骤</a>
+        <p class="eyebrow">按需查阅</p><h2>详细手册</h2>
+        <label for="manualSearch">搜索概念、设置或遇到的问题</label>
+        <input type="search" id="manualSearch" placeholder="例如：Token、Mod 增补、没有掉落、聊天键" autocomplete="off" aria-controls="searchResults" aria-describedby="searchStatus">
+        <p id="searchStatus" role="status">输入关键词搜索全文；也可以直接选择下方主题。</p>
+        <ul id="searchResults" class="search-results" hidden></ul>
+        <div class="reference-topics"><a href="#concepts">概念关系</a><a href="#connections">路径与认证</a><a href="#mod-processing">Mod 加工</a><a href="#audio-telemetry">识别与统计</a><a href="#room-automation">自动跟房</a><a href="#troubleshooting">故障排查</a></div>
+      </div>
+      <noscript><p class="callout">快速上手交互与搜索需要启用 JavaScript；下方完整手册仍可直接阅读，也可使用浏览器查找。</p></noscript>
+
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
       <h1>D2RHub v0.9.97<br>使用手册</h1>
@@ -292,25 +409,49 @@
       </div>
     </section>
 
+    <section id="concepts">
+      <p class="eyebrow">START HERE · CONCEPTS</p>
+      <h2>先懂这几个概念，再选你的路线</h2>
+      <p><strong>多开是基础；识别统计与自动跟房是两项独立扩展，可以只用一个，也可以一起用。</strong>第一次使用，先让两个账号都能正常进游戏，再准备需要的扩展。</p>
+      <div class="table-wrap"><table>
+        <thead><tr><th>概念</th><th>一句话理解</th><th>在哪里操作</th></tr></thead>
+        <tbody>
+          <tr><td>账号 / 游戏实例</td><td>账号是保存的登录与启动配置；启动后对应一个游戏进程和窗口。初始化是完成该账号认证，不是加工 Mod。</td><td>添加账号；账号与实例</td></tr>
+          <tr><td>软件模块</td><td>给 D2RHub 添加操作面板和运行服务，例如“识别与统计”“自动跟房”。添加模块不代表游戏已经具备对应能力。</td><td>可选功能 → 模块管理</td></tr>
+          <tr><td>源 Mod / 加工成品</td><td>源 Mod 是你原来使用的游戏内容；加工把所需功能放进一个可供游戏加载的 Mod。原版玩家也要生成成品。</td><td>Mod 管理 → 加工</td></tr>
+          <tr><td>声纹识别</td><td>Mod 在游戏里发出地点、掉落标记；D2RHub 监听一个指定账号的游戏声音，形成记录。</td><td>加工时选“声纹识别”；识别与统计中选监听账号</td></tr>
+          <tr><td>局内房间工具</td><td>Mod 提供游戏内建房 / 入房表单；D2RHub 按房名规则操作主号和小号。</td><td>加工时选“局内房间工具”；自动跟房中配置参与账号</td></tr>
+          <tr><td>启动方案 / 自动跟房</td><td>启动方案负责打开一组账号；自动跟房负责让运行中的账号创建或加入同一房间。启动一组账号后仍需进入角色和局内。</td><td>主界面启动方案；可选功能 → 自动跟房</td></tr>
+        </tbody>
+      </table></div>
+      <div class="callout"><strong>扩展生效的顺序：</strong>添加软件模块 → 加工所需游戏功能 → 账号选用加工成品 → 重启该账号游戏 → 开启识别或触发跟房。<br>一个 Mod 可以同时包含声纹识别和局内房间工具，不需要叠加两个 Mod。只多开无需这两项功能；自动跟房也不依赖识别统计。</div>
+    </section>
+
     <section id="quick-start">
-      <p class="eyebrow">01 · FIRST RUN</p>
-      <h2>快速开始</h2>
-      <div class="steps">
-        <div class="step"><strong>下载并安装</strong><p>从 <a href="https://github.com/gjy991229/D2RHub/releases">项目 Releases</a> 下载 Windows 安装包，完成安装后启动 D2RHub。</p></div>
-        <div class="step"><strong>阅读应用级说明</strong><p>当前版本首次打开时必须阅读并确认应用级说明。接受后才会激活全局输入监听、声纹监控、可选能力监督器和 Mod 启动扫描；选择退出不会启动这些运行服务。</p></div>
-        <div class="step"><strong>选择使用模式</strong><p>“正常模式”按配置启用可选模块；“纯净模式”保留多开与 Mod 管理，不创建扩展运行实例。之后可在“设置 → 维护与迁移”切换，程序会保存设置并重启，保留账号和模块数据。</p></div>
-        <div class="step"><strong>至少配置一套客户端档案</strong><p>在首次向导中填写国服或国际服的“游戏目录 + 存档目录”。战网客户端认证仅供国服兼容使用，需要额外填写国服 Battle.net.exe；国际服使用网页 Token。</p></div>
-        <div class="step"><strong>创建账号</strong><p>点击“添加账号”，依次选择昵称、区服、语言和认证方式。网页 Token 按向导取得并粘贴；战网认证按提示完成登录与快照。</p></div>
-        <div class="step"><strong>启动</strong><p>在账号卡片启动单个账号，使用“启动全部”依次处理所有可用账号，或创建并复用命名启动方案。常用方案可以固定在主界面直接启动；启动进度和错误会显示在卡片及运行日志中。</p></div>
-        <div class="step"><strong>一键准备并开启识别</strong><p>如需声纹功能，先在“设置中心 → 可选功能 → 模块管理”添加“识别与统计”并确认模块说明，再选择已初始化账号、“我玩原版”或一个现有 Mod，并为生成的新 Mod 输入名称，点击“一键准备并开启”。无论是否使用源 Mod，名称都为必填，仅可使用英文字母、数字、短横线和下划线。D2RHub 会生成并复核新的识别 Mod，同时为该账号配置 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>；游戏已运行时需重启该账号一次。</p></div>
+      <p class="eyebrow">01 · QUICK START</p>
+      <h2>按目标选一条最短路线</h2>
+      <div class="grid">
+        <div class="card"><h3><a href="#start-multi">① 先用上多开</a></h3><p>配置路径 → 初始化两个账号 → 分别启动 → 保存常用启动方案。</p></div>
+        <div class="card"><h3><a href="#audio-telemetry">② 自动识别与统计</a></h3><p>添加模块 → 选监听账号 → 准备声纹 Mod → 重启游戏 → 开启识别。</p></div>
+        <div class="card"><h3><a href="#room-automation">③ 主号建房、小号跟随</a></h3><p>添加模块 → 所有参与账号选用房间工具 Mod → 选方案与房名 → 局内触发。</p></div>
       </div>
-      <div class="callout"><strong>路径检测边界：</strong>当前向导可自动探测国服/国际服存档目录、Agent、Roaming 配置和 Edge/Chrome；游戏安装目录及 Battle.net.exe 仍应由你确认或手动选择。</div>
+      <h3 id="start-multi">路线一：从零到两个游戏窗口</h3>
+      <ol>
+        <li><strong>安装并选择模式。</strong>安装 Windows 版本，阅读首次说明。打算使用识别或跟房就选“正常模式”；只多开也可选“纯净模式”。后续可在“维护与迁移”切换，程序保存后重启。</li>
+        <li><strong>配置运行环境。</strong>首次向导或“设置中心 → 运行环境”填写对应客户端的游戏目录（含 <code>D2R.exe</code>）和存档目录。国服、国际服分别配置；仅国服战网客户端认证额外需要 <code>Battle.net.exe</code>。<a href="#connections">路径详解</a></li>
+        <li><strong>添加第一个账号并完成初始化。</strong>点击“添加账号”，按昵称、区服、语言和认证向导操作；网页 Token 需登录这个账号并粘贴取得的 Token。完成后在卡片启动，进入角色。</li>
+        <li><strong>添加第二个账号。</strong>使用另一个游戏账号重复初始化，确认没有误用第一个账号的凭据，再启动第二个。每个卡片对应自己的游戏窗口。</li>
+        <li><strong>保存日常启动方式。</strong>两个账号都能独立启动后，创建包含这两个账号的命名启动方案，并按需固定到主界面；下次可一键启动这组账号。需要全部可用账号时使用“启动全部”。</li>
+      </ol>
+      <div class="callout"><strong>完成标志：</strong>两个账号都进入游戏，各自有窗口且卡片能对应到正确账号。做到这里，多开已经可用；接着按需要选择路线二或三。认证失败先在对应账号重新初始化，路径问题先回“运行环境”处理。</div>
+      <h3>三个功能一起用：准备一次，日常少点几步</h3>
+      <p>先完成多开 → 添加“识别与统计”和“自动跟房” → 为主号加工同时包含“声纹识别 + 局内房间工具”的 Mod → 同客户端小号可选用同一成品（也可用各自带房间工具的成品）→ 重启相关游戏 → 监听账号选择主号 → 配置跟房。日常只需启动账号组、进入局内、开启识别，再由 D2RHub 触发主号建房和小号跟随。</p>
     </section>
 
     <section id="connections">
       <p class="eyebrow">02 · CONNECTIONS</p>
       <h2>路径与双客户端配置</h2>
-      <p>“设置中心 → 连接”把本机环境分为两套互不混用的安装档案。</p>
+      <p>“设置中心 → 运行环境”把本机环境分为两套互不混用的安装档案。</p>
       <div class="grid">
         <div class="card"><span class="label">CN PROFILE</span><h3>国服</h3><p>供国服账号使用。存档目录通常带有 <code>Diablo II Resurrected (CN)</code> 标识。</p></div>
         <div class="card"><span class="label">GLOBAL PROFILE</span><h3>国际服</h3><p>亚服、美服和欧服共用同一套国际服游戏与存档路径，通过网页 Token 认证。</p></div>
@@ -388,6 +529,8 @@
       <h3>账号独立游戏设置</h3>
       <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。切换账号、离开设置页或关闭设置中心时会保存待提交的修改；保存失败时停留在当前页面。刷新账号列表或切换其他账号的“覆盖游戏配置”开关，不会清空当前账号的编辑草稿。</p>
       <p>未开启“覆盖游戏配置”时跟随当前存档目录的 <code>Settings.json</code>；开启后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置”。此操作会用系统值替换当前游戏设置草稿。</p>
+      <h3>主题、透明度与字号</h3>
+      <p>“外观与界面 → 主程序窗口主题”提供深色、浅色、午夜蓝、森林绿、暖砂五套配色。选中后点击“应用外观”；离开页面或关闭设置也会自动应用。午夜蓝和森林绿使用深底色，暖砂使用暖白底色。主界面透明度与字号可单独调整；“桌面悬浮窗 → 信息悬浮窗主题”也可选择这五套主题，并独立保存。</p>
       <h3>窗口与快捷键</h3>
       <p>首次运行且没有窗口记录时，主面板按屏幕宽度的 59.4%、高度的 65.3% 居中显示，并适配 Windows 缩放。之后优先恢复你调整过的尺寸和位置。关闭按钮将主面板收起到托盘；再次双击程序快捷方式、使用托盘菜单或主面板快捷键，都可唤回原窗口。</p>
       <p>在“窗口快捷键”中点击录制框并按下组合键。主面板使用同一个快捷键：位于前台时收起，否则恢复并聚焦。账号快捷键按账号卡片顺序对应，拖动排序后位置随之变化。小键盘数字显示为 <code>Num0</code>–<code>Num9</code>，与上方数字行独立；如果旧版本已录制成普通数字，请重新录制。小键盘数字建议保持 NumLock 开启。F12 和 Win 组合键不可用。</p>
@@ -404,7 +547,7 @@
         <li>TZ 播报窗可在任意位置双击切换；场景统计窗在正常模式下双击空白区域切换，账号和计时器仍保留原有操作。</li>
         <li>窗口获得焦点时按 <kbd>Enter</kbd> 也可切换；统计窗进入迷你模式后仍可用 <kbd>Enter</kbd> 返回正常模式。</li>
         <li>统计窗与 TZ 迷你窗均通过窗口内交互控制：双击或按 Enter 恢复正常模式，拖动空白区域移动窗口，拖拽边缘缩放；不使用全局鼠标钩子。</li>
-        <li>正常模式记住用户调整的尺寸；统计窗迷你模式使用固定的一行摘要尺寸，且不可移动或缩放。</li>
+        <li>正常模式记住用户调整的尺寸；统计窗迷你模式可压缩到单行摘要，仍支持移动和缩放。</li>
       </ul>
       <h3>贴边吸附与自动隐藏</h3>
       <ol>
@@ -416,13 +559,54 @@
       <p>吸附位置按当前显示器的可用工作区计算，也适用于副屏和任务栏占用区域。系统启用“减少动态效果”时，抽出/隐藏会改为即时完成。</p>
     </section>
 
+    <section id="mod-processing">
+      <p class="eyebrow">MOD PROCESSING · PREPARATION</p>
+      <h2>Mod 加工：把游戏能力准备好，再交给账号使用</h2>
+      <p>入口是“设置中心 → Mod 管理”。在识别或跟房页面遇到“开始准备”“前往加工”，也会进入对应的准备流程。内置生成器会生成、校验并应用结果，无需另行安装命令行工具。</p>
+      <h3>先决定怎么加工</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>你的情况</th><th>选择</th><th>结果</th></tr></thead>
+        <tbody>
+          <tr><td>一直玩原版</td><td>加工新 Mod → 原版游戏</td><td>为所选功能生成独立成品，需要新名称。</td></tr>
+          <tr><td>已有喜欢的界面 / 掉落提示 Mod</td><td>加工新 Mod → 已有 Mod → 选择源 Mod</td><td>以源 Mod 为基础生成新成品，源目录不改动；需要新名称。</td></tr>
+          <tr><td>已经有 D2RHub 加工成品，想增加功能</td><td>选择已加工 Mod → 勾选要增加的模块 → 增补所选模块</td><td>校验后原位增补所选成品，保留已有功能；不必另起名称。</td></tr>
+          <tr><td>成品显示待更新 / 协议不兼容</td><td>按页面“更新”引导处理</td><td>按来源重建、校验后同名替换旧成品；不要把不兼容旧成品当作普通源 Mod 反复加工。</td></tr>
+        </tbody>
+      </table></div>
+      <h3>首次加工的明确流程</h3>
+      <ol>
+        <li><strong>选加工目标。</strong>选择一个已初始化账号，软件据此确定国服 / 国际服和 Mod 目录；完成后自动更新的是这个账号的启动参数。</li>
+        <li><strong>选来源。</strong>首次选“加工新 Mod”，再选“原版游戏”或“已有 Mod”。已有 Mod 不在列表时，先在 Mod 管理添加 / 检查对应客户端目录，再重新扫描。</li>
+        <li><strong>选功能。</strong>识别统计勾选“声纹识别”；自动跟房勾选“局内房间工具”；两项都用就一起勾选。已有功能会继承并锁定。“死亡后自动退出”是独立可选项，不是识别或跟房的前置条件，也不能防止死亡。</li>
+        <li><strong>给新成品命名。</strong>例如 <code>HubMain</code>；使用英文字母、数字、短横线、下划线，避免重名和 Windows 保留名称，最长 128 字符。</li>
+        <li><strong>关闭使用待修改成品的游戏，再执行加工。</strong>点击“开始加工并应用”（识别准备入口可能显示“一键准备并应用”），等待生成、校验和应用完成；失败时先看页面原因。</li>
+        <li><strong>让账号加载成品。</strong>加工目标会自动写入 <code>-mod HubMain -txt -assettestmode 1</code>，其他无关参数保留。其他账号需在账号 Mod 选择处自行选用成品；自动跟房也可在“参与账号 Mod”逐个选择。</li>
+        <li><strong>重启有关游戏。</strong>已经运行的进程不会随配置切换 Mod。关闭后重新从 D2RHub 启动，再回识别或跟房面板继续。</li>
+      </ol>
+      <div class="callout"><strong>共享的是什么？</strong>同一客户端下多个账号可以选同一个成品，修改这个 Mod 会影响所有使用者；“加工目标账号”不等于所有账号自动改用它。国服与国际服按各自安装档案准备。一个账号使用包含所需功能的单一成品，不要同时写源 Mod 和成品两套 <code>-mod</code> 参数。</div>
+      <p><strong>完成标志：</strong>成品功能标签包含所需能力，账号选用的名称正确，并已用新参数重新启动。回到 <a href="#audio-telemetry">识别流程</a> 或 <a href="#room-automation">跟房流程</a>；加工成功本身不代表监控或跟房任务已启动。</p>
+    </section>
+
     <section id="audio-telemetry">
       <p class="eyebrow">07 · AUDIO TELEMETRY</p>
-      <h2>独立 Mod 工具与实时识别</h2>
+      <h2>路线二：让游戏自动记录地点、掉落与用时</h2>
+      <p><strong>需要：</strong>正常模式、一个已初始化账号、包含“声纹识别”的加工 Mod。识别一次监听一个目标账号，不会汇总所有多开窗口的声音；可以只开一个账号使用。</p>
+      <ol>
+        <li><strong>添加模块。</strong>打开“设置中心 → 可选功能 → 模块管理”，添加“识别与统计”并阅读模块说明；软件会同时补齐桌面悬浮窗依赖。</li>
+        <li><strong>选监听账号。</strong>进入“识别与统计”，在“识别目标账号”选择实际刷图的账号；与自动跟房一起用时通常选主号。</li>
+        <li><strong>准备 Mod。</strong>点击“开始准备”，按<a href="#mod-processing">加工流程</a>创建或增补声纹功能，完成后确认该账号选用成品，并重启其游戏。</li>
+        <li><strong>开启监控。</strong>回到“识别与统计”，打开“音频声纹自动识别”（就绪卡可显示“立即开启”）。游戏运行时应显示“正在捕获 · PID …”；保留游戏声音和音效输出。</li>
+        <li><strong>进入野外正常刷图。</strong>先看地点信号 / 最近识别是否更新，再看场景计时。主城、主界面、尚未识别的地点不会记录掉落；没有物品掉落时掉落数为零是正常的。</li>
+        <li><strong>查看记录。</strong>切换到另一个野外、回城或返回主界面后，已完成分段会保存。点击“打开掉落统计图表”查看；正在进行的段先看悬浮窗实时计时。历史为空时先检查时间、角色、路线等筛选。</li>
+      </ol>
+      <div class="callout"><strong>完成标志：</strong>状态显示正在捕获正确游戏进程，地点信号更新，进入野外开始计时，离开后统计页出现已完成记录。掉落识别依赖实际支持的物品信号，不要求每场都有掉落。</div>
+      <h3>过滤器与统计筛选不是同一件事</h3>
+      <p><strong>识别过滤器</strong>决定今后哪些已识别事件写入数据库，例如仅记录 #20–#33 符文；修改后点击“诊断工具 → 应用并重启识别”，无需重新加工 Mod。被过滤掉、没有保存的事件以后不能靠放宽筛选补回来。<strong>统计页筛选</strong>只决定怎样展示已保存记录，不改变原始数据。</p>
+      <h3>信号从哪里来，哪些物品可以识别</h3>
       <p>识别 Mod 由内置的 <code>d2r-audio-mod.exe v1.3.3</code> 独立生成，D2RHub 负责调用生成器、复核输出、配置目标账号，并接收和统计 v7 声纹。生成器不读取 D2RHub 的账号、配置或数据库，也不修改源 Mod。“设置中心 → 可选功能 → 识别与统计”选择一个<strong>已初始化</strong>账号后，捕获器只监听该账号的 D2R 进程及其子进程。</p>
       <p>生成器已在 <a href="https://github.com/gjy991229/d2r-audio-mod">独立开源仓库</a> 按 MIT 许可公开，可从其 <a href="https://github.com/gjy991229/d2r-audio-mod/releases">Releases</a> 单独下载。独立运行支持图形界面和命令行；使用 D2RHub 时无需额外安装或手动运行。</p>
       <ul>
-        <li><strong>两种准备方式：</strong>选择“我玩原版”时从本机游戏资源创建识别 Mod；选择“我使用 Mod”时复制并加工所选现有 Mod，保留其功能且不修改源目录。两种方式都需要为输出的新 Mod 输入名称。</li>
+        <li><strong>首次新建的两种来源：</strong>选择“我玩原版”时从本机游戏资源创建识别 Mod；选择“我使用 Mod”时复制并加工所选现有 Mod，保留其功能且不修改源目录。两种方式都需要为输出的新 Mod 输入名称。</li>
         <li><strong>兼容处理：</strong>每个所选掉落克隆自己的世界实体与 <code>Flippy ↔ Ground</code> 状态机；原动画、模型、VFX、依赖和原声音均保留，背包/仓库 <code>usesound</code> 与表格 <code>dropsound</code> 不改。</li>
         <li><strong>覆盖范围：</strong>地图可选女伯爵路线或游戏数据中的全部 137 个区域；掉落可选 33 个符文、宝石与骷髅、护身符、珠宝、钥匙、器官、精华与赦免徽章。</li>
         <li><strong>协议：</strong>v7 使用独立地点同步码与 127 个低相关掉落签名，默认增益 <code>-30dBFS</code>；地点标记混入原始持续环境音，主界面有独立标记用于立即结束上一场计时。</li>
@@ -430,19 +614,38 @@
         <li><strong>落库：</strong>所选掉落先写入通用原始观测表；离开当前野外或返回主界面时，独立分段和观测归属在同一数据库事务内保存。</li>
         <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、扩展物品、地点信号和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
       </ul>
-      <div class="callout"><strong>启动方式：</strong>点击“一键准备并开启”后，工具默认生成全区域和全部支持类别；D2RHub 会复核协议清单，在保留其他无关启动参数的前提下，将目标账号的 Mod 参数固定为 <code>-mod &lt;新 Mod 名&gt; -txt -assettestmode 1</code> 并开启识别。不要同时启用源 Mod；若游戏已经运行，请重启该账号使新参数生效。</div>
+      <div class="callout"><strong>启动方式：</strong>首次创建识别 Mod 时，工具默认生成全区域和全部支持类别；D2RHub 会复核协议清单，在保留其他无关启动参数的前提下，将目标账号的 Mod 参数固定为 <code>-mod &lt;新 Mod 名&gt; -txt -assettestmode 1</code>；回到识别页确认监控已开启。不要同时启用源 Mod；若游戏已经运行，请重启该账号使新参数生效。</div>
       <p>不同代码的掉落同时播放可以分别识别；同一代码在完全相同时间重叠时，只能视为一次事件。护身符、珠宝等只能识别基础代码，无法仅凭声音判断暗金、套装、品质、词缀或鉴定结果。</p>
     </section>
 
     <section id="room-automation">
       <p class="eyebrow">ROOM AUTOMATION</p>
-      <h2>自动建房与小号跟随</h2>
+      <h2>路线三：主号建房，让小号加入同一房间</h2>
+      <p><strong>需要：</strong>正常模式、至少两个已初始化账号；主号和每个小号都必须加载包含“局内房间工具”的成品。它按你在 D2RHub 中配置的房名创建 / 加入，不会自动读取任意手动创建房间的房号；也不会代替登录、选角色或自动刷图。</p>
+      <ol>
+        <li><strong>添加模块。</strong>“设置中心 → 可选功能 → 模块管理”添加“自动跟房”，阅读模块说明后打开该面板。</li>
+        <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；在“参与账号 Mod”逐个选用带局内房间工具的成品。缺少时点击“前往加工”，完成后返回。主号也需要房间工具。</li>
+        <li><strong>选择操作方案。</strong>想直接看见操作过程可选“前台键鼠”，使用 16:9 高清键鼠界面并显示局内工具栏；想让窗口后台接收按键则选“后台按键”，先完成下面的聊天第二键位绑定。</li>
+        <li><strong>填写房名与快捷键。</strong>例如“房名开头”填 <code>hub-</code>、“下一个序号”填 <code>1</code>、“序号位数”选 <code>3</code>，以下次房名预览 <code>hub-001</code> 为准。填写可选密码，并分别录制不冲突的“创建房间快捷键”“跟随账号快捷键”。</li>
+        <li><strong>首次先选“手动跟随”。</strong>等待有效配置自动保存，启用模块。用所选 Mod 启动 / 重启所有参与账号，选好角色并分别进入局内；参与者使用可互相加入房间的区服与角色模式。</li>
+        <li><strong>创建一间房。</strong>在“房间操作”点击“主账号创建房间”（或使用创建快捷键并松开按键），等主号实际进入新房，再点击“让跟随账号加入”。小号使用最近由该流程创建的房名和密码，不会各自增加序号。</li>
+        <li><strong>改为自动跟随。</strong>掌握首次流程后，将“跟随触发”改成“自动跟随”，设置“建房后等待（秒）”与小号进房方式。等待时间应覆盖主号实际载入所需时间；下次仍由你触发主号创建房间，随后软件按延时派发跟随。</li>
+      </ol>
+      <div class="callout"><strong>完成标志：</strong>在游戏内确认主号与所选小号进入同一个房间。任务完成表示输入流程执行完毕，不能代替游戏服务端的入房结果；如果房间未建立或小号未加入，先看游戏提示和“后台任务”，处理后再触发跟随。</div>
+      <h3>两种方案怎么选</h3>
+      <div class="table-wrap"><table>
+        <thead><tr><th>方案</th><th>启动前准备</th><th>执行时的表现</th></tr></thead>
+        <tbody>
+          <tr><td>前台键鼠</td><td>16:9 高清键鼠界面、工具栏可见、从局内开始；不需要聊天键绑定。</td><td>依次切到游戏窗口，短暂接管键鼠；所有可用小号执行完后切回主号。期间让程序完成操作。</td></tr>
+          <tr><td>后台按键</td><td>选择 Pause / F13 作为聊天第二键位，阅读绑定说明，点击“扫描并更新绑定”，然后重启游戏。</td><td>向窗口发送按键；可同时或按间隔派发。间隔派发不等待前一个小号实际进房。</td></tr>
+        </tbody>
+      </table></div>
       <p>在正常模式下添加“自动跟房”模块，阅读模块说明后，选择一个主号和需要跟随的小号。账号需已初始化并正在运行，且使用包含局内房间工具的 Mod。设置房名前缀、密码、下一房序号及创建 / 加入快捷键；每次主号建房会产生新房号，小号使用最近一组房号和密码。</p>
       <h3>先准备房间工具</h3>
-      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r26 将大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。升级旧成品会生成新 Mod，请确认账号已选用新产物。</p>
+      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r26 将大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。旧成品按更新引导重建并在校验后同名替换；完成后请重启所有使用该成品的账号。</p>
       <p>每个 Mod 条目的“显示游戏内右上角按钮”可控制工具栏，无需重新加工。关闭使用该 Mod 的游戏后切换，下次启动生效；共享该 Mod 的账号一起变化。隐藏工具栏后，后台方案的暂停菜单键盘入口仍可使用，但前台方案要求工具栏保持显示。</p>
       <h3>方案一：后台按键</h3>
-      <p>选择聊天第二键位 Pause（默认）或 F13，关闭游戏后扫描并同步绑定，再重新进入游戏。扫描会处理对应客户端系统存档目录与游戏 <code>mods/</code> 下已有的键位副本，并保留首次备份；第一聊天键位无需改为回车。主号与小号可在后台接收按键流程。按住时间默认 50ms，可与松开间隔分别调整。</p>
+      <p>选择聊天第二键位 Pause（默认）或 F13，点击“扫描并更新绑定”同步绑定，再重新进入游戏。扫描会处理对应客户端系统存档目录与游戏 <code>mods/</code> 下已有的键位副本，并保留首次备份；第一聊天键位无需改为回车。主号与小号可在后台接收按键流程。按住时间默认 50ms，可与松开间隔分别调整。</p>
       <h3>方案二：前台键鼠接管</h3>
       <p>在“建房 / 入房操作方案”选择前台键鼠接管。此方案无需 Pause / F13 绑定，要求游戏使用 <strong>16:9 高清键鼠界面</strong>、工具栏可见，且操作开始时位于局内。程序依次切换到目标窗口，打开创建 / 加入表单，全选并粘贴房名，按需更新密码，最后回车；主号首次建房会选择地狱难度。</p>
       <p>主号与小号共用一套时序设置。各小号串行接管；间隔模式还会保留设定的最小开始间隔。所有可用小号完成后自动将焦点切回主号，中途失败或取消则不切回；主号已退出或无法获得焦点时仅记录原因，不重复提交小号。</p>
@@ -454,7 +657,7 @@
     <section id="stats">
       <p class="eyebrow">08 · LOCAL ANALYTICS</p>
       <h2>新版统计页与统计口径</h2>
-      <p>从主界面顶部的统计按钮，或“设置中心 → 自动化 → 打开掉落统计图表”进入。统计按钮旁的“分享战报”可直接生成当前战报并复制为 PNG 图片，随后可粘贴到聊天、文档或图片编辑器。页面读取本地数据库，并通过仅监听本机回环地址的临时 API 完成刷新、重命名和删除。</p>
+      <p>从主界面顶部的统计按钮，或“设置中心 → 可选功能 → 识别与统计 → 打开掉落统计图表”进入。统计按钮旁的“分享战报”可直接生成当前战报并复制为 PNG 图片，随后可粘贴到聊天、文档或图片编辑器。页面读取本地数据库，并通过仅监听本机回环地址的临时 API 完成刷新、重命名和删除。</p>
       <h3>底层分段与多选策略组</h3>
       <p>不同名称的野外各自开始、结束并保存独立分段；主城和主界面停止计时。统计页内置女伯爵、地穴、安达利尔、墨菲斯托、Chaos、巴尔等常用 Farm 策略组，首次使用时全部默认开启，也可同时勾选或关闭多条路线；每个预设旁都能直接编辑，修改后的预设保存在本机并可恢复系统默认。自定义策略同样支持新建、编辑和删除。每个原始分段最多归入一个策略，重叠路线不会重复计数。策略只对展示、筛选、导出和战报生效，不修改数据库中的原始分段与掉落归属；没有行程标识的旧记录不会被猜测合并。主界面快捷战报与统计 HTML 共用所选策略、预设修改、战报周期、展示字段和异常场次口径；没有保存过偏好时才使用系统默认值。</p>
       <h3>统一筛选</h3>
@@ -486,7 +689,7 @@
     <section id="pet">
       <p class="eyebrow">09 · COMPANION</p>
       <h2>Bongo Cat</h2>
-      <p>在“设置中心 → 伴随”开启桌宠。猫咪会响应键盘和鼠标输入，可显示随机对话及轻量系统状态提示。</p>
+      <p>在“设置中心 → 桌宠”开启桌宠。猫咪会响应键盘和鼠标输入，可显示随机对话及轻量系统状态提示。</p>
       <ul>
         <li>拖动猫咪本体可以改变屏幕位置；右键打开皮肤、计数重置和隐藏菜单。</li>
         <li>设置中心可调整 0.5×–5.0× 缩放、气泡对话框和已解锁皮肤。</li>
@@ -525,7 +728,7 @@
       <h3>战网初始化超时或快照失效</h3>
       <p>确认 Battle.net 已实际登录完成、路径对应正确客户端，并避免同时执行另一个战网认证操作。账号卡片显示过期、<code>runtime/</code> 快照缺失/损坏或启动失败时，执行重新初始化；不要手工复制顶层旧认证文件来绕过快照校验。</p>
       <h3>网页 Token 获取页打不开</h3>
-      <p>在“连接”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
+      <p>在“运行环境”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
       <h3>画质设置无法读取</h3>
       <p>确认存档路径正确且包含 <code>Settings.json</code>。先用对应国服/国际服客户端正常进入游戏一次，再回到设置中心加载。</p>
       <h3>窗口默认大小没有变化</h3>
@@ -533,15 +736,24 @@
       <h3>小键盘快捷键没有反应</h3>
       <p>保持 NumLock 开启，在“窗口快捷键”中重新录制，确认显示 <code>Num1</code> 等小键盘名称，而非普通 <code>1</code>。若出现占用提示，换用其他组合键；录制期间和自动输入期间 Hub 热键会暂时停用。</p>
       <h3>悬浮窗吸附后找不到</h3>
-      <p>沿最近使用的屏幕边缘缓慢移动鼠标，触发边会让窗口抽出。仍无法找到时，在“显示”中关闭再开启悬浮窗，或重启应用。</p>
+      <p>沿最近使用的屏幕边缘缓慢移动鼠标，触发边会让窗口抽出。仍无法找到时，在“桌面悬浮窗”中关闭再开启悬浮窗，或重启应用。</p>
       <h3>迷你窗无法变成单行</h3>
       <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
       <h3>声纹无数据或识别不稳定</h3>
       <p>确认账号使用的是独立工具最新输出的组合 Mod、启动参数包含完整的 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。Mod 实际发出的类别由工具的 <code>--track</code> 决定；D2RHub 设置只过滤接收后要记录的类别。先看“音频峰值”，再看“地点信号”和掉落计数；日志会提示当前 Mod 清单缺失或协议版本不兼容。</p>
+      <h3>Mod 已加工，功能还是不可用</h3>
+      <p>按顺序查看：对应软件模块是否已添加且处于正常模式 → 成品标签是否包含所需功能 → 实际账号是否选用了这个成品 → 游戏是否已重启。加工只自动应用到目标账号；小号没有选用或仍是旧进程，是跟房准备未完成的常见原因。</p>
+      <h3>正在捕获，但没有场次或掉落</h3>
+      <p>音频峰值一直为零：检查监听账号是否运行、游戏声音是否有输出。峰值变化但地点信号为零：检查成品、协议和启动参数，并重启游戏。地点正常但无掉落：确认处于野外、物品在支持范围且未被识别过滤器排除。实时有计时但历史为空：先离开当前野外完成分段，再放宽统计页时间和角色筛选。</p>
+      <h3>主号建房成功，小号没跟上</h3>
+      <p>先查看跟随触发是否仍为“手动跟随”，小号是否勾选、已运行并处于局内。确认各账号的房间工具就绪、区服与角色模式可互相加入。自动跟随过早时增加“建房后等待（秒）”；后台方案检查当前角色聊天第二键位是否已扫描并重启生效；前台方案检查工具栏、16:9 比例、遮挡与最小化状态。查看后台任务的具体失败步骤，主号房间仍有效时可重新触发“让跟随账号加入”。</p>
+      <h3>想取消跟房或停止识别</h3>
+      <p>跟房进行中从“后台任务”取消；关闭自动跟房模块可停止后续快捷键和任务运行。停止识别请关闭“音频声纹自动识别”；仅关闭统计悬浮窗不会停止后台记录。设置会保留，之后可继续使用。</p>
       <h3>进一步排查</h3>
       <p>从“维护 → 打开日志”查看最新日志。提交 Issue 前删除 Token、Windows 用户名、个人路径和含敏感画面的截图；安全问题请通过项目安全政策私下报告。</p>
     </section>
 
+    </div>
     <footer class="footer">
       D2RHub v0.9.97 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
@@ -550,26 +762,181 @@
 
 <script>
   const root = document.documentElement;
-  const savedTheme = localStorage.getItem("d2rhub-guide-theme");
-  if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
-
+  try {
+    const savedTheme = localStorage.getItem("d2rhub-guide-theme");
+    if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
+  } catch {}
   document.getElementById("themeToggle").addEventListener("click", () => {
-    const next = root.dataset.theme === "dark" ? "light" : "dark";
-    root.dataset.theme = next;
-    localStorage.setItem("d2rhub-guide-theme", next);
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem("d2rhub-guide-theme", root.dataset.theme); } catch {}
   });
+</script>
 
-  const links = [...document.querySelectorAll(".nav-link")];
-  const sections = links
-    .map(link => document.querySelector(link.getAttribute("href")))
-    .filter(Boolean);
-  const observer = new IntersectionObserver(entries => {
-    const visible = entries.filter(entry => entry.isIntersecting);
-    if (!visible.length) return;
-    const current = visible.sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0].target.id;
-    links.forEach(link => link.classList.toggle("active", link.getAttribute("href") === `#${current}`));
-  }, { rootMargin: "-12% 0px -70% 0px", threshold: [0, .2, .6] });
-  sections.forEach(section => observer.observe(section));
+<script src="guide-images/guide-figures.js"></script>
+<script>
+  // These are instructions, not live application state. Only explicit confirmation marks a step done.
+  const step = (id, short, title, why, entry, actions, done, help, ref) =>
+    ({ id, short, title, why, entry, actions, done, help, ref });
+  const setup = [
+    step('paths', '配置路径', '先告诉软件：游戏装在哪里', '配置你实际使用的客户端即可；国服和国际服各用自己的路径。', '首次设置向导，或 设置中心 → 运行环境',
+      ['安装后阅读首次说明；后面要用识别或跟房，请选择“正常模式”。', '选择含 D2R.exe 的游戏目录，再选择该客户端的存档目录。', '仅使用国服战网客户端认证时，额外填写 Battle.net.exe；网页 Token 方式无需填写它。'],
+      '对应客户端的游戏目录与存档目录已保存，可以继续添加账号。', '不知道存档位置时先用对应客户端正常进入一次游戏，再回向导选择存档目录。不要把国服和国际服目录混用。', 'connections'),
+    step('first', '初始化主号', '添加第一个账号，并让它进入游戏', '初始化就是完成账号认证；此时还不需要 Mod。', '主界面 → 添加账号',
+      ['填写昵称，选择区服、语言与认证方式。', '按向导登录这个游戏账号；网页 Token 方式取得 Token 后粘贴回向导，完成初始化。', '点击该账号卡片的启动按钮，选角色并进入游戏。'],
+      '第一个账号已进入游戏，卡片对应到正确窗口。', '登录失败时在这个账号的操作中重新初始化；Token 必须属于当前账号。', 'accounts'),
+    step('second', '启动小号', '再添加一个不同账号，完成多开', '每个账号保留自己的认证和窗口。', '主界面 → 添加账号 → 账号卡片启动',
+      ['使用另一个游戏账号完成相同的初始化流程，勿重复粘贴主号的 Token。', '保持主号运行，启动第二个账号并进入角色。', '需要更多小号时，按同样方式添加。'],
+      '至少两个不同账号已同时进入游戏，并能分别切换到它们的窗口。', '先确保每个账号都能单独启动；失败的账号先处理认证或路径，再继续配置扩展。', 'launch'),
+    step('group', '保存启动组', '把常用账号存成一组，下次一键启动', '做到这里，多开已经可用。', '主界面 → 启动方案',
+      ['创建命名启动方案，选入主号和需要的小号。', '保存方案；按需点星标固定到主界面。'],
+      '主界面可以找到刚保存的启动方案。下次用它启动这一组账号。', '启动方案只负责打开账号，不会替你选角色或进入同一个房间；跟房由后面的自动跟房模块完成。', 'launch'),
+  ];
+  const audioInstall = step('audio-install', '添加识别', '添加“识别与统计”，选好监听账号', '软件模块负责接收记录；下一步的 Mod 负责让游戏发出识别信号。', '设置中心 → 可选功能 → 模块管理 → 识别与统计',
+    ['添加“识别与统计”并阅读模块说明；软件会补齐桌面悬浮窗依赖。', '打开识别与统计，在“识别目标账号”选择实际刷图的已初始化账号。'],
+    '页面显示了你要监听的账号。', '看不到可选功能时检查是否为正常模式；没有账号可选时先完成账号初始化。', 'audio-telemetry');
+  const audioMod = step('audio-mod', '准备声纹 Mod', '给监听账号准备声纹识别能力', '只添加软件模块还不够，游戏也要加载加工成品。', '识别与统计 → 开始准备 / 准备识别 Mod',
+    ['首次选择原版游戏，或选择想保留功能的已有 Mod。', '确认包含“声纹识别”，为新成品命名，例如 HubMain，然后执行加工并应用。', '已有 D2RHub 成品时，可在 Mod 管理选择它并增补声纹识别；修改前关闭使用它的游戏。'],
+    '加工成功，监听账号选用的成品带有“声纹识别”功能。', '源 Mod 不会在新建流程中被改写。新成品名只用英文字母、数字、短横线和下划线；已有成品增补无需另起名。', 'mod-processing');
+  const audioRestart = step('audio-restart', '重启并开启', '重启监听账号，再打开识别开关', '正在运行的游戏不会自动换成新 Mod。', '账号卡片 → 重启游戏；识别与统计 → 音频声纹自动识别',
+    ['关闭监听账号的游戏，从 D2RHub 重新启动，进入角色；如果上一阶段已用这个成品重启，直接继续即可。', '回到识别与统计，确认目标账号正确，点击“立即开启”或打开识别开关。', '保留游戏声音与音效输出，先使用默认识别设置。'],
+    '识别状态显示“正在捕获 · PID …”，目标是刚启动的游戏账号。', '显示未运行时先检查账号进程和识别开关；只关闭悬浮窗不会停止后台识别。', 'audio-telemetry');
+  const audioRecord = step('audio-record', '得到首条记录', '进入野外，让第一段刷图记录保存下来', '先确认地点和计时，不必等到稀有物品掉落。', '游戏内 → 野外；识别与统计 → 打开掉落统计图表',
+    ['进入野外或地下城，查看地点信号、最近识别和场景计时是否更新。', '正常刷图后回城、切换到另一野外或返回主界面，完成当前分段。', '打开掉落统计图表查看已完成记录；没有掉落的场次也可以有计时。'],
+    '地点已识别，离开场景后，统计页能看到这次已完成的分段。', '音频峰值为零：先查游戏声音和监听账号。有声音但无地点：查 Mod、启动参数与是否重启。历史为空：完成分段后放宽时间、角色和路线筛选。', 'troubleshooting');
+  const roomInstall = step('room-install', '添加跟房', '选出谁建房、谁跟随', '主号负责创建新房，小号加入最近由该流程创建的房间。', '设置中心 → 可选功能 → 模块管理 → 自动跟房',
+    ['添加自动跟房并阅读模块说明。', '进入自动跟房，选择一个“主账号”，勾选需要的“跟随账号”。'],
+    '主号与小号各自选定，使用可互相加入房间的区服与角色模式。', '没有可选账号时先完成初始化。自动跟房无需开启识别统计，但主号和小号都需要局内房间工具。', 'room-automation');
+  const roomMod = step('room-mod', '准备房间工具', '每个参与账号都要选用房间工具 Mod', '只给主号加工，不会自动让小号也用上。', '自动跟房 → 参与账号 Mod → 选择 Mod / 前往加工',
+    ['缺少成品时点击“前往加工”：从原版或已有 Mod 新建，勾选“局内房间工具”，命名后加工并应用。', '已有加工成品时可增补房间工具；关闭使用该成品的游戏后再修改。', '回到“参与账号 Mod”，给主号和每个小号分别选用带房间工具的成品。同客户端可以共用一个成品。'],
+    '所有参与账号都选用了包含“局内房间工具”的成品。', '识别 Mod 不一定带房间工具，要看功能标签；成品按国服 / 国际服分别准备，修改共享成品会影响它的所有使用者。', 'mod-processing');
+  const roomMethod = step('room-method', '选操作方式', '选一种建房 / 入房操作方式', '两种方案选一种即可；下面只显示所选方案的准备动作。', '自动跟房 → 建房 / 入房操作方案', [], '', '', 'room-automation');
+  const roomRules = step('room-rules', '设置房名', '设置下一间房叫什么，先手动跟一次', '先完成一次清楚可见的建房与入房，再开启自动派发。', '自动跟房 → 房间命名 / 跟随触发 / 快捷键',
+    ['房名开头填 hub-，下一个序号填 1，序号位数选 3；确认“下次房名”为 hub-001。密码可选。', '分别录制“创建房间快捷键”和“跟随账号快捷键”，避免与已有快捷键冲突。', '跟随触发先选“手动跟随”，等待有效修改自动保存，再启用模块。', '用刚选的成品启动或重启所有参与账号，选角色并分别进入局内。'],
+    '配置已保存、模块已启用，主号和小号都在局内。', '游戏重启后才加载 Mod 和新键位。未保存的无效输入需先按页面提示修正；前台方案首次建房会选择地狱难度。', 'room-automation');
+  const roomFirst = step('room-first', '建房并加入', '主号进新房后，再让小号加入', '以游戏内实际入房为准；输入任务完成不等于服务端已让账号进房。', '自动跟房 → 房间操作',
+    ['先确认所有参与账号都在局内；如果刚才查看统计后返回了主界面，请先重新进入游戏。', '点击“主账号创建房间”，等待主号实际进入新房。使用快捷键时按下后松开。', '点击“让跟随账号加入”，等待所选小号完成入房。', '在游戏内确认主号和小号进入同一个房间。'],
+    '主号和所选小号已在同一房间。', '先看游戏提示与“后台任务”错误。前台方案期间请让程序完成键鼠操作；后台方案检查当前角色聊天第二键位。房间仍有效时可重新触发小号跟随。', 'troubleshooting');
+  const roomAuto = step('room-auto', '开启自动跟随', '以后触发建房，小号延时自动跟上', '仍由你触发主号建房，软件随后按延时派发小号入房。', '自动跟房 → 跟随触发 → 自动跟随',
+    ['改为“自动跟随”，设置“建房后等待（秒）”，覆盖主号实际载入所需时间。', '选择小号进房方式与间隔。前台方案始终依次操作；后台间隔派发不等待前一个小号入房。', '日常启动账号组并进入局内后，触发主号创建房间即可。'],
+    '自动跟随设置已保存；下一次通过 D2RHub 建房后，小号会按配置派发。', '跟随过早就增加建房后等待时间。它不会读取任意手动创建房间的房号，也不会自动刷图。进行中的任务可在“后台任务”取消。', 'room-automation');
+  const combinedMod = step('combined-mod', '一次加工两项', '一次准备声纹识别和房间工具', '主号负责被监听，所有跟房账号都需要房间工具。', '设置中心 → Mod 管理 → 加工',
+    ['加工目标选主号，从原版或想保留的 Mod 新建成品，同时勾选“声纹识别”和“局内房间工具”。', '命名后点击“开始加工并应用”。已有加工成品时可增补缺少的功能，修改前先关闭所有使用者的游戏。', '在自动跟房的“参与账号 Mod”中，给同客户端小号也选用这个成品，或选用各自带房间工具的成品。', '回识别与统计确认监听主号。国服和国际服的成品需要分别准备。'],
+    '主号成品包含两项功能；所有小号成品至少包含房间工具。', '一个成品可以同时包含两种能力，不要叠加两个 -mod 参数。加工只自动应用给目标账号，小号需要另选。', 'mod-processing');
+  const routes = {
+    multi: { title: '我要多开', prerequisite: '从零开始。准备两个不同游戏账号，跟着下面四步完成。', steps: setup, daily: '打开 D2RHub → 启动常用账号组 → 分别进入角色。多开无需开启识别或跟房。' },
+    audio: { title: '我要自动记录刷图与掉落', prerequisite: '前提：正常模式，已有一个能启动的账号。还没准备好？先走“我要多开”的前两步。', steps: [audioInstall, audioMod, audioRestart, audioRecord], daily: '启动监听账号 → 确认识别开启 → 正常刷图 → 离开场景后查看统计。一次只监听一个账号。' },
+    room: { title: '我要小号自动跟房', prerequisite: '前提：正常模式，至少两个账号已能独立启动。不需要开启识别统计。', steps: [roomInstall, roomMod, roomMethod, roomRules, roomFirst, roomAuto], daily: '启动账号组 → 各自进入局内 → 触发主号建房 → 按延时自动派发小号入房。' },
+    all: { title: '多开 + 识别 + 跟房，一条路线配好', prerequisite: '从零开始。基础设置只做一次；把声纹识别和房间工具合到同一成品。', steps: [...setup, audioInstall, roomInstall, combinedMod, roomMethod, roomRules, audioRestart, audioRecord, roomFirst, roomAuto], daily: '启动账号组 → 各自进入局内 → 确认正在监听主号 → 触发建房和自动跟随 → 正常刷图并查看统计。' },
+  };
+  const methodCopy = {
+    foreground: { actions: ['在软件中选择“前台键鼠”。无需设置 Pause / F13 聊天键。', '游戏使用 16:9 高清键鼠界面，并保持游戏内右上角工具栏显示。', '操作会依次切换游戏窗口、短暂接管键鼠；开始前要处于局内。'], done: '软件已选择前台键鼠方案，参与账号将使用 16:9 高清键鼠界面与可见工具栏。', help: '工具栏可在 Mod 条目中设置显示，修改后重启游戏。窗口被遮挡、最小化或失去前台时会停止；首次创建选择地狱难度。' },
+    background: { actions: ['在软件中选择“后台按键”。', '关闭游戏，阅读聊天键绑定说明，选择默认 Pause 或 F13 作为聊天第二键位。', '点击“扫描并更新绑定”，确认键位已就绪；下一步启动游戏后生效，第一聊天键位不用改。'], done: '后台按键方案已保存，聊天第二键位扫描完成且没有待处理冲突。', help: '新建角色后要重新扫描。切换聊天键或恢复原绑定前关闭所有游戏；已有的游戏进程需要重启才能加载新键位。' },
+  };
+  const states = Object.fromEntries(Object.keys(routes).map(key => [key, { index: 0, done: new Set(), method: 'foreground' }]));
+  let currentRoute = null;
+  const byId = id => document.getElementById(id);
+  const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+  function renderRoute(focus = false) {
+    const route = routes[currentRoute], state = states[currentRoute];
+    byId('routeWorkspace').hidden = false;
+    byId('guideMode').href = `#guide-${currentRoute}`;
+    byId('resumeGuide').hidden = false;
+    byId('resumeGuide').href = `#guide-${currentRoute}`;
+    byId('routeTitle').textContent = route.title;
+    byId('routePrerequisite').textContent = route.prerequisite;
+    document.querySelectorAll('[data-route]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.route === currentRoute)));
+    byId('routeFlow').innerHTML = route.steps.map((item, index) => `<li><button type="button" class="route-node" data-step="${index}" ${state.index === index ? 'aria-current="step"' : ''} data-complete="${state.done.has(item.id)}"><span>${state.done.has(item.id) ? '✓ ' : ''}${String(index + 1).padStart(2, '0')}</span>${escapeHTML(item.short)}</button></li>`).join('');
+    const item = route.steps[state.index];
+    if (!item) {
+      const remaining = route.steps.filter(item => !state.done.has(item.id)).length;
+      byId('stepContent').innerHTML = `<div class="guide-finish"><h2 tabindex="-1" id="stepTitle">${remaining ? '已到路线末尾' : '这条路线已完成'}</h2><p>${remaining ? `还有 ${remaining} 步未确认，可点流程节点回看。` : '所有步骤均已由你确认。'}</p><strong>以后每天这样用</strong><p>${escapeHTML(route.daily)}</p><div class="step-footer"><button class="guide-button" type="button" id="restartRoute">重新走一遍</button><a class="guide-button primary" href="#guide">选择其他目标</a><a href="#reference">查询详细手册</a></div></div>`;
+      byId('restartRoute').onclick = () => { state.index = 0; state.done.clear(); renderRoute(true); };
+    } else {
+      const content = item.id === 'room-method' ? { ...item, ...methodCopy[state.method] } : item;
+      byId('stepContent').innerHTML = `<article class="step-panel"><header><span class="step-label">第 ${state.index + 1} / ${route.steps.length} 步 · 已确认 ${state.done.size} 步</span><h2 tabindex="-1" id="stepTitle">${escapeHTML(item.title)}</h2><p>${escapeHTML(item.why)}</p></header><div class="step-body"><span class="step-label">在哪里操作</span><div class="entry-path">${escapeHTML(item.entry)}</div>${guideStepFigureMarkup(item.id)}${item.id === 'room-method' ? `<div class="method-picker" aria-label="查看哪种方案的指引"><button class="guide-button" type="button" data-method="foreground" aria-pressed="${state.method === 'foreground'}">前台键鼠 · 看得见操作</button><button class="guide-button" type="button" data-method="background" aria-pressed="${state.method === 'background'}">后台按键 · 先绑定聊天键</button></div><p class="progress-note">此处只切换指引，请在 D2RHub 中选择同一方案。</p>` : ''}<span class="step-label">现在做什么</span><ol class="step-actions">${content.actions.map(action => `<li>${escapeHTML(action)}</li>`).join('')}</ol><div class="success-check"><strong>看到这样，就可以继续</strong>${escapeHTML(content.done)}</div><details class="step-help"><summary>没做到？展开本步帮助</summary><p>${escapeHTML(content.help)}</p><a href="#${item.ref}">查看相关详细说明 →</a></details><div class="step-footer"><button type="button" class="guide-button" id="previousStep" ${state.index === 0 ? 'disabled' : ''}>上一步</button><button type="button" class="guide-button primary" id="nextStep">${state.index === route.steps.length - 1 ? '我已完成，查看日常流程' : '我已完成，下一步 →'}</button></div></div></article>`;
+      bindGuideGalleries(byId('stepContent'));
+      byId('previousStep').onclick = () => { state.index--; renderRoute(true); };
+      byId('nextStep').onclick = () => { state.done.add(item.id); state.index++; renderRoute(true); };
+      document.querySelectorAll('[data-method]').forEach(button => button.onclick = () => {
+        if (state.method === button.dataset.method) return;
+        state.method = button.dataset.method;
+        // Changing instructions invalidates the dependent confirmations in this route.
+        route.steps.slice(state.index).forEach(item => state.done.delete(item.id));
+        renderRoute();
+        document.querySelector(`[data-method="${state.method}"]`).focus();
+      });
+    }
+    document.querySelectorAll('[data-step]').forEach(button => button.onclick = () => {
+      state.index = Number(button.dataset.step); renderRoute(true);
+    });
+    const activeNode = byId('routeFlow').querySelector('[aria-current="step"]');
+    if (focus) {
+      if (activeNode) activeNode.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'instant' });
+      byId('stepTitle').focus();
+    }
+  }
+  function syncView() {
+    const hash = location.hash.slice(1);
+    const isGuide = !hash || hash === 'guide' || hash.startsWith('guide-');
+    byId('guideView').hidden = !isGuide;
+    byId('referenceView').hidden = isGuide;
+    byId('guideNav').hidden = !isGuide;
+    byId('referenceNav').hidden = isGuide;
+    byId('guideMode').setAttribute('aria-current', isGuide ? 'page' : 'false');
+    byId('referenceMode').setAttribute('aria-current', isGuide ? 'false' : 'page');
+    document.querySelectorAll('.nav-link').forEach(link => link.classList.toggle('active', link.hash === location.hash));
+    if (isGuide) {
+      const key = hash.slice(6);
+      if (routes[key]) { currentRoute = key; renderRoute(); }
+      else { byId('routeWorkspace').hidden = true; document.querySelectorAll('[data-route]').forEach(button => button.setAttribute('aria-pressed', 'false')); }
+    }
+    // Hidden reference targets must be revealed before scrolling to a bookmark.
+    requestAnimationFrame(() => {
+      const target = isGuide ? (routes[hash.slice(6)] ? byId('routeWorkspace') : byId('guideView')) : byId(hash);
+      if (target) {
+        target.tabIndex = -1;
+        target.focus({ preventScroll: true });
+        target.scrollIntoView({ block: 'start', behavior: 'instant' });
+      }
+    });
+  }
+  document.querySelectorAll('[data-route]').forEach(button => button.onclick = () => {
+    const next = `#guide-${button.dataset.route}`;
+    if (location.hash === next) { renderRoute(true); return; }
+    location.hash = next;
+  });
+  window.addEventListener('hashchange', syncView);
+
+  // Search each heading and its following content, with safe text-only excerpts.
+  const reference = byId('referenceView');
+  const searchIndex = [...reference.querySelectorAll('h2, h3')].map((heading, index) => {
+    if (heading.closest('.reference-search')) return null;
+    if (!heading.id) heading.id = `reference-topic-${index}`;
+    const parts = [heading.textContent];
+    let sibling = heading.nextElementSibling;
+    while (sibling && !/^H[23]$/.test(sibling.tagName)) { parts.push(sibling.textContent); sibling = sibling.nextElementSibling; }
+    return { id: heading.id, title: heading.textContent, text: parts.join(' ').replace(/\s+/g, ' ').trim() };
+  }).filter(Boolean);
+  syncView();
+  byId('manualSearch').addEventListener('input', event => {
+    const query = event.target.value.trim().toLocaleLowerCase();
+    const terms = query.split(/\s+/).filter(Boolean);
+    const results = byId('searchResults');
+    results.replaceChildren();
+    results.hidden = !query;
+    if (!query) { byId('searchStatus').textContent = '输入关键词搜索全文；也可以直接选择下方主题。'; return; }
+    const matches = searchIndex.filter(item => terms.every(term => item.text.toLocaleLowerCase().includes(term)));
+    byId('searchStatus').textContent = matches.length ? `找到 ${matches.length} 项，点击标题查看完整说明。` : '没有找到匹配内容。试试更短的词，例如“掉落”“跟房”“Mod”，或打开故障排查。';
+    matches.forEach(item => {
+      const row = document.createElement('li'), link = document.createElement('a'), excerpt = document.createElement('p');
+      link.href = `#${item.id}`;
+      link.textContent = item.title;
+      const first = item.text.toLocaleLowerCase().indexOf(terms[0]);
+      const start = Math.max(0, first - 36), end = Math.min(item.text.length, start + 180);
+      excerpt.textContent = `${start ? '…' : ''}${item.text.slice(start, end)}${end < item.text.length ? '…' : ''}`;
+      row.append(link, excerpt); results.append(row);
+    });
+  });
 </script>
 </body>
 </html>
