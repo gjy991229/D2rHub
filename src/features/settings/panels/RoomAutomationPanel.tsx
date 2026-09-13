@@ -993,10 +993,6 @@ export function RoomAutomationPanel({
               disabled={foregroundMouse}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(key_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, key_hold_ms } }))} />
-            <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms} min={10} max={250}
-              disabled={foregroundMouse}
-              invalid={!!validation?.fieldErrors.timing}
-              onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
               options={[{ value: "post_keys", label: copy.postKeys }, { value: "send_keys", label: copy.sendKeys }]}
               disabled={editorDisabled}

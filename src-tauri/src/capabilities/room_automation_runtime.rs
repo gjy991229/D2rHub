@@ -115,6 +115,16 @@ impl CancellationCheck for CancellationSignal {
 }
 
 trait RuntimeHost: Send + Sync {
+    fn prepare_background_room(
+        &self,
+        _config: &RoomAutomationConfig,
+        _primary_pid: u32,
+        _follower_pids: &[u32],
+        _room_name: &str,
+        _cancel: &CancellationSignal,
+    ) -> Result<(), String> {
+        Err("当前运行环境不支持后台同步粘贴".to_string())
+    }
     fn account_shortcuts(&self) -> Result<Vec<String>, String>;
     fn existing_account_ids(&self) -> Result<Vec<String>, String>;
     fn canonicalize_and_validate_accounts(
@@ -181,6 +191,24 @@ impl WindowsRuntimeHost {
 }
 
 impl RuntimeHost for WindowsRuntimeHost {
+    fn prepare_background_room(
+        &self,
+        config: &RoomAutomationConfig,
+        primary_pid: u32,
+        follower_pids: &[u32],
+        room_name: &str,
+        cancel: &CancellationSignal,
+    ) -> Result<(), String> {
+        #[cfg(target_os = "windows")]
+        {
+            windows::prepare_background_room(config, primary_pid, follower_pids, room_name, cancel)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (config, primary_pid, follower_pids, room_name, cancel);
+            Err("自动跟房仅支持 Windows".to_string())
+        }
+    }
     fn account_shortcuts(&self) -> Result<Vec<String>, String> {
         let config = self.global_config()?;
         let mut shortcuts = self
@@ -339,6 +367,9 @@ impl RuntimeHost for WindowsRuntimeHost {
     ) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
+            if config.input_method == InputMethod::BackgroundKeys {
+                return windows::submit_prepared_follower(config, pid, room_name, cancel);
+            }
             windows::fill_room_form(
                 windows::RoomFormRequest {
                     input_method: config.input_method,
@@ -1172,10 +1203,18 @@ impl RoomAutomationManager {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
         let raw_config = self.workflow_config_snapshot()?;
-        // 建房阶段只操作主号。跟随号会在真正跟进前重新解析并单独取得租约，
-        // 不应在主号操作或人工等待期间被提前锁住。
-        let primary_lease = self.acquire_primary_lease(&raw_config)?;
-        let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
+        // Background create prepares every participant before submitting the
+        // primary. Mouse mode retains its primary-only preparation.
+        let (config, primary, followers, primary_lease) =
+            if raw_config.input_method == InputMethod::BackgroundKeys {
+                let ((config, primary, followers), leases) =
+                    self.prepare_and_reserve_workflow(raw_config, true)?;
+                (config, primary, followers, leases)
+            } else {
+                let lease = self.acquire_primary_lease(&raw_config)?;
+                let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
+                (config, primary, Vec::new(), lease)
+            };
         let task = self
             .workflow
             .lock()
@@ -1201,6 +1240,7 @@ impl RoomAutomationManager {
                             task_id,
                             config,
                             primary,
+                            followers,
                             room.name,
                             room.sequence,
                             retrying,
@@ -1245,6 +1285,11 @@ impl RoomAutomationManager {
             .ok_or_else(|| "尚无待跟进房间密码".to_string())?;
         let mut raw_config = self.workflow_config_snapshot()?;
         raw_config.password = pending_password;
+        if raw_config.input_method == InputMethod::BackgroundKeys {
+            raw_config.follower_account_ids.retain(|account| {
+                snapshot.follower_account_ids.iter().any(|prepared| prepared.eq_ignore_ascii_case(account))
+            });
+        }
         if self.lifecycle.lock().leases.is_some() {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝继续".to_string());
         }
@@ -1550,6 +1595,7 @@ impl RoomAutomationManager {
         task_id: WorkflowTaskId,
         config: RoomAutomationConfig,
         primary: RunningInstance,
+        followers: Vec<(String, RunningInstance)>,
         room_name: String,
         sequence: u32,
         retrying: bool,
@@ -1566,9 +1612,12 @@ impl RoomAutomationManager {
         if self.persist_used_sequence(task_id, sequence).is_err() {
             return;
         }
-        let result = self
-            .host
-            .run_primary(&config, primary.pid, &room_name, retrying, &cancel);
+        let result = if config.input_method == InputMethod::BackgroundKeys {
+            let pids = followers.iter().map(|(_, instance)| instance.pid).collect::<Vec<_>>();
+            self.host.prepare_background_room(&config, primary.pid, &pids, &room_name, &cancel)
+        } else {
+            self.host.run_primary(&config, primary.pid, &room_name, retrying, &cancel)
+        };
         if let Err(error) = result {
             self.fail_and_release(task_id, &error);
             return;
@@ -1610,6 +1659,11 @@ impl RoomAutomationManager {
             }
         };
         raw_config.password = room_password;
+        if config.input_method == InputMethod::BackgroundKeys {
+            raw_config.follower_account_ids.retain(|account| {
+                config.follower_account_ids.iter().any(|prepared| prepared.eq_ignore_ascii_case(account))
+            });
+        }
         let ((fresh_config, _primary, followers), leases) =
             match self.prepare_and_reserve_workflow(raw_config, false) {
                 Ok(prepared) => prepared,

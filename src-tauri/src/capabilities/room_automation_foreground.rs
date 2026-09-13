@@ -16,7 +16,7 @@ struct FormMemory {
     timing: ForegroundTiming,
 }
 static FORMS: OnceLock<Mutex<HashMap<(u32, bool), FormMemory>>> = OnceLock::new();
-static DESKTOP: Mutex<()> = Mutex::new(());
+pub(super) static DESKTOP: Mutex<()> = Mutex::new(());
 
 pub(super) fn invalidate(pid: u32) {
     FORMS
