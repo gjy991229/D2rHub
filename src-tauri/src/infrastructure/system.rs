@@ -533,7 +533,8 @@ const AF_INET: u32 = 2;
 const AF_INET6: u32 = 23;
 const TCP_TABLE_OWNER_PID_ALL: u32 = 5;
 const MIB_TCP_STATE_ESTAB: u32 = 5;
-const BATTLE_NET_LOBBY_PORT: u16 = 1119;
+// 443 作为兼容性兜底；端口命中仅表示联网信号，不保证服务端认证已完成。
+const BATTLE_NET_READINESS_PORTS: &[u16] = &[1119, 443];
 const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
 
 fn tcp_connection_indicates_online_readiness(
@@ -542,7 +543,9 @@ fn tcp_connection_indicates_online_readiness(
     state: u32,
     remote_port: u16,
 ) -> bool {
-    owning_pid == target_pid && state == MIB_TCP_STATE_ESTAB && remote_port == BATTLE_NET_LOBBY_PORT
+    owning_pid == target_pid
+        && state == MIB_TCP_STATE_ESTAB
+        && BATTLE_NET_READINESS_PORTS.contains(&remote_port)
 }
 
 struct TcpTableSnapshot {
@@ -649,8 +652,8 @@ fn tcp6_indicates_online_readiness(pid: u32) -> bool {
     })
 }
 
-/// 检查目标进程是否已建立 TCP 1119 连接（Battle.net 游戏大厅）。
-/// IPv4 和 IPv6 都会检查，但不再将目标进程的其他 TCP 连接视为大厅就绪。
+/// 检查目标进程是否已建立 TCP 1119 或 443 连接，作为启动流程的联网就绪信号。
+/// 同时覆盖 IPv4 和 IPv6；443 为兼容性兜底，不能单凭连接证明登录完成。
 pub fn check_game_connected(pid: u32) -> bool {
     tcp4_indicates_online_readiness(pid) || tcp6_indicates_online_readiness(pid)
 }
@@ -658,15 +661,6 @@ pub fn check_game_connected(pid: u32) -> bool {
 #[cfg(test)]
 mod network_readiness_tests {
     use super::tcp_connection_indicates_online_readiness;
-
-    #[test]
-    fn established_game_connection_requires_battle_net_lobby_port() {
-        assert!(tcp_connection_indicates_online_readiness(42, 42, 5, 1119));
-        assert!(!tcp_connection_indicates_online_readiness(42, 42, 5, 443));
-        assert!(!tcp_connection_indicates_online_readiness(
-            42, 42, 5, 52_123
-        ));
-    }
 
     #[test]
     fn readiness_rejects_other_processes_and_non_established_connections() {
@@ -1353,8 +1347,92 @@ fn find_bnet_window() -> Option<isize> {
     }
 }
 
+/// 每次启动独立记录输入时间；仅在目标进程位于前台时锁存用户接管状态。
+/// 会话输入时间不包含目标窗口信息，因此这是无需钩子的近似判断。
+pub(crate) struct LaunchInputGuard {
+    last_input_tick: Option<u32>,
+    stopped: bool,
+}
+
+fn last_input_tick() -> Option<u32> {
+    #[cfg(target_os = "windows")]
+    {
+        #[repr(C)]
+        struct LastInputInfo {
+            size: u32,
+            tick: u32,
+        }
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetLastInputInfo(info: *mut LastInputInfo) -> i32;
+        }
+        let mut info = LastInputInfo {
+            size: std::mem::size_of::<LastInputInfo>() as u32,
+            tick: 0,
+        };
+        (unsafe { GetLastInputInfo(&mut info) } != 0).then_some(info.tick)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+fn process_is_foreground(pid: u32) -> bool {
+    #[cfg(target_os = "windows")]
+    unsafe {
+        #[link(name = "user32")]
+        extern "system" {
+            fn GetForegroundWindow() -> isize;
+            fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
+        }
+        let hwnd = GetForegroundWindow();
+        let mut foreground_pid = 0;
+        hwnd != 0
+            && GetWindowThreadProcessId(hwnd, &mut foreground_pid) != 0
+            && foreground_pid == pid
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+impl LaunchInputGuard {
+    pub(crate) fn new() -> Self {
+        Self {
+            last_input_tick: last_input_tick(),
+            stopped: false,
+        }
+    }
+
+    pub(crate) fn poll(&mut self, pid: u32) -> bool {
+        if !self.stopped {
+            if let Some(tick) = last_input_tick() {
+                // 前台不是游戏时也更新基线，避免把其他窗口的旧输入当成接管。
+                // 时间戳可能回绕或倒退，只比较是否变化。
+                let changed = self.last_input_tick.replace(tick).is_some_and(|last| last != tick);
+                self.stopped = changed && process_is_foreground(pid);
+            }
+        }
+        self.stopped
+    }
+
+    pub(crate) fn send_keys(&mut self, pid: u32) -> Result<(), AppError> {
+        send_keys_to_window_inner(pid, Some(self))
+    }
+}
+
 /// 纯 Rust 发送按键：空格 + 回车（静默后台投递，无 PowerShell，不抢占键盘焦点）
 pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
+    send_keys_to_window_inner(pid, None)
+}
+
+fn send_keys_to_window_inner(
+    pid: u32,
+    mut input_guard: Option<&mut LaunchInputGuard>,
+) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // 该函数在启动阶段每 500ms 调用一次。窗口存在本身就足以证明目标
@@ -1367,6 +1445,9 @@ pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
             const WM_KEYUP: u32 = 0x0101;
 
             unsafe {
+                if input_guard.as_deref_mut().is_some_and(|guard| guard.poll(pid)) {
+                    return Ok(());
+                }
                 // Post Space Key
                 PostMessageW(hwnd, WM_KEYDOWN, VK_SPACE, 0);
                 std::thread::sleep(std::time::Duration::from_millis(30));
@@ -1374,6 +1455,10 @@ pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
 
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
+                // 空格已投递时仍补齐 KeyUp；用户接管后不再发送后续回车。
+                if input_guard.as_deref_mut().is_some_and(|guard| guard.poll(pid)) {
+                    return Ok(());
+                }
                 // Post Enter Key
                 PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0);
                 std::thread::sleep(std::time::Duration::from_millis(30));
