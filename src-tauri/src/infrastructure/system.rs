@@ -1347,92 +1347,8 @@ fn find_bnet_window() -> Option<isize> {
     }
 }
 
-/// 每次启动独立记录输入时间；仅在目标进程位于前台时锁存用户接管状态。
-/// 会话输入时间不包含目标窗口信息，因此这是无需钩子的近似判断。
-pub(crate) struct LaunchInputGuard {
-    last_input_tick: Option<u32>,
-    stopped: bool,
-}
-
-fn last_input_tick() -> Option<u32> {
-    #[cfg(target_os = "windows")]
-    {
-        #[repr(C)]
-        struct LastInputInfo {
-            size: u32,
-            tick: u32,
-        }
-        #[link(name = "user32")]
-        extern "system" {
-            fn GetLastInputInfo(info: *mut LastInputInfo) -> i32;
-        }
-        let mut info = LastInputInfo {
-            size: std::mem::size_of::<LastInputInfo>() as u32,
-            tick: 0,
-        };
-        (unsafe { GetLastInputInfo(&mut info) } != 0).then_some(info.tick)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        None
-    }
-}
-
-fn process_is_foreground(pid: u32) -> bool {
-    #[cfg(target_os = "windows")]
-    unsafe {
-        #[link(name = "user32")]
-        extern "system" {
-            fn GetForegroundWindow() -> isize;
-            fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
-        }
-        let hwnd = GetForegroundWindow();
-        let mut foreground_pid = 0;
-        hwnd != 0
-            && GetWindowThreadProcessId(hwnd, &mut foreground_pid) != 0
-            && foreground_pid == pid
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = pid;
-        false
-    }
-}
-
-impl LaunchInputGuard {
-    pub(crate) fn new() -> Self {
-        Self {
-            last_input_tick: last_input_tick(),
-            stopped: false,
-        }
-    }
-
-    pub(crate) fn poll(&mut self, pid: u32) -> bool {
-        if !self.stopped {
-            if let Some(tick) = last_input_tick() {
-                // 前台不是游戏时也更新基线，避免把其他窗口的旧输入当成接管。
-                // 时间戳可能回绕或倒退，只比较是否变化。
-                let changed = self.last_input_tick.replace(tick).is_some_and(|last| last != tick);
-                self.stopped = changed && process_is_foreground(pid);
-            }
-        }
-        self.stopped
-    }
-
-    pub(crate) fn send_keys(&mut self, pid: u32) -> Result<(), AppError> {
-        send_keys_to_window_inner(pid, Some(self))
-    }
-}
-
 /// 纯 Rust 发送按键：空格 + 回车（静默后台投递，无 PowerShell，不抢占键盘焦点）
 pub fn send_keys_to_window(pid: u32) -> Result<(), AppError> {
-    send_keys_to_window_inner(pid, None)
-}
-
-fn send_keys_to_window_inner(
-    pid: u32,
-    mut input_guard: Option<&mut LaunchInputGuard>,
-) -> Result<(), AppError> {
     #[cfg(target_os = "windows")]
     {
         // 该函数在启动阶段每 500ms 调用一次。窗口存在本身就足以证明目标
@@ -1445,9 +1361,6 @@ fn send_keys_to_window_inner(
             const WM_KEYUP: u32 = 0x0101;
 
             unsafe {
-                if input_guard.as_deref_mut().is_some_and(|guard| guard.poll(pid)) {
-                    return Ok(());
-                }
                 // Post Space Key
                 PostMessageW(hwnd, WM_KEYDOWN, VK_SPACE, 0);
                 std::thread::sleep(std::time::Duration::from_millis(30));
@@ -1455,10 +1368,6 @@ fn send_keys_to_window_inner(
 
                 std::thread::sleep(std::time::Duration::from_millis(100));
 
-                // 空格已投递时仍补齐 KeyUp；用户接管后不再发送后续回车。
-                if input_guard.as_deref_mut().is_some_and(|guard| guard.poll(pid)) {
-                    return Ok(());
-                }
                 // Post Enter Key
                 PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, 0);
                 std::thread::sleep(std::time::Duration::from_millis(30));

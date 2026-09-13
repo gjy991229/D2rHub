@@ -2307,8 +2307,6 @@ async fn launch_single(
     let mut network_ready_samples = 0u8;
 
     // 先等 2 秒让游戏窗口初始化
-    let mut input_guard = crate::infrastructure::system::LaunchInputGuard::new();
-    let mut auto_keys_stopped = false;
     tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
     let mut keys_logged = false;
@@ -2360,12 +2358,8 @@ async fn launch_single(
             break;
         }
 
-        if !auto_keys_stopped && input_guard.poll(d2r_pid) {
-            auto_keys_stopped = true;
-            emit("connect", "running", "检测到用户操作前台游戏窗口，本次启动已停止自动按键，继续等待登录就绪...");
-        }
-        if !auto_keys_stopped && now >= next_key_send {
-            let _ = input_guard.send_keys(d2r_pid);
+        if now >= next_key_send {
+            let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             if !keys_logged {
                 emit("connect", "running", "正在发送按键跳过动画...");
                 keys_logged = true;
@@ -2908,8 +2902,6 @@ async fn launch_single_token(
     let mut network_ready_samples = 0u8;
     let mut next_tcp_sample = start;
     let mut next_key_send = start;
-    let mut input_guard = crate::infrastructure::system::LaunchInputGuard::new();
-    let mut auto_keys_stopped = false;
     let mut etw_diagnostics = None;
     let mut launch_ready;
     let mut mutex_closed_logged = false;
@@ -2923,10 +2915,6 @@ async fn launch_single_token(
 
         let now = std::time::Instant::now();
         if readiness_source.is_none() {
-            if !auto_keys_stopped && input_guard.poll(d2r_pid) {
-                auto_keys_stopped = true;
-                emit("connect", "running", "检测到用户操作前台游戏窗口，本次启动已停止自动按键，继续等待登录就绪...");
-            }
             let web_token_read = token_read_monitor
                 .as_ref()
                 .is_some_and(|monitor| monitor.was_read_by(d2r_pid));
@@ -2961,8 +2949,8 @@ async fn launch_single_token(
                         "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
                     ),
                 }
-            } else if !auto_keys_stopped && now >= next_key_send {
-                let _ = input_guard.send_keys(d2r_pid);
+            } else if now >= next_key_send {
+                let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
                 next_key_send = now + std::time::Duration::from_millis(500);
             }
         }
