@@ -21,7 +21,6 @@ import {
   selectedCapsuleForAccount,
 } from "../../modCapsules/model";
 import { ROOM_AUTOMATION_COPY } from "../../roomAutomation/copy";
-import { FOREGROUND_TIMING_FIELDS, foregroundTimingWithDefaults } from "../../roomAutomation/foregroundTiming";
 import {
   roomAutomationGateway,
   type RoomAutomationGateway,
@@ -62,8 +61,6 @@ type Operation = "save";
 function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
   return {
     ...config,
-    input_method: config.input_method ?? "background_keys",
-    foreground_timing: foregroundTimingWithDefaults(config.foreground_timing),
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     follower_account_ids: [...config.follower_account_ids],
@@ -377,8 +374,6 @@ export function RoomAutomationPanel({
     );
   }
 
-  const foregroundMouse = draft.input_method === "foreground_mouse";
-  const foregroundTiming = foregroundTimingWithDefaults(draft.foreground_timing);
   const statusTone = status?.phase === "error"
     ? "danger"
     : !draft.enabled
@@ -524,11 +519,11 @@ export function RoomAutomationPanel({
                   );
                 })}
               </div>
-              {(foregroundMouse || followerJoinMode === "interval") && draft.follower_account_ids.length > 0 && (
+              {(followerJoinMode === "interval") && draft.follower_account_ids.length > 0 && (
                 <div className="room-automation-follower-order">
                   <div className="room-automation-follower-order-heading">
                     <strong>{copy.followerOrder}</strong>
-                    <span>{foregroundMouse ? copy.foregroundQueueHelp : copy.followerJoinOrderHelp}</span>
+                    <span>{copy.followerJoinOrderHelp}</span>
                   </div>
                   <ol>
                     {draft.follower_account_ids.map((accountId, index) => {
@@ -643,16 +638,7 @@ export function RoomAutomationPanel({
           <KeyRound size={16} aria-hidden="true" />
           <div><h3 id="room-mode-title">{copy.modeAndRoom}</h3></div>
         </div>
-        <ChoiceField label={copy.inputMethod} value={draft.input_method ?? "background_keys"}
-          options={[
-            { value: "background_keys", label: copy.backgroundMethodShort },
-            { value: "foreground_mouse", label: copy.foregroundMethodShort },
-          ]}
-          disabled={editorDisabled}
-          help={foregroundMouse ? copy.foregroundMethodSummary : copy.backgroundMethodHelp}
-          onChange={(value) => updateDraft((current) => ({
-            ...current, input_method: value as RoomAutomationConfig["input_method"],
-          }))} />
+        <p className="room-automation-consent-copy">{copy.backgroundMethodHelp}</p>
         <div className="room-automation-behavior-fields">
           <ChoiceField label={copy.followTrigger} value={draft.auto_followers_enabled ? "auto" : "manual"}
             options={[{ value: "manual", label: copy.manualMode }, { value: "auto", label: copy.automaticMode }]}
@@ -661,13 +647,13 @@ export function RoomAutomationPanel({
             onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_enabled: value === "auto" }))} />
           <ChoiceField label={copy.followerJoinMode} value={followerJoinMode}
             options={[
-              { value: "simultaneous", label: foregroundMouse ? copy.sequentialJoin : copy.simultaneousJoin },
+              { value: "simultaneous", label: copy.simultaneousJoin },
               { value: "interval", label: copy.intervalJoin },
             ]}
             disabled={editorDisabled}
             help={followerJoinMode === "interval"
-              ? (foregroundMouse ? copy.foregroundIntervalHelp : copy.intervalJoinHelp)
-              : (foregroundMouse ? copy.foregroundQueueHelp : copy.simultaneousJoinHelp)}
+              ? copy.intervalJoinHelp
+              : copy.simultaneousJoinHelp}
             onChange={(value) => updateDraft((current) => ({
               ...current, follower_join_mode: value as RoomAutomationConfig["follower_join_mode"],
             }))} />
@@ -759,22 +745,10 @@ export function RoomAutomationPanel({
         </summary>
         <fieldset disabled={editorDisabled}>
           <div className="room-automation-fields">
-            {foregroundMouse ? FOREGROUND_TIMING_FIELDS.map(([key, label]) => (
-              <NumberField key={key} label={copy[label]} value={foregroundTiming[key]}
-                min={key === "step_interval_ms" ? 0 : 1} max={2000}
-                invalid={!!validation?.fieldErrors.timing}
-                onChange={(value) => updateDraft((current) => ({
-                  ...current,
-                  foreground_timing: { ...foregroundTimingWithDefaults(current.foreground_timing), [key]: value },
-                }))}
-              />
-            )) : <>
             <NumberField label={copy.stepDelay} value={draft.flow.step_delay_ms} min={0} max={2000}
-              disabled={foregroundMouse}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, step_delay_ms } }))} />
             <NumberField label={copy.keyHold} value={draft.flow.key_hold_ms ?? 50} min={10} max={250}
-              disabled={foregroundMouse}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(key_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, key_hold_ms } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
@@ -783,9 +757,8 @@ export function RoomAutomationPanel({
               onChange={(value) => updateDraft((current) => ({
                 ...current, background_text_strategy: value as RoomAutomationConfig["background_text_strategy"],
               }))} />
-            </>}
           </div>
-          <p className="room-automation-consent-copy">{foregroundMouse ? copy.foregroundTimingHelp : copy.inputTimingHelp}</p>
+          <p className="room-automation-consent-copy">{copy.inputTimingHelp}</p>
           {validation?.fieldErrors.timing && <p className="room-automation-field-error" role="alert">{validation.fieldErrors.timing}</p>}
         </fieldset>
       </details>

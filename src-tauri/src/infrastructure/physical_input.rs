@@ -1,6 +1,5 @@
 //! Scoped desktop input ownership. This adapter knows nothing about room forms.
-use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND, POINT, RECT};
-use windows::Win32::Graphics::Gdi::ClientToScreen;
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HWND, POINT};
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::DataExchange::*;
 use windows::Win32::System::Memory::*;
@@ -81,36 +80,6 @@ impl DesktopInput {
         Ok(())
     }
 
-    pub(crate) fn client_size(&self) -> Result<(i32, i32), String> {
-        self.check_target()?;
-        let mut rect = RECT::default();
-        unsafe { GetClientRect(self.hwnd, &mut rect) }.map_err(|e| e.to_string())?;
-        Ok((rect.right - rect.left, rect.bottom - rect.top))
-    }
-
-    pub(crate) fn move_to(&self, x: i32, y: i32) -> Result<(), String> {
-        let (width, height) = self.client_size()?;
-        if x < 0 || y < 0 || x >= width || y >= height {
-            return Err("控件坐标超出游戏客户区，已停止点击".to_string());
-        }
-        let mut point = POINT { x, y };
-        unsafe { ClientToScreen(self.hwnd, &mut point) }
-            .ok()
-            .map_err(|e| e.to_string())?;
-        if unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) } != self.hwnd {
-            return Err("目标控件被其他窗口遮挡，已停止点击".to_string());
-        }
-        unsafe { SetCursorPos(point.x, point.y) }.map_err(|e| e.to_string())?;
-        let mut actual = POINT::default();
-        unsafe { GetCursorPos(&mut actual) }.map_err(|e| e.to_string())?;
-        if actual.x != point.x || actual.y != point.y {
-            return Err(
-                "鼠标未到达目标物理位置（窗口可能在屏幕外或鼠标被限制），已停止点击".to_string(),
-            );
-        }
-        Ok(())
-    }
-
     pub(crate) fn key_down(&mut self, key: u16) -> Result<(), String> {
         self.check_target()?;
         let scan = unsafe { MapVirtualKeyW(u32::from(key), MAPVK_VK_TO_VSC) } as u16;
@@ -134,21 +103,6 @@ impl DesktopInput {
             },
         };
         self.press(event(false), event(true))
-    }
-
-    pub(crate) fn mouse_down(&mut self) -> Result<(), String> {
-        self.check_target()?;
-        let event = |flags| INPUT {
-            r#type: INPUT_MOUSE,
-            Anonymous: INPUT_0 {
-                mi: MOUSEINPUT {
-                    dwFlags: flags,
-                    dwExtraInfo: INPUT_TAG,
-                    ..Default::default()
-                },
-            },
-        };
-        self.press(event(MOUSEEVENTF_LEFTDOWN), event(MOUSEEVENTF_LEFTUP))
     }
 
     fn press(&mut self, down: INPUT, up: INPUT) -> Result<(), String> {

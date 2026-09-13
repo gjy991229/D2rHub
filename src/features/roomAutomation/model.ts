@@ -1,5 +1,4 @@
 import type { RoomAutomationConfig } from "./types";
-import { foregroundTimingWithDefaults } from "./foregroundTiming";
 
 export interface RoomAutomationValidation {
   valid: boolean;
@@ -122,8 +121,6 @@ export function roomAutomationConfigsEqual(
   if (!left || !right) return left === right;
   const withDefaults = (config: RoomAutomationConfig) => ({
     ...config,
-    input_method: config.input_method ?? "background_keys",
-    foreground_timing: foregroundTimingWithDefaults(config.foreground_timing),
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },
@@ -198,9 +195,6 @@ export function validateRoomAutomationConfig(
     fieldErrors.sequence = copy.invalidSequence;
   }
   const flows = [config.flow];
-  const invalidForegroundTiming = Object.entries(foregroundTimingWithDefaults(config.foreground_timing))
-    .some(([key, value]) => !Number.isSafeInteger(value)
-      || value < (key === "step_interval_ms" ? 0 : 1) || value > 2000);
   const followerJoinInterval = config.follower_join_interval_secs ?? 3;
   const invalidFollowerJoinInterval = (config.follower_join_mode ?? "simultaneous") === "interval"
     && (!Number.isSafeInteger(followerJoinInterval)
@@ -208,7 +202,6 @@ export function validateRoomAutomationConfig(
   if (!Number.isSafeInteger(config.auto_followers_delay_secs)
     || config.auto_followers_delay_secs < 2 || config.auto_followers_delay_secs > 60
     || invalidFollowerJoinInterval
-    || invalidForegroundTiming
     || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)
       || !Number.isSafeInteger(flow.character_delay_ms)
       || !Number.isSafeInteger(flow.key_hold_ms ?? 50)

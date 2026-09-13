@@ -1,3 +1,4 @@
+import { PetWardrobePanel } from "../../pet/PetWardrobePanel";
 import { LocateFixed } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
@@ -87,25 +88,12 @@ export function PetPanel({
               />
             </div>
 
-            <div className="flex items-center justify-between gap-3 pt-2">
-              <div>
-                <label htmlFor="pet-skin" className="text-sm font-semibold text-text-secondary">猫咪皮肤外观</label>
-                <p className="text-2xs text-text-muted">当前选择的猫咪贴图类型</p>
-              </div>
-              <select
-                id="pet-skin"
-                value={config.bongo_cat_skin || "original"}
-                onChange={event => updateConfig(current => { current.bongo_cat_skin = event.target.value; })}
-                className="h-8 px-2.5 rounded-lg bg-surface-hover border border-border-default text-text-primary text-xs"
-              >
-                {(config.bongo_cat_unlocked_skins || ["original"]).map(skin => (
-                  <option key={skin} value={skin}>{skin === "original" ? "经典原版" : skin}</option>
-                ))}
-              </select>
-            </div>
+
           </div>
         )}
       </section>
+      <PetWardrobePanel english={config.app_language === "en-US"} />
     </div>
   );
 }
+

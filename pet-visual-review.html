@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><title>桌宠装扮 · 视觉审核</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#e8e5df;color:#403630;font:14px 'Segoe UI','Microsoft YaHei',sans-serif}header{padding:14px 24px;background:#fffdf8;position:sticky;top:0;z-index:99;border-bottom:1px solid #cbbfaf}h1{font-size:18px;margin:0 0 10px}button,select{font:inherit;padding:5px 10px;margin-right:6px;cursor:pointer}main{padding:14px 24px}.row{display:grid;grid-template-columns:200px repeat(3,1fr);border-bottom:1px solid #c4b9ac;min-height:154px;align-items:center;gap:8px}.pose{display:flex;justify-content:center;align-items:center;flex-direction:column;min-height:145px}.label{font-size:11px;color:#7d7269}.name{font-weight:600}.row small{display:block;font-weight:normal;color:#7d7269;margin-top:5px}.dark{background:#25272c;color:#e6e2dd}.dark .row{border-color:#555}.dark .name small,.dark .label{color:#b9b1a4}#status{margin-left:16px;font-size:12px}.z-20{z-index:20}.relative{position:relative}.inline-block{display:inline-block}.shrink-0{flex-shrink:0}
+</style></head><body><div id="root"></div><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {PetStage} from '/src/features/pet/PetStage.tsx';
+import {PET_ITEMS} from '/src/features/pet/catalog.ts';
+const h=React.createElement;
+const outfits=[
+ {name:'法师混搭',equipped:{head:'circlet',face:'glasses',neck:'red-scarf',body:'star-cape',hands:'assassin-wraps',companion:'rune-jah'}},
+ {name:'自然混搭',equipped:{head:'druid-antlers',face:'glasses',neck:'bell',body:'paladin-cape',hands:'assassin-wraps',companion:'little-ghost'}},
+ {name:'战士混搭',equipped:{head:'barbarian-horns',face:'glasses',neck:'necromancer-skull',body:'paladin-cape',hands:'assassin-wraps',companion:'rune-ber'}},
+ {name:'旅人混搭',equipped:{head:'traveler-hood',face:'glasses',neck:'bronze-charm',body:'star-cape',hands:'assassin-wraps',companion:'warlock-tome'}},
+];
+function avatar(frame,equipped,width){return h(PetStage,{frame,equipped,width,count:123456});}
+function App(){const[page,setPage]=React.useState(0),[dark,setDark]=React.useState(false),[width,setWidth]=React.useState(195);
+const all=[{name:'基础猫咪',equipped:{}},...PET_ITEMS.map(i=>({name:i.name,id:i.id,equipped:{[i.slot]:i.id}})),...outfits];
+const shown=all.slice(page*6,page*6+6);
+return h(React.Fragment,null,h('header',null,h('h1',null,'桌宠装扮 · 真实组件视觉审核'),[0,1,2,3].map(i=>h('button',{key:i,onClick:()=>setPage(i)},'第 '+(i+1)+' 组')),h('button',{onClick:()=>setDark(!dark)},dark?'浅色背景':'深色背景'),h('select',{'aria-label':'预览大小',value:width,onChange:e=>setWidth(+e.target.value)},[97.5,195,390].map(w=>h('option',{key:w,value:w},w+' px'))),h('span',{id:'status'},'第 '+(page+1)+' 组 · '+shown.length+' 套 · 每套三帧')),
+h('main',{className:dark?'dark':''},shown.map((item,i)=>h('section',{className:'row',key:item.name},h('div',{className:'name'},item.name,h('small',null,item.id||'组合')),...['up','left','right'].map(frame=>h('div',{className:'pose',key:frame},h('span',{className:'label'},frame),avatar(frame,item.equipped,width)))))))}
+createRoot(document.getElementById('root')).render(h(App));
+</script></body></html>
+
+

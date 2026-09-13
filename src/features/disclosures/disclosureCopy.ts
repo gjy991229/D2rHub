@@ -133,7 +133,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "功能与原理",
-          body: "本模块可让主账号自动创建或重开房间，并让跟随账号同时或按固定间隔派发进房指令。程序通过识别对应的 D2R 窗口并发送键盘消息，自动填写房间名和密码。前后台方案均直接填写房间表单，不调用或修改游戏聊天键。",
+          body: "本模块可让主账号自动创建或重开房间，并让跟随账号同时或按固定间隔派发进房指令。程序通过识别对应的 D2R 窗口并发送键盘消息，自动填写房间名和密码。后台方案直接填写房间表单，不调用或修改游戏聊天键。",
         },
         {
           title: "风险与免责",
@@ -207,7 +207,7 @@ const MODULE_COPY: Record<SettingsLanguage, Record<OptionalModuleTabId, Omit<Dis
       sections: [
         {
           title: "What it does",
-          body: "This module can create or recreate a room on the primary account and dispatch follower join commands together or at a fixed interval. It identifies each D2R window and sends keyboard messages to enter the room name and password. Both input methods fill room forms directly without invoking or changing in-game chat bindings.",
+          body: "This module can create or recreate a room on the primary account and dispatch follower join commands together or at a fixed interval. It identifies each D2R window and sends keyboard messages to enter the room name and password. Background input fills room forms directly without invoking or changing in-game chat bindings.",
         },
         {
           title: "Risks and disclaimer",

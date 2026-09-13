@@ -26,8 +26,8 @@ const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 26;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 5] = [21, 22, 23, 24, 25];
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 27;
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 6] = [21, 22, 23, 24, 25, 26];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -802,27 +802,6 @@ fn room_toolbar_visibility(hud: &serde_json::Value) -> Result<bool, String> {
     }
 }
 
-pub(crate) fn read_room_toolbar_visible(
-    mods_directory: &Path,
-    mod_name: &str,
-) -> Result<bool, String> {
-    let mod_name = plain_mod_name(mod_name)?;
-    let layout_path = mods_directory
-        .join(mod_name)
-        .join(format!("{mod_name}.mpq"))
-        .join(ROOM_TOOL_LAYOUT_DIRECTORY)
-        .join("HudWarningshd.json");
-    let canonical_mods = canonical_safe_mods_root(mods_directory)?;
-    ensure_safe_existing_node(&canonical_mods, &layout_path, false, "游戏 HUD 布局")?;
-    let document = read_room_tool_layout(
-        layout_path
-            .parent()
-            .ok_or_else(|| "游戏 HUD 布局路径无效".to_string())?,
-        "HudWarningshd.json",
-    )?;
-    room_toolbar_visibility(&document)
-}
-
 fn layout_has_timed_child_message(
     document: &serde_json::Value,
     expected: &str,
@@ -926,7 +905,7 @@ fn validate_routed_pause_buttons(
     Ok(routed)
 }
 
-fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str) -> Result<(), String> {
+fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str, room_recipe_version: u32) -> Result<(), String> {
     let is_button = node.get("type").and_then(serde_json::Value::as_str) == Some("ButtonWidget");
     let name = node.get("name").and_then(serde_json::Value::as_str);
     let returns_to_game = is_button && name == Some("ReturnToGame");
@@ -943,7 +922,7 @@ fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str) -> Re
         && node
             .pointer("/fields/onClickMessage")
             .and_then(serde_json::Value::as_str)
-            != Some("PausePanelMessage:Close")
+            != Some(if room_recipe_version >= 27 { "PanelManager:OpenPanel:D2RHubPauseReturnToGame" } else { "PausePanelMessage:Close" })
     {
         return Err(format!(
             "暂停布局 Esc 未绑定返回游戏，请重新加工：{pause_name}"
@@ -954,7 +933,7 @@ fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str) -> Re
             .as_array()
             .ok_or_else(|| format!("暂停布局 children 不是数组：{pause_name}"))?;
         for child in children {
-            validate_pause_esc_bindings(child, pause_name)?;
+            validate_pause_esc_bindings(child, pause_name, room_recipe_version)?;
         }
     }
     Ok(())
@@ -1116,10 +1095,37 @@ fn validate_in_game_room_tool_layouts_for_version(
         .join(format!("{mod_name}.mpq"))
         .join(ROOM_TOOL_LAYOUT_DIRECTORY);
     let hud = read_room_tool_layout(&layout_directory, "HudWarningshd.json")?;
-    // Toolbar visibility is independent of the PausePanel keyboard gateways.
-    room_toolbar_visibility(&hud)?;
+    // Legacy visibility is accepted only when reading an upgrade source.
+    let toolbar_visible = room_toolbar_visibility(&hud)?;
+    if room_recipe_version >= 27 && toolbar_visible {
+        return Err("局内按钮应始终隐藏，请重新加工".to_string());
+    }
 
     let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
+    if room_recipe_version >= 27 {
+        if toolbar.pointer("/fields/rect/x").and_then(serde_json::Value::as_i64) != Some(-9999)
+            || toolbar.pointer("/fields/rect/y").and_then(serde_json::Value::as_i64) != Some(-9999)
+        {
+            return Err("局内工具栏没有固定隐藏，请重新加工".to_string());
+        }
+        let return_helper = read_room_tool_layout(&layout_directory, "D2RHubPauseReturnToGamehd.json")?;
+        if !layout_has_timed_child_message(&return_helper, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", 0.001)
+            || !layout_has_timed_child_message(&return_helper, "PausePanelMessage:Close", 0.005) {
+            return Err("暂停菜单返回入口无效，请重新加工".to_string());
+        }
+        let esc_arm = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateEscArmhd.json")?;
+        let receiver = find_layout_node(&esc_arm, "D2RHubEscNextGame")
+            .ok_or_else(|| "缺少双击 Esc 下一局入口，请重新加工".to_string())?;
+        if esc_arm.get("type").and_then(serde_json::Value::as_str) != Some("TooltipsPanel")
+            || esc_arm.pointer("/fields/priority").and_then(serde_json::Value::as_i64) != Some(9002)
+            || receiver.pointer("/fields/acceptsEscKeyEverywhere").and_then(serde_json::Value::as_bool) != Some(true)
+            || receiver.pointer("/fields/acceptsReturnKey").and_then(serde_json::Value::as_bool) != Some(false)
+            || receiver.pointer("/fields/onClickMessage").and_then(serde_json::Value::as_str) != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
+            || !layout_has_timed_child_message(&esc_arm, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS)
+        {
+            return Err("双击 Esc 下一局入口或双击时限无效，请重新加工".to_string());
+        }
+    }
     for action in [
         "PanelManager:OpenPanel:D2RHubQuickRecreateArm",
         "PanelManager:OpenPanel:D2RHubOpenCreateGame",
@@ -1350,6 +1356,11 @@ fn validate_in_game_room_tool_layouts_for_version(
 
     for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&layout_directory, pause_name)?;
+        if room_recipe_version >= 27 && !layout_has_timed_child_message(
+            &pause, "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm", 0.01,
+        ) {
+            return Err(format!("暂停布局缺少双击 Esc 入口：{pause_name}"));
+        }
         if requires_input_safety {
             if find_layout_node(&pause, "ReturnToGame")
                 .and_then(|node| node.get("type"))
@@ -1358,7 +1369,7 @@ fn validate_in_game_room_tool_layouts_for_version(
             {
                 return Err(format!("暂停布局缺少返回游戏按钮：{pause_name}"));
             }
-            validate_pause_esc_bindings(&pause, pause_name)?;
+            validate_pause_esc_bindings(&pause, pause_name, room_recipe_version)?;
         }
         let safe_hub = find_layout_node(&pause, ROOM_TOOL_GATEWAY_HUB)
             .ok_or_else(|| format!("暂停布局缺少安全键盘焦点：{pause_name}"))?;
@@ -2309,81 +2320,6 @@ fn replace_mod_layout_file(path: &Path, contents: &[u8]) -> Result<(), String> {
         let _ = std::fs::remove_file(&temporary);
     }
     result
-}
-
-pub(crate) fn set_room_toolbar_visible(
-    state: &SharedState,
-    config: &GlobalConfig,
-    mods_directory: &Path,
-    mod_name: &str,
-    visible: bool,
-) -> Result<(), String> {
-    let _lease = BuildLease::acquire(state)?;
-    ensure_audio_mod_not_in_use(state, config, mod_name)?;
-    let validated = validate_audio_mod_credential(mods_directory, mod_name)?;
-    if !validated.current_feature_protocol
-        || !validated.feature_groups.iter().any(|group| {
-            group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID
-                && group.recipe_version == IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION
-        })
-    {
-        return Err(format!(
-            "Mod“{mod_name}”不含当前版本局内房间工具，请先加工更新"
-        ));
-    }
-    // A display toggle only needs the feature credential and room UI layouts;
-    // avoid traversing or decoding the unrelated audio assets.
-    validate_in_game_room_tool_layouts_for_recipe(&validated.directory, mod_name, true)?;
-    validate_lobby_return_hint(&validated.directory, mod_name)?;
-    if read_room_toolbar_visible(mods_directory, mod_name)? == visible {
-        return Ok(());
-    }
-    let layout_path = validated
-        .directory
-        .join(format!("{mod_name}.mpq"))
-        .join(ROOM_TOOL_LAYOUT_DIRECTORY)
-        .join("HudWarningshd.json");
-    let original =
-        std::fs::read(&layout_path).map_err(|error| format!("无法读取游戏 HUD 布局：{error}"))?;
-    let mut document: serde_json::Value =
-        serde_json::from_slice(&original).map_err(|_| "游戏 HUD 布局已损坏".to_string())?;
-    let children = document
-        .get_mut("children")
-        .and_then(serde_json::Value::as_array_mut)
-        .ok_or_else(|| "游戏 HUD 布局缺少 children".to_string())?;
-    for child in children {
-        if let Some(message) = child.pointer_mut("/fields/message") {
-            if matches!(
-                message.as_str(),
-                Some(ROOM_TOOLBAR_OPEN_MESSAGE | ROOM_TOOLBAR_CLOSE_MESSAGE)
-            ) {
-                // Closing the toolbar removes both visuals and mouse hit regions;
-                // all form controllers and keyboard gateways stay installed.
-                *message = serde_json::json!(if visible {
-                    ROOM_TOOLBAR_OPEN_MESSAGE
-                } else {
-                    ROOM_TOOLBAR_CLOSE_MESSAGE
-                });
-            }
-        }
-    }
-    let updated = serde_json::to_vec_pretty(&document)
-        .map_err(|error| format!("无法序列化局内按钮配置：{error}"))?;
-    let result = replace_mod_layout_file(&layout_path, &updated).and_then(|()| {
-        if read_room_toolbar_visible(mods_directory, mod_name)? != visible {
-            return Err("写入后的按钮显示状态与请求不一致".to_string());
-        }
-        Ok(())
-    });
-    if let Err(error) = result {
-        return match replace_mod_layout_file(&layout_path, &original) {
-            Ok(()) => Err(format!("局内按钮配置保存失败，已恢复原配置：{error}")),
-            Err(restore) => Err(format!(
-                "局内按钮配置保存失败：{error}；恢复原配置失败：{restore}"
-            )),
-        };
-    }
-    Ok(())
 }
 
 pub(crate) fn set_auto_exit_on_death_enabled(

@@ -158,6 +158,7 @@ fn reconcile() -> Result<(), String> {
         .name("pet-input-events".into())
         .spawn(move || {
             while let Ok(event) = receiver.recv() {
+                crate::capabilities::pet_activity::note_input(needed);
                 let _ = app.emit("global-input-event", event);
             }
         })

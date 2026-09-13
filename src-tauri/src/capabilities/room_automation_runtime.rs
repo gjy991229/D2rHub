@@ -5,7 +5,7 @@
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    FollowerJoinMode, InputMethod, RoomAutomationConfig, WaitingMode, WorkflowPhase,
+    FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase,
     WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
@@ -130,19 +130,7 @@ trait RuntimeHost: Send + Sync {
     ) -> Result<(), String>;
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
     fn foreground_pid(&self) -> Option<u32>;
-    fn focus_primary(&self, account_id: &str, cancel: &CancellationSignal) -> Result<(), String> {
-        let _ = account_id;
-        cancel.check_active()?;
-        Err("当前运行环境不支持切回主号焦点".to_string())
-    }
-    fn run_primary(
-        &self,
-        config: &RoomAutomationConfig,
-        pid: u32,
-        room_name: &str,
-        retrying: bool,
-        cancel: &CancellationSignal,
-    ) -> Result<(), String>;
+
     fn run_follower(
         &self,
         config: &RoomAutomationConfig,
@@ -302,56 +290,9 @@ impl RuntimeHost for WindowsRuntimeHost {
         }
     }
 
-    fn focus_primary(&self, account_id: &str, cancel: &CancellationSignal) -> Result<(), String> {
-        cancel.check_active()?;
-        #[cfg(target_os = "windows")]
-        {
-            let primary = self.running_instance(account_id)?;
-            super::room_automation_foreground::focus_game(primary.pid, cancel)
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = account_id;
-            Err("自动跟房仅支持 Windows".to_string())
-        }
-    }
 
-    fn run_primary(
-        &self,
-        config: &RoomAutomationConfig,
-        pid: u32,
-        room_name: &str,
-        _retrying: bool,
-        cancel: &CancellationSignal,
-    ) -> Result<(), String> {
-        #[cfg(target_os = "windows")]
-        {
-            let flow = config.flow();
-            windows::fill_room_form(
-                windows::RoomFormRequest {
-                    input_method: config.input_method,
-                    foreground_timing: &config.foreground_timing,
-                    pid,
-                    background_text_strategy: &config.background_text_strategy,
-                    create: true,
-                    // Every physical create-shortcut press starts a new room
-                    // form. The old lobby-era duplicate-dialog confirmation
-                    // path made manual waiting indistinguishable from retrying
-                    // the previous native submission.
-                    open_form: true,
-                    name: room_name,
-                    password: &config.password,
-                    flow,
-                },
-                cancel,
-            )
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = (config, pid, room_name, cancel);
-            Err("自动跟房仅支持 Windows".to_string())
-        }
-    }
+
+
 
     fn run_follower(
         &self,
@@ -363,27 +304,11 @@ impl RuntimeHost for WindowsRuntimeHost {
     ) -> Result<(), String> {
         #[cfg(target_os = "windows")]
         {
-            if config.input_method == InputMethod::BackgroundKeys {
-                return windows::submit_prepared_follower(config, pid, room_name, cancel);
-            }
-            windows::fill_room_form(
-                windows::RoomFormRequest {
-                    input_method: config.input_method,
-                    foreground_timing: &config.foreground_timing,
-                    pid,
-                    background_text_strategy: &config.background_text_strategy,
-                    create: false,
-                    open_form: true,
-                    name: room_name,
-                    password: &config.password,
-                    flow: config.flow(),
-                },
-                cancel,
-            )
+            windows::submit_prepared_follower(config, pid, room_name, cancel)
         }
         #[cfg(not(target_os = "windows"))]
         {
-            let _ = (config, account_id, pid, room_name, cancel);
+            let _ = (config, _account_id, pid, room_name, cancel);
             Err("自动跟房仅支持 Windows".to_string())
         }
     }
@@ -890,18 +815,9 @@ impl RoomAutomationManager {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
         let raw_config = self.workflow_config_snapshot()?;
-        // Background create prepares every participant before submitting the
-        // primary. Mouse mode retains its primary-only preparation.
-        let (config, primary, followers, primary_lease) =
-            if raw_config.input_method == InputMethod::BackgroundKeys {
-                let ((config, primary, followers), leases) =
-                    self.prepare_and_reserve_workflow(raw_config, true, false)?;
-                (config, primary, followers, leases)
-            } else {
-                let lease = self.acquire_primary_lease(&raw_config)?;
-                let (config, primary) = self.prepare_primary_workflow(raw_config, true)?;
-                (config, primary, Vec::new(), lease)
-            };
+        // Prepare all participating forms before submitting the primary.
+        let ((config, primary, followers), primary_lease) =
+            self.prepare_and_reserve_workflow(raw_config, true, false)?;
         let task = self
             .workflow
             .lock()
@@ -972,14 +888,12 @@ impl RoomAutomationManager {
             .ok_or_else(|| "尚无待跟进房间密码".to_string())?;
         let mut raw_config = self.workflow_config_snapshot()?;
         raw_config.password = pending_password;
-        if raw_config.input_method == InputMethod::BackgroundKeys {
-            raw_config.follower_account_ids.retain(|account| {
-                snapshot
-                    .follower_account_ids
-                    .iter()
-                    .any(|prepared| prepared.eq_ignore_ascii_case(account))
-            });
-        }
+        raw_config.follower_account_ids.retain(|account| {
+            snapshot
+                .follower_account_ids
+                .iter()
+                .any(|prepared| prepared.eq_ignore_ascii_case(account))
+        });
         if self.lifecycle.lock().leases.is_some() {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝继续".to_string());
         }
@@ -1127,8 +1041,7 @@ impl RoomAutomationManager {
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let primary = self.host.running_instance(&config.primary_account_id)?;
-        if config.input_method == InputMethod::BackgroundKeys
-            && require_primary_foreground
+        if require_primary_foreground
             && self.host.foreground_pid() != Some(primary.pid)
         {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
@@ -1190,14 +1103,7 @@ impl RoomAutomationManager {
             .map_err(|error| error.to_string())
     }
 
-    fn acquire_primary_lease(
-        &self,
-        config: &RoomAutomationConfig,
-    ) -> Result<AccountOperationLeases, String> {
-        self.leases
-            .try_acquire_many(std::iter::once(config.primary_account_id.as_str()))
-            .map_err(|error| error.to_string())
-    }
+
 
     fn prepare_and_reserve_workflow(
         &self,
@@ -1236,7 +1142,7 @@ impl RoomAutomationManager {
         followers: Vec<(String, RunningInstance)>,
         room_name: String,
         sequence: u32,
-        retrying: bool,
+        _retrying: bool,
         cancel: Arc<CancellationSignal>,
     ) {
         let room_password = config.password.clone();
@@ -1250,17 +1156,10 @@ impl RoomAutomationManager {
         if self.persist_used_sequence(task_id, sequence).is_err() {
             return;
         }
-        let result = if config.input_method == InputMethod::BackgroundKeys {
-            let pids = followers
-                .iter()
-                .map(|(_, instance)| instance.pid)
-                .collect::<Vec<_>>();
-            self.host
-                .prepare_background_room(&config, primary.pid, &pids, &room_name, &cancel)
-        } else {
-            self.host
-                .run_primary(&config, primary.pid, &room_name, retrying, &cancel)
-        };
+        let pids = followers.iter().map(|(_, instance)| instance.pid).collect::<Vec<_>>();
+        let result = self.host.prepare_background_room(
+            &config, primary.pid, &pids, &room_name, &cancel,
+        );
         if let Err(error) = result {
             self.fail_and_release(task_id, &error);
             return;
@@ -1302,14 +1201,12 @@ impl RoomAutomationManager {
             }
         };
         raw_config.password = room_password;
-        if config.input_method == InputMethod::BackgroundKeys {
-            raw_config.follower_account_ids.retain(|account| {
-                config
-                    .follower_account_ids
-                    .iter()
-                    .any(|prepared| prepared.eq_ignore_ascii_case(account))
-            });
-        }
+        raw_config.follower_account_ids.retain(|account| {
+            config
+                .follower_account_ids
+                .iter()
+                .any(|prepared| prepared.eq_ignore_ascii_case(account))
+        });
         let ((fresh_config, _primary, followers), leases) =
             match self.prepare_and_reserve_workflow(raw_config, false, true) {
                 Ok(prepared) => prepared,
@@ -1377,10 +1274,6 @@ impl RoomAutomationManager {
         room_name: String,
         cancel: Arc<CancellationSignal>,
     ) {
-        if config.input_method == InputMethod::ForegroundMouse {
-            self.run_foreground_followers(task_id, config, followers, room_name, cancel);
-            return;
-        }
         if config.follower_join_mode == FollowerJoinMode::Interval {
             self.run_interval_followers(task_id, config, followers, room_name, cancel);
             return;
@@ -1442,74 +1335,6 @@ impl RoomAutomationManager {
                 &format!("部分小号执行失败：{}", failures.join("；")),
             );
         }
-    }
-
-    /// A desktop has one cursor and clipboard. Keep configured account order,
-    /// waiting for each input sequence before another window can take focus.
-    fn run_foreground_followers(
-        &self,
-        task_id: WorkflowTaskId,
-        config: RoomAutomationConfig,
-        followers: Vec<(String, RunningInstance)>,
-        room_name: String,
-        cancel: Arc<CancellationSignal>,
-    ) {
-        let mut previous_dispatch = None::<Instant>;
-        let follower_count = followers.len();
-        for (index, (account_id, instance)) in followers.into_iter().enumerate() {
-            if let Some(started) = previous_dispatch {
-                if config.follower_join_mode == FollowerJoinMode::Interval {
-                    let delay = Duration::from_secs(config.follower_join_interval_secs)
-                        .saturating_sub(started.elapsed());
-                    if cancel.wait(delay) {
-                        return;
-                    }
-                }
-            }
-            if cancel.check_active().is_err() {
-                return;
-            }
-            previous_dispatch = Some(Instant::now());
-            if let Err(error) =
-                self.host
-                    .run_follower(&config, &account_id, instance.pid, &room_name, &cancel)
-            {
-                self.fail_and_release(task_id, &format!("{account_id}: {error}"));
-                return;
-            }
-            if cancel.check_active().is_err() {
-                return;
-            }
-            if index + 1 == follower_count {
-                // Return focus only after the whole available follower queue
-                // has submitted. Keep the lease until this final action ends.
-                // A focus failure must not replay already-submitted followers.
-                match self.host.focus_primary(&config.primary_account_id, &cancel) {
-                    Ok(()) => crate::logger::log_msg(
-                        "INFO",
-                        "RoomAutomation",
-                        &format!(
-                            "可用小号流程已执行完毕，已切回主号“{}”",
-                            config.primary_account_id
-                        ),
-                    ),
-                    Err(error) => crate::logger::log_msg(
-                        "WARN",
-                        "RoomAutomation",
-                        &format!("可用小号流程已执行完毕，但切回主号焦点失败：{error}"),
-                    ),
-                }
-            }
-            match self
-                .workflow
-                .lock()
-                .record_follower_complete(task_id, &account_id)
-            {
-                Ok(status) => self.bridge.publish_status(&status),
-                Err(_) => return,
-            }
-        }
-        self.lifecycle.lock().leases = None;
     }
 
     fn run_interval_followers(

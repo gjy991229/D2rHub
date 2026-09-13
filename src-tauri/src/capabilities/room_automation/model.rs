@@ -1,9 +1,8 @@
-use super::ForegroundTiming;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-pub const CURRENT_STRATEGY_VERSION: u8 = 24;
+pub const CURRENT_STRATEGY_VERSION: u8 = 25;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 50;
@@ -122,15 +121,6 @@ fn default_background_text_strategy() -> String {
     "post_keys".to_string()
 }
 
-/// Independent execution paths; old configurations retain background delivery.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InputMethod {
-    #[default]
-    BackgroundKeys,
-    ForegroundMouse,
-}
-
 fn default_standard_flow() -> FlowStrategy {
     FlowStrategy::standard()
 }
@@ -145,12 +135,10 @@ fn default_standard_flow() -> FlowStrategy {
 /// V22 uses complete operation budgets instead of additive response substeps.
 /// V23 separates follower focus/selection/paste response waits from primary budgets.
 /// V24 applies that response flow to every participant, preserving its settings.
+/// V25 removes the mouse adapter; obsolete input_method/foreground_timing fields
+/// are ignored on import and removed when the normalized configuration is saved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
-    #[serde(default)]
-    pub input_method: InputMethod,
-    #[serde(default)]
-    pub foreground_timing: ForegroundTiming,
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
@@ -192,8 +180,6 @@ pub struct RoomAutomationConfig {
 impl Default for RoomAutomationConfig {
     fn default() -> Self {
         Self {
-            input_method: InputMethod::default(),
-            foreground_timing: ForegroundTiming::default(),
             enabled: false,
             primary_account_id: String::new(),
             follower_account_ids: Vec::new(),
@@ -241,8 +227,6 @@ pub enum ShortcutValidationError {
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RoomAutomationConfigError {
-    #[error("foreground operation durations must be 1–2000 ms and the step interval 0–2000 ms")]
-    InvalidForegroundTiming,
     #[error("room automation strategy v{found} is newer than supported v{supported}")]
     UnsupportedStrategyVersion { found: u8, supported: u8 },
     #[error("room name prefix is empty")]
@@ -301,7 +285,7 @@ pub enum RoomAutomationConfigError {
 }
 
 impl RoomAutomationConfig {
-    /// Normalizes legacy strategies from the unversioned shape through v23.
+    /// Normalizes legacy strategies from the unversioned shape through v24.
     /// Unknown obsolete mouse/profile fields are ignored by Serde and disappear
     /// on the next serialization.
     pub fn normalize_legacy(&mut self) -> Result<NormalizationReport, RoomAutomationConfigError> {
@@ -343,13 +327,6 @@ impl RoomAutomationConfig {
         };
 
         self.flow.normalize();
-        // Before v23, form_response_ms was only an extra delay added to an
-        // obsolete primary budget. It is now the entire post-click response.
-        if source_strategy_version < 23 {
-            self.foreground_timing.form_response_ms = ForegroundTiming::default().form_response_ms;
-        }
-        self.foreground_timing.normalize();
-
         let primary_account_id = self.primary_account_id.clone();
         let primary_identity = account_identity(&primary_account_id);
         let mut followers_seen = BTreeSet::new();
@@ -419,9 +396,6 @@ impl RoomAutomationConfig {
             ));
         }
         self.flow.validate("unified")?;
-        if !self.foreground_timing.valid() {
-            return Err(RoomAutomationConfigError::InvalidForegroundTiming);
-        }
 
         let primary = self.primary_account_id.as_str();
         if primary.is_empty() {

@@ -8,7 +8,9 @@ commands.allow = [
   "room_automation_get_config", "room_automation_save_config", "room_automation_get_status",
   "room_automation_start_primary", "room_automation_start_followers", "room_automation_retry",
   "room_automation_cancel",
-  "save_global_config", "patch_global_config", "switch_feature_profile", "patch_desktop_pet_settings", "save_window_geometry", "load_window_geometry",
+  "save_global_config", "patch_global_config", "switch_feature_profile", "patch_desktop_pet_settings",
+  "pet_get_wardrobe", "pet_wardrobe_action", "pet_settle_activity", "pet_open_wardrobe", "pet_set_menu_open",
+  "save_window_geometry", "load_window_geometry",
   "save_overlay_geometry", "load_overlay_geometry", "save_stats_overlay_geometry", "load_stats_overlay_geometry",
   "restore_window_placement", "save_window_placement", "set_auxiliary_window_visible",
   "recover_auxiliary_windows", "save_theme", "detect_saved_games_path", "detect_global_saved_games_path",
@@ -29,7 +31,7 @@ commands.allow = [
   "activate_application_runtime",
   "get_terror_zone_snapshot", "get_next_terror_zone",
   "get_audio_mod_setup_state", "get_mod_capsule_pool", "scan_mod_capsule_pool", "open_mods_directory",
-  "set_mod_auto_exit_on_death_enabled", "set_mod_room_toolbar_visible",
+  "set_mod_auto_exit_on_death_enabled",
   "add_mod_capsule", "update_mod_capsule", "delete_mod_capsule",
   "assign_mod_capsule_to_account", "prepare_audio_mod", "upgrade_audio_mod", "apply_audio_mod_to_account",
   "start_rune_audio_monitor", "restart_rune_audio_monitor", "stop_rune_audio_monitor",
@@ -64,5 +66,5 @@ commands.allow = [
 identifier = "desktop-pet-commands"
 description = "Allows the desktop pet to read its settings, save pet preferences, and persist its own placement."
 commands.allow = [
-  "get_global_config", "patch_desktop_pet_settings", "restore_window_placement", "save_window_placement"
+  "get_global_config", "patch_desktop_pet_settings", "pet_get_wardrobe", "pet_wardrobe_action", "pet_settle_activity", "pet_open_wardrobe", "pet_set_menu_open", "restore_window_placement", "save_window_placement"
 ]

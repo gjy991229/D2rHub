@@ -410,7 +410,7 @@ export function ModProcessingPanel({
               />}
               {!minimalMode && <FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
-                detail={isEnglish ? "Create, recreate, and join rooms from the automation workflow" : "为自动跟房提供创建、重开与加入房间能力"}
+                detail={isEnglish ? "Double Esc for the next Hell game; create/join shortcuts and automation with hidden buttons" : "双击 Esc 下一局地狱；保留创建、加入与自动跟房，局内按钮始终隐藏"}
                 checked={roomToolsSelected}
                 locked={roomToolsRequired || roomToolsInherited}
                 lockLabel={roomToolsInherited

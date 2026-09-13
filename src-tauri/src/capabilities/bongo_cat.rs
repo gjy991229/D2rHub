@@ -149,7 +149,7 @@ impl BongoCatCapability {
                 continue;
             };
 
-            let cursor_is_over_cat = is_cat_hit(normalized_x, normalized_y);
+            let cursor_is_over_cat = super::pet_wardrobe::menu_open() || is_cat_hit(normalized_x, normalized_y);
             if cursor_is_over_cat && is_ignoring_cursor_events {
                 let _ = window.set_ignore_cursor_events(false);
                 is_ignoring_cursor_events = false;
@@ -159,6 +159,7 @@ impl BongoCatCapability {
             }
         }
 
+        super::pet_wardrobe::set_menu_open(false);
         // A stopped hidden window must never retain click-through state if the
         // user enables it again during the same process.
         let _ = window.set_ignore_cursor_events(false);
@@ -216,6 +217,9 @@ impl CapabilityDriver for BongoCatCapability {
 
     fn stop(&self) -> Result<(), CapabilityFailure> {
         crate::input_listener::set_bongo_cat_input_enabled(false);
+        if let Err(error) = super::pet_wardrobe::flush_activity(&self.app) {
+            crate::logger::log_msg("WARN", "PetWardrobe", &format!("保存陪伴进度失败：{error}"));
+        }
         let worker = self
             .worker
             .lock()
@@ -295,16 +299,16 @@ struct HitBox {
 
 const CAT_HIT_BOXES: [HitBox; 2] = [
     HitBox {
-        y_min: 280.0,
+        y_min: 260.0,
         y_max: 330.0,
-        x_min: 60.0,
-        x_max: 195.0,
+        x_min: 35.0,
+        x_max: 218.0,
     },
     HitBox {
         y_min: 330.0,
         y_max: 400.0,
-        x_min: 35.0,
-        x_max: 205.0,
+        x_min: 22.0,
+        x_max: 218.0,
     },
 ];
 

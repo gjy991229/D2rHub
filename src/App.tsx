@@ -94,6 +94,19 @@ function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [settingsTab, setSettingsTab] = useState<string | null>(null);
   const [settingsAccountId, setSettingsAccountId] = useState<string | null>(null);
+  const [settingsRequestRevision, setSettingsRequestRevision] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    const listener = listenEvent("pet-open-wardrobe", () => {
+      if (cancelled) return;
+      setSettingsTab("pet"); setSettingsAccountId(null); setShowSettings(true);
+      setSettingsRequestRevision(revision => revision + 1);
+    });
+    void listener.catch(error => {
+      if (!cancelled) showToast("error", String(error));
+    });
+    return () => { cancelled = true; void listener.then(unlisten => unlisten()).catch(() => {}); };
+  }, []);
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
   const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);
@@ -628,6 +641,7 @@ function App() {
         onReconfigure={handleReconfigure}
         onInitializeAccount={() => setShowInit(true)}
         initialTab={settingsTab}
+        initialRequestRevision={settingsRequestRevision}
         initialAccountId={settingsAccountId}
       />
 

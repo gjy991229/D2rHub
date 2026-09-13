@@ -30,16 +30,16 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - 主窗口首次打开时，宽度为当前屏幕的 **59.4%**、高度为 **65.3%**，适配 Windows 显示缩放；已有窗口尺寸与位置继续恢复。关闭到托盘后，再次启动程序也能唤回原窗口。
 - 账号列表刷新或切换其他账号的“覆盖游戏配置”开关，不再清空正在编辑的账号草稿；未编辑字段仍会同步已保存值。
 - 全局快捷键使用 Windows 原生热键服务，录制时检查占用并暂时停用 Hub 热键；小键盘数字按 `Num0`–`Num9` 保存，与主键盘数字区分。F12 和 Win 组合键不可用。
-- 自动跟房新增前台键鼠方案、统一主号与小号的输入时序，并在小号完成后切回主号。正常模式与纯净模式通过重启切换运行服务。
+- 自动跟房统一采用后台同步预填，移除前台鼠标方案与专用时序配置。正常模式与纯净模式通过重启切换运行服务。
 - 账号初始化统一由向导驱动，支持已有账号重新初始化；Token 账号使用隔离的浏览器 Profile，避免登录状态互相污染。
-- 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r26，大厅与局内表单分离，保留工具栏显示选择。
+- 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r27，双击 Esc 下一局地狱，三个局内按钮始终隐藏。
 
 完整操作说明见 [v0.9.98 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
 
 ### 当前能力
 
-- **局内按钮显示开关**：在“设置 → 可选功能 → Mod 管理”的具体 Mod 条目中切换“显示游戏内右上角按钮”。先关闭使用该 Mod 的游戏，D2RHub 直接修改 HUD 工具栏入口，无需重新加工，下次启动游戏生效。隐藏后不能鼠标点击右上角按钮，但 `Esc → 左/右两次 → 回车` 与后台按键跟房方案保留；前台键鼠接管方案需要显示工具栏。共用同一 Mod 的账号一起生效，后续增补加工继承该选择。
-- **局内创建/加入修复（房间工具 r26）**：大厅与局内创建/加入使用独立表单。大厅保留原生提交，局内沿用先退出再提交，并参照 JCY Esc 快速重开将退出和下一步动作设为同一时间、按顺序发出，取消导致局内提交中断的 150ms 间隔。r21–r25 产物可作为升级来源；升级保留声纹和 HUD 显示选择。
+- **双击 Esc 下一局地狱**：局内 0.5 秒内双击 Esc，正常退出当前房间并用当前角色进入下一局地狱，与原“下一局”按钮双击共用控制器。单击打开暂停菜单，超时后 Esc 正常返回游戏。下一局、创建、加入三个按钮始终隐藏，移除显示开关；`Esc → 左/右两次 → 回车` 和后台跟房继续可用。旧成品需重新加工并重启游戏。
+- **局内创建/加入修复（房间工具 r26）**：大厅与局内创建/加入使用独立表单。大厅保留原生提交，局内沿用先退出再提交，并参照 JCY Esc 快速重开将退出和下一步动作设为同一时间、按顺序发出，取消导致局内提交中断的 150ms 间隔。r21–r26 产物可作为升级来源；升级保留声纹，统一隐藏局内按钮。
 - **国服 / 国际服双客户端隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
 - **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
 - **首次披露与延迟激活**：每个应用版本首次启动都必须先阅读并确认应用级说明；确认前不会启动全局输入监听、声纹监控、可选能力监督器或 Mod 启动扫描。高风险可选模块另有独立说明，未确认时不会启用。
@@ -50,27 +50,19 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - **独立功能组 Mod 加工**：D2RHub 内置独立的 `d2r-audio-mod.exe` 生成器，可按需加入声纹识别、局内房间工具和显式选择的“死亡后自动退房”。死亡退房会保留原死亡界面，在死亡判定后约 0.11 秒离开当前游戏，不能避免死亡或挽救专家模式角色；能力指纹只标识支持情况，不包含启停状态。安装后可在“设置 → 可选功能 → Mod 管理”的具体 Mod 条目中切换，D2RHub 仅原子增删死亡界面的具名定时入口，不调用加工器或重建 Mod；正在使用该 Mod 的游戏需先关闭，并在下次启动时生效。无论从原版还是现有 Mod 准备，软件都会生成新 Mod、复核功能组清单并安全配置账号启动参数。游戏、源 Mod 与输出目录支持中文、空格及 Windows 允许的特殊字符；源 Mod 数据表兼容 UTF-8、UTF-16、GBK/GB18030 与常见 Windows ANSI 编码，JSON 资源兼容常见 JSON5 写法，0 字节 FLAC 静音占位也会保持静音。生成器代码仍在独立仓库，不读取 D2RHub 配置或数据库，也不修改源 Mod。
 - **自动刷图统计**：每个不同野外独立计时，主城和主界面停止并结算；统计页可同时勾选并编辑女伯爵、地穴、安达利尔、墨菲斯托、Chaos、巴尔等常用 Farm 策略组，也可创建和编辑自定义路线。策略组内分段先合计耗时，再作为一场参与场次与平均耗时计算；重叠策略不会重复计数，原始数据保持不变。筛选器可折叠，离群优化默认开启，短空场阈值默认 1 秒且可调。
 - **分组掉落反馈**：场景统计悬浮窗按物品分组显示重复掉落并标注数量；新掉落会短时弹出提示，列表默认保留最近 5 种，可按需展开全部，并支持贴边自动隐藏。双击空白区域或按 Enter 可切换为仅显示识别场景、计时和场次的迷你模式；与 TZ 迷你窗一样，可直接拖动位置和拖拽边缘缩放，不开启鼠标穿透，也不依赖全局鼠标钩子。
-- **可选自动跟房**：以多开核心中的已运行账号为边界，主号每次按创建快捷键都会生成并提交新房间，随后可手动或延时让小号跟进最近一组房号密码。小号既可同时进房，也可按可调整的固定间隔依序派发；单个窗口的状态或指令投递失败不会阻断后续账号。任务支持取消、账号租约和下一房序号持久化。启用前会验证受信任的启动快照、局内房间工具，停用后自动回收快捷键和工作线程。按住时间默认 50ms，可与松开间隔分别配置；开表单和切字段后各追加固定 50ms 等待。前后台方案均直接填写房间表单，不调用或管理游戏聊天键。
+- **可选自动跟房**：以多开核心中的已运行账号为边界，主号每次按创建快捷键都会生成并提交新房间，随后可手动或延时让小号跟进最近一组房号密码。小号既可同时进房，也可按可调整的固定间隔依序派发；单个窗口的状态或指令投递失败不会阻断后续账号。任务支持取消、账号租约和下一房序号持久化。启用前会验证受信任的启动快照、局内房间工具，停用后自动回收快捷键和工作线程。按住时间默认 50ms，可与松开间隔分别配置；开表单和切字段后各追加固定 50ms 等待。后台方案直接填写房间表单，不调用或管理游戏聊天键。
 - **快捷键与桌宠**：按账号位置聚焦游戏窗口；主面板使用同一个快捷键切换，在前台时隐藏到托盘，未聚焦或已最小化时恢复并聚焦。旧配置优先沿用呼出键，没有呼出键时沿用最小化键。Bongo Cat 支持缩放、气泡和可解锁皮肤。
 
-自动跟房设置中的“建房 / 入房操作方案”还可选择**方案二：前台键鼠接管**。后台方案保持默认。前台方案从现有局内房间工具入口操作：从局内开始，将主号或小号切到前台，点击对应工具栏按钮与房名输入框，用 `SendInput` 扫描码模拟物理 `Ctrl+V`。密码在对应进程首次操作或变化时填写（变为空时清空）；主号首次选择地狱后直接回车提交，不重新聚焦输入框。进程重启、PID 重用、窗口更换及切换方案后会重新初始化输入缓存。
+自动跟房统一使用后台按键与同步粘贴。创建时保持主号前台，主号与本轮小号同时打开表单并预填；主号先创建，小号在跟随时只提交回车。保留同时 / 间隔派发、手动 / 自动跟随和取消。策略 v25 自动迁移旧配置并移除前台方案字段，房名、密码、账号、快捷键和后台时序保留。
 
-前台方案要求显示局内工具栏并使用 **16:9 高清键鼠界面**。坐标读取目标进程实际加载 Mod 的创建/加入布局，分别累加父控件偏移、锚点与缩放，并转换为窗口客户区位置；无法识别的布局、比例、隐藏工具栏、窗口遮挡或失去前台时会报错停止。小号按配置顺序串行接管，间隔模式还保留最小开始间隔，失败时停止本次队列。所有当前可用小号的流程执行完成后，自动将焦点切回主号；中途取消或失败时不切回。若主号已退出或无法获得焦点，只记录原因，不重复小号的入房操作。每次输入短暂独占键鼠，结束或取消后释放按键、恢复鼠标位置；剪贴板未被其他程序改动时恢复原内容。自动输入期间暂时注销 Hub 热键，结束后恢复，防止模拟按键触发业务动作；表单操作本身不依赖游戏快捷键。
-
-鼠标接管的主号与小号共用 **同一个填写流程、同一套时序和间隔**：打开对应表单 → 点击房名 → Ctrl+A 全选 → Ctrl+V 直接覆盖 → 需要更新密码时以 Tab 切到密码框 → 全选并粘贴密码 → 回车。正常文本不预先清空，只有空密码使用全选后删除；首次建房额外点击地狱，不重新聚焦。不同 Mod 的控件坐标仍分别读取。
-
-统一默认时序：切前台响应 100ms，鼠标移动后等 10ms、按住 20ms；开表单鼠标抬起后等 150ms，点击 / Tab / 难度切换后等 100ms，全选后等 100ms，粘贴后等 100ms。Ctrl+A / Ctrl+V / Tab 按住 50ms，每段响应后另加 1ms 步骤间隔。回车按住 20ms 后直接继续，不追加响应等待或步骤间隔。响应时间从输入抬起后计时，不扣除鼠标移动、按住及其他 API 耗时。高级时序只显示一套参数，升级时继承旧版小号响应设置；修改参数后各账号都会重新初始化填写缓存。方案一继续使用独立的后台按键时序。
-
-鼠标和按键抬起后再等待对应响应时间，取消时仍释放已按下的输入。建房后自动跟随等待、小号进房间隔另按原配置执行。接管资源被占用或触发快捷键尚未松开时仍会等待，并保留窗口校验。后台消息点击试验已撤回，主号与小号均切前台；旧试验配置在升级时自动移除。
-
-### 快速开始
+## 快速开始
 
 [快速上手与参考手册](docs/user-guide.html) 默认进入目标向导：选择多开、识别统计、自动跟房或三项一起配置，沿可点击流程逐步操作。每步都有操作入口、具体动作、完成标志和折叠排障；完整说明独立放在“详细手册 · 搜索”，可按关键词查阅并返回原步骤。应用内帮助入口打开同一页面。
 
 1. 安装后阅读首次说明。需要识别与自动跟房时选择“正常模式”，在“运行环境”配置对应客户端的游戏目录与存档目录。
 2. 添加并初始化两个不同游戏账号，分别从卡片启动并进入游戏。之后可保存命名启动方案、固定到主界面，一键启动常用账号组。到这里多开已经可用。
 3. **需要识别统计：**在“可选功能 → 模块管理”添加“识别与统计”，选择监听账号；准备包含“声纹识别”的 Mod，应用给该账号并重启游戏。回到识别页开启“音频声纹自动识别”，进入野外后看地点信号和计时，离开当前场景后查看统计图表。
-4. **需要自动跟房：**添加“自动跟房”模块，指定主号和小号，为每个参与账号选用包含“局内房间工具”的 Mod 并重启。选择前台键鼠或后台按键方案，设置房名、密码和两个快捷键；后台方案在创建时保持主号前台，前台方案保持工具栏可见及 16:9 高清键鼠界面。从局内触发“主账号创建房间”，主号进房后再“让跟随账号加入”；熟悉后改为自动跟随并设置建房后等待时间。
+4. **需要自动跟房：**添加“自动跟房”模块，指定主号和小号，为每个参与账号选用包含“局内房间工具”的 Mod 并重启。设置房名、密码和两个快捷键；创建时保持主号前台。从局内触发“主账号创建房间”，主号进房后再“让跟随账号加入”；熟悉后改为自动跟随并设置建房后等待时间。
 
 **Mod 与模块的关系：**模块管理添加的是 D2RHub 的服务；Mod 加工准备的是游戏里的功能，账号还要选用成品并重启才能加载。首次可从原版或已有 Mod 生成新成品（不修改源 Mod）；已加工成品可以校验后同名增补已有功能之外的模块。新名称使用英文字母、数字、短横线或下划线。加工目标自动应用 `-mod <名称> -txt -assettestmode 1`，其他账号需自行选择成品。两项扩展可合在同一个 Mod 中，自动跟房不依赖识别统计。
 
@@ -123,8 +115,8 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 - Version 0.9.97 sizes a new main window to 59.4% of screen width and 65.3% of screen height, with Windows scaling applied. Saved geometry is retained, and launching the app again restores a tray-hidden window.
 - Account refreshes preserve unsaved settings drafts. Shortcut recording distinguishes `Num0`–`Num9` from the main number row; Windows-native hotkeys are suspended during recording and automated input, with conflict checks when assigning bindings.
 - Account initialization is wizard-driven, supports reinitializing existing accounts, and gives Token accounts isolated browser profiles.
-- Normal and Pure modes switch through an application restart. Foreground room automation uses a shared input sequence for primary and follower accounts, then restores primary focus after followers complete.
-- Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r26 and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
+- Normal and Pure modes switch through an application restart. Room automation uses background keys and synchronized form prefilling. The foreground mouse adapter has been removed.
+- Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r27, double-Esc Hell restart, permanently hidden buttons, and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
 - A version-scoped application disclosure that must be accepted before global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning are activated. Risk-bearing optional modules have their own disclosures.

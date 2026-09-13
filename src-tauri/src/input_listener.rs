@@ -364,11 +364,13 @@ impl Drop for CapabilityShortcutRegistration {
 
 pub fn set_bongo_cat_input_enabled(enabled: bool) {
     BONGO_CAT_INPUT_ENABLED.store(enabled, Ordering::Relaxed);
+    if !enabled { crate::capabilities::pet_activity::pause(); }
     refresh_input_services();
 }
 
 pub(crate) fn set_bongo_cat_input_visible_state(visible: bool) {
     BONGO_CAT_INPUT_VISIBLE.store(visible, Ordering::Relaxed);
+    if !visible { crate::capabilities::pet_activity::pause(); }
     refresh_input_services();
 }
 

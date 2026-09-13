@@ -6,6 +6,7 @@ pub mod crypto;
 pub mod diagnostics;
 pub mod global_config;
 pub mod launch;
+pub mod pet;
 pub mod room_automation;
 pub mod settings;
 pub mod system;

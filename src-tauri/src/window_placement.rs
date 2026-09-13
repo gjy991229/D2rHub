@@ -928,6 +928,20 @@ pub fn show_main_window_safely(app: &AppHandle) {
 
 pub fn hide_main_window_to_tray(app: &AppHandle) {
     crate::input_listener::cancel_shortcut_capture();
+    // Keep the framework update and native fallback on the event loop, in
+    // order. A second instance can restore this HWND directly with ShowWindow
+    // while Tao still caches VISIBLE=false, making another hide a no-op.
+    let hide_app = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || hide_main_window_on_event_loop(&hide_app)) {
+        crate::logger::log_msg(
+            "ERROR",
+            "WindowPlacement",
+            &format!("无法调度主面板隐藏操作: {error}"),
+        );
+    }
+}
+
+fn hide_main_window_on_event_loop(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if let Err(error) = window.hide() {
             crate::logger::log_msg(
@@ -936,12 +950,48 @@ pub fn hide_main_window_to_tray(app: &AppHandle) {
                 &format!("隐藏主面板到托盘失败: {error}"),
             );
         }
+        #[cfg(target_os = "windows")]
+        match window.hwnd() {
+            Ok(hwnd) => unsafe {
+                use windows::Win32::Foundation::HWND;
+                use windows::Win32::UI::WindowsAndMessaging::{
+                    IsWindowVisible, ShowWindow, SW_HIDE,
+                };
+                let hwnd = HWND(hwnd.0);
+                if IsWindowVisible(hwnd).as_bool() {
+                    // ShowWindow returns the previous visibility, not success.
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    if IsWindowVisible(hwnd).as_bool() {
+                        crate::logger::log_msg(
+                            "ERROR",
+                            "WindowPlacement",
+                            "原生隐藏后主面板仍然可见",
+                        );
+                        return;
+                    }
+                    crate::logger::log_msg(
+                        "INFO",
+                        "WindowPlacement",
+                        "主面板可见状态与框架缓存不同步，已通过原生窗口隐藏恢复",
+                    );
+                }
+            },
+            Err(error) => {
+                crate::logger::log_msg(
+                    "ERROR",
+                    "WindowPlacement",
+                    &format!("无法读取主面板原生窗口句柄: {error}"),
+                );
+                return;
+            }
+        }
     } else {
         crate::logger::log_msg(
             "WARN",
             "WindowPlacement",
             "隐藏主面板到托盘失败：主窗口不存在",
         );
+        return;
     }
 
     crate::capabilities::restore_after_main_hidden(app);

@@ -849,6 +849,36 @@
           "markdownDescription": "Enables the patch_global_config command without any pre-configured scope."
         },
         {
+          "description": "Enables the pet_get_wardrobe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-get-wardrobe",
+          "markdownDescription": "Enables the pet_get_wardrobe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_open_wardrobe command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-open-wardrobe",
+          "markdownDescription": "Enables the pet_open_wardrobe command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_set_menu_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-set-menu-open",
+          "markdownDescription": "Enables the pet_set_menu_open command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_settle_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-settle-activity",
+          "markdownDescription": "Enables the pet_settle_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the pet_wardrobe_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-pet-wardrobe-action",
+          "markdownDescription": "Enables the pet_wardrobe_action command without any pre-configured scope."
+        },
+        {
           "description": "Enables the prepare_audio_mod command without any pre-configured scope.",
           "type": "string",
           "const": "allow-prepare-audio-mod",
@@ -1051,12 +1081,6 @@
           "type": "string",
           "const": "allow-set-mod-auto-exit-on-death-enabled",
           "markdownDescription": "Enables the set_mod_auto_exit_on_death_enabled command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the set_mod_room_toolbar_visible command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-set-mod-room-toolbar-visible",
-          "markdownDescription": "Enables the set_mod_room_toolbar_visible command without any pre-configured scope."
         },
         {
           "description": "Enables the set_settings_customized command without any pre-configured scope.",
@@ -1629,6 +1653,36 @@
           "markdownDescription": "Denies the patch_global_config command without any pre-configured scope."
         },
         {
+          "description": "Denies the pet_get_wardrobe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-get-wardrobe",
+          "markdownDescription": "Denies the pet_get_wardrobe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_open_wardrobe command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-open-wardrobe",
+          "markdownDescription": "Denies the pet_open_wardrobe command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_set_menu_open command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-set-menu-open",
+          "markdownDescription": "Denies the pet_set_menu_open command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_settle_activity command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-settle-activity",
+          "markdownDescription": "Denies the pet_settle_activity command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the pet_wardrobe_action command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-pet-wardrobe-action",
+          "markdownDescription": "Denies the pet_wardrobe_action command without any pre-configured scope."
+        },
+        {
           "description": "Denies the prepare_audio_mod command without any pre-configured scope.",
           "type": "string",
           "const": "deny-prepare-audio-mod",
@@ -1831,12 +1885,6 @@
           "type": "string",
           "const": "deny-set-mod-auto-exit-on-death-enabled",
           "markdownDescription": "Denies the set_mod_auto_exit_on_death_enabled command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the set_mod_room_toolbar_visible command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-set-mod-room-toolbar-visible",
-          "markdownDescription": "Denies the set_mod_room_toolbar_visible command without any pre-configured scope."
         },
         {
           "description": "Denies the set_settings_customized command without any pre-configured scope.",

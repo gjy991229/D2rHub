@@ -1,0 +1,21 @@
+[
+  {"id":"cloth-cap","name":"营地布帽","en":"Camp cap","slot":"head","tags":["camp"],"source":"starter","weight":0,"cost":0},
+  {"id":"red-scarf","name":"红围巾","en":"Red scarf","slot":"neck","tags":["camp"],"source":"starter","weight":0,"cost":0},
+  {"id":"bell","name":"小铃铛","en":"Little bell","slot":"neck","tags":["cat"],"source":"starter","weight":0,"cost":0},
+  {"id":"circlet","name":"法师·宝石头环","en":"Sorceress circlet","slot":"head","tags":["sorceress"],"source":"random","weight":6,"cost":24},
+  {"id":"amazon-band","name":"亚马逊·羽饰额带","en":"Amazon feather band","slot":"head","tags":["amazon"],"source":"random","weight":15,"cost":12},
+  {"id":"assassin-wraps","name":"刺客·影爪护腕","en":"Assassin wraps","slot":"hands","tags":["assassin"],"source":"random","weight":15,"cost":12,"motion":"paws"},
+  {"id":"barbarian-horns","name":"野蛮人·战吼角盔","en":"Barbarian horned helm","slot":"head","tags":["barbarian"],"source":"random","weight":15,"cost":12},
+  {"id":"paladin-cape","name":"圣骑士·圣徽披风","en":"Paladin heraldic cape","slot":"body","tags":["paladin"],"source":"random","weight":15,"cost":12,"back":true},
+  {"id":"druid-antlers","name":"德鲁伊·林地鹿角","en":"Druid antlers","slot":"head","tags":["druid"],"source":"random","weight":15,"cost":12},
+  {"id":"necromancer-skull","name":"死灵法师·骨纹项坠","en":"Necromancer bone pendant","slot":"neck","tags":["necromancer"],"source":"random","weight":15,"cost":12},
+  {"id":"warlock-tome","name":"术士·契约魔典","en":"Warlock pact tome","slot":"companion","tags":["warlock"],"source":"random","weight":6,"cost":24,"motion":"pulse"},
+  {"id":"glasses","name":"鉴定师圆眼镜","en":"Appraiser spectacles","slot":"face","tags":["camp"],"source":"random","weight":15,"cost":12},
+  {"id":"rune-lo","name":"罗 Lo · 符文石","en":"Lo rune stone","slot":"companion","tags":["rune","lo"],"source":"random","weight":3,"cost":36,"motion":"pulse"},
+  {"id":"rune-ber","name":"贝 Ber · 符文石","en":"Ber rune stone","slot":"companion","tags":["rune","ber"],"source":"random","weight":2,"cost":48,"motion":"pulse"},
+  {"id":"rune-jah","name":"乔 Jah · 符文石","en":"Jah rune stone","slot":"companion","tags":["rune","jah"],"source":"random","weight":2,"cost":48,"motion":"pulse"},
+  {"id":"traveler-hood","name":"启程·旅人兜帽","en":"First journey hood","slot":"head","tags":["journey"],"source":"achievement","weight":0,"cost":0,"metric":"seconds","target":3600},
+  {"id":"bronze-charm","name":"老朋友·铜色项链","en":"Old friend charm","slot":"neck","tags":["journey"],"source":"achievement","weight":0,"cost":0,"metric":"seconds","target":36000},
+  {"id":"little-ghost","name":"常来坐坐·小幽灵","en":"Welcome back ghost","slot":"companion","tags":["necromancer","journey"],"source":"achievement","weight":0,"cost":0,"metric":"days","target":7,"motion":"pulse"},
+  {"id":"star-cape","name":"长路星光·披风","en":"Starlit journey cape","slot":"body","tags":["journey"],"source":"achievement","weight":0,"cost":0,"metric":"seconds","target":180000,"back":true}
+]

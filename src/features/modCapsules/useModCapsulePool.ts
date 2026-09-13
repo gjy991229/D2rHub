@@ -60,8 +60,7 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
       | "add_mod_capsule"
       | "update_mod_capsule"
       | "delete_mod_capsule"
-      | "set_mod_auto_exit_on_death_enabled"
-      | "set_mod_room_toolbar_visible",
+      | "set_mod_auto_exit_on_death_enabled",
     payload: Record<string, unknown>,
   ) => {
     setLoading(true);
@@ -109,15 +108,10 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
       "set_mod_auto_exit_on_death_enabled",
       { capsuleId, enabled },
     ),
-    setRoomToolbarVisible: (capsuleId: string, visible: boolean) => mutate(
-      "set_mod_room_toolbar_visible",
-      { capsuleId, visible },
-    ),
     assign,
   };
 }
 
-export type ModCapsuleController = Omit<ReturnType<typeof useModCapsulePool>, "openDirectory" | "setRoomToolbarVisible"> & {
+export type ModCapsuleController = Omit<ReturnType<typeof useModCapsulePool>, "openDirectory"> & {
   openDirectory?: ReturnType<typeof useModCapsulePool>["openDirectory"];
-  setRoomToolbarVisible?: ReturnType<typeof useModCapsulePool>["setRoomToolbarVisible"];
 };

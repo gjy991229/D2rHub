@@ -6,7 +6,7 @@
 //! signal so capability shutdown never leaves detached input work behind.
 
 use crate::capabilities::room_automation::{
-    FlowStrategy, ForegroundTiming, InputMethod, RoomAutomationConfig,
+    FlowStrategy, RoomAutomationConfig,
 };
 use crate::infrastructure::physical_input::{modifiers_released, DesktopInput};
 use parking_lot::Mutex;
@@ -29,14 +29,9 @@ const VK_ESCAPE: u16 = 0x1B;
 const VK_END: u16 = 0x23;
 const VK_LEFT: u16 = 0x25;
 const VK_RIGHT: u16 = 0x27;
-const VK_OEM_MINUS: u16 = 0xBD;
 const MAPVK_VK_TO_VSC: u32 = 0;
 const EXTRA_PANEL_SETTLE_MS: u64 = 50;
-const MIN_CHARACTER_GAP_MS: u64 = 10;
-const PUNCTUATION_GAP_MS: u64 = 18;
-const FIELD_CLEAR_SETTLE_MS: u64 = 24;
 const ROOM_FORM_SETTLE_MS: u64 = 200;
-const FIELD_CLEAR_COUNT: usize = 16;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
@@ -57,6 +52,8 @@ struct PreparedForm {
     room_name: String,
 }
 
+static DESKTOP: Mutex<()> = Mutex::new(());
+
 static PREPARED_FORMS: OnceLock<Mutex<HashMap<u32, PreparedForm>>> = OnceLock::new();
 
 /// Open every form concurrently, then share physical Ctrl with posted A/V.
@@ -72,7 +69,7 @@ pub(crate) fn prepare_background_room(
     validate_text(&config.password)?;
     let _desktop = loop {
         cancel.check()?;
-        if let Some(guard) = super::room_automation_foreground::DESKTOP.try_lock() {
+        if let Some(guard) = DESKTOP.try_lock() {
             break guard;
         }
         wait(cancel, Duration::from_millis(25))?;
@@ -123,7 +120,6 @@ pub(crate) fn prepare_background_room(
             .iter()
             .map(|&(pid, hwnd, created)| {
                 scope.spawn(move || -> Result<(), String> {
-                    super::room_automation_foreground::invalidate(pid);
                     let previous = forms.lock().remove(&pid);
                     if previous.is_some_and(|entry| entry.created == created && entry.hwnd == hwnd)
                     {
@@ -135,7 +131,7 @@ pub(crate) fn prepare_background_room(
                             false,
                             strategy,
                             flow.key_hold_ms,
-                            120,
+                            550,
                             cancel,
                         )?;
                     }
@@ -439,101 +435,6 @@ pub(crate) fn foreground_pid() -> Option<u32> {
     (pid != 0).then_some(pid)
 }
 
-pub(crate) struct RoomFormRequest<'a> {
-    pub input_method: InputMethod,
-    pub foreground_timing: &'a ForegroundTiming,
-    pub pid: u32,
-    pub background_text_strategy: &'a str,
-    pub create: bool,
-    pub open_form: bool,
-    pub name: &'a str,
-    pub password: &'a str,
-    pub flow: &'a FlowStrategy,
-}
-
-pub(crate) fn fill_room_form(
-    request: RoomFormRequest<'_>,
-    cancel: &dyn CancellationCheck,
-) -> Result<(), String> {
-    if request.input_method == InputMethod::ForegroundMouse {
-        PREPARED_FORMS
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .remove(&request.pid);
-        ENTERED_PASSWORDS
-            .get_or_init(|| Mutex::new(HashMap::new()))
-            .lock()
-            .remove(&request.pid);
-        return super::room_automation_foreground::fill_room_form(request, cancel);
-    }
-    super::room_automation_foreground::invalidate(request.pid);
-    let hwnd = crate::infrastructure::system::find_game_hwnd(request.pid)
-        .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {})", request.pid))?;
-    validate_target(hwnd)?;
-    let strategy = BackgroundTextStrategy::from_value(request.background_text_strategy);
-    let process_created_at = process_creation_time(request.pid);
-    let passwords = ENTERED_PASSWORDS.get_or_init(|| Mutex::new(HashMap::new()));
-    let enter_password = {
-        let mut passwords = passwords.lock();
-        passwords
-            .retain(|pid, entry| process_creation_time(*pid) == Some(entry.process_created_at));
-        !passwords.get(&request.pid).is_some_and(|entry| {
-            Some(entry.process_created_at) == process_created_at
-                && entry.hwnd == hwnd
-                && entry.create == request.create
-                && entry.password == request.password
-        })
-    };
-
-    if request.open_form {
-        open_room_form(hwnd, request.create, strategy, request.flow, cancel)?;
-    }
-    replace_text(hwnd, request.name, strategy, request.flow, cancel)?;
-    wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
-    deliver_key(
-        hwnd,
-        VK_TAB,
-        false,
-        strategy,
-        request.flow.key_hold_ms,
-        20,
-        cancel,
-    )?;
-    wait(
-        cancel,
-        Duration::from_millis(request.flow.step_delay_ms + EXTRA_PANEL_SETTLE_MS),
-    )?;
-    if enter_password {
-        // Invalidate before editing so a partial write or cancellation is retried.
-        passwords.lock().remove(&request.pid);
-        replace_text(hwnd, request.password, strategy, request.flow, cancel)?;
-        wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
-    }
-    deliver_key(
-        hwnd,
-        VK_RETURN,
-        false,
-        strategy,
-        request.flow.key_hold_ms,
-        20,
-        cancel,
-    )?;
-    if enter_password {
-        if let Some(process_created_at) = process_created_at {
-            passwords.lock().insert(
-                request.pid,
-                EnteredPassword {
-                    process_created_at,
-                    hwnd,
-                    create: request.create,
-                    password: request.password.to_string(),
-                },
-            );
-        }
-    }
-    Ok(())
-}
-
 fn open_room_form(
     hwnd: isize,
     create: bool,
@@ -551,7 +452,8 @@ fn open_room_form(
         20,
         cancel,
     )?;
-    wait(cancel, Duration::from_millis(step))?;
+    // Let the double-Esc receiver expire before navigating the pause menu.
+    wait(cancel, Duration::from_millis(step.max(550)))?;
     let direction = if create { VK_LEFT } else { VK_RIGHT };
     for _ in 0..GATEWAY_DIRECTION_REPETITIONS {
         deliver_key(
@@ -579,48 +481,6 @@ fn open_room_form(
         cancel,
         Duration::from_millis(ROOM_FORM_SETTLE_MS + EXTRA_PANEL_SETTLE_MS),
     )
-}
-
-fn replace_text(
-    hwnd: isize,
-    value: &str,
-    strategy: BackgroundTextStrategy,
-    flow: &FlowStrategy,
-    cancel: &dyn CancellationCheck,
-) -> Result<(), String> {
-    validate_text(value)?;
-    let gap = flow.character_delay_ms.clamp(MIN_CHARACTER_GAP_MS, 250);
-    deliver_key(hwnd, VK_END, false, strategy, flow.key_hold_ms, gap, cancel)?;
-    for _ in 0..FIELD_CLEAR_COUNT {
-        deliver_key(
-            hwnd,
-            VK_BACK,
-            false,
-            strategy,
-            flow.key_hold_ms,
-            gap,
-            cancel,
-        )?;
-    }
-    wait(cancel, Duration::from_millis(FIELD_CLEAR_SETTLE_MS))?;
-    for character in value.chars() {
-        let (key, shift) = character_key(character)?;
-        let release_gap = if matches!(character, '-' | '_') {
-            gap.max(PUNCTUATION_GAP_MS)
-        } else {
-            gap
-        };
-        deliver_key(
-            hwnd,
-            key,
-            shift,
-            strategy,
-            flow.key_hold_ms,
-            release_gap,
-            cancel,
-        )?;
-    }
-    Ok(())
 }
 
 fn deliver_key(
@@ -735,17 +595,6 @@ fn validate_text(value: &str) -> Result<(), String> {
         return Err("后台房间表单输入只支持英文字母、数字、短横线和下划线".to_string());
     }
     Ok(())
-}
-
-fn character_key(character: char) -> Result<(u16, bool), String> {
-    match character {
-        'a'..='z' => Ok((character.to_ascii_uppercase() as u16, false)),
-        'A'..='Z' => Ok((character as u16, true)),
-        '0'..='9' => Ok((character as u16, false)),
-        '-' => Ok((VK_OEM_MINUS, false)),
-        '_' => Ok((VK_OEM_MINUS, true)),
-        _ => Err(format!("后台房间表单输入暂不支持字符：{character}")),
-    }
 }
 
 fn wait(cancel: &dyn CancellationCheck, duration: Duration) -> Result<(), String> {

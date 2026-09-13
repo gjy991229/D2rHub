@@ -60,10 +60,11 @@ interface Props {
   onReconfigure: () => void;
   onInitializeAccount: () => void;
   initialTab?: string | null;
+  initialRequestRevision?: number;
   initialAccountId?: string | null;
 }
 
-export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId }: Props) {
+export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccount, initialTab, initialAccountId, initialRequestRevision }: Props) {
   const { config, patch: patchConfig, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
   const { accounts, loadAccounts, renameAccount } = useAccounts();
   const { previewTheme } = useTheme();
@@ -205,31 +206,49 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         setActiveTab("accounts");
       }
 
-      const activeAccounts = accounts.filter(a => a.initialized);
-      if (initialAccountId) {
-        setSelectedAccountId(initialAccountId);
-      } else if (activeAccounts.length > 0) {
-        setSelectedAccountId(activeAccounts[0].id);
-      } else if (accounts.length > 0) {
-        setSelectedAccountId(accounts[0].id);
-      }
-
-      (async () => {
-        const cnSavedGames = await detectSavedGamesPath();
-        const globalSavedGames = await detectGlobalSavedGamesPath();
-        const agent = await detectProgramDataAgentPath();
-        const roaming = await detectAppDataRoamingBnetPath();
-        const browser = await detectBrowserPath();
-        setDetectedPaths({
-          cnSavedGames,
-          globalSavedGames,
-          agent,
-          roaming,
-          browser: browser ? browser[0] : null,
-        });
-      })();
     }
-  }, [open, initialTab, initialAccountId]);
+  }, [open, initialTab, initialRequestRevision]);
+
+  // Navigation to a companion panel must not replace an account draft by
+  // resetting the selected account to the first item in the list.
+  const accountPickerOpened = useRef(false);
+  useEffect(() => {
+    if (!open) { accountPickerOpened.current = false; return; }
+    const opening = !accountPickerOpened.current;
+    accountPickerOpened.current = true;
+    if (!opening && !initialAccountId) return;
+    const activeAccounts = accounts.filter(a => a.initialized);
+    if (initialAccountId) {
+      setSelectedAccountId(initialAccountId);
+    } else if (activeAccounts.length > 0) {
+      setSelectedAccountId(activeAccounts[0].id);
+    } else if (accounts.length > 0) {
+      setSelectedAccountId(accounts[0].id);
+    }
+  }, [open, initialAccountId]);
+
+  // Opening the wardrobe again only navigates; it must not launch another
+  // round of path/process discovery while the settings window is already open.
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const cnSavedGames = await detectSavedGamesPath();
+      const globalSavedGames = await detectGlobalSavedGamesPath();
+      const agent = await detectProgramDataAgentPath();
+      const roaming = await detectAppDataRoamingBnetPath();
+      const browser = await detectBrowserPath();
+      if (cancelled) return;
+      setDetectedPaths({
+        cnSavedGames,
+        globalSavedGames,
+        agent,
+        roaming,
+        browser: browser ? browser[0] : null,
+      });
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
 
   // Close / Rollback
   const handleClose = () => {

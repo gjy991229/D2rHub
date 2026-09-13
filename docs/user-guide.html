@@ -395,7 +395,7 @@
         <li>快捷键改用 Windows 原生热键；正常 / 纯净模式通过重启切换，保留账号、模块配置和本地统计。</li>
         <li>前台自动跟房统一主号 / 小号操作时序，完成跟随后返回主号。</li>
         <li>账号初始化统一由向导驱动，支持已有账号重新初始化；Token 账号使用隔离的浏览器 Profile。</li>
-        <li>内置 <a href="https://github.com/gjy991229/d2r-audio-mod">d2r-audio-mod v1.3.3</a>，生成器与 v7 协议源码按 MIT 许可公开；局内房间工具更新至 r26。</li>
+        <li>内置 <a href="https://github.com/gjy991229/d2r-audio-mod">d2r-audio-mod v1.3.3</a>，生成器与 v7 协议源码按 MIT 许可公开；局内房间工具更新至 r27。</li>
       </ul>
     </section>
 
@@ -632,7 +632,7 @@
       <ol>
         <li><strong>添加模块。</strong>“设置中心 → 可选功能 → 模块管理”添加“自动跟房”，阅读模块说明后打开该面板。</li>
         <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；在“参与账号 Mod”逐个选用带局内房间工具的成品。缺少时点击“前往加工”，完成后返回。主号也需要房间工具。</li>
-        <li><strong>选择操作方案。</strong>想直接看见操作过程可选“前台键鼠”，使用 16:9 高清键鼠界面并显示局内工具栏；想让窗口后台接收按键则选“后台按键”，创建时保持主号前台。</li>
+        <li><strong>准备后台跟房。</strong>创建时保持主号前台，所有参与账号处于局内；主号和小号同步预填表单，小号跟随时只提交回车。</li>
         <li><strong>填写房名与快捷键。</strong>例如“房名开头”填 <code>hub-</code>、“下一个序号”填 <code>1</code>、“序号位数”选 <code>3</code>，以下次房名预览 <code>hub-001</code> 为准。填写可选密码，并分别录制不冲突的“创建房间快捷键”“跟随账号快捷键”。</li>
         <li><strong>首次先选“手动跟随”。</strong>等待有效配置自动保存，启用模块。用所选 Mod 启动 / 重启所有参与账号，选好角色并分别进入局内；参与者使用可互相加入房间的区服与角色模式。</li>
         <li><strong>创建一间房。</strong>在“房间操作”点击“主账号创建房间”（或使用创建快捷键并松开按键），等主号实际进入新房，再点击“让跟随账号加入”。小号使用最近由该流程创建的房名和密码，不会各自增加序号。</li>
@@ -643,22 +643,17 @@
       <div class="table-wrap"><table>
         <thead><tr><th>方案</th><th>启动前准备</th><th>执行时的表现</th></tr></thead>
         <tbody>
-          <tr><td>前台键鼠</td><td>16:9 高清键鼠界面、工具栏可见、从局内开始。</td><td>依次切到游戏窗口，短暂接管键鼠；所有可用小号执行完后切回主号。期间让程序完成操作。</td></tr>
           <tr><td>后台按键</td><td>参与账号从局内开始，创建时主号保持前台；直接填写房间表单。</td><td>向窗口发送按键；可同时或按间隔派发。间隔派发不等待前一个小号实际进房。</td></tr>
         </tbody>
       </table></div>
       <p>在正常模式下添加“自动跟房”模块，阅读模块说明后，选择一个主号和需要跟随的小号。账号需已初始化并正在运行，且使用包含局内房间工具的 Mod。设置房名前缀、密码、下一房序号及创建 / 加入快捷键；每次主号建房会产生新房号，小号使用最近一组房号和密码。</p>
       <h3>先准备房间工具</h3>
-      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r26 将大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。旧成品按更新引导重建并在校验后同名替换；完成后请重启所有使用该成品的账号。</p>
-      <p>每个 Mod 条目的“显示游戏内右上角按钮”可控制工具栏，无需重新加工。关闭使用该 Mod 的游戏后切换，下次启动生效；共享该 Mod 的账号一起变化。隐藏工具栏后，后台方案的暂停菜单键盘入口仍可使用，但前台方案要求工具栏保持显示。</p>
+      <p>在 Mod 管理中加工“局内房间工具”，再重启使用该 Mod 的游戏。当前 r27 保留大厅原生表单与局内表单分离，并从本机游戏重建两份高清暂停菜单；源 Mod 在这两份菜单上的自定义外观和 Esc 行为不会继承。旧成品按更新引导重建并在校验后同名替换；完成后请重启所有使用该成品的账号。</p>
+      <p>r27 局内房间工具的下一局、创建、加入三个按钮始终隐藏，不再提供显示开关。局内 0.5 秒内双击 Esc 快速进入下一局地狱；单击打开暂停菜单，超时后 Esc 正常返回游戏。后台跟房通过 Esc 和方向键打开表单。旧成品需重新加工并重启游戏。</p>
       <h3>方案一：后台按键</h3>
       <p>后台方案直接打开并填写房间表单，不调用或管理游戏聊天键。创建时主号保持前台，同步预填可用账号，小号跟随阶段只提交回车。按住时间默认 50ms，可与松开间隔分别调整。</p>
-      <h3>方案二：前台键鼠接管</h3>
-      <p>在“建房 / 入房操作方案”选择前台键鼠接管。要求游戏使用 <strong>16:9 高清键鼠界面</strong>、工具栏可见，且操作开始时位于局内。程序依次切换到目标窗口，打开创建 / 加入表单，全选并粘贴房名，按需更新密码，最后回车；主号首次建房会选择地狱难度。</p>
-      <p>主号与小号共用一套时序设置。各小号串行接管；间隔模式还会保留设定的最小开始间隔。所有可用小号完成后自动将焦点切回主号，中途失败或取消则不切回；主号已退出或无法获得焦点时仅记录原因，不重复提交小号。</p>
-      <p>操作期间短暂接管键鼠并暂停 Hub 热键。完成、失败或取消后会释放按键、恢复鼠标位置；剪贴板没有被其他程序改动时恢复原内容。窗口被遮挡、最小化、失去前台、工具栏隐藏或布局无法识别时会停止操作并报告原因。开始操作前请松开触发快捷键。</p>
       <h3>跟随、取消与升级</h3>
-      <p>可手动触发小号跟随，或设置建房后自动跟随延时；小号可同时派发或按固定间隔派发，前台方案仍串行操作。任务面板支持取消与查看错误。修改 Mod 或操作方案后，按提示重启游戏或重新初始化；日常切换方案会保留各方案独立设置。</p>
+      <p>可手动触发小号跟随，或设置建房后自动跟随延时；小号可同时派发或按固定间隔派发。任务面板支持取消与查看错误。修改 Mod 后请重启游戏。旧前台方案配置自动迁移为后台方案，账号、房号和快捷键等设置保留。</p>
     </section>
 
     <section id="stats">
@@ -698,9 +693,12 @@
       <h2>Bongo Cat</h2>
       <p>在“设置中心 → 桌宠”开启桌宠。猫咪会响应键盘和鼠标输入，可显示随机对话及轻量系统状态提示。</p>
       <ul>
-        <li>拖动猫咪本体可以改变屏幕位置；右键打开皮肤、计数重置和隐藏菜单。</li>
-        <li>设置中心可调整 0.5×–5.0× 缩放、气泡对话框和已解锁皮肤。</li>
-        <li>“法师猫咪”属于随机彩蛋解锁项；未解锁时不会出现在可选皮肤中。</li>
+        <li>拖动猫咪本体可以改变屏幕位置；右键打开装扮衣柜、切换三套保存搭配、卸下装扮、重置计数或关闭桌宠。</li>
+        <li>设置中心可调整 0.5×–5.0× 缩放和气泡。衣柜支持头饰、面部、颈部、身体、手部及身边装饰，未拥有的组件也能试穿预览。</li>
+        <li>初始赠送三件组件；其他组件通过随机机会、碎片兑换或累计陪伴成就获得。职业主题可混搭，乔 Jah、贝 Ber、罗 Lo 是桌宠装饰，不是游戏内物品。</li>
+        <li>桌宠可见且有键鼠活动时累计陪伴，相邻活动间隔超过 30 秒不计入。每 10 分钟获得一次机会，10% 获得装扮，连续 15 次未中后下一次必得；每天最多 12 次。未中获得 1 碎片，重复获得 4 碎片，碎片可定向兑换随机池组件。</li>
+        <li>累计陪伴 1、10、50 小时和 7 个不同日期各解锁一件成就装扮，不要求连续签到。进度约每分钟保存；意外退出可能丢失最近未保存的少量陪伴时间。</li>
+        <li>旧版已解锁的法师猫咪自动迁移为宝石头环，正在使用的头环会保留。吐槽按职业、符文、场景和独立语气选择，关闭气泡不影响装扮获取。</li>
       </ul>
     </section>
 
@@ -753,7 +751,7 @@
       <h3>正在捕获，但没有场次或掉落</h3>
       <p>音频峰值一直为零：检查监听账号是否运行、游戏声音是否有输出。峰值变化但地点信号为零：检查成品、协议和启动参数，并重启游戏。地点正常但无掉落：确认处于野外、物品在支持范围且未被识别过滤器排除。实时有计时但历史为空：先离开当前野外完成分段，再放宽统计页时间和角色筛选。</p>
       <h3>主号建房成功，小号没跟上</h3>
-      <p>先查看跟随触发是否仍为“手动跟随”，小号是否勾选、已运行并处于局内。确认各账号的房间工具就绪、区服与角色模式可互相加入。自动跟随过早时增加“建房后等待（秒）”；后台方案检查创建时主号是否在前台、参与账号是否处于局内；前台方案检查工具栏、16:9 比例、遮挡与最小化状态。查看后台任务的具体失败步骤，主号房间仍有效时可重新触发“让跟随账号加入”。</p>
+      <p>先查看跟随触发是否仍为“手动跟随”，小号是否勾选、已运行并处于局内。确认各账号的房间工具就绪、区服与角色模式可互相加入。自动跟随过早时增加“建房后等待（秒）”；后台方案检查创建时主号是否在前台、参与账号是否处于局内。查看后台任务的具体失败步骤，主号房间仍有效时可重新触发“让跟随账号加入”。</p>
       <h3>想取消跟房或停止识别</h3>
       <p>跟房进行中从“后台任务”取消；关闭自动跟房模块可停止后续快捷键和任务运行。停止识别请关闭“音频声纹自动识别”；仅关闭统计悬浮窗不会停止后台记录。设置会保留，之后可继续使用。</p>
       <h3>进一步排查</h3>
@@ -816,15 +814,15 @@
   const roomMod = step('room-mod', '准备房间工具', '每个参与账号都要选用房间工具 Mod', '只给主号加工，不会自动让小号也用上。', '自动跟房 → 参与账号 Mod → 选择 Mod / 前往加工',
     ['缺少成品时点击“前往加工”：从原版或已有 Mod 新建，勾选“局内房间工具”，命名后加工并应用。', '已有加工成品时可增补房间工具；关闭使用该成品的游戏后再修改。', '回到“参与账号 Mod”，给主号和每个小号分别选用带房间工具的成品。同客户端可以共用一个成品。'],
     '所有参与账号都选用了包含“局内房间工具”的成品。', '识别 Mod 不一定带房间工具，要看功能标签；成品按国服 / 国际服分别准备，修改共享成品会影响它的所有使用者。', 'mod-processing');
-  const roomMethod = step('room-method', '选操作方式', '选一种建房 / 入房操作方式', '两种方案选一种即可；下面只显示所选方案的准备动作。', '自动跟房 → 建房 / 入房操作方案', [], '', '', 'room-automation');
+  const roomMethod = step('room-method', '准备后台跟房', '准备后台同步预填', '主号与小号先预填表单，小号跟随时只提交回车。', '自动跟房', ['确认各账号已加载局内房间工具，并处于局内。', '创建时保持主号游戏窗口在前台。'], '参与账号已就绪，主号保持前台。', '无需选择操作方案，旧配置自动迁移。', 'room-automation');
   const roomRules = step('room-rules', '设置房名', '设置下一间房叫什么，先手动跟一次', '先完成一次清楚可见的建房与入房，再开启自动派发。', '自动跟房 → 房间命名 / 跟随触发 / 快捷键',
     ['房名开头填 hub-，下一个序号填 1，序号位数选 3；确认“下次房名”为 hub-001。密码可选。', '分别录制“创建房间快捷键”和“跟随账号快捷键”，避免与已有快捷键冲突。', '跟随触发先选“手动跟随”，等待有效修改自动保存，再启用模块。', '用刚选的成品启动或重启所有参与账号，选角色并分别进入局内。'],
-    '配置已保存、模块已启用，主号和小号都在局内。', '游戏重启后才加载 Mod 和新键位。未保存的无效输入需先按页面提示修正；前台方案首次建房会选择地狱难度。', 'room-automation');
+    '配置已保存、模块已启用，主号和小号都在局内。', '游戏重启后才加载 Mod 和新键位。未保存的无效输入需先按页面提示修正。', 'room-automation');
   const roomFirst = step('room-first', '建房并加入', '主号进新房后，再让小号加入', '以游戏内实际入房为准；输入任务完成不等于服务端已让账号进房。', '自动跟房 → 房间操作',
     ['先确认所有参与账号都在局内；如果刚才查看统计后返回了主界面，请先重新进入游戏。', '点击“主账号创建房间”，等待主号实际进入新房。使用快捷键时按下后松开。', '点击“让跟随账号加入”，等待所选小号完成入房。', '在游戏内确认主号和小号进入同一个房间。'],
-    '主号和所选小号已在同一房间。', '先看游戏提示与“后台任务”错误。前台方案期间请让程序完成键鼠操作；后台方案检查主号前台状态和各账号的房间表单。房间仍有效时可重新触发小号跟随。', 'troubleshooting');
+    '主号和所选小号已在同一房间。', '先看游戏提示与“后台任务”错误。检查主号前台状态和各账号的房间表单。房间仍有效时可重新触发小号跟随。', 'troubleshooting');
   const roomAuto = step('room-auto', '开启自动跟随', '以后触发建房，小号延时自动跟上', '仍由你触发主号建房，软件随后按延时派发小号入房。', '自动跟房 → 跟随触发 → 自动跟随',
-    ['改为“自动跟随”，设置“建房后等待（秒）”，覆盖主号实际载入所需时间。', '选择小号进房方式与间隔。前台方案始终依次操作；后台间隔派发不等待前一个小号入房。', '日常启动账号组并进入局内后，触发主号创建房间即可。'],
+    ['改为“自动跟随”，设置“建房后等待（秒）”，覆盖主号实际载入所需时间。', '选择小号进房方式与间隔。间隔派发不等待前一个小号入房。', '日常启动账号组并进入局内后，触发主号创建房间即可。'],
     '自动跟随设置已保存；下一次通过 D2RHub 建房后，小号会按配置派发。', '跟随过早就增加建房后等待时间。它不会读取任意手动创建房间的房号，也不会自动刷图。进行中的任务可在“后台任务”取消。', 'room-automation');
   const combinedMod = step('combined-mod', '一次加工两项', '一次准备声纹识别和房间工具', '主号负责被监听，所有跟房账号都需要房间工具。', '设置中心 → Mod 管理 → 加工',
     ['加工目标选主号，从原版或想保留的 Mod 新建成品，同时勾选“声纹识别”和“局内房间工具”。', '命名后点击“开始加工并应用”。已有加工成品时可增补缺少的功能，修改前先关闭所有使用者的游戏。', '在自动跟房的“参与账号 Mod”中，给同客户端小号也选用这个成品，或选用各自带房间工具的成品。', '回识别与统计确认监听主号。国服和国际服的成品需要分别准备。'],
@@ -835,11 +833,7 @@
     room: { title: '我要小号自动跟房', prerequisite: '前提：正常模式，至少两个账号已能独立启动。不需要开启识别统计。', steps: [roomInstall, roomMod, roomMethod, roomRules, roomFirst, roomAuto], daily: '启动账号组 → 各自进入局内 → 触发主号建房 → 按延时自动派发小号入房。' },
     all: { title: '多开 + 识别 + 跟房，一条路线配好', prerequisite: '从零开始。基础设置只做一次；把声纹识别和房间工具合到同一成品。', steps: [...setup, audioInstall, roomInstall, combinedMod, roomMethod, roomRules, audioRestart, audioRecord, roomFirst, roomAuto], daily: '启动账号组 → 各自进入局内 → 确认正在监听主号 → 触发建房和自动跟随 → 正常刷图并查看统计。' },
   };
-  const methodCopy = {
-    foreground: { actions: ['在软件中选择“前台键鼠”。', '游戏使用 16:9 高清键鼠界面，并保持游戏内右上角工具栏显示。', '操作会依次切换游戏窗口、短暂接管键鼠；开始前要处于局内。'], done: '软件已选择前台键鼠方案，参与账号将使用 16:9 高清键鼠界面与可见工具栏。', help: '工具栏可在 Mod 条目中设置显示，修改后重启游戏。窗口被遮挡、最小化或失去前台时会停止；首次创建选择地狱难度。' },
-    background: { actions: ['在软件中选择“后台同步粘贴”；创建时主号保持前台，系统预填所有可用账号，小号随后只提交回车。', '确认参与账号已加载局内房间工具，并从局内开始操作。'], done: '后台同步粘贴方案已保存，参与账号的局内房间工具已就绪。', help: '直接填写房间表单，无需管理聊天键。创建时保持主号前台，小号完成预填后再提交跟随。' },
-  };
-  const states = Object.fromEntries(Object.keys(routes).map(key => [key, { index: 0, done: new Set(), method: 'foreground' }]));
+  const states = Object.fromEntries(Object.keys(routes).map(key => [key, { index: 0, done: new Set() }]));
   let currentRoute = null;
   const byId = id => document.getElementById(id);
   const escapeHTML = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
@@ -859,19 +853,12 @@
       byId('stepContent').innerHTML = `<div class="guide-finish"><h2 tabindex="-1" id="stepTitle">${remaining ? '已到路线末尾' : '这条路线已完成'}</h2><p>${remaining ? `还有 ${remaining} 步未确认，可点流程节点回看。` : '所有步骤均已由你确认。'}</p><strong>以后每天这样用</strong><p>${escapeHTML(route.daily)}</p><div class="step-footer"><button class="guide-button" type="button" id="restartRoute">重新走一遍</button><a class="guide-button primary" href="#guide">选择其他目标</a><a href="#reference">查询详细手册</a></div></div>`;
       byId('restartRoute').onclick = () => { state.index = 0; state.done.clear(); renderRoute(true); };
     } else {
-      const content = item.id === 'room-method' ? { ...item, ...methodCopy[state.method] } : item;
-      byId('stepContent').innerHTML = `<article class="step-panel"><header><span class="step-label">第 ${state.index + 1} / ${route.steps.length} 步 · 已确认 ${state.done.size} 步</span><h2 tabindex="-1" id="stepTitle">${escapeHTML(item.title)}</h2><p>${escapeHTML(item.why)}</p></header><div class="step-body"><span class="step-label">在哪里操作</span><div class="entry-path">${escapeHTML(item.entry)}</div>${guideStepFigureMarkup(item.id)}${item.id === 'room-method' ? `<div class="method-picker" aria-label="查看哪种方案的指引"><button class="guide-button" type="button" data-method="foreground" aria-pressed="${state.method === 'foreground'}">前台键鼠 · 看得见操作</button><button class="guide-button" type="button" data-method="background" aria-pressed="${state.method === 'background'}">后台按键 · 同步预填</button></div><p class="progress-note">此处只切换指引，请在 D2RHub 中选择同一方案。</p>` : ''}<span class="step-label">现在做什么</span><ol class="step-actions">${content.actions.map(action => `<li>${escapeHTML(action)}</li>`).join('')}</ol><div class="success-check"><strong>看到这样，就可以继续</strong>${escapeHTML(content.done)}</div><details class="step-help"><summary>没做到？展开本步帮助</summary><p>${escapeHTML(content.help)}</p><a href="#${item.ref}">查看相关详细说明 →</a></details><div class="step-footer"><button type="button" class="guide-button" id="previousStep" ${state.index === 0 ? 'disabled' : ''}>上一步</button><button type="button" class="guide-button primary" id="nextStep">${state.index === route.steps.length - 1 ? '我已完成，查看日常流程' : '我已完成，下一步 →'}</button></div></div></article>`;
+      const content = item;
+      byId('stepContent').innerHTML = `<article class="step-panel"><header><span class="step-label">第 ${state.index + 1} / ${route.steps.length} 步 · 已确认 ${state.done.size} 步</span><h2 tabindex="-1" id="stepTitle">${escapeHTML(item.title)}</h2><p>${escapeHTML(item.why)}</p></header><div class="step-body"><span class="step-label">在哪里操作</span><div class="entry-path">${escapeHTML(item.entry)}</div>${guideStepFigureMarkup(item.id)}<span class="step-label">现在做什么</span><ol class="step-actions">${content.actions.map(action => `<li>${escapeHTML(action)}</li>`).join('')}</ol><div class="success-check"><strong>看到这样，就可以继续</strong>${escapeHTML(content.done)}</div><details class="step-help"><summary>没做到？展开本步帮助</summary><p>${escapeHTML(content.help)}</p><a href="#${item.ref}">查看相关详细说明 →</a></details><div class="step-footer"><button type="button" class="guide-button" id="previousStep" ${state.index === 0 ? 'disabled' : ''}>上一步</button><button type="button" class="guide-button primary" id="nextStep">${state.index === route.steps.length - 1 ? '我已完成，查看日常流程' : '我已完成，下一步 →'}</button></div></div></article>`;
       bindGuideGalleries(byId('stepContent'));
       byId('previousStep').onclick = () => { state.index--; renderRoute(true); };
       byId('nextStep').onclick = () => { state.done.add(item.id); state.index++; renderRoute(true); };
-      document.querySelectorAll('[data-method]').forEach(button => button.onclick = () => {
-        if (state.method === button.dataset.method) return;
-        state.method = button.dataset.method;
-        // Changing instructions invalidates the dependent confirmations in this route.
-        route.steps.slice(state.index).forEach(item => state.done.delete(item.id));
-        renderRoute();
-        document.querySelector(`[data-method="${state.method}"]`).focus();
-      });
+
     }
     document.querySelectorAll('[data-step]').forEach(button => button.onclick = () => {
       state.index = Number(button.dataset.step); renderRoute(true);
