@@ -5,7 +5,6 @@ import type { AccountMeta, GlobalConfig, ModCapsulePool } from "./store/types";
 import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationWorkflowStatus,
-  RoomChatBindingStatus,
 } from "./features/roomAutomation/types";
 import "./styles/globals.css";
 import "./styles/visualAudit.css";
@@ -298,7 +297,6 @@ let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
   generation: 6,
   config: {
     enabled: true,
-    chat_f13_auto_patch_enabled: true,
     primary_account_id: "sorc-01",
     follower_account_ids: ["barb-02", "pala-03"],
     auto_followers_enabled: false,
@@ -319,9 +317,7 @@ let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
     source_strategy_version: 17,
     target_strategy_version: 17,
     changed: false,
-    requires_chat_binding_consent: false,
   },
-  consent_notice: null,
 };
 
 const roomAutomationStatus: RoomAutomationWorkflowStatus = {
@@ -339,24 +335,6 @@ const roomAutomationStatus: RoomAutomationWorkflowStatus = {
   completed_follower_account_ids: [],
   started_at: null,
   last_error: null,
-};
-
-const roomChatBindingStatus: RoomChatBindingStatus = {
-  ready: true,
-  totalFiles: 3,
-  installedFiles: 3,
-  eligibleFiles: 0,
-  conflictedFiles: 0,
-  backupFiles: 3,
-  orphanBackupFiles: 0,
-  transactionArtifacts: 0,
-  d2rRunning: false,
-  consentGranted: true,
-  watcherRunning: true,
-  autoPatchEnabled: true,
-  directories: ["Saved Games\\Diablo II Resurrected"],
-  lastWatcherError: null,
-  message: "F13 binding ready",
 };
 
 const modCapsulePool: ModCapsulePool = {
@@ -634,10 +612,6 @@ function installIpcMock() {
       case "room_automation_retry":
       case "room_automation_cancel":
         return roomAutomationStatus;
-      case "room_automation_get_chat_binding":
-      case "room_automation_install_chat_binding":
-      case "room_automation_restore_chat_binding":
-        return roomChatBindingStatus;
       case "get_terror_zone_snapshot":
         return {
           current: {

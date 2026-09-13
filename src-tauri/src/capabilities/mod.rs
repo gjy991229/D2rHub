@@ -15,7 +15,6 @@ mod room_automation_layout;
 pub(crate) mod room_automation_runtime;
 #[cfg(target_os = "windows")]
 mod room_automation_windows;
-pub(crate) mod room_chat_binding;
 mod rune_audio;
 mod supervisor;
 
@@ -386,7 +385,7 @@ pub(crate) fn wait_until_disabled(app: &tauri::AppHandle) -> Result<(), String> 
 }
 
 /// Some tools can be explicitly started without enabling their capability
-/// switch (for example diagnostic capture/F13 setup). Drain those too. The
+/// switch (for example diagnostic capture). Drain those too. The
 /// caller holds the profile lock, excluding concurrent explicit start commands.
 pub(crate) fn stop_explicit_optional_activity(app: &tauri::AppHandle) -> Result<(), String> {
     crate::rune_audio::monitor::stop_blocking()?;

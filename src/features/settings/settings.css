@@ -442,6 +442,7 @@
 .appearance-opacity-section { grid-column: 1; grid-row: 3; }
 .appearance-taskbar-section { grid-column: 1; grid-row: 4; }
 .appearance-font-section { grid-column: 2; grid-row: 4; }
+.appearance-overlay-section { grid-column: 1 / -1; grid-row: 5; }
 
 .appearance-apply-strip {
   display: flex;
@@ -504,9 +505,10 @@
 .appearance-theme-swatch { width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: 6px; }
 .appearance-theme-swatch[data-theme-preview="onyx"] { background: #0d0d0d; }
 .appearance-theme-swatch[data-theme-preview="light"] { background: #f7f7f8; }
-.appearance-theme-swatch[data-theme-preview="midnight"] { background: linear-gradient(135deg, #18283e 60%, #91caff 60%); }
-.appearance-theme-swatch[data-theme-preview="forest"] { background: linear-gradient(135deg, #192e27 60%, #8ad9b4 60%); }
-.appearance-theme-swatch[data-theme-preview="sand"] { background: linear-gradient(135deg, #fffaf0 60%, #89521b 60%); }
+.appearance-theme-swatch[data-theme-preview="midnight"] { background: linear-gradient(135deg, #242b35 60%, #a4b6ca 60%); }
+.appearance-theme-swatch[data-theme-preview="forest"] { background: linear-gradient(135deg, #28312c 60%, #a6bcad 60%); }
+.appearance-theme-swatch[data-theme-preview="pink"] { background: linear-gradient(135deg, #fdf9fa 60%, #865e6b 60%); }
+.appearance-theme-swatch[data-theme-preview="sand"] { background: linear-gradient(135deg, #fcfaf6 60%, #75634f 60%); }
 .appearance-theme-option:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
 .appearance-percent-input { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--text-xs); }
@@ -531,6 +533,8 @@
 .appearance-font-option span { font-size: var(--text-xs); }
 
 .appearance-taskbar-section { min-height: 92px; flex-direction: row; align-items: center; justify-content: space-between; }
+.appearance-overlay-section { min-height: 92px; flex-direction: row; align-items: center; justify-content: space-between; }
+.appearance-overlay-section > button { flex-shrink: 0; }
 
 .path-input-row {
   display: grid;
@@ -1038,39 +1042,11 @@
 }
 
 .room-automation-disabled-note,
-.room-automation-consent-notice,
 .room-automation-consent-copy {
   margin: 0;
   color: var(--text-secondary);
   font-size: var(--text-xs);
   line-height: 1.5;
-}
-
-.room-automation-consent-notice {
-  margin: 0;
-  padding: 9px 10px;
-  border: 1px solid color-mix(in srgb, var(--warning) 28%, var(--border-default));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--warning) 7%, var(--surface-card));
-}
-
-.room-automation-scan-hint,
-.room-automation-scan-feedback {
-  margin: 0;
-  padding: 9px 10px;
-  border-radius: 10px;
-  font-size: var(--text-xs);
-  line-height: 1.5;
-}
-
-.room-automation-scan-hint {
-  background: color-mix(in srgb, var(--warning) 7%, var(--surface-card));
-  color: var(--text-secondary);
-}
-
-.room-automation-scan-feedback {
-  background: color-mix(in srgb, var(--success) 7%, var(--surface-card));
-  color: var(--success);
 }
 
 .room-automation-section,
@@ -1457,66 +1433,6 @@
   gap: 7px;
 }
 
-.room-automation-binding-status {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-default);
-  border-radius: 10px;
-  background: var(--surface-hover);
-}
-
-.room-automation-binding-status[data-ready="true"] {
-  border-color: color-mix(in srgb, var(--success) 30%, var(--border-default));
-}
-
-.room-automation-binding-status strong,
-.room-automation-binding-status span {
-  display: block;
-}
-
-.room-automation-binding-status strong { color: var(--text-primary); font-size: var(--text-xs); }
-.room-automation-binding-status div > span { margin-top: 3px; color: var(--text-muted); font-size: var(--text-2xs); }
-.room-automation-scan-mode { color: var(--success) !important; white-space: nowrap; }
-
-.room-automation-binding-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.room-automation-binding-toggle {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  text-align: left;
-}
-
-.room-automation-binding-toggle > span { min-width: 0; }
-.room-automation-binding-toggle strong { color: var(--text-primary); font-size: var(--text-xs); }
-.room-automation-binding-toggle small {
-  display: block;
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: 400;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.room-automation-binding-toggle > svg {
-  flex: 0 0 auto;
-  transition: transform 180ms ease;
-}
-.room-automation-binding-toggle[data-open="true"] > svg { transform: rotate(180deg); }
-.room-automation-binding-scan { flex: 0 0 auto; }
-
 .room-automation-advanced > summary {
   display: flex;
   align-items: center;
@@ -1531,13 +1447,6 @@
 .room-automation-advanced > summary svg { transition: transform 180ms ease; }
 .room-automation-advanced[open] > summary svg { transform: rotate(180deg); }
 .room-automation-advanced > fieldset { margin-top: 12px; }
-
-.room-automation-binding-body {
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  margin-top: 10px;
-}
 
 .room-automation-state {
   display: flex;
@@ -2117,6 +2026,7 @@
 
 @media (max-width: 620px) {
   .appearance-apply-strip,
+  .appearance-overlay-section,
   .appearance-taskbar-section { align-items: stretch; flex-direction: column; }
   .appearance-apply-strip > button { align-self: flex-end; }
   .room-automation-header-main { align-items: center; }
@@ -2161,10 +2071,6 @@
   .room-automation-header-main { align-items: stretch; flex-direction: column; }
   .room-automation-header-actions { align-items: flex-end; flex-direction: column-reverse; }
   .room-automation-readiness { align-items: flex-start; flex-direction: column; }
-  .room-automation-binding-status { align-items: stretch; flex-direction: column; }
-  .room-automation-binding-heading { align-items: stretch; flex-wrap: wrap; }
-  .room-automation-binding-toggle { flex: 1 1 100%; }
-  .room-automation-binding-scan { margin-left: auto; }
   .room-automation-actions > button { flex: 1 1 160px; }
   .room-automation-section-heading-action { flex-wrap: wrap; }
   .room-automation-section-heading-action > button { margin-left: 25px; }

@@ -4,7 +4,6 @@ import type {
   RoomAutomationConfigSnapshot,
   RoomAutomationSaveOutcome,
   RoomAutomationWorkflowStatus,
-  RoomChatBindingStatus,
 } from "./types";
 
 export interface RoomAutomationSyncHandlers {
@@ -20,9 +19,6 @@ export interface RoomAutomationGateway {
   startFollowers(): Promise<RoomAutomationWorkflowStatus>;
   retry(): Promise<RoomAutomationWorkflowStatus>;
   cancel(): Promise<RoomAutomationWorkflowStatus>;
-  getChatBinding(): Promise<RoomChatBindingStatus>;
-  installChatBinding(): Promise<RoomChatBindingStatus>;
-  restoreChatBinding(): Promise<RoomChatBindingStatus>;
   startSync(handlers: RoomAutomationSyncHandlers): Promise<() => void>;
 }
 
@@ -57,9 +53,6 @@ export const roomAutomationGateway: RoomAutomationGateway = {
   startFollowers: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_start_followers"),
   retry: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_retry"),
   cancel: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_cancel"),
-  getChatBinding: () => invokeCommand<RoomChatBindingStatus>("room_automation_get_chat_binding"),
-  installChatBinding: () => invokeCommand<RoomChatBindingStatus>("room_automation_install_chat_binding"),
-  restoreChatBinding: () => invokeCommand<RoomChatBindingStatus>("room_automation_restore_chat_binding"),
   startSync: async ({ onConfig, onStatus }) => {
     const statusRevision = { value: -1 };
     const configGeneration = { value: -1 };

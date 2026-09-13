@@ -103,7 +103,20 @@
             "icons/icon.png"
         ],
         "resources": [
-            "../docs/"
+            "../docs/stats.html",
+            "../docs/user-guide.html",
+            "../docs/guide-images/guide-figures.css",
+            "../docs/guide-images/guide-figures.js",
+            "../docs/guide-images/recognition.png",
+            "../docs/guide-images/mod-processing.png",
+            "../docs/guide-images/room-participants.png",
+            "../docs/guide-images/room-method.png",
+            "../docs/guide-images/paths.png",
+            "../docs/guide-images/account-init.png",
+            "../docs/guide-images/accounts.png",
+            "../docs/guide-images/modules.png",
+            "../docs/guide-images/room-rules.png",
+            "../docs/guide-images/room-auto.png"
         ],
         "windows": {
             "wix": {

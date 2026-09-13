@@ -31,30 +31,6 @@ fn default_key_hold_ms() -> u64 {
     DEFAULT_KEY_HOLD_MS
 }
 
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChatKey {
-    #[default]
-    Pause,
-    F13,
-}
-
-impl ChatKey {
-    pub(crate) fn virtual_key(self) -> u16 {
-        match self {
-            Self::Pause => 0x13,
-            Self::F13 => 0x7C,
-        }
-    }
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::Pause => "Pause",
-            Self::F13 => "F13",
-        }
-    }
-}
-
 /// Keyboard pacing for one room-form workflow profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -177,12 +153,6 @@ pub struct RoomAutomationConfig {
     pub foreground_timing: ForegroundTiming,
     #[serde(default)]
     pub enabled: bool,
-    /// Explicit consent only. Legacy imports must never infer this value from
-    /// `enabled`, because patching character key files is a separate mutation.
-    #[serde(default)]
-    pub chat_f13_auto_patch_enabled: bool,
-    #[serde(default)]
-    pub chat_key: ChatKey,
     #[serde(default)]
     pub primary_account_id: String,
     #[serde(default)]
@@ -225,8 +195,6 @@ impl Default for RoomAutomationConfig {
             input_method: InputMethod::default(),
             foreground_timing: ForegroundTiming::default(),
             enabled: false,
-            chat_f13_auto_patch_enabled: false,
-            chat_key: ChatKey::default(),
             primary_account_id: String::new(),
             follower_account_ids: Vec::new(),
             auto_followers_enabled: false,
@@ -251,9 +219,6 @@ pub struct NormalizationReport {
     pub source_strategy_version: u8,
     pub target_strategy_version: u8,
     pub changed: bool,
-    /// A v0-v12 enabled configuration used to be treated as implicit consent.
-    /// The new adapter can use this flag to ask once instead of mutating files.
-    pub requires_chat_binding_consent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -404,9 +369,6 @@ impl RoomAutomationConfig {
             source_strategy_version,
             target_strategy_version: CURRENT_STRATEGY_VERSION,
             changed: original != *self,
-            requires_chat_binding_consent: source_strategy_version < 13
-                && self.enabled
-                && !self.chat_f13_auto_patch_enabled,
         })
     }
 
@@ -805,21 +767,6 @@ mod tests {
         assert!(saved.get("standard_flow").is_none());
         assert!(saved.get("direct_lobby_flow").is_none());
         assert!(saved.get("account_flow_bindings").is_none());
-    }
-
-    #[test]
-    fn legacy_enabled_config_requires_explicit_f13_consent() {
-        let mut config = RoomAutomationConfig {
-            enabled: true,
-            strategy_version: 12,
-            chat_f13_auto_patch_enabled: false,
-            ..RoomAutomationConfig::default()
-        };
-
-        let report = config.normalize_legacy().unwrap();
-
-        assert!(report.requires_chat_binding_consent);
-        assert!(!config.chat_f13_auto_patch_enabled);
     }
 
     #[test]

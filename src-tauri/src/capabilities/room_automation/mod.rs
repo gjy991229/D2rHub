@@ -12,7 +12,7 @@ pub use foreground_timing::ForegroundTiming;
 pub(crate) use model::canonicalize_shortcut;
 pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
-    ChatKey, FlowStrategy, FollowerJoinMode, InputMethod, NormalizationReport,
+    FlowStrategy, FollowerJoinMode, InputMethod, NormalizationReport,
     RoomAutomationConfig, RoomAutomationConfigError,
 };
 pub use status::{

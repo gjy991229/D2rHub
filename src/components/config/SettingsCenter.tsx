@@ -581,6 +581,10 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                   ...patch,
                 }))}
                 onApply={() => applyAppearanceDraft(false)}
+                navigationSaving={navigationSaving}
+                onOpenOverlaySettings={!minimalMode && installedModules.includes("overlays")
+                  ? () => { void handleTabChange("overlays"); }
+                  : undefined}
               />
             )}
 

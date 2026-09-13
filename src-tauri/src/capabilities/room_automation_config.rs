@@ -56,22 +56,12 @@ pub struct RoomAutomationConfigSnapshot {
     pub generation: u64,
     pub config: RoomAutomationConfig,
     pub normalization: NormalizationReport,
-    pub consent_notice: Option<ChatBindingConsentNotice>,
-}
-
-/// Explains why a legacy F13 preference was deliberately not trusted.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
-pub struct ChatBindingConsentNotice {
-    pub source: String,
-    pub original_strategy_version: u8,
-    pub requires_user_reauthorization: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 struct LegacyImportMetadata {
     source: String,
     original_strategy_version: u8,
-    requires_chat_binding_reauthorization: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -240,19 +230,6 @@ impl RoomAutomationConfigController {
         })
     }
 
-    /// Persists the independent, explicit consent controlling automatic F13
-    /// patching. This merge never overwrites concurrent settings edits.
-    pub fn set_chat_binding_consent(
-        &self,
-        granted: bool,
-    ) -> Result<RoomAutomationConfigSnapshot, RoomAutomationConfigControllerError> {
-        self.merge_sidecar(|config| {
-            let changed = config.chat_f13_auto_patch_enabled != granted;
-            config.chat_f13_auto_patch_enabled = granted;
-            changed
-        })
-    }
-
     fn merge_sidecar(
         &self,
         mut mutate: impl FnMut(&mut RoomAutomationConfig) -> bool,
@@ -309,35 +286,20 @@ fn prepare_initial_config(
         });
     };
 
-    let mut config: RoomAutomationConfig =
+    let config: RoomAutomationConfig =
         serde_json::from_value(legacy_value.clone()).map_err(|error| {
             RoomAutomationConfigControllerError::InvalidLegacyPayload {
                 message: error.to_string(),
             }
         })?;
     let original_strategy_version = config.strategy_version;
-    let legacy_claimed_chat_binding_consent = config.chat_f13_auto_patch_enabled;
-
-    // Before strategy v13 this flag could be inferred from module enablement,
-    // so it did not prove user consent. Since v13 it was written only after a
-    // successful explicit install and can be preserved; the service still
-    // verifies every live key file before resuming a watcher.
-    let consent_is_explicit = original_strategy_version >= 13;
-    if !consent_is_explicit {
-        config.chat_f13_auto_patch_enabled = false;
-    }
-    let (config, mut normalization) = normalize_and_validate(config, account_shortcuts)?;
-    normalization.changed |= legacy_claimed_chat_binding_consent && !consent_is_explicit;
-    let requires_chat_binding_reauthorization = !consent_is_explicit
-        && (legacy_claimed_chat_binding_consent || normalization.requires_chat_binding_consent);
-
+    let (config, normalization) = normalize_and_validate(config, account_shortcuts)?;
     Ok(PreparedInitialConfig {
         config,
         normalization,
         legacy_import: Some(LegacyImportMetadata {
             source: LEGACY_GLOBAL_SOURCE.to_string(),
             original_strategy_version,
-            requires_chat_binding_reauthorization,
         }),
     })
 }
@@ -356,27 +318,12 @@ fn snapshot_from_envelope(
     config: RoomAutomationConfig,
     normalization: NormalizationReport,
 ) -> RoomAutomationConfigSnapshot {
-    let consent_notice = consent_notice(envelope.legacy_import.as_ref(), &config);
     RoomAutomationConfigSnapshot {
         schema_version: envelope.schema_version,
         generation: envelope.generation,
         config,
         normalization,
-        consent_notice,
     }
-}
-
-fn consent_notice(
-    legacy_import: Option<&Value>,
-    config: &RoomAutomationConfig,
-) -> Option<ChatBindingConsentNotice> {
-    let metadata: LegacyImportMetadata = serde_json::from_value(legacy_import?.clone()).ok()?;
-    (metadata.requires_chat_binding_reauthorization && !config.chat_f13_auto_patch_enabled)
-        .then_some(ChatBindingConsentNotice {
-            source: metadata.source,
-            original_strategy_version: metadata.original_strategy_version,
-            requires_user_reauthorization: true,
-        })
 }
 
 #[cfg(test)]
@@ -439,12 +386,10 @@ mod tests {
         assert_eq!(initial.generation, 1);
         assert_eq!(initial.config.name_prefix, "first-");
         assert_eq!(initial.config.strategy_version, CURRENT_STRATEGY_VERSION);
-        assert!(initial.consent_notice.is_some());
 
         let mut stale_global = enabled_config();
         stale_global.name_prefix = "must-not-win-".to_string();
         stale_global.password = "secret-two".to_string();
-        stale_global.chat_f13_auto_patch_enabled = true;
         let reloaded = controller
             .load_or_initialize(Some(serde_json::to_value(stale_global).unwrap()), &[])
             .unwrap();
@@ -460,26 +405,9 @@ mod tests {
         let metadata = envelope.legacy_import.unwrap();
         assert_eq!(metadata["source"], LEGACY_GLOBAL_SOURCE);
         assert_eq!(metadata["original_strategy_version"], 12);
-        assert_eq!(metadata["requires_chat_binding_reauthorization"], true);
         let encoded_metadata = metadata.to_string();
         assert!(!encoded_metadata.contains("secret-one"));
         assert!(!encoded_metadata.contains("secret-two"));
-    }
-
-    #[test]
-    fn preserves_explicit_v16_consent_during_sidecar_import() {
-        let root = TestDirectory::new("consent_preserved");
-        let controller = controller(&root);
-        let mut legacy = enabled_config();
-        legacy.strategy_version = CURRENT_STRATEGY_VERSION;
-        legacy.chat_f13_auto_patch_enabled = true;
-
-        let imported = controller
-            .load_or_initialize(Some(serde_json::to_value(legacy).unwrap()), &[])
-            .unwrap();
-        assert!(imported.config.chat_f13_auto_patch_enabled);
-        assert!(!imported.normalization.changed);
-        assert!(imported.consent_notice.is_none());
     }
 
     #[test]

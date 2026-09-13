@@ -25,9 +25,6 @@ export interface RoomAutomationConfig {
   /** Legacy snapshots receive the independent foreground operation defaults. */
   foreground_timing?: ForegroundTiming;
   enabled: boolean;
-  chat_f13_auto_patch_enabled: boolean;
-  /** Legacy snapshots and new configurations default to Pause. */
-  chat_key?: "pause" | "f13";
   primary_account_id: string;
   follower_account_ids: string[];
   auto_followers_enabled: boolean;
@@ -51,13 +48,6 @@ export interface RoomAutomationNormalizationReport {
   source_strategy_version: number;
   target_strategy_version: number;
   changed: boolean;
-  requires_chat_binding_consent: boolean;
-}
-
-export interface RoomAutomationConsentNotice {
-  source: string;
-  original_strategy_version: number;
-  requires_user_reauthorization: boolean;
 }
 
 export interface RoomAutomationConfigSnapshot {
@@ -65,7 +55,6 @@ export interface RoomAutomationConfigSnapshot {
   generation: number;
   config: RoomAutomationConfig;
   normalization: RoomAutomationNormalizationReport;
-  consent_notice: RoomAutomationConsentNotice | null;
 }
 
 export interface RoomAutomationSaveOutcome {
@@ -106,20 +95,3 @@ export interface RoomAutomationWorkflowStatus {
   last_error: string | null;
 }
 
-export interface RoomChatBindingStatus {
-  ready: boolean;
-  totalFiles: number;
-  installedFiles: number;
-  eligibleFiles: number;
-  conflictedFiles: number;
-  backupFiles: number;
-  orphanBackupFiles: number;
-  transactionArtifacts: number;
-  d2rRunning: boolean;
-  consentGranted: boolean;
-  watcherRunning: boolean;
-  autoPatchEnabled: boolean;
-  directories: string[];
-  lastWatcherError: string | null;
-  message: string;
-}

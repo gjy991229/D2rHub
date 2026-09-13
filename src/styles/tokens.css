@@ -81,11 +81,11 @@
   --accent-glow: rgba(245, 245, 245, 0.10);
   --cta-bg: #f5f5f5;
   --cta-text: #080808;
-  --success: #4ade80;
-  --warning: #facc15;
-  --error: #fb7185;
-  --info: #60a5fa;
-  --tz-accent: #c084fc;
+  --success: #98b5a0;
+  --warning: #c5b184;
+  --error: #ce9da4;
+  --info: #9fB5cf;
+  --tz-accent: #b7a6c8;
 
   /* On black, separation comes from solid surfaces and borders, not haze or glow. */
   --shadow-xs: none;
@@ -96,22 +96,23 @@
 
   /* Toast notification variables */
   --toast-success-bg: #0d0d0d;
-  --toast-success-border: rgba(74, 222, 128, 0.48);
+  --toast-success-border: rgba(152, 181, 160, 0.48);
   --toast-success-glow: transparent;
   --toast-warning-bg: #0d0d0d;
-  --toast-warning-border: rgba(250, 204, 21, 0.48);
+  --toast-warning-border: rgba(197, 177, 132, 0.48);
   --toast-warning-glow: transparent;
   --toast-error-bg: #0d0d0d;
-  --toast-error-border: rgba(251, 113, 133, 0.52);
+  --toast-error-border: rgba(206, 157, 164, 0.52);
   --toast-error-glow: transparent;
   --toast-info-bg: #0d0d0d;
-  --toast-info-border: rgba(96, 165, 250, 0.52);
+  --toast-info-border: rgba(159, 181, 207, 0.52);
   --toast-info-glow: transparent;
 }
 
 /* ── Light (Apple-inspired light mode) ── */
 [data-theme="light"],
-[data-theme="sand"] {
+[data-theme="sand"],
+[data-theme="pink"] {
   --surface-base-rgb: 245 246 247;
   --surface-glass-rgb: 248 249 250;
   --surface-card-rgb: 255 255 255;
@@ -169,103 +170,156 @@
 
 /* Colored variants inherit semantic status colors from their light/dark family. */
 [data-theme="midnight"] {
-  --surface-base-rgb: 13 21 34;
-  --surface-glass-rgb: 18 31 48;
-  --surface-card-rgb: 24 40 62;
-  --surface-hover-rgb: 145 202 255;
-  --surface-active-rgb: 145 202 255;
-  --surface-base: #0d1522;
-  --surface-glass: #121f30;
-  --surface-card: #18283e;
-  --surface-tile: #18283e;
-  --surface-tile-soft: #121f30;
-  --surface-control: #121f30;
-  --surface-modal: #18283e;
-  --surface-hover: #1e314b;
-  --surface-active: #233952;
-  --border-default: #304866;
-  --border-strong: #526c8b;
-  --border-focus: #91caff;
-  --text-primary: #e8f2ff;
-  --text-secondary: #c2d2e7;
-  --text-muted: #9caec6;
-  --input-text: #e8f2ff;
-  --input-bg: #121f30;
-  --accent: #91caff;
-  --accent-rgb: 145 202 255;
-  --accent-hover: #b9ddff;
-  --accent-glow: rgb(145 202 255 / 0.10);
-  --cta-bg: #91caff;
-  --cta-text: #0c1b2c;
-  --toast-success-bg: #18283e;
-  --toast-warning-bg: #18283e;
-  --toast-error-bg: #18283e;
-  --toast-info-bg: #18283e;
+  --surface-base-rgb: 21 24 30;
+  --surface-glass-rgb: 28 33 41;
+  --surface-card-rgb: 36 43 53;
+  --surface-hover-rgb: 164 182 202;
+  --surface-active-rgb: 164 182 202;
+  --surface-base: #15181e;
+  --surface-glass: #1c2129;
+  --surface-card: #242b35;
+  --surface-tile: #242b35;
+  --surface-tile-soft: #1c2129;
+  --surface-control: #1c2129;
+  --surface-modal: #242b35;
+  --surface-hover: #2c3440;
+  --surface-active: #343e4a;
+  --border-default: #3c4653;
+  --border-strong: #606d7c;
+  --border-focus: #a4b6ca;
+  --text-primary: #ecf0f5;
+  --text-secondary: #c9d0d9;
+  --text-muted: #a5afbd;
+  --input-text: #ecf0f5;
+  --input-bg: #1c2129;
+  --accent: #a4b6ca;
+  --accent-rgb: 164 182 202;
+  --accent-hover: #c0ccd9;
+  --accent-glow: rgb(164 182 202 / 0.10);
+  --cta-bg: #a4b6ca;
+  --cta-text: #19212b;
+  --toast-success-bg: #242b35;
+  --toast-warning-bg: #242b35;
+  --toast-error-bg: #242b35;
+  --toast-info-bg: #242b35;
 }
 
 [data-theme="forest"] {
-  --surface-base-rgb: 16 28 23;
-  --surface-glass-rgb: 20 37 30;
-  --surface-card-rgb: 25 46 39;
-  --surface-hover-rgb: 138 217 180;
-  --surface-active-rgb: 138 217 180;
-  --surface-base: #101c17;
-  --surface-glass: #14251e;
-  --surface-card: #192e27;
-  --surface-tile: #192e27;
-  --surface-tile-soft: #14251e;
-  --surface-control: #14251e;
-  --surface-modal: #192e27;
-  --surface-hover: #203a30;
-  --surface-active: #29483b;
-  --border-default: #345447;
-  --border-strong: #597b6a;
-  --border-focus: #8ad9b4;
-  --text-primary: #eaf7ef;
-  --text-secondary: #c2d9cc;
-  --text-muted: #9fbbaa;
-  --input-text: #eaf7ef;
-  --input-bg: #14251e;
-  --accent: #8ad9b4;
-  --accent-rgb: 138 217 180;
-  --accent-hover: #b2edcf;
-  --accent-glow: rgb(138 217 180 / 0.10);
-  --cta-bg: #8ad9b4;
-  --cta-text: #10271c;
-  --toast-success-bg: #192e27;
-  --toast-warning-bg: #192e27;
-  --toast-error-bg: #192e27;
-  --toast-info-bg: #192e27;
+  --surface-base-rgb: 23 28 25;
+  --surface-glass-rgb: 30 38 34;
+  --surface-card-rgb: 40 49 44;
+  --surface-hover-rgb: 166 188 173;
+  --surface-active-rgb: 166 188 173;
+  --surface-base: #171c19;
+  --surface-glass: #1e2622;
+  --surface-card: #28312c;
+  --surface-tile: #28312c;
+  --surface-tile-soft: #1e2622;
+  --surface-control: #1e2622;
+  --surface-modal: #28312c;
+  --surface-hover: #303c35;
+  --surface-active: #39463e;
+  --border-default: #414f46;
+  --border-strong: #66786b;
+  --border-focus: #a6bcad;
+  --text-primary: #edf2ee;
+  --text-secondary: #cbd5ce;
+  --text-muted: #aab9ae;
+  --input-text: #edf2ee;
+  --input-bg: #1e2622;
+  --accent: #a6bcad;
+  --accent-rgb: 166 188 173;
+  --accent-hover: #c2d1c7;
+  --accent-glow: rgb(166 188 173 / 0.10);
+  --cta-bg: #a6bcad;
+  --cta-text: #1c2820;
+  --toast-success-bg: #28312c;
+  --toast-warning-bg: #28312c;
+  --toast-error-bg: #28312c;
+  --toast-info-bg: #28312c;
 }
 
 [data-theme="sand"] {
-  --surface-base-rgb: 243 237 225;
-  --surface-glass-rgb: 248 242 231;
-  --surface-card-rgb: 255 250 240;
-  --surface-hover-rgb: 137 82 27;
-  --surface-active-rgb: 137 82 27;
-  --surface-base: #f3ede1;
-  --surface-glass: #f8f2e7;
-  --surface-card: #fffaf0;
-  --surface-tile: #fffaf0;
-  --surface-tile-soft: #f8f2e7;
-  --surface-control: #f8f2e7;
-  --surface-modal: #fffaf0;
-  --surface-hover: #eee3d0;
-  --surface-active: #e8dac2;
-  --border-default: #d6c8b0;
-  --border-strong: #a18b68;
-  --border-focus: #89521b;
-  --text-primary: #352b20;
-  --text-secondary: #65533f;
-  --text-muted: #79664e;
-  --input-text: #352b20;
-  --input-bg: #f8f2e7;
-  --accent: #89521b;
-  --accent-rgb: 137 82 27;
-  --accent-hover: #663a0e;
-  --accent-glow: rgb(137 82 27 / 0.10);
-  --cta-bg: #89521b;
-  --cta-text: #fffaf0;
+  --surface-base-rgb: 241 238 234;
+  --surface-glass-rgb: 247 244 239;
+  --surface-card-rgb: 252 250 246;
+  --surface-hover-rgb: 117 99 79;
+  --surface-active-rgb: 117 99 79;
+  --surface-base: #f1eeea;
+  --surface-glass: #f7f4ef;
+  --surface-card: #fcfaf6;
+  --surface-tile: #fcfaf6;
+  --surface-tile-soft: #f7f4ef;
+  --surface-control: #f7f4ef;
+  --surface-modal: #fcfaf6;
+  --surface-hover: #e9e3da;
+  --surface-active: #e0d8cd;
+  --border-default: #d6cfc5;
+  --border-strong: #a3998b;
+  --border-focus: #75634f;
+  --text-primary: #34302b;
+  --text-secondary: #625b52;
+  --text-muted: #756c60;
+  --input-text: #34302b;
+  --input-bg: #f7f4ef;
+  --accent: #75634f;
+  --accent-rgb: 117 99 79;
+  --accent-hover: #5f503f;
+  --accent-glow: rgb(117 99 79 / 0.10);
+  --cta-bg: #75634f;
+  --cta-text: #fcfaf6;
 }
 
+/* Dusty rose uses the light family with softly tinted surfaces. */
+[data-theme="pink"] {
+  --surface-base-rgb: 244 237 239;
+  --surface-glass-rgb: 249 243 245;
+  --surface-card-rgb: 253 249 250;
+  --surface-hover-rgb: 134 94 107;
+  --surface-active-rgb: 134 94 107;
+  --surface-base: #f4edef;
+  --surface-glass: #f9f3f5;
+  --surface-card: #fdf9fa;
+  --surface-tile: #fdf9fa;
+  --surface-tile-soft: #f9f3f5;
+  --surface-control: #f9f3f5;
+  --surface-modal: #fdf9fa;
+  --surface-hover: #ede1e5;
+  --surface-active: #e5d5db;
+  --border-default: #dbcdd2;
+  --border-strong: #af959e;
+  --border-focus: #865e6b;
+  --text-primary: #382e32;
+  --text-secondary: #69575e;
+  --text-muted: #7b6870;
+  --input-text: #382e32;
+  --input-bg: #f9f3f5;
+  --accent: #865e6b;
+  --accent-rgb: 134 94 107;
+  --accent-hover: #6e4b57;
+  --accent-glow: rgb(134 94 107 / 0.08);
+  --cta-bg: #865e6b;
+  --cta-text: #fdf9fa;
+}
+
+/* Keep status cues muted on tinted light themes without changing white. */
+[data-theme="sand"],
+[data-theme="pink"] {
+  --success: #506e59;
+  --warning: #806840;
+  --error: #a05c61;
+  --info: #546f8c;
+  --tz-accent: #80678f;
+  --toast-success-bg: color-mix(in srgb, var(--success) 6%, var(--surface-card));
+  --toast-success-border: color-mix(in srgb, var(--success) 28%, transparent);
+  --toast-success-glow: transparent;
+  --toast-warning-bg: color-mix(in srgb, var(--warning) 6%, var(--surface-card));
+  --toast-warning-border: color-mix(in srgb, var(--warning) 28%, transparent);
+  --toast-warning-glow: transparent;
+  --toast-error-bg: color-mix(in srgb, var(--error) 6%, var(--surface-card));
+  --toast-error-border: color-mix(in srgb, var(--error) 28%, transparent);
+  --toast-error-glow: transparent;
+  --toast-info-bg: color-mix(in srgb, var(--info) 6%, var(--surface-card));
+  --toast-info-border: color-mix(in srgb, var(--info) 28%, transparent);
+  --toast-info-glow: transparent;
+}

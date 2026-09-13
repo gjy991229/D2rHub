@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { ArrowRight, Check } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
@@ -20,6 +20,8 @@ interface AppearancePanelProps {
   applying: boolean;
   onChange: (patch: Partial<AppearanceSettingsDraft>) => void;
   onApply: () => Promise<boolean>;
+  onOpenOverlaySettings?: () => void;
+  navigationSaving: boolean;
 }
 
 function sliderToPercent(value: number): number {
@@ -37,6 +39,8 @@ export function AppearancePanel({
   applying,
   onChange,
   onApply,
+  onOpenOverlaySettings,
+  navigationSaving,
 }: AppearancePanelProps) {
   const sliderValue = percentToSlider(draft.main_opacity);
 
@@ -156,6 +160,19 @@ export function AppearancePanel({
           ))}
         </div>
       </section>
+
+      {onOpenOverlaySettings && (
+        <section className="spatial-panel appearance-section appearance-overlay-section">
+          <div className="appearance-section-heading">
+            <h3>悬浮窗外观与显示</h3>
+            <p>独立设置悬浮窗主题、背景不透明度、显示开关和窗口位置。</p>
+          </div>
+          <Button variant="secondary" size="md" disabled={applying || navigationSaving} onClick={onOpenOverlaySettings}>
+            悬浮窗设置
+            <ArrowRight size={14} aria-hidden="true" />
+          </Button>
+        </section>
+      )}
 
       <section className="spatial-panel appearance-section appearance-taskbar-section">
         <div className="appearance-section-heading">

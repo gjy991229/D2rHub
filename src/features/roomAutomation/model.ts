@@ -124,7 +124,6 @@ export function roomAutomationConfigsEqual(
     ...config,
     input_method: config.input_method ?? "background_keys",
     foreground_timing: foregroundTimingWithDefaults(config.foreground_timing),
-    chat_key: config.chat_key ?? "pause",
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },

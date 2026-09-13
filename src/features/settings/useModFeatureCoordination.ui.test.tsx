@@ -36,7 +36,7 @@ describe("shared Mod feature coordination", () => {
     vi.spyOn(roomAutomationGateway, "getConfig").mockResolvedValue({
       schema_version: 1, generation: 1,
       config: { enabled: true, primary_account_id: "main" } as never,
-      normalization: {} as never, consent_notice: null,
+      normalization: {} as never,
     });
     const assign = vi.fn(async () => pool);
     const toggleAudio = vi.fn(async () => undefined);

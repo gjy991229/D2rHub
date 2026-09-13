@@ -1,20 +1,16 @@
 //! Tauri/Windows adapter for the optional room-automation capability.
 //!
 //! The sidecar controller is the only configuration authority. This adapter
-//! owns every shortcut, bounded chat-binding scan, account lease, cancellation signal
+//! owns every shortcut, account lease, cancellation signal
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    ChatKey, FollowerJoinMode, InputMethod, RoomAutomationConfig, WaitingMode, WorkflowPhase,
+    FollowerJoinMode, InputMethod, RoomAutomationConfig, WaitingMode, WorkflowPhase,
     WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
     RoomAutomationConfigController, RoomAutomationConfigControllerError,
     RoomAutomationConfigSnapshot, ROOM_AUTOMATION_MODULE_ID,
-};
-use super::room_chat_binding::{
-    validate_and_canonicalize_directories, ChatBindingModRoot, ChatF13BindingService,
-    ChatF13BindingStatus, ExplicitChatBindingConsent,
 };
 use super::supervisor::CapabilitySupervisor;
 use crate::application::capability::{
@@ -36,6 +32,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
+#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Weak};
@@ -336,7 +333,6 @@ impl RuntimeHost for WindowsRuntimeHost {
                     foreground_timing: &config.foreground_timing,
                     pid,
                     background_text_strategy: &config.background_text_strategy,
-                    chat_key: config.chat_key,
                     create: true,
                     // Every physical create-shortcut press starts a new room
                     // form. The old lobby-era duplicate-dialog confirmation
@@ -376,7 +372,6 @@ impl RuntimeHost for WindowsRuntimeHost {
                     foreground_timing: &config.foreground_timing,
                     pid,
                     background_text_strategy: &config.background_text_strategy,
-                    chat_key: config.chat_key,
                     create: false,
                     open_form: true,
                     name: room_name,
@@ -422,265 +417,6 @@ fn canonicalize_account_references(
         .filter_map(|account_id| canonical(account_id).transpose())
         .collect::<Result<Vec<_>, _>>()?;
     Ok(())
-}
-
-trait ChatBindingPort: Send + Sync {
-    fn status_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        self.status()
-    }
-    fn install_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        self.install()
-    }
-    fn resume_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        self.resume()
-    }
-    fn preflight_restore_for_key(&self, _key: ChatKey) -> Result<(), String> {
-        self.preflight_restore()
-    }
-    fn restore_for_key(&self, _key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        self.restore()
-    }
-    fn status(&self) -> Result<ChatF13BindingStatus, String>;
-    fn install(&self) -> Result<ChatF13BindingStatus, String>;
-    fn resume(&self) -> Result<ChatF13BindingStatus, String>;
-    fn stop(&self) -> Result<ChatF13BindingStatus, String>;
-    fn preflight_restore(&self) -> Result<(), String>;
-    fn restore(&self) -> Result<ChatF13BindingStatus, String>;
-}
-
-struct LazyChatBinding {
-    state: SharedState,
-    /// Serializes service creation and every bounded key-file operation.
-    operation: Mutex<()>,
-    service: Mutex<Option<CachedChatBinding>>,
-}
-
-struct CachedChatBinding {
-    directories: Vec<PathBuf>,
-    mod_roots: Vec<ChatBindingModRoot>,
-    service: Arc<ChatF13BindingService>,
-}
-
-impl LazyChatBinding {
-    fn configured_directories(&self) -> Result<(Vec<PathBuf>, Vec<ChatBindingModRoot>), String> {
-        let config = self
-            .state
-            .configuration()
-            .snapshot()
-            .ok_or_else(|| "尚未加载全局配置".to_string())?;
-        let mut directories = Vec::new();
-        let mut mod_roots = Vec::new();
-        // Use the same per-edition game paths as Mod management, keeping each
-        // installation paired with its own system save directory.
-        for (save_path, game_path) in [
-            (&config.cn_saved_games_path, &config.cn_game_path),
-            (&config.global_saved_games_path, &config.global_game_path),
-        ] {
-            if save_path.trim().is_empty() {
-                continue;
-            }
-            let save_directory = PathBuf::from(save_path.trim());
-            if !save_directory.is_dir() {
-                continue;
-            }
-            directories.push(save_directory.clone());
-            let game_path = game_path.trim();
-            if !game_path.is_empty() && std::path::Path::new(game_path).is_dir() {
-                mod_roots.push(ChatBindingModRoot {
-                    save_directory,
-                    mods_directory: PathBuf::from(game_path).join("mods"),
-                });
-            }
-        }
-        Ok((
-            validate_and_canonicalize_directories(directories)?,
-            mod_roots,
-        ))
-    }
-
-    /// Must be called while `operation` is held. A directory change replaces
-    /// the cached service before the next bounded scan.
-    fn service(&self) -> Result<Arc<ChatF13BindingService>, String> {
-        self.service_for_key(ChatKey::F13)
-    }
-
-    fn service_for_key(&self, key: ChatKey) -> Result<Arc<ChatF13BindingService>, String> {
-        let (directories, mod_roots) = match self.configured_directories() {
-            Ok(paths) => paths,
-            Err(error) => {
-                self.clear_cached_service()?;
-                return Err(error);
-            }
-        };
-        if !mod_roots.is_empty() {
-            self.service_for_directories_and_mod_roots(directories, mod_roots, key)
-        } else if key == ChatKey::F13 {
-            self.service_for_directories(directories)
-        } else {
-            self.service_for_directories_and_key(directories, key)
-        }
-    }
-
-    fn service_for_directories(
-        &self,
-        directories: Vec<PathBuf>,
-    ) -> Result<Arc<ChatF13BindingService>, String> {
-        self.service_for_directories_and_key(directories, ChatKey::F13)
-    }
-
-    fn service_for_directories_and_key(
-        &self,
-        directories: Vec<PathBuf>,
-        key: ChatKey,
-    ) -> Result<Arc<ChatF13BindingService>, String> {
-        self.service_for_directories_and_mod_roots(directories, Vec::new(), key)
-    }
-
-    fn service_for_directories_and_mod_roots(
-        &self,
-        directories: Vec<PathBuf>,
-        mod_roots: Vec<ChatBindingModRoot>,
-        key: ChatKey,
-    ) -> Result<Arc<ChatF13BindingService>, String> {
-        let previous = {
-            let mut current = self.service.lock();
-            if let Some(cached) = current.as_ref() {
-                if cached.directories == directories
-                    && cached.mod_roots == mod_roots
-                    && cached.service.chat_key() == key
-                {
-                    return Ok(Arc::clone(&cached.service));
-                }
-            }
-            current.take()
-        };
-        let rescan_with_consent = previous.as_ref().is_some_and(|cached| {
-            cached.service.chat_key() == key
-                && cached
-                    .service
-                    .status()
-                    .is_ok_and(|status| status.consent_granted)
-        });
-        if let Some(cached) = previous {
-            cached.service.shutdown()?;
-        }
-        let probe = || !crate::infrastructure::system::get_d2r_pids().is_empty();
-        let service = Arc::new(if !mod_roots.is_empty() {
-            ChatF13BindingService::new_with_mod_roots(
-                directories.clone(),
-                mod_roots.clone(),
-                probe,
-                key,
-            )?
-        } else if key == ChatKey::F13 {
-            ChatF13BindingService::new(directories.clone(), probe)?
-        } else {
-            ChatF13BindingService::new_with_key(directories.clone(), probe, key)?
-        });
-        if rescan_with_consent {
-            let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
-            if let Err(error) = service.start_watcher_with_consent(consent) {
-                crate::logger::log_msg(
-                    "WARN",
-                    "RoomAutomation",
-                    &format!("存档或游戏 Mod 目录变化后聊天键一次性扫描失败：{error}"),
-                );
-            }
-        }
-        *self.service.lock() = Some(CachedChatBinding {
-            directories,
-            mod_roots,
-            service: Arc::clone(&service),
-        });
-        Ok(service)
-    }
-
-    fn clear_cached_service(&self) -> Result<(), String> {
-        if let Some(cached) = self.service.lock().take() {
-            cached.service.shutdown()?;
-        }
-        Ok(())
-    }
-}
-
-impl ChatBindingPort for LazyChatBinding {
-    fn status_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service_for_key(key)?.status()
-    }
-
-    fn install_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service_for_key(key)?.install()
-    }
-
-    fn resume_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
-        self.service_for_key(key)?
-            .start_watcher_with_consent(consent)
-    }
-
-    fn preflight_restore_for_key(&self, key: ChatKey) -> Result<(), String> {
-        let _operation = self.operation.lock();
-        self.service_for_key(key)?.preflight_restore()
-    }
-
-    fn restore_for_key(&self, key: ChatKey) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service_for_key(key)?.restore()
-    }
-
-    fn status(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service()?.status()
-    }
-
-    fn install(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service()?.install()
-    }
-
-    fn resume(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        let consent = ExplicitChatBindingConsent::from_persisted_user_consent(true)?;
-        self.service()?.start_watcher_with_consent(consent)
-    }
-
-    fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        let service = self.service.lock().take();
-        match service {
-            Some(cached) => cached.service.stop(),
-            None => Ok(ChatF13BindingStatus {
-                ready: false,
-                total_files: 0,
-                installed_files: 0,
-                eligible_files: 0,
-                conflicted_files: 0,
-                backup_files: 0,
-                orphan_backup_files: 0,
-                transaction_artifacts: 0,
-                d2r_running: !crate::infrastructure::system::get_d2r_pids().is_empty(),
-                consent_granted: false,
-                watcher_running: false,
-                auto_patch_enabled: false,
-                directories: Vec::new(),
-                last_watcher_error: None,
-                message: "聊天键扫描服务尚未初始化".to_string(),
-            }),
-        }
-    }
-
-    fn preflight_restore(&self) -> Result<(), String> {
-        let _operation = self.operation.lock();
-        self.service()?.preflight_restore()
-    }
-
-    fn restore(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.service()?.restore()
-    }
 }
 
 trait RuntimeBridge: Send + Sync {
@@ -871,7 +607,6 @@ pub(crate) struct RoomAutomationManager {
     config_apply: Mutex<()>,
     leases: AccountLeaseManager,
     host: Arc<dyn RuntimeHost>,
-    chat_binding: Arc<dyn ChatBindingPort>,
     bridge: Arc<dyn RuntimeBridge>,
     self_reference: Weak<RoomAutomationManager>,
 }
@@ -984,11 +719,6 @@ impl RoomAutomationManager {
                 ),
             }
 
-            let chat_binding: Arc<dyn ChatBindingPort> = Arc::new(LazyChatBinding {
-                state: state.clone(),
-                operation: Mutex::new(()),
-                service: Mutex::new(None),
-            });
             let bridge: Arc<dyn RuntimeBridge> = Arc::new(TauriRuntimeBridge {
                 app: app.clone(),
                 state: state.clone(),
@@ -1000,7 +730,6 @@ impl RoomAutomationManager {
                 snapshot,
                 leases,
                 host,
-                chat_binding,
                 bridge,
             ))
         }
@@ -1011,7 +740,6 @@ impl RoomAutomationManager {
         snapshot: RoomAutomationConfigSnapshot,
         leases: AccountLeaseManager,
         host: Arc<dyn RuntimeHost>,
-        chat_binding: Arc<dyn ChatBindingPort>,
         bridge: Arc<dyn RuntimeBridge>,
     ) -> Arc<Self> {
         Arc::new_cyclic(|self_reference| Self {
@@ -1023,7 +751,6 @@ impl RoomAutomationManager {
             config_apply: Mutex::new(()),
             leases,
             host,
-            chat_binding,
             bridge,
             self_reference: self_reference.clone(),
         })
@@ -1052,33 +779,8 @@ impl RoomAutomationManager {
             self.cancel()?;
         }
         let operation = self.operation.lock();
-
         let previous = self.get_config();
-        let chat_key_changed = candidate.chat_key != previous.config.chat_key;
-        if chat_key_changed {
-            // A key-file edit cannot take effect in already-running clients.
-            // Reject before committing a sender key that their cached binding lacks.
-            if self
-                .chat_binding
-                .status_for_key(previous.config.chat_key)?
-                .d2r_running
-            {
-                return Err(
-                    "请先关闭全部 D2R 窗口，再切换聊天按键；游戏会缓存并覆盖键位文件".to_string(),
-                );
-            }
-            candidate.chat_f13_auto_patch_enabled = true;
-        }
-        let consent_granted_while_enabling = !previous.config.enabled
-            && candidate.enabled
-            && !previous.config.chat_f13_auto_patch_enabled
-            && candidate.chat_f13_auto_patch_enabled;
-        if candidate.chat_f13_auto_patch_enabled != previous.config.chat_f13_auto_patch_enabled
-            && !consent_granted_while_enabling
-            && !chat_key_changed
-        {
-            return Err("聊天键授权只能通过安装或恢复操作修改".to_string());
-        }
+
         candidate
             .normalize_legacy()
             .map_err(|error| error.to_string())?;
@@ -1138,20 +840,9 @@ impl RoomAutomationManager {
             } else {
                 None
             };
-        let binding_warning = if saved.config.input_method == InputMethod::BackgroundKeys
-            && (saved.config.enabled || chat_key_changed)
-            && saved.config.chat_f13_auto_patch_enabled
-        {
-            match self.chat_binding.resume_for_key(saved.config.chat_key) {
-                Ok(_) => None,
-                Err(error) => Some(format!("聊天键一次性扫描未完成：{error}")),
-            }
-        } else {
-            None
-        };
         drop(operation);
         join_shortcut(old_shortcut);
-        let lifecycle_warning =
+        let apply_warning =
             self.bridge
                 .apply_requested(saved.config.enabled)
                 .err()
@@ -1160,10 +851,6 @@ impl RoomAutomationManager {
                         "配置生命周期应用失败：{error}"
                     ))
                 });
-        let apply_warning = [binding_warning, lifecycle_warning]
-            .into_iter()
-            .flatten()
-            .reduce(|left, right| format!("{left}；{right}"));
         Ok(RoomAutomationSaveOutcome {
             snapshot: saved,
             apply_warning,
@@ -1411,67 +1098,6 @@ impl RoomAutomationManager {
         Ok(status)
     }
 
-    pub(crate) fn get_chat_binding(&self) -> Result<ChatF13BindingStatus, String> {
-        let _operation = self.operation.lock();
-        self.chat_binding
-            .status_for_key(self.get_config().config.chat_key)
-    }
-
-    pub(crate) fn install_chat_binding(&self) -> Result<ChatF13BindingStatus, String> {
-        let _config_apply = self.config_apply.lock();
-        let _operation = self.operation.lock();
-        if self.workflow_is_reserved() {
-            return Err("请先完成或取消当前自动跟房任务".to_string());
-        }
-        let installed = self
-            .chat_binding
-            .install_for_key(self.get_config().config.chat_key)?;
-        match self.controller.set_chat_binding_consent(true) {
-            Ok(snapshot) => {
-                *self.snapshot.write() = snapshot.clone();
-                self.bridge.publish_config(&snapshot);
-                Ok(installed)
-            }
-            Err(error) => {
-                let _ = self.chat_binding.stop();
-                Err(format!("聊天键已安装但扫描授权保存失败：{error}"))
-            }
-        }
-    }
-
-    pub(crate) fn restore_chat_binding(&self) -> Result<ChatF13BindingStatus, String> {
-        let _config_apply = self.config_apply.lock();
-        let _operation = self.operation.lock();
-        if self.workflow_is_reserved() {
-            return Err("请先完成或取消当前自动跟房任务".to_string());
-        }
-        // Only revoke durable consent after a read-only filesystem preflight.
-        // If the following transaction rolls back, restore the exact previous
-        // scan consent as compensation.
-        let chat_key = self.get_config().config.chat_key;
-        self.chat_binding.preflight_restore_for_key(chat_key)?;
-        let previous_consent = self.snapshot.read().config.chat_f13_auto_patch_enabled;
-        let revoked = self
-            .controller
-            .set_chat_binding_consent(false)
-            .map_err(|error| error.to_string())?;
-        *self.snapshot.write() = revoked.clone();
-        self.bridge.publish_config(&revoked);
-        match self.chat_binding.restore_for_key(chat_key) {
-            Ok(restored) => Ok(restored),
-            Err(error) => match self.controller.set_chat_binding_consent(previous_consent) {
-                Ok(snapshot) => {
-                    *self.snapshot.write() = snapshot.clone();
-                    self.bridge.publish_config(&snapshot);
-                    Err(format!("{error}；授权状态已恢复"))
-                }
-                Err(compensation_error) => Err(format!(
-                    "{error}；扫描授权状态回滚失败：{compensation_error}"
-                )),
-            },
-        }
-    }
-
     /// Optional cleanup hook. Core account deletion must never depend on it.
     pub(crate) fn remove_account_reference(&self, account_id: &str) -> Result<(), String> {
         let _config_apply = self.config_apply.lock();
@@ -1490,17 +1116,6 @@ impl RoomAutomationManager {
         let config = self.get_config().config;
         if !config.enabled {
             return Err("自动跟房模块尚未启用".to_string());
-        }
-        if config.input_method == InputMethod::ForegroundMouse {
-            return Ok(config);
-        }
-        let binding = self.chat_binding.status_for_key(config.chat_key)?;
-        if !binding.ready {
-            return Err(format!(
-                "{} 聊天键绑定尚未就绪，请扫描安装并重新启动游戏使其生效：{}",
-                config.chat_key.label(),
-                binding.message
-            ));
         }
         Ok(config)
     }
@@ -2178,9 +1793,6 @@ impl CapabilityDriver for RoomAutomationManager {
         join_workflow(workflow)
             .map_err(|error| CapabilityFailure::new("workflow-stop-failed", error))?;
         self.lifecycle.lock().leases = None;
-        self.chat_binding
-            .stop()
-            .map_err(|error| CapabilityFailure::new("chat-binding-stop-failed", error))?;
         Ok(())
     }
 
@@ -2495,112 +2107,6 @@ mod tests {
         }
     }
 
-    struct FakeBinding;
-
-    impl FakeBinding {
-        fn status(watcher_running: bool) -> ChatF13BindingStatus {
-            ChatF13BindingStatus {
-                ready: true,
-                total_files: 1,
-                installed_files: 1,
-                eligible_files: 0,
-                conflicted_files: 0,
-                backup_files: 1,
-                orphan_backup_files: 0,
-                transaction_artifacts: 0,
-                d2r_running: false,
-                consent_granted: watcher_running,
-                watcher_running,
-                auto_patch_enabled: watcher_running,
-                directories: Vec::new(),
-                last_watcher_error: None,
-                message: "ready".to_string(),
-            }
-        }
-    }
-
-    impl ChatBindingPort for FakeBinding {
-        fn status(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(Self::status(false))
-        }
-
-        fn install(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(Self::status(true))
-        }
-
-        fn resume(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(Self::status(true))
-        }
-
-        fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(Self::status(false))
-        }
-
-        fn preflight_restore(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn restore(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(Self::status(false))
-        }
-    }
-
-    struct PreflightFailBinding;
-
-    impl ChatBindingPort for PreflightFailBinding {
-        fn status(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn install(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn resume(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(false))
-        }
-
-        fn preflight_restore(&self) -> Result<(), String> {
-            Err("injected restore preflight failure".to_string())
-        }
-
-        fn restore(&self) -> Result<ChatF13BindingStatus, String> {
-            panic!("restore must not run after a failed preflight")
-        }
-    }
-
-    struct RestoreFailBinding;
-
-    impl ChatBindingPort for RestoreFailBinding {
-        fn status(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn install(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn resume(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(true))
-        }
-
-        fn stop(&self) -> Result<ChatF13BindingStatus, String> {
-            Ok(FakeBinding::status(false))
-        }
-
-        fn preflight_restore(&self) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn restore(&self) -> Result<ChatF13BindingStatus, String> {
-            Err("injected restore transaction failure".to_string())
-        }
-    }
-
     #[derive(Default)]
     struct FakeBridge {
         requested: AtomicBool,
@@ -2711,7 +2217,6 @@ mod tests {
             snapshot,
             leases.clone(),
             host.clone(),
-            Arc::new(FakeBinding),
             Arc::new(FakeBridge::default()),
         );
         (root, manager, leases, host)
@@ -2870,7 +2375,6 @@ mod tests {
             initial.clone(),
             AccountLeaseManager::default(),
             Arc::new(FakeHost::new(false)),
-            Arc::new(FakeBinding),
             bridge,
         );
         let mut candidate = initial.config.clone();
@@ -2907,7 +2411,6 @@ mod tests {
             initial.clone(),
             AccountLeaseManager::default(),
             Arc::new(FakeHost::new(false)),
-            Arc::new(FakeBinding),
             bridge.clone(),
         );
         let mut first = initial.config.clone();
@@ -2943,136 +2446,6 @@ mod tests {
         assert_eq!(second_outcome.snapshot.config.name_prefix, "second-");
         assert_eq!(*bridge.calls.lock(), [true, false]);
         assert!(!bridge.requested.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn lazy_chat_binding_stop_is_serialized_by_the_outer_operation_lock() {
-        let binding = Arc::new(LazyChatBinding {
-            state: Arc::new(crate::state::AppState::new()),
-            operation: Mutex::new(()),
-            service: Mutex::new(None),
-        });
-        let stop_binding = binding.clone();
-        let operation = binding.operation.lock();
-        let (finished_tx, finished_rx) = std::sync::mpsc::sync_channel(1);
-        let stop = std::thread::spawn(move || {
-            let result = stop_binding.stop();
-            let _ = finished_tx.send(());
-            result
-        });
-
-        assert!(finished_rx.recv_timeout(Duration::from_millis(40)).is_err());
-        drop(operation);
-        finished_rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert!(!stop.join().unwrap().unwrap().watcher_running);
-    }
-
-    #[test]
-    fn lazy_chat_binding_replaces_cached_paths_and_accepts_a_later_directory() {
-        let first = TestDirectory::new("chat_path_first");
-        let second = TestDirectory::new("chat_path_second");
-        let later = second.0.join("created-later");
-        let binding = LazyChatBinding {
-            state: Arc::new(crate::state::AppState::new()),
-            operation: Mutex::new(()),
-            service: Mutex::new(None),
-        };
-
-        let first_service = {
-            let _operation = binding.operation.lock();
-            binding
-                .service_for_directories(
-                    validate_and_canonicalize_directories(vec![first.0.clone()]).unwrap(),
-                )
-                .unwrap()
-        };
-        let first_again = {
-            let _operation = binding.operation.lock();
-            binding
-                .service_for_directories(
-                    validate_and_canonicalize_directories(vec![first.0.clone()]).unwrap(),
-                )
-                .unwrap()
-        };
-        assert!(Arc::ptr_eq(&first_service, &first_again));
-
-        let second_service = {
-            let _operation = binding.operation.lock();
-            binding
-                .service_for_directories(
-                    validate_and_canonicalize_directories(vec![second.0.clone()]).unwrap(),
-                )
-                .unwrap()
-        };
-        assert!(!Arc::ptr_eq(&first_service, &second_service));
-        assert_eq!(
-            second_service.status().unwrap().directories,
-            vec![second.0.canonicalize().unwrap().to_string_lossy()]
-        );
-
-        {
-            let _operation = binding.operation.lock();
-            assert!(binding
-                .service_for_directories(vec![later.clone()])
-                .is_err());
-        }
-        std::fs::create_dir_all(&later).unwrap();
-        let later_service = {
-            let _operation = binding.operation.lock();
-            binding
-                .service_for_directories(
-                    validate_and_canonicalize_directories(vec![later.clone()]).unwrap(),
-                )
-                .unwrap()
-        };
-        assert_eq!(
-            later_service.status().unwrap().directories,
-            vec![later.canonicalize().unwrap().to_string_lossy()]
-        );
-    }
-
-    #[test]
-    fn failed_restore_preflight_preserves_durable_consent() {
-        let root = TestDirectory::new("restore_preflight_consent");
-        let controller = RoomAutomationConfigController::new(&root.0).unwrap();
-        let initial = controller.load_or_initialize(None, &[]).unwrap();
-        let consent = controller.set_chat_binding_consent(true).unwrap();
-        let manager = RoomAutomationManager::new(
-            controller,
-            consent,
-            AccountLeaseManager::default(),
-            Arc::new(FakeHost::new(false)),
-            Arc::new(PreflightFailBinding),
-            Arc::new(FakeBridge::default()),
-        );
-
-        let error = manager.restore_chat_binding().unwrap_err();
-
-        assert!(error.contains("injected restore preflight failure"));
-        assert!(manager.get_config().config.chat_f13_auto_patch_enabled);
-        assert_eq!(manager.get_config().generation, initial.generation + 1);
-    }
-
-    #[test]
-    fn failed_restore_transaction_compensates_durable_consent() {
-        let root = TestDirectory::new("restore_transaction_consent");
-        let controller = RoomAutomationConfigController::new(&root.0).unwrap();
-        controller.load_or_initialize(None, &[]).unwrap();
-        let consent = controller.set_chat_binding_consent(true).unwrap();
-        let manager = RoomAutomationManager::new(
-            controller,
-            consent,
-            AccountLeaseManager::default(),
-            Arc::new(FakeHost::new(false)),
-            Arc::new(RestoreFailBinding),
-            Arc::new(FakeBridge::default()),
-        );
-
-        let error = manager.restore_chat_binding().unwrap_err();
-
-        assert!(error.contains("injected restore transaction failure"));
-        assert!(error.contains("授权状态已恢复"));
-        assert!(manager.get_config().config.chat_f13_auto_patch_enabled);
     }
 
     #[test]
@@ -3163,7 +2536,6 @@ mod tests {
             snapshot,
             AccountLeaseManager::default(),
             Arc::new(FakeHost::new(false)),
-            Arc::new(FakeBinding),
             Arc::new(BlockingWaitingBridge {
                 waiting_started: Mutex::new(Some(waiting_started_tx)),
                 release_waiting: Mutex::new(Some(release_waiting_rx)),
@@ -3237,7 +2609,6 @@ mod tests {
             snapshot,
             leases.clone(),
             host.clone(),
-            Arc::new(FakeBinding),
             Arc::new(FakeBridge::default()),
         );
         manager.start().unwrap();

@@ -6,7 +6,7 @@
 //! signal so capability shutdown never leaves detached input work behind.
 
 use crate::capabilities::room_automation::{
-    ChatKey, FlowStrategy, ForegroundTiming, InputMethod, RoomAutomationConfig,
+    FlowStrategy, ForegroundTiming, InputMethod, RoomAutomationConfig,
 };
 use crate::infrastructure::physical_input::{modifiers_released, DesktopInput};
 use parking_lot::Mutex;
@@ -35,7 +35,6 @@ const EXTRA_PANEL_SETTLE_MS: u64 = 50;
 const MIN_CHARACTER_GAP_MS: u64 = 10;
 const PUNCTUATION_GAP_MS: u64 = 18;
 const FIELD_CLEAR_SETTLE_MS: u64 = 24;
-const CHAT_MODE_SETTLE_MS: u64 = 120;
 const ROOM_FORM_SETTLE_MS: u64 = 200;
 const FIELD_CLEAR_COUNT: usize = 16;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
@@ -149,7 +148,7 @@ pub(crate) fn prepare_background_room(
                             room_name: String::new(),
                         },
                     );
-                    enter_native_chat_mode(hwnd, strategy, config.chat_key, flow, cancel)
+                    Ok(())
                 })
             })
             .collect::<Vec<_>>();
@@ -445,7 +444,6 @@ pub(crate) struct RoomFormRequest<'a> {
     pub foreground_timing: &'a ForegroundTiming,
     pub pid: u32,
     pub background_text_strategy: &'a str,
-    pub chat_key: ChatKey,
     pub create: bool,
     pub open_form: bool,
     pub name: &'a str,
@@ -490,7 +488,6 @@ pub(crate) fn fill_room_form(
     if request.open_form {
         open_room_form(hwnd, request.create, strategy, request.flow, cancel)?;
     }
-    enter_native_chat_mode(hwnd, strategy, request.chat_key, request.flow, cancel)?;
     replace_text(hwnd, request.name, strategy, request.flow, cancel)?;
     wait(cancel, Duration::from_millis(request.flow.step_delay_ms))?;
     deliver_key(
@@ -582,26 +579,6 @@ fn open_room_form(
         cancel,
         Duration::from_millis(ROOM_FORM_SETTLE_MS + EXTRA_PANEL_SETTLE_MS),
     )
-}
-
-fn enter_native_chat_mode(
-    hwnd: isize,
-    strategy: BackgroundTextStrategy,
-    chat_key: ChatKey,
-    flow: &FlowStrategy,
-    cancel: &dyn CancellationCheck,
-) -> Result<(), String> {
-    let step = flow.step_delay_ms.clamp(60, 500).max(CHAT_MODE_SETTLE_MS);
-    deliver_key(
-        hwnd,
-        chat_key.virtual_key(),
-        false,
-        strategy,
-        flow.key_hold_ms,
-        20,
-        cancel,
-    )?;
-    wait(cancel, Duration::from_millis(step))
 }
 
 fn replace_text(
@@ -755,7 +732,7 @@ fn validate_text(value: &str) -> Result<(), String> {
         .bytes()
         .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
     {
-        return Err("后台原生聊天态输入只支持英文字母、数字、短横线和下划线".to_string());
+        return Err("后台房间表单输入只支持英文字母、数字、短横线和下划线".to_string());
     }
     Ok(())
 }
@@ -767,7 +744,7 @@ fn character_key(character: char) -> Result<(u16, bool), String> {
         '0'..='9' => Ok((character as u16, false)),
         '-' => Ok((VK_OEM_MINUS, false)),
         '_' => Ok((VK_OEM_MINUS, true)),
-        _ => Err(format!("后台原生聊天态输入暂不支持字符：{character}")),
+        _ => Err(format!("后台房间表单输入暂不支持字符：{character}")),
     }
 }
 

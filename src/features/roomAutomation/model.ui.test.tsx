@@ -9,7 +9,6 @@ import type { RoomAutomationConfig } from "./types";
 
 const validConfig: RoomAutomationConfig = {
   enabled: true,
-  chat_f13_auto_patch_enabled: false,
   primary_account_id: "one",
   follower_account_ids: ["two"],
   auto_followers_enabled: false,

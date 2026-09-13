@@ -3,7 +3,6 @@ use crate::capabilities::room_automation_config::RoomAutomationConfigSnapshot;
 use crate::capabilities::room_automation_runtime::{
     RoomAutomationCommandState, RoomAutomationManager, RoomAutomationSaveOutcome,
 };
-use crate::capabilities::room_chat_binding::ChatF13BindingStatus;
 use crate::state::SharedState;
 use std::sync::Arc;
 use tauri::Manager;
@@ -100,36 +99,3 @@ pub(crate) fn room_automation_cancel(app: tauri::AppHandle) -> Result<WorkflowSt
     manager(&app)?.cancel()
 }
 
-#[tauri::command(async)]
-pub(crate) fn room_automation_get_chat_binding(
-    app: tauri::AppHandle,
-    global: tauri::State<'_, SharedState>,
-) -> Result<ChatF13BindingStatus, String> {
-    // Resolving this status can initialize the lazy directory service. Wait for
-    // activation or a profile transition instead of surfacing transient contention.
-    let _profile = global.runtime_activation_lock.lock();
-    require_module_installed(&global)?;
-    manager(&app)?.get_chat_binding()
-}
-
-#[tauri::command(async)]
-pub(crate) fn room_automation_install_chat_binding(
-    app: tauri::AppHandle,
-    global: tauri::State<'_, SharedState>,
-) -> Result<ChatF13BindingStatus, String> {
-    let _profile = global.runtime_activation_lock.lock();
-    require_module_installed(&global)?;
-    manager(&app)?.install_chat_binding()
-}
-
-#[tauri::command(async)]
-pub(crate) fn room_automation_restore_chat_binding(
-    app: tauri::AppHandle,
-    global: tauri::State<'_, SharedState>,
-) -> Result<ChatF13BindingStatus, String> {
-    let _profile = global
-        .runtime_activation_lock
-        .try_lock()
-        .ok_or_else(|| "模式切换或模块操作进行中，请稍后重试".to_string())?;
-    manager(&app)?.restore_chat_binding()
-}

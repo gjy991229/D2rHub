@@ -2459,16 +2459,16 @@ html, body, #root {
 
 /* Keep compact semantic badges readable on the true-black surfaces. */
 :is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-blue {
-  color: #79b8dc;
+  color: var(--info);
 }
 :is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-green {
-  color: #72c98d;
+  color: var(--success);
 }
 :is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-gold {
-  color: #d6ad61;
+  color: var(--warning);
 }
 :is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-violet {
-  color: #b9a1dc;
+  color: var(--tz-accent);
 }
 
 /* Dark themes use solid tonal layers. State is communicated with borders and color, never haze. */
