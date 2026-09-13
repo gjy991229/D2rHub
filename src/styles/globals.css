@@ -2365,114 +2365,114 @@ html, body, #root {
   background: var(--surface-hover);
 }
 
-/* ── Dark (onyx) theme overrides — remove glass effects, dampen white highlights ── */
+/* ── Dark theme family overrides — remove glass effects, dampen white highlights ── */
 
-[data-theme="onyx"] .app-shell {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .app-shell {
   background: var(--surface-base);
 }
-[data-theme="onyx"] .app-shell::before {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .app-shell::before {
   background: var(--surface-base);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Header — no blur */
-[data-theme="onyx"] .top-nav-material {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .top-nav-material {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Overlay — no blur */
-[data-theme="onyx"] .overlay-window::before {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .overlay-window::before {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Glass utility — no blur */
-[data-theme="onyx"] .frosted-glass {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .frosted-glass {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Hover drawer — no blur */
-[data-theme="onyx"] .hover-drawer:hover {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hover-drawer:hover {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Toast — no blur */
-[data-theme="onyx"] .toast-item {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
 
 /* Cards — remove glass blur */
-[data-theme="onyx"] .account-line {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .account-line {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
-[data-theme="onyx"] .account-line:hover {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .account-line:hover {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), var(--shadow-card);
 }
 
 /* Spatial tiles — dampen inset from 0.84 → 0.04 */
-[data-theme="onyx"] .spatial-tile {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .spatial-tile {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
-[data-theme="onyx"] .spatial-tile:hover {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .spatial-tile:hover {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), var(--shadow-card);
 }
-[data-theme="onyx"] .spatial-tile[data-selected="true"] {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .spatial-tile[data-selected="true"] {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 0 0 1px rgb(var(--accent-rgb) / 0.05);
 }
 
 /* Account options — dampen bright inset */
-[data-theme="onyx"] .account-option {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .account-option {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
-[data-theme="onyx"] .account-option:hover,
-[data-theme="onyx"] .account-option[data-selected="true"] {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .account-option:hover,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .account-option[data-selected="true"] {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), var(--shadow-card);
 }
 
 /* Spatial panel */
-[data-theme="onyx"] .spatial-panel {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .spatial-panel {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 /* Setting card */
-[data-theme="onyx"] .setting-card {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .setting-card {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
 }
 
 /* Setting category tile hover */
-[data-theme="onyx"] .setting-category-tile:hover,
-[data-theme="onyx"] .setting-category-tile[data-active="true"] {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .setting-category-tile:hover,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .setting-category-tile[data-active="true"] {
   box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), var(--shadow-card);
 }
 
 /* Badge — ensure border is visible on dark */
-[data-theme="onyx"] .hig-badge {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge {
   border-color: var(--border-default);
 }
 
 /* Keep compact semantic badges readable on the true-black surfaces. */
-[data-theme="onyx"] .hig-badge-blue {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-blue {
   color: #79b8dc;
 }
-[data-theme="onyx"] .hig-badge-green {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-green {
   color: #72c98d;
 }
-[data-theme="onyx"] .hig-badge-gold {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-gold {
   color: #d6ad61;
 }
-[data-theme="onyx"] .hig-badge-violet {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .hig-badge-violet {
   color: #b9a1dc;
 }
 
-/* Onyx uses solid black layers. State is communicated with borders and color, never haze. */
-[data-theme="onyx"] :is(
+/* Dark themes use solid tonal layers. State is communicated with borders and color, never haze. */
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(
   .account-line,
   .spatial-tile,
   .spatial-panel,
@@ -2484,7 +2484,7 @@ html, body, #root {
   box-shadow: none;
 }
 
-[data-theme="onyx"] :is(
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(
   .account-line:hover,
   .spatial-tile:hover,
   .account-option:hover,
@@ -2494,7 +2494,7 @@ html, body, #root {
   box-shadow: none;
 }
 
-[data-theme="onyx"] :is(
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(
   .account-line[data-selected="true"],
   .spatial-tile[data-selected="true"],
   .account-option[data-selected="true"],
@@ -2504,31 +2504,31 @@ html, body, #root {
   box-shadow: none;
 }
 
-[data-theme="onyx"] .modal-content {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .modal-content {
   background: var(--surface-modal) !important;
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
 }
 
-[data-theme="onyx"] .toast-item,
-[data-theme="onyx"] .toast-item.toast-success,
-[data-theme="onyx"] .toast-item.toast-warning,
-[data-theme="onyx"] .toast-item.toast-error,
-[data-theme="onyx"] .toast-item.toast-info {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item.toast-success,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item.toast-warning,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item.toast-error,
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) .toast-item.toast-info {
   background: var(--surface-modal);
   box-shadow: var(--shadow-elevated);
 }
 
-[data-theme="onyx"] :is(.progress-pulse-glow, .btn-pulse, .btn-pulse:hover) {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(.progress-pulse-glow, .btn-pulse, .btn-pulse:hover) {
   animation: none;
   box-shadow: none;
 }
 
-[data-theme="onyx"] :is(.state-dot, .state-dot.warn, .account-state-dot, .account-state-dot.warn) {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) :is(.state-dot, .state-dot.warn, .account-state-dot, .account-state-dot.warn) {
   box-shadow: none;
 }
 
-[data-theme="onyx"] input[type="range"]::-webkit-slider-thumb {
+:is([data-theme="onyx"], [data-theme="midnight"], [data-theme="forest"]) input[type="range"]::-webkit-slider-thumb {
   box-shadow: none;
 }
 

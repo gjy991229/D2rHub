@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import { useGlobalConfig } from "../../store/globalConfig";
 import type { ThemeKey } from "../../store/theme";
+import { normalizeTheme } from "../../store/themeCatalog";
 import type { GlobalConfig } from "../../store/types";
 import type { AppearanceSettingsDraft } from "./panels/AppearancePanel";
 
 export function appearanceFromConfig(config: GlobalConfig): AppearanceSettingsDraft {
   return {
     app_language: config.app_language,
-    theme: config.theme === "onyx" ? "onyx" : "light",
+    theme: normalizeTheme(config.theme),
     main_opacity: config.main_opacity ?? 95,
     font_scale: config.font_scale || "default",
     separate_game_taskbar_icons: !!config.separate_game_taskbar_icons,
@@ -70,7 +71,7 @@ export function useAppearanceSettingsController({
     setApplying(false);
     if (!saved) {
       useGlobalConfig.setState({ config: current });
-      previewTheme(current.theme === "onyx" ? "onyx" : "light");
+      previewTheme(normalizeTheme(current.theme));
       document.documentElement.dataset.fontScale = current.font_scale || "default";
       try { localStorage.setItem("d2rhub-font-scale", current.font_scale || "default"); } catch {}
       return false;

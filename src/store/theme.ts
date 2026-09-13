@@ -3,7 +3,8 @@ import { invokeCommand } from "../platform/tauri";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useGlobalConfig } from "./globalConfig";
 
-export type ThemeKey = "onyx" | "light";
+import { isThemeKey, type ThemeKey } from "./themeCatalog";
+export type { ThemeKey } from "./themeCatalog";
 
 interface ThemeState {
   theme: ThemeKey;
@@ -31,7 +32,7 @@ function loadTheme(): ThemeKey {
   // 先尝试 localStorage 缓存，再回退到 config；config 加载后会通过 syncThemeFromConfig 纠正
   try {
     const saved = localStorage.getItem(STORAGE_KEY) as ThemeKey | null;
-    if (saved && ["onyx", "light"].includes(saved)) {
+    if (isThemeKey(saved)) {
       applyTheme(saved);
       return saved;
     }
@@ -44,7 +45,7 @@ function loadTheme(): ThemeKey {
 
 /** 从 config 同步主题（配置作为真相源，启动时调用一次） */
 export function syncThemeFromConfig(configTheme: string | undefined) {
-  if (!configTheme || !["onyx", "light"].includes(configTheme)) return;
+  if (!isThemeKey(configTheme)) return;
   const t = configTheme as ThemeKey;
   const current = useTheme.getState().theme;
   if (t !== current) {
@@ -81,7 +82,7 @@ if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
     if (e.key === STORAGE_KEY && e.newValue) {
       const newTheme = e.newValue as ThemeKey;
-      if (["onyx", "light"].includes(newTheme)) {
+      if (isThemeKey(newTheme)) {
         applyTheme(newTheme);
         useTheme.setState({ theme: newTheme });
       }

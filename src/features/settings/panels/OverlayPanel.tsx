@@ -3,6 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { useGlobalConfig } from "../../../store/globalConfig";
+import { THEME_OPTIONS } from "../../../store/themeCatalog";
 import type { GlobalConfig } from "../../../store/types";
 import { type AuxiliaryWindowLabel } from "../../../utils/windowPlacement";
 
@@ -38,10 +39,7 @@ export function OverlayPanel({
       <div className="spatial-panel p-3 space-y-2">
         <h3 className="text-xs font-bold text-text-primary">信息悬浮窗主题</h3>
         <div className="grid grid-cols-2 gap-2.5">
-          {([
-            { id: "onyx", label: "深色悬浮窗", desc: "纯黑分层，清晰克制" },
-            { id: "light", label: "浅色悬浮窗", desc: "明亮清晰界面" },
-          ] as const).map((option) => {
+          {THEME_OPTIONS.map((option) => {
             const active = (config.theme_overlay || "light") === option.id;
             return (
               <button

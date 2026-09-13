@@ -1,9 +1,10 @@
 import type { CSSProperties } from "react";
 import type { ThemeKey } from "../store/theme";
+import { isDarkTheme } from "../store/themeCatalog";
 
 type SurfaceKey = "base" | "glass" | "card" | "hover" | "active";
 
-const SURFACE_ALPHA: Record<ThemeKey, Record<SurfaceKey, number>> = {
+const SURFACE_ALPHA: Record<"onyx" | "light", Record<SurfaceKey, number>> = {
   onyx: {
     base: 1,
     glass: 1,
@@ -34,8 +35,8 @@ export function surfaceOpacityVars(
   theme: ThemeKey,
 ): CSSProperties {
   const opacity = clampOpacity(opacityPercent);
-  const alpha = SURFACE_ALPHA[theme] ?? SURFACE_ALPHA.light;
-  const modalAlpha = theme === "onyx"
+  const alpha = SURFACE_ALPHA[isDarkTheme(theme) ? "onyx" : "light"];
+  const modalAlpha = isDarkTheme(theme)
     ? Math.max(0.86, alpha.glass * opacity)
     : Math.max(0.82, alpha.glass * opacity);
 

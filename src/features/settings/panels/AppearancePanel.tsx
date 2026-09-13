@@ -3,6 +3,7 @@ import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import type { ThemeKey } from "../../../store/theme";
+import { THEME_OPTIONS } from "../../../store/themeCatalog";
 import type { GlobalConfig } from "../../../store/types";
 
 export interface AppearanceSettingsDraft {
@@ -80,10 +81,7 @@ export function AppearancePanel({
           <p>选择适合当前使用环境的明暗层级。</p>
         </div>
         <div className="appearance-theme-options">
-          {([
-            { id: "onyx", label: "深色", desc: "纯黑分层，高对比" },
-            { id: "light", label: "浅色", desc: "清晰明亮，低干扰" },
-          ] as const).map((option) => {
+          {THEME_OPTIONS.map((option) => {
             const active = draft.theme === option.id;
             return (
               <button

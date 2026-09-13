@@ -504,6 +504,10 @@
 .appearance-theme-swatch { width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: 6px; }
 .appearance-theme-swatch[data-theme-preview="onyx"] { background: #0d0d0d; }
 .appearance-theme-swatch[data-theme-preview="light"] { background: #f7f7f8; }
+.appearance-theme-swatch[data-theme-preview="midnight"] { background: linear-gradient(135deg, #18283e 60%, #91caff 60%); }
+.appearance-theme-swatch[data-theme-preview="forest"] { background: linear-gradient(135deg, #192e27 60%, #8ad9b4 60%); }
+.appearance-theme-swatch[data-theme-preview="sand"] { background: linear-gradient(135deg, #fffaf0 60%, #89521b 60%); }
+.appearance-theme-option:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
 .appearance-percent-input { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--text-xs); }
 .appearance-percent-input input { width: 58px; min-height: 32px; border: 1px solid var(--border-default); border-radius: 8px; background: transparent; color: var(--text-primary); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: center; }

@@ -141,10 +141,10 @@ pub struct GlobalConfig {
     /// 音频遥测场景计时与掉落统计悬浮窗。旧配置从 enable_overlay 迁移。
     #[serde(default = "default_enable_overlay")]
     pub enable_stats_overlay: bool,
-    /// 主题选择: "onyx" | "light"
+    /// 主题选择: "onyx" | "light" | "midnight" | "forest" | "sand"
     #[serde(default = "default_theme")]
     pub theme: String,
-    /// 悬浮窗主题选择: "onyx" | "light"
+    /// 悬浮窗主题选择: "onyx" | "light" | "midnight" | "forest" | "sand"
     #[serde(default = "default_theme")]
     pub theme_overlay: String,
     /// 是否在登录后/流程结束后自动关闭浏览器，以及在启动前做清理
