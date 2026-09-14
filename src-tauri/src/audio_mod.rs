@@ -26,8 +26,10 @@ const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
 const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
-const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 27;
-const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 6] = [21, 22, 23, 24, 25, 26];
+const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 28;
+const ESC_NEXT_GAME_FEATURE_ID: &str = "esc_next_game";
+const ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v1;window_ms=500";
+const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 7] = [21, 22, 23, 24, 25, 26, 27];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
 const AUTO_EXIT_ON_DEATH_FINGERPRINT: &str = "auto-exit-on-death-v1;trigger_ms=10;commit_ms=100";
@@ -175,6 +177,7 @@ struct ValidatedGeneratorOutput {
 struct RequestedFeatureGroups {
     audio_telemetry: bool,
     room_tools: bool,
+    esc_next_game: bool,
     auto_exit_on_death: bool,
 }
 
@@ -192,15 +195,17 @@ impl RequestedFeatureGroups {
     fn from_options(
         audio_telemetry: Option<bool>,
         room_tools: Option<bool>,
+        esc_next_game: Option<bool>,
         auto_exit_on_death: Option<bool>,
     ) -> Result<Self, String> {
         // Missing fields preserve the pre-r22 command contract used by older D2RHub frontends.
         let requested = Self {
             audio_telemetry: audio_telemetry.unwrap_or(true),
             room_tools: room_tools.unwrap_or(false),
+            esc_next_game: esc_next_game.unwrap_or(false),
             auto_exit_on_death: auto_exit_on_death.unwrap_or(false),
         };
-        if !requested.audio_telemetry && !requested.room_tools && !requested.auto_exit_on_death {
+        if !requested.audio_telemetry && !requested.room_tools && !requested.esc_next_game && !requested.auto_exit_on_death {
             return Err("请至少选择一个要加工的功能".to_string());
         }
         Ok(requested)
@@ -214,6 +219,9 @@ impl RequestedFeatureGroups {
         if self.room_tools {
             features.push("rooms");
         }
+        if self.esc_next_game {
+            features.push("esc-next-game");
+        }
         if self.auto_exit_on_death {
             features.push("death-exit");
         }
@@ -223,6 +231,7 @@ impl RequestedFeatureGroups {
     fn validate_present(self, groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
         for (requested, id, label) in [
             (self.audio_telemetry, AUDIO_TELEMETRY_FEATURE_ID, "声纹识别"),
+            (self.esc_next_game, ESC_NEXT_GAME_FEATURE_ID, "双击 Esc 下一局地狱"),
             (
                 self.room_tools,
                 IN_GAME_ROOM_TOOLS_FEATURE_ID,
@@ -253,6 +262,7 @@ impl RequestedFeatureGroups {
         self.room_tools |= groups
             .iter()
             .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
+        self.esc_next_game |= groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID);
         self.auto_exit_on_death |= groups
             .iter()
             .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID);
@@ -268,6 +278,7 @@ impl RequestedFeatureGroups {
                 || groups
                     .iter()
                     .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID))
+            && (!self.esc_next_game || groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID))
             && (!self.auto_exit_on_death
                 || groups
                     .iter()
@@ -583,6 +594,12 @@ fn validate_supported_feature_group(group: &GeneratorFeatureGroup) -> Result<(),
             let expected = format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}");
             if group.fingerprint != expected {
                 return Err("D2RHub Mod 的局内房间工具指纹无效，请重新加工".to_string());
+            }
+            Ok(())
+        }
+        ESC_NEXT_GAME_FEATURE_ID => {
+            if group.recipe_version != 1 || group.fingerprint != ESC_NEXT_GAME_FINGERPRINT {
+                return Err("双击 Esc 下一局地狱功能组无效，请重新加工".to_string());
             }
             Ok(())
         }
@@ -1044,6 +1061,36 @@ fn validate_lobby_return_hint(mod_directory: &Path, mod_name: &str) -> Result<()
     Ok(())
 }
 
+fn validate_esc_next_game_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
+    let directory = mod_directory.join(format!("{mod_name}.mpq")).join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let arm = read_room_tool_layout(&directory, "D2RHubQuickRecreateEscArmhd.json")?;
+    let receiver = find_layout_node(&arm, "D2RHubEscNextGame")
+        .ok_or_else(|| "缺少双击 Esc 下一局入口".to_string())?;
+    if arm.get("type").and_then(serde_json::Value::as_str) != Some("TooltipsPanel")
+        || receiver.pointer("/fields/acceptsEscKeyEverywhere").and_then(serde_json::Value::as_bool) != Some(true)
+        || receiver.pointer("/fields/onClickMessage").and_then(serde_json::Value::as_str) != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
+        || !layout_has_timed_child_message(&arm, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", 0.5) {
+        return Err("双击 Esc 下一局接收器无效".to_string());
+    }
+    for name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
+        let pause = read_room_tool_layout(&directory, name)?;
+        if !layout_has_timed_child_message(&pause, "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm", 0.01) {
+            return Err(format!("暂停布局缺少双击 Esc 入口：{name}"));
+        }
+    }
+    let controller = read_room_tool_layout(&directory, "D2RHubQuickRecreatehd.json")?;
+    let messages = controller.get("children").and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "下一局控制器不完整".to_string())?;
+    let exit = messages.iter().position(|child| child.pointer("/fields/message").and_then(serde_json::Value::as_str) == Some("PausePanelMessage:ExitGame"));
+    let load = messages.iter().position(|child| child.pointer("/fields/message").and_then(serde_json::Value::as_str) == Some("CharacterSelect:LoadCharacter:2"));
+    if !matches!((exit, load), (Some(exit), Some(load)) if exit < load)
+        || !layout_has_timed_child_message(&controller, "PausePanelMessage:ExitGame", 0.05)
+        || !layout_has_timed_child_message(&controller, "CharacterSelect:LoadCharacter:2", 0.05) {
+        return Err("下一局地狱必须先正常退出再加载角色".to_string());
+    }
+    Ok(())
+}
+
 fn validate_in_game_room_tool_layouts_for_recipe(
     mod_directory: &Path,
     mod_name: &str,
@@ -1356,7 +1403,7 @@ fn validate_in_game_room_tool_layouts_for_version(
 
     for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&layout_directory, pause_name)?;
-        if room_recipe_version >= 27 && !layout_has_timed_child_message(
+        if room_recipe_version == 27 && !layout_has_timed_child_message(
             &pause, "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm", 0.01,
         ) {
             return Err(format!("暂停布局缺少双击 Esc 入口：{pause_name}"));
@@ -1713,6 +1760,9 @@ fn validate_compatible_audio_mod_directory_with_policy(
         if room_group.recipe_version >= 23 {
             validate_lobby_return_hint(&mod_directory, mod_name)?;
         }
+    }
+    if current_feature_protocol && feature_groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID) {
+        validate_esc_next_game_layouts(&mod_directory, mod_name)?;
     }
     if current_feature_protocol
         && feature_groups
@@ -3640,6 +3690,7 @@ pub async fn prepare_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
     prepare_audio_mod_task(
@@ -3651,6 +3702,7 @@ pub async fn prepare_audio_mod(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_esc_next_game,
             include_auto_exit_on_death,
         },
         None,
@@ -3670,6 +3722,7 @@ async fn prepare_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     } = payload
     else {
@@ -3681,6 +3734,7 @@ async fn prepare_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
@@ -3705,6 +3759,7 @@ async fn prepare_audio_mod_task(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_esc_next_game,
             include_auto_exit_on_death,
         },
         &task,
@@ -3730,6 +3785,7 @@ struct PrepareAudioModRequest {
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 }
 
@@ -3745,6 +3801,7 @@ async fn prepare_audio_mod_impl(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     } = request;
     let shared_state = state.inner().clone();
@@ -3766,6 +3823,7 @@ async fn prepare_audio_mod_impl(
     let requested_features = RequestedFeatureGroups::from_options(
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     )?;
 
@@ -3821,6 +3879,7 @@ pub async fn upgrade_audio_mod(
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
     upgrade_audio_mod_task(
@@ -3832,6 +3891,7 @@ pub async fn upgrade_audio_mod(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_esc_next_game,
             include_auto_exit_on_death,
         },
         None,
@@ -3851,6 +3911,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     } = payload
     else {
@@ -3862,6 +3923,7 @@ async fn upgrade_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
@@ -3886,6 +3948,7 @@ async fn upgrade_audio_mod_task(
             source_mod_name,
             include_audio_telemetry,
             include_room_tools,
+            include_esc_next_game,
             include_auto_exit_on_death,
         },
         &task,
@@ -3914,6 +3977,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        include_esc_next_game: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
     },
     Upgrade {
@@ -3922,6 +3986,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
         include_room_tools: Option<bool>,
+        include_esc_next_game: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
     },
 }
@@ -3952,6 +4017,7 @@ struct UpgradeAudioModRequest {
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
     include_room_tools: Option<bool>,
+    include_esc_next_game: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
 }
 
@@ -3967,6 +4033,7 @@ async fn upgrade_audio_mod_impl(
         source_mod_name,
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     } = request;
     let shared_state = state.inner().clone();
@@ -3992,6 +4059,7 @@ async fn upgrade_audio_mod_impl(
     let mut explicitly_requested = RequestedFeatureGroups::from_options(
         include_audio_telemetry,
         include_room_tools,
+        include_esc_next_game,
         include_auto_exit_on_death,
     )?;
     let current_validated = match validate_audio_mod(&mods_directory, mod_name) {

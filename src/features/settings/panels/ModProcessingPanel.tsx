@@ -17,6 +17,7 @@ import { capsuleBaseModLabel, capsuleFeatureLabels } from "../../modCapsules/mod
 import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
+  ESC_NEXT_GAME_FEATURE_ID,
   AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   IN_GAME_ROOM_TOOLS_FEATURE_ID,
@@ -58,7 +59,9 @@ interface ModProcessingPanelProps {
   setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
   includeRoomTools: boolean;
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
+  includeEscNextGame?: boolean;
   includeAutoExitOnDeath: boolean;
+  setIncludeEscNextGame?: Dispatch<SetStateAction<boolean>>;
   setIncludeAutoExitOnDeath: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
@@ -104,6 +107,8 @@ export function ModProcessingPanel({
   setIncludeAudioTelemetry,
   includeRoomTools,
   setIncludeRoomTools,
+  includeEscNextGame = false,
+  setIncludeEscNextGame = () => {},
   includeAutoExitOnDeath,
   setIncludeAutoExitOnDeath,
   audioPreparing,
@@ -410,7 +415,7 @@ export function ModProcessingPanel({
               />}
               {!minimalMode && <FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
-                detail={isEnglish ? "Double Esc for the next Hell game; create/join shortcuts and automation with hidden buttons" : "双击 Esc 下一局地狱；保留创建、加入与自动跟房，局内按钮始终隐藏"}
+                detail={isEnglish ? "Create/join shortcuts and automation with hidden buttons" : "创建、加入与自动跟房，局内按钮始终隐藏"}
                 checked={roomToolsSelected}
                 locked={roomToolsRequired || roomToolsInherited}
                 lockLabel={roomToolsInherited
@@ -421,6 +426,15 @@ export function ModProcessingPanel({
                 disabled={audioPreparing}
                 onChange={setIncludeRoomTools}
               />}
+              <FeatureChoice
+                title={isEnglish ? "Double Esc: next Hell game" : "双击 Esc 下一局地狱"}
+                detail={isEnglish ? "Press Esc twice within 0.5 seconds; available independently of room tools" : "0.5 秒内双击 Esc 退出并进入下一局地狱，可独立启用"}
+                checked={includeEscNextGame || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
+                locked={inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={audioPreparing}
+                onChange={setIncludeEscNextGame}
+              />
               <FeatureChoice
                 title={isEnglish ? "Auto-exit after death" : "死亡后自动退房"}
                 detail={isEnglish

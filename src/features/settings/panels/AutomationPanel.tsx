@@ -23,6 +23,7 @@ import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import {
   AGGREGATE_ITEM_FILTERS,
+  ESC_NEXT_GAME_FEATURE_ID,
   AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   CHARM_FILTERS,
@@ -65,7 +66,9 @@ interface AutomationPanelProps {
   setIncludeAudioTelemetry: Dispatch<SetStateAction<boolean>>;
   includeRoomTools: boolean;
   setIncludeRoomTools: Dispatch<SetStateAction<boolean>>;
+  includeEscNextGame?: boolean;
   includeAutoExitOnDeath: boolean;
+  setIncludeEscNextGame?: Dispatch<SetStateAction<boolean>>;
   setIncludeAutoExitOnDeath: Dispatch<SetStateAction<boolean>>;
   audioPreparing: boolean;
   audioPrepareProgress: AudioModPrepareProgress | null;
@@ -115,6 +118,8 @@ export function AutomationPanel({
   setIncludeAudioTelemetry,
   includeRoomTools,
   setIncludeRoomTools,
+  includeEscNextGame = false,
+  setIncludeEscNextGame = () => {},
   includeAutoExitOnDeath,
   setIncludeAutoExitOnDeath,
   audioPreparing,
@@ -138,6 +143,7 @@ export function AutomationPanel({
 }: AutomationPanelProps) {
   const isEnglish = config.app_language === "en-US";
   const installedAudioTelemetry = !!audioModState?.feature_groups.includes(AUDIO_TELEMETRY_FEATURE_ID);
+  const installedEscNextGame = !!audioModState?.feature_groups.includes(ESC_NEXT_GAME_FEATURE_ID);
   const installedRoomTools = !!audioModState?.feature_groups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID);
   const installedAutoExitOnDeath = !!audioModState?.feature_groups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID);
   const trackingAccountId = trackingTarget.valid ? trackingTarget.account.id : "";
@@ -169,7 +175,7 @@ export function AutomationPanel({
         audioTitle: "Audio recognition",
         audioDetail: "Recognize scenes, drops, and Terror Zones",
         roomTitle: "In-game room tools",
-        roomDetail: "Quickly recreate, create, and join rooms",
+        roomDetail: "Create/join shortcuts and room automation",
         deathExitTitle: "Auto-exit after death",
         deathExitDetail: "Protect the blacksmith / Iron Golem from dying, but the corpse cannot be recovered (experience and gold are lost)",
         installed: "Installed · kept",
@@ -181,11 +187,11 @@ export function AutomationPanel({
         title: "Mod 功能",
         description: isAudioModFeatureManagement
           ? "为当前 Mod 增补能力；已经安装的功能会保留，无法在这里移除。"
-          : "选择要打包进这个 Mod 的能力；三个模块可以独立或组合启用。",
+          : "选择要打包进这个 Mod 的能力；各模块可以独立或组合启用。",
         audioTitle: "声纹识别",
         audioDetail: "场景、掉落与恐怖区域识别",
         roomTitle: "局内房间工具",
-        roomDetail: "快速重开、创建与加入房间",
+        roomDetail: "创建、加入与自动跟房",
         deathExitTitle: "死亡后自动退房",
         deathExitDetail: "避免铁匠/铁魔死亡，但无法捡尸体（掉经验和金币）",
         installed: "已安装 · 保留",
@@ -537,6 +543,19 @@ export function AutomationPanel({
                     <span className="mt-0.5 block text-2xs leading-relaxed text-text-muted">
                       {featureCopy.roomDetail}
                     </span>
+                  </span>
+                </label>
+                <label className={`audio-mod-choice min-h-[62px] ${
+                  includeEscNextGame || installedEscNextGame ? "is-selected" : ""
+                } ${installedEscNextGame ? "cursor-default" : "cursor-pointer"}`}>
+                  <input type="checkbox"
+                    checked={includeEscNextGame || installedEscNextGame}
+                    disabled={audioPreparing || installedEscNextGame}
+                    onChange={event => setIncludeEscNextGame(event.target.checked)}
+                    className="mt-0.5 shrink-0 accent-[var(--accent)]" />
+                  <span className="min-w-0">
+                    <span className="text-xs font-semibold text-text-primary">{isEnglish ? "Double Esc: next Hell game" : "双击 Esc 下一局地狱"}</span>
+                    <span className="mt-0.5 block text-2xs text-text-muted">{isEnglish ? "Press Esc twice within 0.5 seconds; independent of room tools" : "0.5 秒内双击 Esc 退出并进入下一局地狱，可独立启用"}</span>
                   </span>
                 </label>
                 <label

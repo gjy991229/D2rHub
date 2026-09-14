@@ -32,13 +32,13 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - 全局快捷键使用 Windows 原生热键服务，录制时检查占用并暂时停用 Hub 热键；小键盘数字按 `Num0`–`Num9` 保存，与主键盘数字区分。F12 和 Win 组合键不可用。
 - 自动跟房统一采用后台同步预填，移除前台鼠标方案与专用时序配置。正常模式与纯净模式通过重启切换运行服务。
 - 账号初始化统一由向导驱动，支持已有账号重新初始化；Token 账号使用隔离的浏览器 Profile，避免登录状态互相污染。
-- 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r27，双击 Esc 下一局地狱，三个局内按钮始终隐藏。
+- 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r28，以及独立可选的双击 Esc 下一局地狱，三个局内按钮始终隐藏。
 
 完整操作说明见 [v0.9.98 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
 
 ### 当前能力
 
-- **双击 Esc 下一局地狱**：局内 0.5 秒内双击 Esc，正常退出当前房间并用当前角色进入下一局地狱，与原“下一局”按钮双击共用控制器。单击打开暂停菜单，超时后 Esc 正常返回游戏。下一局、创建、加入三个按钮始终隐藏，移除显示开关；`Esc → 左/右两次 → 回车` 和后台跟房继续可用。旧成品需重新加工并重启游戏。
+- **双击 Esc 下一局地狱（独立可选）**：默认不勾选，可单独加工，也可与局内房间工具组合。局内 0.5 秒内双击 Esc，正常退出当前房间并用当前角色进入下一局地狱，与原“下一局”按钮双击共用控制器。单击打开暂停菜单，超时后 Esc 正常返回游戏。下一局、创建、加入三个按钮始终隐藏，移除显示开关；`Esc → 左/右两次 → 回车` 和后台跟房继续可用。旧成品需重新加工并重启游戏。
 - **局内创建/加入修复（房间工具 r26）**：大厅与局内创建/加入使用独立表单。大厅保留原生提交，局内沿用先退出再提交，并参照 JCY Esc 快速重开将退出和下一步动作设为同一时间、按顺序发出，取消导致局内提交中断的 150ms 间隔。r21–r26 产物可作为升级来源；升级保留声纹，统一隐藏局内按钮。
 - **国服 / 国际服双客户端隔离**：分别配置游戏、存档和 Battle.net 路径；亚服、美服、欧服共用国际服档案。
 - **两种账号认证**：网页 Token 直启，或 Battle.net 客户端认证与本地运行快照；Token 使用 Windows DPAPI 加密保存。
@@ -116,7 +116,7 @@ D2RHub is maintained as one desktop distribution. The multi-instance core is alw
 - Account refreshes preserve unsaved settings drafts. Shortcut recording distinguishes `Num0`–`Num9` from the main number row; Windows-native hotkeys are suspended during recording and automated input, with conflict checks when assigning bindings.
 - Account initialization is wizard-driven, supports reinitializing existing accounts, and gives Token accounts isolated browser profiles.
 - Normal and Pure modes switch through an application restart. Room automation uses background keys and synchronized form prefilling. The foreground mouse adapter has been removed.
-- Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r27, double-Esc Hell restart, permanently hidden buttons, and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
+- Bundled [d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod) is available as a separate MIT-licensed open-source project, with room-tools recipe r28, independently opt-in double-Esc Hell restart, permanently hidden buttons, and isolated lobby/in-game forms. Standalone downloads are available in its [Releases](https://github.com/gjy991229/d2r-audio-mod/releases).
 - Isolated CN and Global game, save, and Battle.net profiles.
 - Web Token launch or Battle.net authentication with local runtime snapshots and DPAPI-encrypted tokens.
 - A version-scoped application disclosure that must be accepted before global input hooks, audio monitoring, the optional-capability supervisor, or startup Mod scanning are activated. Risk-bearing optional modules have their own disclosures.

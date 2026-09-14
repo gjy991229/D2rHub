@@ -5,6 +5,7 @@ import { useGlobalConfig } from "../../store/globalConfig";
 import type { AccountMeta, AudioModSetupState, GlobalConfig } from "../../store/types";
 import { validateAudioModName } from "../../utils/audioModName";
 import {
+  ESC_NEXT_GAME_FEATURE_ID,
   AUTO_EXIT_ON_DEATH_FEATURE_ID,
   AUDIO_TELEMETRY_FEATURE_ID,
   audioModFeatureDefaultsForPurpose,
@@ -62,6 +63,7 @@ export function useAudioModuleController({
   const [audioProcessingTarget, setAudioProcessingTarget] = useState("");
   const [includeAudioTelemetry, setIncludeAudioTelemetry] = useState(false);
   const [includeRoomTools, setIncludeRoomTools] = useState(false);
+  const [includeEscNextGame, setIncludeEscNextGame] = useState(false);
   const [includeAutoExitOnDeath, setIncludeAutoExitOnDeath] = useState(false);
   const [audioPreparing, setAudioPreparing] = useState(false);
   const [audioPrepareProgress, setAudioPrepareProgress] = useState<AudioModPrepareProgress | null>(null);
@@ -109,6 +111,8 @@ export function useAudioModuleController({
     includeRoomTools: includeRoomTools
       || audioSetupPurpose === "room-tools"
       || inheritedAudioFeatureGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
+    includeEscNextGame: includeEscNextGame
+      || inheritedAudioFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID),
     includeAutoExitOnDeath: includeAutoExitOnDeath
       || inheritedAudioFeatureGroups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID),
   };
@@ -153,6 +157,7 @@ export function useAudioModuleController({
     const defaults = audioModFeatureDefaultsForPurpose(purpose);
     setIncludeAudioTelemetry(defaults.includeAudioTelemetry);
     setIncludeRoomTools(defaults.includeRoomTools);
+    setIncludeEscNextGame(defaults.includeEscNextGame ?? false);
     setIncludeAutoExitOnDeath(defaults.includeAutoExitOnDeath);
   };
 
@@ -530,6 +535,8 @@ export function useAudioModuleController({
     setIncludeAudioTelemetry,
     includeRoomTools,
     setIncludeRoomTools,
+    includeEscNextGame,
+    setIncludeEscNextGame,
     includeAutoExitOnDeath,
     setIncludeAutoExitOnDeath,
     audioPreparing,

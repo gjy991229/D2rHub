@@ -382,6 +382,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setIncludeAudioTelemetry,
     includeRoomTools,
     setIncludeRoomTools,
+    includeEscNextGame,
+    setIncludeEscNextGame,
     includeAutoExitOnDeath,
     setIncludeAutoExitOnDeath,
     audioPreparing,
@@ -649,6 +651,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeAudioTelemetry={setIncludeAudioTelemetry}
                 includeRoomTools={includeRoomTools}
                 setIncludeRoomTools={setIncludeRoomTools}
+                includeEscNextGame={includeEscNextGame}
+                setIncludeEscNextGame={setIncludeEscNextGame}
                 includeAutoExitOnDeath={includeAutoExitOnDeath}
                 setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
                 audioPreparing={audioPreparing}
@@ -699,6 +703,8 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setIncludeAudioTelemetry={setIncludeAudioTelemetry}
                 includeRoomTools={includeRoomTools}
                 setIncludeRoomTools={setIncludeRoomTools}
+                includeEscNextGame={includeEscNextGame}
+                setIncludeEscNextGame={setIncludeEscNextGame}
                 includeAutoExitOnDeath={includeAutoExitOnDeath}
                 setIncludeAutoExitOnDeath={setIncludeAutoExitOnDeath}
                 audioPreparing={audioPreparing}

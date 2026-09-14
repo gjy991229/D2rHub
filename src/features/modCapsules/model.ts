@@ -6,11 +6,13 @@ import type {
 
 export const AUDIO_TELEMETRY_CAPSULE_FEATURE = "audio_telemetry";
 export const ROOM_TOOLS_CAPSULE_FEATURE = "in_game_room_tools";
+export const ESC_NEXT_GAME_CAPSULE_FEATURE = "esc_next_game";
 export const AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE = "auto_exit_on_death";
 
 const FEATURE_LABELS: Record<string, readonly [string, string]> = {
   [AUDIO_TELEMETRY_CAPSULE_FEATURE]: ["声纹识别", "Audio recognition"],
   [ROOM_TOOLS_CAPSULE_FEATURE]: ["局内房间工具", "In-game room tools"],
+  [ESC_NEXT_GAME_CAPSULE_FEATURE]: ["双击 Esc 下一局地狱", "Double Esc: next Hell game"],
   [AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE]: ["死亡自动退房", "Auto-exit on death"],
 };
 
@@ -20,7 +22,7 @@ export function capsuleFeatureLabels(
   minimalMode = false,
 ): string[] {
   const visibleFeatures = minimalMode
-    ? capsule.feature_groups.filter((feature) => feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE)
+    ? capsule.feature_groups.filter((feature) => feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE || feature === ESC_NEXT_GAME_CAPSULE_FEATURE)
     : capsule.feature_groups;
   return visibleFeatures.map((feature) => {
     if (feature === AUTO_EXIT_ON_DEATH_CAPSULE_FEATURE

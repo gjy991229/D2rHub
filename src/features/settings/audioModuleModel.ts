@@ -37,6 +37,7 @@ export interface AudioModPrepareResult {
 export interface AudioModFeatureSelection {
   includeAudioTelemetry: boolean;
   includeRoomTools: boolean;
+  includeEscNextGame?: boolean;
   includeAutoExitOnDeath: boolean;
 }
 
@@ -45,6 +46,7 @@ export type AudioModProcessingMode = "create" | "augment";
 
 export const AUDIO_TELEMETRY_FEATURE_ID = "audio_telemetry";
 export const IN_GAME_ROOM_TOOLS_FEATURE_ID = "in_game_room_tools";
+export const ESC_NEXT_GAME_FEATURE_ID = "esc_next_game";
 export const AUTO_EXIT_ON_DEATH_FEATURE_ID = "auto_exit_on_death";
 
 export function audioModFeatureDefaultsForPurpose(
@@ -53,6 +55,7 @@ export function audioModFeatureDefaultsForPurpose(
   return {
     includeAudioTelemetry: purpose === "recognition",
     includeRoomTools: purpose === "recognition" || purpose === "room-tools",
+    includeEscNextGame: false,
     includeAutoExitOnDeath: false,
   };
 }
@@ -63,6 +66,7 @@ export function audioModFeatureInvokeOptions(
   return {
     includeAudioTelemetry: selection.includeAudioTelemetry,
     includeRoomTools: selection.includeRoomTools,
+    includeEscNextGame: selection.includeEscNextGame ?? false,
     includeAutoExitOnDeath: selection.includeAutoExitOnDeath,
   };
 }
@@ -72,6 +76,7 @@ export function hasSelectedAudioModFeature(
 ): boolean {
   return selection.includeAudioTelemetry
     || selection.includeRoomTools
+    || selection.includeEscNextGame
     || selection.includeAutoExitOnDeath;
 }
 
@@ -82,6 +87,7 @@ export function selectedAudioModFeatureAddsCapability(
   return (
     (selection.includeAudioTelemetry && !installedGroups.includes(AUDIO_TELEMETRY_FEATURE_ID))
     || (selection.includeRoomTools && !installedGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID))
+    || (selection.includeEscNextGame && !installedGroups.includes(ESC_NEXT_GAME_FEATURE_ID))
     || (selection.includeAutoExitOnDeath
       && !installedGroups.includes(AUTO_EXIT_ON_DEATH_FEATURE_ID))
   );
