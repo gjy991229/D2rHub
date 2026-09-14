@@ -153,10 +153,20 @@ fn battle_net_readiness_source(
     }
 }
 
-fn stop_optional_web_token_monitor(monitor: &mut Option<WebTokenReadMonitor>, account_id: &str, reason: &str) {
+fn stop_optional_web_token_monitor(
+    monitor: &mut Option<WebTokenReadMonitor>,
+    account_id: &str,
+    reason: &str,
+) {
     if let Some(monitor) = monitor.take() {
-        crate::logger::log_msg("INFO", "TokenETW", &format!(
-            "[Account {account_id}] 停止原因={reason}；{}", monitor.diagnostics()));
+        crate::logger::log_msg(
+            "INFO",
+            "TokenETW",
+            &format!(
+                "[Account {account_id}] 停止原因={reason}；{}",
+                monitor.diagnostics()
+            ),
+        );
         if let Err(error) = monitor.stop() {
             crate::logger::log_msg("WARN", "Launch", &format!("[Account {account_id}] {error}"));
         }
@@ -2316,7 +2326,11 @@ async fn launch_single(
         if is_cancelled(state, cancellation_ticket) {
             emit("done", "error", "已取消，正在保存状态...");
             mutex_task.abort();
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+            stop_optional_web_token_monitor(
+                &mut token_read_monitor,
+                account_id,
+                "启动取消或提前结束",
+            );
             return cancel_with_cleanup(
                 config,
                 &context,
@@ -2374,11 +2388,17 @@ async fn launch_single(
         .as_ref()
         .map(WebTokenReadMonitor::diagnostics)
         .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(&mut token_read_monitor, account_id, match readiness_source {
-        Some(BattleNetReadinessSource::Etw) => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
-        Some(BattleNetReadinessSource::Tcp) => "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）",
-        None => "登录信号等待超时，保留 ETW 诊断",
-    });
+    stop_optional_web_token_monitor(
+        &mut token_read_monitor,
+        account_id,
+        match readiness_source {
+            Some(BattleNetReadinessSource::Etw) => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
+            Some(BattleNetReadinessSource::Tcp) => {
+                "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）"
+            }
+            None => "登录信号等待超时，保留 ETW 诊断",
+        },
+    );
 
     if readiness_source.is_none() {
         let error = format!(
@@ -2684,7 +2704,11 @@ async fn launch_single_token(
                 cmd.args(args);
             }
             Err(error) => {
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+                stop_optional_web_token_monitor(
+                    &mut token_read_monitor,
+                    account_id,
+                    "启动取消或提前结束",
+                );
                 return account_path_error(account_id, AppError::ConfigReadError(error));
             }
         }
@@ -2694,7 +2718,11 @@ async fn launch_single_token(
     match spawn_res {
         Ok(Ok(_)) => {}
         _ => {
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+            stop_optional_web_token_monitor(
+                &mut token_read_monitor,
+                account_id,
+                "启动取消或提前结束",
+            );
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
@@ -2713,7 +2741,11 @@ async fn launch_single_token(
 
     while wait_start.elapsed().as_secs() < timeout_secs {
         if is_cancelled(state, cancellation_ticket) {
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+            stop_optional_web_token_monitor(
+                &mut token_read_monitor,
+                account_id,
+                "启动取消或提前结束",
+            );
             return cancelled();
         }
 
@@ -2742,7 +2774,11 @@ async fn launch_single_token(
         let (d2r_pids, sys_ret) = match process_refresh {
             Ok(result) => result,
             Err(error) => {
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+                stop_optional_web_token_monitor(
+                    &mut token_read_monitor,
+                    account_id,
+                    "启动取消或提前结束",
+                );
                 return LaunchResult {
                     account_id: account_id.to_string(),
                     success: false,
@@ -2829,7 +2865,11 @@ async fn launch_single_token(
         }
         None => {
             emit("game", "error", "等待游戏进程启动超时");
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+            stop_optional_web_token_monitor(
+                &mut token_read_monitor,
+                account_id,
+                "启动取消或提前结束",
+            );
             return LaunchResult {
                 account_id: account_id.to_string(),
                 success: false,
@@ -2909,7 +2949,11 @@ async fn launch_single_token(
     loop {
         if is_cancelled(state, cancellation_ticket) {
             mutex_task.abort();
-            stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "启动取消或提前结束");
+            stop_optional_web_token_monitor(
+                &mut token_read_monitor,
+                account_id,
+                "启动取消或提前结束",
+            );
             return cancelled();
         }
 
@@ -2933,10 +2977,16 @@ async fn launch_single_token(
                 etw_diagnostics = token_read_monitor
                     .as_ref()
                     .map(WebTokenReadMonitor::diagnostics);
-                stop_optional_web_token_monitor(&mut token_read_monitor, account_id, match source {
-                    BattleNetReadinessSource::Etw => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
-                    BattleNetReadinessSource::Tcp => "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）",
-                });
+                stop_optional_web_token_monitor(
+                    &mut token_read_monitor,
+                    account_id,
+                    match source {
+                        BattleNetReadinessSource::Etw => "目标 PID 已读取 WEB_TOKEN，允许下一账号",
+                        BattleNetReadinessSource::Tcp => {
+                            "TCP 1119 兜底先命中，主动停止 ETW（非监听故障）"
+                        }
+                    },
+                );
                 match source {
                     BattleNetReadinessSource::Etw => emit(
                         "connect",
@@ -2975,7 +3025,11 @@ async fn launch_single_token(
                 .map(WebTokenReadMonitor::diagnostics)
         })
         .unwrap_or_else(|| "监听不可用".to_string());
-    stop_optional_web_token_monitor(&mut token_read_monitor, account_id, "登录信号等待超时，保留 ETW 诊断");
+    stop_optional_web_token_monitor(
+        &mut token_read_monitor,
+        account_id,
+        "登录信号等待超时，保留 ETW 诊断",
+    );
 
     if !launch_ready {
         let error = format!(

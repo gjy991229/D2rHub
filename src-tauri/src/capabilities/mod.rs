@@ -5,9 +5,9 @@
 //! are never started directly from configuration transactions.
 
 mod bongo_cat;
-pub(crate) mod pet_wardrobe;
-pub(crate) mod pet_activity;
 mod overlay_windows;
+pub(crate) mod pet_activity;
+pub(crate) mod pet_wardrobe;
 pub(crate) mod room_automation;
 pub(crate) mod room_automation_config;
 pub(crate) mod room_automation_runtime;
@@ -136,8 +136,19 @@ pub(crate) fn install(app: &tauri::AppHandle) {
                 CapabilityCategory::Companion,
                 CURRENT_CONFIG_VERSION,
                 "pet",
-                &["set_bongo_cat_input_visible", "pet_get_wardrobe", "pet_wardrobe_action", "pet_settle_activity", "pet_open_wardrobe", "pet_set_menu_open"],
-                &["global-input-event", "pet-wardrobe-updated", "pet-open-wardrobe"],
+                &[
+                    "set_bongo_cat_input_visible",
+                    "pet_get_wardrobe",
+                    "pet_wardrobe_action",
+                    "pet_settle_activity",
+                    "pet_open_wardrobe",
+                    "pet_set_menu_open",
+                ],
+                &[
+                    "global-input-event",
+                    "pet-wardrobe-updated",
+                    "pet-open-wardrobe",
+                ],
             ),
             driver: desktop_pet_driver,
         },
