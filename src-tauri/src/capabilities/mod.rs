@@ -99,31 +99,16 @@ pub(crate) fn install(app: &tauri::AppHandle) {
         .is_some_and(|config| {
             config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION)
         });
-    let (room_driver, room_requested, room_command_state): (
-        Arc<dyn CapabilityDriver>,
-        bool,
-        room_automation_runtime::RoomAutomationCommandState,
-    ) = match room_automation_runtime::RoomAutomationManager::install(app) {
-        Ok(manager) => (
-            manager.clone(),
-            room_module_installed && manager.requested_enabled(),
-            room_automation_runtime::RoomAutomationCommandState::available(manager),
-        ),
-        Err(failure) => {
-            crate::logger::log_msg(
-                "ERROR",
-                "RoomAutomation",
-                &format!("自动跟房 capability 安装失败: {}", failure.message),
-            );
-            (
-                Arc::new(UnavailableCapability {
-                    failure: failure.clone(),
-                }),
-                room_module_installed,
-                room_automation_runtime::RoomAutomationCommandState::unavailable(failure.message),
-            )
-        }
-    };
+    let room_command_state = room_automation_runtime::RoomAutomationCommandState::default();
+    if room_module_installed {
+        room_command_state.initialize(app);
+    }
+    let room_requested = room_module_installed
+        && room_command_state
+            .manager()
+            .map(|manager| manager.requested_enabled())
+            .unwrap_or(true);
+    let room_driver: Arc<dyn CapabilityDriver> = Arc::new(room_command_state.clone());
     if !app.manage(room_command_state) {
         crate::logger::log_msg("ERROR", "RoomAutomation", "自动跟房 command state 重复安装");
     }
@@ -235,6 +220,53 @@ pub(crate) fn install(app: &tauri::AppHandle) {
             &format!("应用自动跟房模块开关失败: {error}"),
         );
     }
+}
+
+/// Called outside configuration transactions, on the supervisor or an IPC worker.
+/// A module installed during this session becomes available without restarting.
+pub(crate) fn initialize_room_automation_if_installed(app: &tauri::AppHandle) {
+    let state = app.state::<SharedState>();
+    let Some(command_state) =
+        app.try_state::<room_automation_runtime::RoomAutomationCommandState>()
+    else {
+        return;
+    };
+    if !state.optional_runtime_ready()
+        || !state.configuration().project_current(|config| {
+            config.is_some_and(|config| {
+                config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION)
+            })
+        })
+    {
+        return;
+    }
+    if !command_state.is_initialized() {
+        command_state.initialize(app);
+    }
+    // Project even if another IPC worker initialized the shared slot first.
+    // Its configuration projection may still be pending when this worker wakes.
+    // Re-read the committed intent after I/O: an uninstall/profile switch may
+    // have happened while initialization was in progress. Never reactivate it.
+    state.configuration().project_current(|config| {
+        let requested = state.optional_runtime_ready()
+            && config.is_some_and(|config| {
+                config.optional_module_runtime_allowed(OPTIONAL_MODULE_ROOM_AUTOMATION)
+            })
+            && command_state
+                .manager()
+                .map(|manager| manager.requested_enabled())
+                .unwrap_or(true);
+        if let Err(error) = state
+            .capabilities()
+            .set_requested(room_automation_runtime::ROOM_AUTOMATION_ID, requested)
+        {
+            crate::logger::log_msg(
+                "ERROR",
+                "RoomAutomation",
+                &format!("应用延迟初始化模块状态失败: {error}"),
+            );
+        }
+    });
 }
 
 /// Starts the serialized supervisor after all platform services are ready and

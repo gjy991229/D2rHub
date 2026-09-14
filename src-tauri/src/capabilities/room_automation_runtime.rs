@@ -532,11 +532,11 @@ pub(crate) struct RoomAutomationManager {
     self_reference: Weak<RoomAutomationManager>,
 }
 
-/// Managed even when installation fails so IPC returns one stable error rather
-/// than exposing missing Tauri state.
+/// A shared, lazy manager slot. Registering an uninstalled module performs no I/O.
+/// OnceLock serializes initialization across IPC and the lifecycle supervisor.
+#[derive(Clone, Default)]
 pub(crate) struct RoomAutomationCommandState {
-    manager: Option<Arc<RoomAutomationManager>>,
-    unavailable_reason: Option<String>,
+    manager: Arc<std::sync::OnceLock<Result<Arc<RoomAutomationManager>, CapabilityFailure>>>,
 }
 
 /// A successful save means the sidecar commit is durable. Runtime application
@@ -549,26 +549,71 @@ pub(crate) struct RoomAutomationSaveOutcome {
 }
 
 impl RoomAutomationCommandState {
-    pub(crate) fn available(manager: Arc<RoomAutomationManager>) -> Self {
-        Self {
-            manager: Some(manager),
-            unavailable_reason: None,
-        }
+    fn initialize_with(
+        &self,
+        initialize: impl FnOnce() -> Result<Arc<RoomAutomationManager>, CapabilityFailure>,
+    ) -> &Result<Arc<RoomAutomationManager>, CapabilityFailure> {
+        self.manager.get_or_init(initialize)
     }
 
-    pub(crate) fn unavailable(reason: impl Into<String>) -> Self {
-        Self {
-            manager: None,
-            unavailable_reason: Some(reason.into()),
-        }
+    pub(crate) fn initialize(&self, app: &tauri::AppHandle) {
+        self.initialize_with(|| {
+            RoomAutomationManager::install(app).inspect_err(|failure| {
+                crate::logger::log_msg(
+                    "ERROR",
+                    "RoomAutomation",
+                    &format!("自动跟房 capability 安装失败: {}", failure.message),
+                );
+            })
+        });
+    }
+
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.manager.get().is_some()
     }
 
     pub(crate) fn manager(&self) -> Result<&Arc<RoomAutomationManager>, String> {
-        self.manager.as_ref().ok_or_else(|| {
-            self.unavailable_reason
-                .clone()
-                .unwrap_or_else(|| "自动跟房 capability 不可用".to_string())
-        })
+        match self.manager.get() {
+            Some(Ok(manager)) => Ok(manager),
+            Some(Err(failure)) => Err(failure.message.clone()),
+            None => Err("自动跟房模块尚未加载".to_string()),
+        }
+    }
+}
+
+impl CapabilityDriver for RoomAutomationCommandState {
+    fn start(&self) -> Result<(), CapabilityFailure> {
+        match self.manager.get() {
+            Some(Ok(manager)) => manager.start(),
+            Some(Err(failure)) => Err(failure.clone()),
+            None => Err(CapabilityFailure::new(
+                "module-not-loaded",
+                "自动跟房模块尚未加载",
+            )),
+        }
+    }
+
+    fn stop(&self) -> Result<(), CapabilityFailure> {
+        match self.manager.get() {
+            Some(Ok(manager)) => manager.stop(),
+            _ => Ok(()),
+        }
+    }
+
+    fn health(&self) -> CapabilityHealth {
+        match self.manager.get() {
+            Some(Ok(manager)) => manager.health(),
+            Some(Err(failure)) => CapabilityHealth::Failed(failure.clone()),
+            None => CapabilityHealth::Healthy,
+        }
+    }
+
+    fn account_removed(&self, account_id: &str) -> Result<(), CapabilityFailure> {
+        match self.manager.get() {
+            Some(Ok(manager)) => manager.account_removed(account_id),
+            // Initialization prunes persisted references before the module can start.
+            _ => Ok(()),
+        }
     }
 }
 
@@ -2044,6 +2089,77 @@ mod tests {
             "timed out waiting for {phase:?}: {:?}",
             manager.get_status()
         );
+    }
+
+    #[test]
+    fn dormant_room_module_cleanup_does_not_initialize_a_manager() {
+        let deferred = RoomAutomationCommandState::default();
+        assert!(!deferred.is_initialized());
+        assert!(deferred.manager().is_err());
+        deferred.stop().unwrap();
+        deferred.account_removed("unused-account").unwrap();
+        assert!(!deferred.is_initialized());
+    }
+
+    #[test]
+    fn deferred_room_initialization_is_shared_and_preserves_settings_across_stop() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, leases, _host) = manager("deferred", false, false);
+        let deferred = RoomAutomationCommandState::default();
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..4 {
+                let deferred = deferred.clone();
+                let manager = manager.clone();
+                let calls = &calls;
+                scope.spawn(move || {
+                    let initialized = deferred
+                        .initialize_with(|| {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            Ok(manager.clone())
+                        })
+                        .as_ref()
+                        .unwrap();
+                    assert!(Arc::ptr_eq(initialized, &manager));
+                });
+            }
+        });
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let snapshot = manager.get_config();
+        let mut next = snapshot.config.clone();
+        next.name_prefix = "saved-".to_string();
+        manager.save_config(snapshot.generation, next).unwrap();
+        deferred.start().unwrap();
+        assert!(manager.lifecycle.lock().started);
+        deferred.clone().stop().unwrap();
+        assert!(!manager.lifecycle.lock().started);
+        assert!(manager.lifecycle.lock().shortcut.is_none());
+        assert!(leases.is_empty());
+        assert_eq!(
+            deferred.manager().unwrap().get_config().config.name_prefix,
+            "saved-"
+        );
+        assert!(deferred
+            .initialize_with(|| panic!("must not recreate an initialized manager"))
+            .is_ok());
+        deferred.start().unwrap();
+        deferred.stop().unwrap();
+    }
+
+    #[test]
+    fn deferred_room_initialization_failure_remains_visible_without_retrying_io() {
+        let deferred = RoomAutomationCommandState::default();
+        let failure = CapabilityFailure::new("config-unavailable", "unreadable configuration");
+        assert!(deferred.initialize_with(|| Err(failure.clone())).is_err());
+        assert!(deferred
+            .initialize_with(|| panic!("must preserve the original failure"))
+            .is_err());
+        assert_eq!(deferred.start().unwrap_err(), failure);
+        assert_eq!(
+            deferred.manager().err().as_deref(),
+            Some("unreadable configuration")
+        );
+        deferred.stop().unwrap();
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { lazy, Suspense, useState, useEffect, useRef } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { invokeCommand } from "../../platform/tauri";
 import { useGlobalConfig } from "../../store/globalConfig";
@@ -16,7 +16,6 @@ import { SettingsShell } from "../../features/settings/SettingsShell";
 import { LaunchStrategyPanel } from "../../features/settings/panels/LaunchStrategyPanel";
 import { ShortcutsPanel } from "../../features/settings/panels/ShortcutsPanel";
 import { MaintenancePanel } from "../../features/settings/panels/MaintenancePanel";
-import { PetPanel } from "../../features/settings/panels/PetPanel";
 import { AccountsPanel } from "../../features/settings/panels/AccountsPanel";
 import { AppearancePanel } from "../../features/settings/panels/AppearancePanel";
 import {
@@ -53,6 +52,8 @@ import {
 } from "../../features/profile/featureProfile";
 import { DisclosureDialog } from "../../features/disclosures/DisclosureDialog";
 import "../../features/settings/settings.css";
+
+const PetPanel = lazy(() => import("../../features/settings/panels/PetPanel").then(module => ({ default: module.PetPanel })));
 
 interface Props {
   open: boolean;
@@ -749,14 +750,16 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
               />
             )}
 
-            {!minimalMode && activeTab === "pet" && config && (
-              <PetPanel
-                config={config}
-                windowPlacementBusy={windowPlacementBusy}
-                updateConfig={updateConfig}
-                persistConfig={persistGlobalDraft}
-                onLocate={() => locateWindow("bongo-cat")}
-              />
+            {open && !minimalMode && installedModules.includes("pet") && activeTab === "pet" && config && (
+              <Suspense fallback={<div role="status" className="p-3 text-sm text-text-muted">{config.app_language === "en-US" ? "Loading companion settings…" : "正在加载桌宠设置…"}</div>}>
+                <PetPanel
+                  config={config}
+                  windowPlacementBusy={windowPlacementBusy}
+                  updateConfig={updateConfig}
+                  persistConfig={persistGlobalDraft}
+                  onLocate={() => locateWindow("bongo-cat")}
+                />
+              </Suspense>
             )}
 
             {activeTab === "shortcuts" && config && (

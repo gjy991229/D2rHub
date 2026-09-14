@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 fn manager(app: &tauri::AppHandle) -> Result<Arc<RoomAutomationManager>, String> {
+    crate::capabilities::initialize_room_automation_if_installed(app);
     app.try_state::<RoomAutomationCommandState>()
         .ok_or_else(|| "当前模式未加载自动跟房模块".to_string())?
         .manager()
@@ -26,7 +27,7 @@ fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(),
         .ok_or_else(|| "自动跟房模块尚未安装".to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_get_config(
     app: tauri::AppHandle,
 ) -> Result<RoomAutomationConfigSnapshot, String> {
@@ -50,7 +51,7 @@ pub(crate) fn room_automation_save_config(
     manager(&app)?.save_config(expected_generation, config)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub(crate) fn room_automation_get_status(app: tauri::AppHandle) -> Result<WorkflowStatus, String> {
     Ok(manager(&app)?.get_status())
 }

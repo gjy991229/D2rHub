@@ -95,7 +95,10 @@ function App() {
   const [settingsTab, setSettingsTab] = useState<string | null>(null);
   const [settingsAccountId, setSettingsAccountId] = useState<string | null>(null);
   const [settingsRequestRevision, setSettingsRequestRevision] = useState(0);
+  const petModuleAvailable = !restarting && optionalFeaturesAreAvailable(config)
+    && config?.installed_optional_modules?.includes("pet") === true;
   useEffect(() => {
+    if (!petModuleAvailable) return;
     let cancelled = false;
     const listener = listenEvent("pet-open-wardrobe", () => {
       if (cancelled) return;
@@ -106,7 +109,7 @@ function App() {
       if (!cancelled) showToast("error", String(error));
     });
     return () => { cancelled = true; void listener.then(unlisten => unlisten()).catch(() => {}); };
-  }, []);
+  }, [petModuleAvailable]);
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
   const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);

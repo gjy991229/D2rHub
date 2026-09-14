@@ -41,6 +41,7 @@ impl CapabilitySupervisor {
                     let message = match receiver.recv_timeout(HEALTH_POLL_INTERVAL) {
                         Ok(message) => message,
                         Err(mpsc::RecvTimeoutError::Timeout) => {
+                            super::initialize_room_automation_if_installed(&app);
                             reconcile_if_changed_and_publish(&app, &registry);
                             continue;
                         }
@@ -52,9 +53,11 @@ impl CapabilitySupervisor {
                                 shutdown_and_publish(&app, &registry);
                                 break;
                             }
+                            super::initialize_room_automation_if_installed(&app);
                             reconcile_and_publish(&app, &registry);
                         }
                         SupervisorMessage::ReconcileAndReply(reply) => {
+                            super::initialize_room_automation_if_installed(&app);
                             let result =
                                 registry.reconcile_all().map_err(|error| error.to_string());
                             if let Ok(snapshot) = &result {
