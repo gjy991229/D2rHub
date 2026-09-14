@@ -28,7 +28,7 @@ const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 3;
 const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 28;
 const ESC_NEXT_GAME_FEATURE_ID: &str = "esc_next_game";
-const ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v1;window_ms=500";
+const ESC_NEXT_GAME_FINGERPRINT: &str = "esc-next-game-v2;window_ms=500;pause_timeout=1";
 const PREVIOUS_IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSIONS: [u32; 7] = [21, 22, 23, 24, 25, 26, 27];
 const AUTO_EXIT_ON_DEATH_FEATURE_ID: &str = "auto_exit_on_death";
 const AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION: u32 = 1;
@@ -611,7 +611,7 @@ fn validate_supported_feature_group(group: &GeneratorFeatureGroup) -> Result<(),
             Ok(())
         }
         ESC_NEXT_GAME_FEATURE_ID => {
-            if group.recipe_version != 1 || group.fingerprint != ESC_NEXT_GAME_FINGERPRINT {
+            if group.recipe_version != 2 || group.fingerprint != ESC_NEXT_GAME_FINGERPRINT {
                 return Err("双击 Esc 下一局地狱功能组无效，请重新加工".to_string());
             }
             Ok(())
@@ -1114,6 +1114,13 @@ fn validate_esc_next_game_layouts(mod_directory: &Path, mod_name: &str) -> Resul
             0.01,
         ) {
             return Err(format!("暂停布局缺少双击 Esc 入口：{name}"));
+        }
+        if !layout_has_timed_child_message(
+            &pause,
+            "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm",
+            QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS,
+        ) {
+            return Err(format!("暂停布局缺少双击 Esc 超时关闭：{name}，请重新加工"));
         }
     }
     let controller = read_room_tool_layout(&directory, "D2RHubQuickRecreatehd.json")?;

@@ -1,6 +1,7 @@
 //! Passive desktop-pet input, modeled on rdev's shared keyboard/mouse listener.
 //! Both hooks share one message thread and always pass input onward.
 use super::*;
+use std::cell::RefCell;
 use std::sync::atomic::AtomicU32;
 use std::sync::{mpsc, Arc};
 use std::thread::JoinHandle;
@@ -19,6 +20,11 @@ static QUEUED: AtomicBool = AtomicBool::new(false);
 static DIRTY: AtomicBool = AtomicBool::new(false);
 static WORKER: Mutex<Option<PetListener>> = Mutex::new(None);
 static EVENT_TX: Mutex<Option<mpsc::SyncSender<&'static str>>> = Mutex::new(None);
+
+thread_local! {
+    // Each listener thread starts fresh when the pet input service restarts.
+    static PRESSED_KEYS: RefCell<[bool; 256]> = const { RefCell::new([false; 256]) };
+}
 
 struct PetListener {
     thread_id: Arc<AtomicU32>,
@@ -64,10 +70,27 @@ fn emit(event: &'static str) {
 }
 
 unsafe extern "system" fn keyboard(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
-    if code >= 0 && matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
+    if code >= 0
+        && matches!(
+            wparam.0 as u32,
+            WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP
+        )
+    {
         let event = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
         if event.dwExtraInfo != crate::infrastructure::physical_input::INPUT_TAG {
-            emit("Keyboard");
+            let is_down = matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN);
+            let first_press = PRESSED_KEYS.with(|keys| {
+                let mut keys = keys.borrow_mut();
+                let Some(pressed) = keys.get_mut(event.vkCode as usize) else {
+                    return false;
+                };
+                let first_press = is_down && !*pressed;
+                *pressed = is_down;
+                first_press
+            });
+            if first_press {
+                emit("Keyboard");
+            }
         }
     }
     CallNextHookEx(HHOOK::default(), code, wparam, lparam)
