@@ -340,16 +340,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hit_regions_preserve_the_original_boundaries() {
-        assert!(is_cat_hit(60.0, 280.0));
-        assert!(is_cat_hit(195.0, 329.999));
-        assert!(!is_cat_hit(59.999, 300.0));
-        assert!(!is_cat_hit(196.0, 300.0));
+    fn hit_regions_match_the_expanded_pet_boundaries() {
+        assert!(is_cat_hit(35.0, 260.0));
+        assert!(is_cat_hit(218.0, 329.999));
+        assert!(!is_cat_hit(34.999, 300.0));
+        assert!(!is_cat_hit(218.001, 300.0));
 
-        assert!(is_cat_hit(35.0, 330.0));
-        assert!(is_cat_hit(205.0, 399.999));
-        assert!(!is_cat_hit(34.999, 350.0));
-        assert!(!is_cat_hit(206.0, 350.0));
+        assert!(is_cat_hit(22.0, 330.0));
+        assert!(is_cat_hit(218.0, 399.999));
+        assert!(!is_cat_hit(21.999, 350.0));
+        assert!(!is_cat_hit(218.001, 350.0));
         assert!(!is_cat_hit(120.0, 400.0));
     }
 

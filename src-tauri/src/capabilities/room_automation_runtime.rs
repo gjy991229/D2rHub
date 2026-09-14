@@ -1812,7 +1812,7 @@ mod tests {
         fail_follower_once: AtomicBool,
         primary_calls: Mutex<Vec<String>>,
         follower_calls: Mutex<Vec<(String, String)>>,
-        preflight_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
+        preparation_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     }
 
     impl FakeHost {
@@ -1823,7 +1823,7 @@ mod tests {
                 fail_follower_once: AtomicBool::new(false),
                 primary_calls: Mutex::new(Vec::new()),
                 follower_calls: Mutex::new(Vec::new()),
-                preflight_gate: Mutex::new(None),
+                preparation_gate: Mutex::new(None),
             }
         }
 
@@ -1859,10 +1859,6 @@ mod tests {
             &self,
             config: &mut RoomAutomationConfig,
         ) -> Result<(), String> {
-            if let Some((started, release)) = self.preflight_gate.lock().take() {
-                let _ = started.send(());
-                let _ = release.recv();
-            }
             config
                 .validate(std::iter::empty::<&str>())
                 .map_err(|error| error.to_string())
@@ -1885,6 +1881,10 @@ mod tests {
             cancel: &CancellationSignal,
         ) -> Result<(), String> {
             cancel.check_active()?;
+            if let Some((started, release)) = self.preparation_gate.lock().take() {
+                let _ = started.send(());
+                let _ = release.recv();
+            }
             self.primary_calls.lock().push(room_name.to_string());
             assert!(
                 !self.panic_primary.load(Ordering::Acquire),
@@ -2109,23 +2109,23 @@ mod tests {
     }
 
     #[test]
-    fn primary_lease_is_held_before_runtime_preflight() {
+    fn participant_leases_are_held_during_background_room_preparation() {
         let _serial = TEST_SERIAL.lock().unwrap();
         let (_root, manager, leases, host) = manager("leased_preflight", false, false);
         manager.start().unwrap();
-        let (preflight_started_tx, preflight_started_rx) = std::sync::mpsc::sync_channel(1);
-        let (release_preflight_tx, release_preflight_rx) = std::sync::mpsc::sync_channel(1);
-        *host.preflight_gate.lock() = Some((preflight_started_tx, release_preflight_rx));
+        let (preparation_started_tx, preparation_started_rx) = std::sync::mpsc::sync_channel(1);
+        let (release_preparation_tx, release_preparation_rx) = std::sync::mpsc::sync_channel(1);
+        *host.preparation_gate.lock() = Some((preparation_started_tx, release_preparation_rx));
         let start_manager = manager.clone();
         let start = std::thread::spawn(move || start_manager.start_primary());
-        preflight_started_rx
+        preparation_started_rx
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
 
         assert!(leases.try_acquire("main").is_err());
-        assert!(leases.try_acquire("FOLLOWER").is_ok());
+        assert!(leases.try_acquire("FOLLOWER").is_err());
 
-        release_preflight_tx.send(()).unwrap();
+        release_preparation_tx.send(()).unwrap();
         start.join().unwrap().unwrap();
         wait_for_phase(&manager, WorkflowPhase::Waiting);
         manager.cancel().unwrap();
