@@ -205,7 +205,11 @@ impl RequestedFeatureGroups {
             esc_next_game: esc_next_game.unwrap_or(false),
             auto_exit_on_death: auto_exit_on_death.unwrap_or(false),
         };
-        if !requested.audio_telemetry && !requested.room_tools && !requested.esc_next_game && !requested.auto_exit_on_death {
+        if !requested.audio_telemetry
+            && !requested.room_tools
+            && !requested.esc_next_game
+            && !requested.auto_exit_on_death
+        {
             return Err("请至少选择一个要加工的功能".to_string());
         }
         Ok(requested)
@@ -231,7 +235,11 @@ impl RequestedFeatureGroups {
     fn validate_present(self, groups: &[GeneratorFeatureGroup]) -> Result<(), String> {
         for (requested, id, label) in [
             (self.audio_telemetry, AUDIO_TELEMETRY_FEATURE_ID, "声纹识别"),
-            (self.esc_next_game, ESC_NEXT_GAME_FEATURE_ID, "双击 Esc 下一局地狱"),
+            (
+                self.esc_next_game,
+                ESC_NEXT_GAME_FEATURE_ID,
+                "双击 Esc 下一局地狱",
+            ),
             (
                 self.room_tools,
                 IN_GAME_ROOM_TOOLS_FEATURE_ID,
@@ -262,7 +270,9 @@ impl RequestedFeatureGroups {
         self.room_tools |= groups
             .iter()
             .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID);
-        self.esc_next_game |= groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID);
+        self.esc_next_game |= groups
+            .iter()
+            .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID);
         self.auto_exit_on_death |= groups
             .iter()
             .any(|group| group.id == AUTO_EXIT_ON_DEATH_FEATURE_ID);
@@ -278,7 +288,10 @@ impl RequestedFeatureGroups {
                 || groups
                     .iter()
                     .any(|group| group.id == IN_GAME_ROOM_TOOLS_FEATURE_ID))
-            && (!self.esc_next_game || groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID))
+            && (!self.esc_next_game
+                || groups
+                    .iter()
+                    .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID))
             && (!self.auto_exit_on_death
                 || groups
                     .iter()
@@ -922,7 +935,11 @@ fn validate_routed_pause_buttons(
     Ok(routed)
 }
 
-fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str, room_recipe_version: u32) -> Result<(), String> {
+fn validate_pause_esc_bindings(
+    node: &serde_json::Value,
+    pause_name: &str,
+    room_recipe_version: u32,
+) -> Result<(), String> {
     let is_button = node.get("type").and_then(serde_json::Value::as_str) == Some("ButtonWidget");
     let name = node.get("name").and_then(serde_json::Value::as_str);
     let returns_to_game = is_button && name == Some("ReturnToGame");
@@ -939,7 +956,11 @@ fn validate_pause_esc_bindings(node: &serde_json::Value, pause_name: &str, room_
         && node
             .pointer("/fields/onClickMessage")
             .and_then(serde_json::Value::as_str)
-            != Some(if room_recipe_version >= 27 { "PanelManager:OpenPanel:D2RHubPauseReturnToGame" } else { "PausePanelMessage:Close" })
+            != Some(if room_recipe_version >= 27 {
+                "PanelManager:OpenPanel:D2RHubPauseReturnToGame"
+            } else {
+                "PausePanelMessage:Close"
+            })
     {
         return Err(format!(
             "暂停布局 Esc 未绑定返回游戏，请重新加工：{pause_name}"
@@ -1062,35 +1083,66 @@ fn validate_lobby_return_hint(mod_directory: &Path, mod_name: &str) -> Result<()
 }
 
 fn validate_esc_next_game_layouts(mod_directory: &Path, mod_name: &str) -> Result<(), String> {
-    let directory = mod_directory.join(format!("{mod_name}.mpq")).join(ROOM_TOOL_LAYOUT_DIRECTORY);
+    let directory = mod_directory
+        .join(format!("{mod_name}.mpq"))
+        .join(ROOM_TOOL_LAYOUT_DIRECTORY);
     let arm = read_room_tool_layout(&directory, "D2RHubQuickRecreateEscArmhd.json")?;
     let receiver = find_layout_node(&arm, "D2RHubEscNextGame")
         .ok_or_else(|| "缺少双击 Esc 下一局入口".to_string())?;
     if arm.get("type").and_then(serde_json::Value::as_str) != Some("TooltipsPanel")
-        || receiver.pointer("/fields/acceptsEscKeyEverywhere").and_then(serde_json::Value::as_bool) != Some(true)
-        || receiver.pointer("/fields/onClickMessage").and_then(serde_json::Value::as_str) != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
-        || !layout_has_timed_child_message(&arm, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", 0.5) {
+        || receiver
+            .pointer("/fields/acceptsEscKeyEverywhere")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        || receiver
+            .pointer("/fields/onClickMessage")
+            .and_then(serde_json::Value::as_str)
+            != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
+        || !layout_has_timed_child_message(
+            &arm,
+            "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm",
+            0.5,
+        )
+    {
         return Err("双击 Esc 下一局接收器无效".to_string());
     }
     for name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&directory, name)?;
-        if !layout_has_timed_child_message(&pause, "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm", 0.01) {
+        if !layout_has_timed_child_message(
+            &pause,
+            "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm",
+            0.01,
+        ) {
             return Err(format!("暂停布局缺少双击 Esc 入口：{name}"));
         }
     }
     let controller = read_room_tool_layout(&directory, "D2RHubQuickRecreatehd.json")?;
-    let messages = controller.get("children").and_then(serde_json::Value::as_array)
+    let messages = controller
+        .get("children")
+        .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "下一局控制器不完整".to_string())?;
-    let exit = messages.iter().position(|child| child.pointer("/fields/message").and_then(serde_json::Value::as_str) == Some("PausePanelMessage:ExitGame"));
-    let load = messages.iter().position(|child| child.pointer("/fields/message").and_then(serde_json::Value::as_str) == Some("CharacterSelect:LoadCharacter:2"));
+    let exit = messages.iter().position(|child| {
+        child
+            .pointer("/fields/message")
+            .and_then(serde_json::Value::as_str)
+            == Some("PausePanelMessage:ExitGame")
+    });
+    let load = messages.iter().position(|child| {
+        child
+            .pointer("/fields/message")
+            .and_then(serde_json::Value::as_str)
+            == Some("CharacterSelect:LoadCharacter:2")
+    });
     if !matches!((exit, load), (Some(exit), Some(load)) if exit < load)
         || !layout_has_timed_child_message(&controller, "PausePanelMessage:ExitGame", 0.05)
-        || !layout_has_timed_child_message(&controller, "CharacterSelect:LoadCharacter:2", 0.05) {
+        || !layout_has_timed_child_message(&controller, "CharacterSelect:LoadCharacter:2", 0.05)
+    {
         return Err("下一局地狱必须先正常退出再加载角色".to_string());
     }
     Ok(())
 }
 
+#[cfg(test)]
 fn validate_in_game_room_tool_layouts_for_recipe(
     mod_directory: &Path,
     mod_name: &str,
@@ -1150,25 +1202,52 @@ fn validate_in_game_room_tool_layouts_for_version(
 
     let toolbar = read_room_tool_layout(&layout_directory, "D2RHubRoomToolbarhd.json")?;
     if room_recipe_version >= 27 {
-        if toolbar.pointer("/fields/rect/x").and_then(serde_json::Value::as_i64) != Some(-9999)
-            || toolbar.pointer("/fields/rect/y").and_then(serde_json::Value::as_i64) != Some(-9999)
+        if toolbar
+            .pointer("/fields/rect/x")
+            .and_then(serde_json::Value::as_i64)
+            != Some(-9999)
+            || toolbar
+                .pointer("/fields/rect/y")
+                .and_then(serde_json::Value::as_i64)
+                != Some(-9999)
         {
             return Err("局内工具栏没有固定隐藏，请重新加工".to_string());
         }
-        let return_helper = read_room_tool_layout(&layout_directory, "D2RHubPauseReturnToGamehd.json")?;
-        if !layout_has_timed_child_message(&return_helper, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", 0.001)
-            || !layout_has_timed_child_message(&return_helper, "PausePanelMessage:Close", 0.005) {
+        let return_helper =
+            read_room_tool_layout(&layout_directory, "D2RHubPauseReturnToGamehd.json")?;
+        if !layout_has_timed_child_message(
+            &return_helper,
+            "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm",
+            0.001,
+        ) || !layout_has_timed_child_message(&return_helper, "PausePanelMessage:Close", 0.005)
+        {
             return Err("暂停菜单返回入口无效，请重新加工".to_string());
         }
         let esc_arm = read_room_tool_layout(&layout_directory, "D2RHubQuickRecreateEscArmhd.json")?;
         let receiver = find_layout_node(&esc_arm, "D2RHubEscNextGame")
             .ok_or_else(|| "缺少双击 Esc 下一局入口，请重新加工".to_string())?;
         if esc_arm.get("type").and_then(serde_json::Value::as_str) != Some("TooltipsPanel")
-            || esc_arm.pointer("/fields/priority").and_then(serde_json::Value::as_i64) != Some(9002)
-            || receiver.pointer("/fields/acceptsEscKeyEverywhere").and_then(serde_json::Value::as_bool) != Some(true)
-            || receiver.pointer("/fields/acceptsReturnKey").and_then(serde_json::Value::as_bool) != Some(false)
-            || receiver.pointer("/fields/onClickMessage").and_then(serde_json::Value::as_str) != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
-            || !layout_has_timed_child_message(&esc_arm, "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm", QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS)
+            || esc_arm
+                .pointer("/fields/priority")
+                .and_then(serde_json::Value::as_i64)
+                != Some(9002)
+            || receiver
+                .pointer("/fields/acceptsEscKeyEverywhere")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            || receiver
+                .pointer("/fields/acceptsReturnKey")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+            || receiver
+                .pointer("/fields/onClickMessage")
+                .and_then(serde_json::Value::as_str)
+                != Some("PanelManager:OpenPanel:D2RHubQuickRecreate")
+            || !layout_has_timed_child_message(
+                &esc_arm,
+                "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm",
+                QUICK_RECREATE_DOUBLE_CLICK_WINDOW_SECONDS,
+            )
         {
             return Err("双击 Esc 下一局入口或双击时限无效，请重新加工".to_string());
         }
@@ -1403,9 +1482,13 @@ fn validate_in_game_room_tool_layouts_for_version(
 
     for pause_name in ["pauselayouthd.json", "pauselayoutgardenhd.json"] {
         let pause = read_room_tool_layout(&layout_directory, pause_name)?;
-        if room_recipe_version == 27 && !layout_has_timed_child_message(
-            &pause, "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm", 0.01,
-        ) {
+        if room_recipe_version == 27
+            && !layout_has_timed_child_message(
+                &pause,
+                "PanelManager:OpenPanel:D2RHubQuickRecreateEscArm",
+                0.01,
+            )
+        {
             return Err(format!("暂停布局缺少双击 Esc 入口：{pause_name}"));
         }
         if requires_input_safety {
@@ -1761,7 +1844,11 @@ fn validate_compatible_audio_mod_directory_with_policy(
             validate_lobby_return_hint(&mod_directory, mod_name)?;
         }
     }
-    if current_feature_protocol && feature_groups.iter().any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID) {
+    if current_feature_protocol
+        && feature_groups
+            .iter()
+            .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID)
+    {
         validate_esc_next_game_layouts(&mod_directory, mod_name)?;
     }
     if current_feature_protocol
@@ -4525,7 +4612,7 @@ mod tests {
                     }},
                     {"type": "ButtonWidget", "name": "ReturnToGame", "fields": {
                         "acceptsEscKeyEverywhere": true,
-                        "onClickMessage": "PausePanelMessage:Close",
+                        "onClickMessage": "PanelManager:OpenPanel:D2RHubPauseReturnToGame",
                         "navigation": {
                         "left": {"name": "D2RHubKeyboardCreateGateway"},
                         "right": {"name": "D2RHubKeyboardJoinGateway"}
@@ -4554,13 +4641,35 @@ mod tests {
         for (name, document) in [
             (
                 "HudWarningshd.json",
-                serde_json::json!({"children": [{"fields": {"message": "PanelManager:OpenPanel:D2RHubRoomToolbar"}}]}),
+                serde_json::json!({"children": [{"fields": {"message": "PanelManager:ClosePanel:D2RHubRoomToolbar"}}]}),
+            ),
+            (
+                "D2RHubPauseReturnToGamehd.json",
+                serde_json::json!({"children": [
+                    {"fields": {"time": 0.001, "message": "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"}},
+                    {"fields": {"time": 0.005, "message": "PausePanelMessage:Close"}}
+                ]}),
+            ),
+            (
+                "D2RHubQuickRecreateEscArmhd.json",
+                serde_json::json!({
+                    "type": "TooltipsPanel",
+                    "fields": {"priority": 9002},
+                    "children": [
+                        {"name": "D2RHubEscNextGame", "fields": {
+                            "acceptsEscKeyEverywhere": true,
+                            "acceptsReturnKey": false,
+                            "onClickMessage": "PanelManager:OpenPanel:D2RHubQuickRecreate"
+                        }},
+                        {"fields": {"time": 0.5, "message": "PanelManager:ClosePanel:D2RHubQuickRecreateEscArm"}}
+                    ]
+                }),
             ),
             ("pauselayouthd.json", pause_layout()),
             ("pauselayoutgardenhd.json", pause_layout()),
             (
                 "D2RHubRoomToolbarhd.json",
-                serde_json::json!({"children": [
+                serde_json::json!({"fields": {"rect": {"x": -9999, "y": -9999}}, "children": [
                     {"name": "D2RHubNextGame", "fields": {
                         "rect": {"x": ROOM_TOOL_NEXT_X, "y": ROOM_TOOL_BUTTON_Y, "scale": ROOM_TOOL_BUTTON_SCALE},
                         "tooltipString": "左键双击进入下一局",
@@ -4822,7 +4931,7 @@ mod tests {
 
     #[test]
     fn omitted_feature_flags_keep_the_legacy_audio_command_contract() {
-        let requested = RequestedFeatureGroups::from_options(None, None, None).unwrap();
+        let requested = RequestedFeatureGroups::from_options(None, None, None, None).unwrap();
         assert!(requested.audio_telemetry);
         assert!(!requested.room_tools);
         assert!(!requested.auto_exit_on_death);
@@ -4859,9 +4968,10 @@ mod tests {
             fingerprint: test_audio_fingerprint(),
             reused_from_source: false,
         };
-        let requested = RequestedFeatureGroups::from_options(Some(true), Some(true), Some(false))
-            .unwrap()
-            .include_existing_known(std::slice::from_ref(&audio));
+        let requested =
+            RequestedFeatureGroups::from_options(Some(true), Some(true), Some(false), Some(false))
+                .unwrap()
+                .include_existing_known(std::slice::from_ref(&audio));
         assert!(!requested.all_present(std::slice::from_ref(&audio)));
         assert_eq!(requested.generator_value(), "audio,rooms");
 
@@ -4877,7 +4987,8 @@ mod tests {
     #[test]
     fn death_auto_exit_is_an_independent_verified_feature_group() {
         let requested =
-            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(true)).unwrap();
+            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(false), Some(true))
+                .unwrap();
         assert_eq!(requested.generator_value(), "death-exit");
 
         let root = test_mods_directory("death_auto_exit");
@@ -4917,7 +5028,8 @@ mod tests {
         let disabled = validate_audio_mod(&root, mod_name).unwrap();
         assert!(!disabled.auto_exit_on_death_enabled);
         let disabled_request =
-            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(true)).unwrap();
+            RequestedFeatureGroups::from_options(Some(false), Some(false), Some(false), Some(true))
+                .unwrap();
         assert!(disabled_request.all_present(&disabled.feature_groups));
         validate_preserved_feature_groups(&[enabled_group], &disabled.feature_groups).unwrap();
         let mut legacy_group = disabled.feature_groups[0].clone();
@@ -5356,6 +5468,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: false,
+                esc_next_game: false,
                 auto_exit_on_death: false,
             },
             &[],
@@ -5376,6 +5489,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: false,
+                esc_next_game: false,
                 auto_exit_on_death: false,
             },
             &[required_future],
@@ -5390,6 +5504,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: true,
+                esc_next_game: false,
                 auto_exit_on_death: false,
             },
             &[],
@@ -5410,6 +5525,7 @@ mod tests {
             RequestedFeatureGroups {
                 audio_telemetry: true,
                 room_tools: true,
+                esc_next_game: false,
                 auto_exit_on_death: false,
             },
             &[],

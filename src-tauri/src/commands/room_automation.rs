@@ -98,4 +98,3 @@ pub(crate) fn room_automation_retry(
 pub(crate) fn room_automation_cancel(app: tauri::AppHandle) -> Result<WorkflowStatus, String> {
     manager(&app)?.cancel()
 }
-

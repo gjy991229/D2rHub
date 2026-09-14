@@ -5,8 +5,8 @@
 //! and worker thread for exactly the capability's running lifetime.
 
 use super::room_automation::{
-    FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase,
-    WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
+    FollowerJoinMode, RoomAutomationConfig, WaitingMode, WorkflowPhase, WorkflowRecoveryAction,
+    WorkflowStateError, WorkflowStatus, WorkflowTaskId, WorkflowTaskState,
 };
 use super::room_automation_config::{
     RoomAutomationConfigController, RoomAutomationConfigControllerError,
@@ -289,10 +289,6 @@ impl RuntimeHost for WindowsRuntimeHost {
             None
         }
     }
-
-
-
-
 
     fn run_follower(
         &self,
@@ -650,13 +646,7 @@ impl RoomAutomationManager {
                 unified_task: Mutex::new(None),
             });
             let leases = state.multi_instance().account_leases().clone();
-            Ok(Self::new(
-                controller,
-                snapshot,
-                leases,
-                host,
-                bridge,
-            ))
+            Ok(Self::new(controller, snapshot, leases, host, bridge))
         }
     }
 
@@ -767,15 +757,13 @@ impl RoomAutomationManager {
             };
         drop(operation);
         join_shortcut(old_shortcut);
-        let apply_warning =
-            self.bridge
-                .apply_requested(saved.config.enabled)
-                .err()
-                .map(|error| {
-                    self.pause_after_committed_apply_failure(format!(
-                        "配置生命周期应用失败：{error}"
-                    ))
-                });
+        let apply_warning = self
+            .bridge
+            .apply_requested(saved.config.enabled)
+            .err()
+            .map(|error| {
+                self.pause_after_committed_apply_failure(format!("配置生命周期应用失败：{error}"))
+            });
         Ok(RoomAutomationSaveOutcome {
             snapshot: saved,
             apply_warning,
@@ -1041,9 +1029,7 @@ impl RoomAutomationManager {
     ) -> Result<PreparedPrimaryWorkflow, String> {
         self.host.canonicalize_and_validate_accounts(&mut config)?;
         let primary = self.host.running_instance(&config.primary_account_id)?;
-        if require_primary_foreground
-            && self.host.foreground_pid() != Some(primary.pid)
-        {
+        if require_primary_foreground && self.host.foreground_pid() != Some(primary.pid) {
             return Err("请先切到主号 D2R 窗口再执行自动跟房".to_string());
         }
         Ok((config, primary))
@@ -1103,8 +1089,6 @@ impl RoomAutomationManager {
             .map_err(|error| error.to_string())
     }
 
-
-
     fn prepare_and_reserve_workflow(
         &self,
         config: RoomAutomationConfig,
@@ -1156,10 +1140,13 @@ impl RoomAutomationManager {
         if self.persist_used_sequence(task_id, sequence).is_err() {
             return;
         }
-        let pids = followers.iter().map(|(_, instance)| instance.pid).collect::<Vec<_>>();
-        let result = self.host.prepare_background_room(
-            &config, primary.pid, &pids, &room_name, &cancel,
-        );
+        let pids = followers
+            .iter()
+            .map(|(_, instance)| instance.pid)
+            .collect::<Vec<_>>();
+        let result =
+            self.host
+                .prepare_background_room(&config, primary.pid, &pids, &room_name, &cancel);
         if let Err(error) = result {
             self.fail_and_release(task_id, &error);
             return;
@@ -1823,7 +1810,7 @@ mod tests {
         fail_primary: AtomicBool,
         panic_primary: AtomicBool,
         fail_follower_once: AtomicBool,
-        primary_calls: Mutex<Vec<(String, bool)>>,
+        primary_calls: Mutex<Vec<String>>,
         follower_calls: Mutex<Vec<(String, String)>>,
         preflight_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     }
@@ -1889,18 +1876,16 @@ mod tests {
             Some(101)
         }
 
-        fn run_primary(
+        fn prepare_background_room(
             &self,
             _config: &RoomAutomationConfig,
-            _pid: u32,
+            _primary_pid: u32,
+            _follower_pids: &[u32],
             room_name: &str,
-            retrying: bool,
             cancel: &CancellationSignal,
         ) -> Result<(), String> {
             cancel.check_active()?;
-            self.primary_calls
-                .lock()
-                .push((room_name.to_string(), retrying));
+            self.primary_calls.lock().push(room_name.to_string());
             assert!(
                 !self.panic_primary.load(Ordering::Acquire),
                 "injected primary panic"
@@ -2115,9 +2100,9 @@ mod tests {
             host.primary_calls
                 .lock()
                 .iter()
-                .map(|(room, retrying)| (room.as_str(), *retrying))
+                .map(String::as_str)
                 .collect::<Vec<_>>(),
-            [("run-001", false), ("run-002", false)]
+            ["run-001", "run-002"]
         );
         manager.cancel().unwrap();
         manager.stop().unwrap();
@@ -2328,10 +2313,7 @@ mod tests {
 
         assert_eq!(
             *host.primary_calls.lock(),
-            [
-                ("run-001".to_string(), false),
-                ("run-002".to_string(), true),
-            ]
+            ["run-001".to_string(), "run-002".to_string()]
         );
         assert_eq!(manager.get_config().config.next_sequence, 3);
         assert!(leases.is_empty());

@@ -6,8 +6,7 @@
 
 use crate::audio_mod::{
     active_mod_name, arguments_with_audio_mod, ensure_audio_mod_not_in_use, installed_mods,
-    set_auto_exit_on_death_enabled,
-    InstalledMod,
+    set_auto_exit_on_death_enabled, InstalledMod,
 };
 use crate::commands::account::{
     update_account_mods_inner, update_account_mods_with_lease_held, AccountManager, AccountMeta,

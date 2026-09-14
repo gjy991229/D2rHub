@@ -32,12 +32,21 @@ struct ObservationState {
 }
 
 impl ObservationState {
-    fn parse_failure(&mut self, record: &EventRecord, field: &'static str, error: impl std::fmt::Debug) {
+    fn parse_failure(
+        &mut self,
+        record: &EventRecord,
+        field: &'static str,
+        error: impl std::fmt::Debug,
+    ) {
         self.parse_errors += 1;
         *self.parse_stages.entry(field).or_default() += 1;
         if self.parse_samples.len() < 3 {
-            self.parse_samples.push(format!("PID={} ID={} version={} field={field}: {error:?}",
-                record.process_id(), record.event_id(), record.version()));
+            self.parse_samples.push(format!(
+                "PID={} ID={} version={} field={field}: {error:?}",
+                record.process_id(),
+                record.event_id(),
+                record.version()
+            ));
         }
     }
 }
@@ -75,10 +84,14 @@ impl WebTokenReadMonitor {
                     if let Ok(mut state) = callback_state.lock() {
                         state.total_events += 1;
                         state.last_event = Some(Instant::now());
-                        if record.event_id() == QUERY_VALUE_EVENT_ID { state.query_events += 1; }
+                        if record.event_id() == QUERY_VALUE_EVENT_ID {
+                            state.query_events += 1;
+                        }
                         if state.target_pid == Some(record.process_id()) {
                             state.target_events += 1;
-                            if record.event_id() == QUERY_VALUE_EVENT_ID { state.target_queries += 1; }
+                            if record.event_id() == QUERY_VALUE_EVENT_ID {
+                                state.target_queries += 1;
+                            }
                         }
                     }
                     if record.event_id() != QUERY_VALUE_EVENT_ID {
@@ -121,7 +134,9 @@ impl WebTokenReadMonitor {
                     if let Ok(mut state) = callback_state.lock() {
                         state.matching_events += 1;
                         let key = (record.process_id(), status);
-                        if state.token_statuses.contains_key(&key) || state.token_statuses.len() < 32 {
+                        if state.token_statuses.contains_key(&key)
+                            || state.token_statuses.len() < 32
+                        {
                             *state.token_statuses.entry(key).or_default() += 1;
                         }
                         if is_successful_web_token_query(record.event_id(), status, &value_name) {
@@ -132,32 +147,43 @@ impl WebTokenReadMonitor {
             )
             .build();
 
-        let (trace, handle) = UserTrace::new()
-            .enable(provider)
-            .start()
-            .map_err(|error| {
-                let message = format!("启动 WEB_TOKEN ETW 监听失败（StartTrace/EnableProvider/OpenTrace）: {error:?}");
-                crate::logger::log_msg("ERROR", "TokenETW", &message);
-                message
-            })?;
+        let (trace, handle) = UserTrace::new().enable(provider).start().map_err(|error| {
+            let message = format!(
+                "启动 WEB_TOKEN ETW 监听失败（StartTrace/EnableProvider/OpenTrace）: {error:?}"
+            );
+            crate::logger::log_msg("ERROR", "TokenETW", &message);
+            message
+        })?;
         let session_name = trace.trace_name().to_string_lossy().into_owned();
         let worker_state = Arc::clone(&state);
         let worker_session = session_name.clone();
-        let worker = std::thread::Builder::new().name("web-token-etw".to_string()).spawn(move || {
-            if let Ok(mut state) = worker_state.lock() { state.processor = "运行中".to_string(); }
-            let result = std::panic::catch_unwind(|| UserTrace::process_from_handle(handle));
-            let outcome = match result {
-                Ok(Ok(())) => "正常返回".to_string(),
-                Ok(Err(error)) => format!("ProcessTrace 错误: {error:?}"),
-                Err(_) => "ProcessTrace 线程 panic".to_string(),
-            };
-            let stopping = if let Ok(mut state) = worker_state.lock() {
-                state.processor = outcome.clone();
-                state.stopping
-            } else { false };
-            crate::logger::log_msg(if stopping { "INFO" } else { "ERROR" }, "TokenETW",
-                &format!("session={worker_session} 事件处理结束；主动停止={stopping}；{outcome}"));
-        }).map_err(|error| format!("创建 ETW 消费线程失败: {error}"))?;
+        let worker = std::thread::Builder::new()
+            .name("web-token-etw".to_string())
+            .spawn(move || {
+                if let Ok(mut state) = worker_state.lock() {
+                    state.processor = "运行中".to_string();
+                }
+                let result = std::panic::catch_unwind(|| UserTrace::process_from_handle(handle));
+                let outcome = match result {
+                    Ok(Ok(())) => "正常返回".to_string(),
+                    Ok(Err(error)) => format!("ProcessTrace 错误: {error:?}"),
+                    Err(_) => "ProcessTrace 线程 panic".to_string(),
+                };
+                let stopping = if let Ok(mut state) = worker_state.lock() {
+                    state.processor = outcome.clone();
+                    state.stopping
+                } else {
+                    false
+                };
+                crate::logger::log_msg(
+                    if stopping { "INFO" } else { "ERROR" },
+                    "TokenETW",
+                    &format!(
+                        "session={worker_session} 事件处理结束；主动停止={stopping}；{outcome}"
+                    ),
+                );
+            })
+            .map_err(|error| format!("创建 ETW 消费线程失败: {error}"))?;
         crate::logger::log_msg("INFO", "TokenETW", &format!(
             "session={session_name} 监听已启动；provider={KERNEL_REGISTRY_PROVIDER_GUID}；等待目标 PID；启动耗时={}ms", started.elapsed().as_millis()));
 
@@ -178,9 +204,16 @@ impl WebTokenReadMonitor {
                     state.target_pid = Some(pid);
                     state.target_events = 0;
                     state.target_queries = 0;
-                    crate::logger::log_msg("INFO", "TokenETW", &format!(
-                        "session={} 绑定目标 PID={pid}；监听已运行={}ms；早期读取已缓存={}",
-                        self.session_name, self.started.elapsed().as_millis(), state.successful_read_pids.contains(&pid)));
+                    crate::logger::log_msg(
+                        "INFO",
+                        "TokenETW",
+                        &format!(
+                            "session={} 绑定目标 PID={pid}；监听已运行={}ms；早期读取已缓存={}",
+                            self.session_name,
+                            self.started.elapsed().as_millis(),
+                            state.successful_read_pids.contains(&pid)
+                        ),
+                    );
                 }
                 state.successful_read_pids.contains(&pid)
             })
@@ -223,7 +256,9 @@ impl WebTokenReadMonitor {
     }
 
     pub(crate) fn stop(mut self) -> Result<(), String> {
-        if let Ok(mut state) = self.state.lock() { state.stopping = true; }
+        if let Ok(mut state) = self.state.lock() {
+            state.stopping = true;
+        }
         if let Some(trace) = self.trace.take() {
             trace
                 .stop()
@@ -234,37 +269,67 @@ impl WebTokenReadMonitor {
 
     fn session_stats(&self) -> String {
         use windows::core::PCWSTR;
-        use windows::Win32::System::Diagnostics::Etw::{ControlTraceW, CONTROLTRACE_HANDLE,
-            EVENT_TRACE_CONTROL_QUERY, EVENT_TRACE_PROPERTIES};
+        use windows::Win32::System::Diagnostics::Etw::{
+            ControlTraceW, CONTROLTRACE_HANDLE, EVENT_TRACE_CONTROL_QUERY, EVENT_TRACE_PROPERTIES,
+        };
         #[repr(C)]
         struct QueryBuffer {
             properties: EVENT_TRACE_PROPERTIES,
             names: [u16; 2048],
         }
-        let mut buffer = QueryBuffer { properties: EVENT_TRACE_PROPERTIES::default(), names: [0; 2048] };
+        let mut buffer = QueryBuffer {
+            properties: EVENT_TRACE_PROPERTIES::default(),
+            names: [0; 2048],
+        };
         buffer.properties.Wnode.BufferSize = std::mem::size_of::<QueryBuffer>() as u32;
         buffer.properties.LoggerNameOffset = std::mem::size_of::<EVENT_TRACE_PROPERTIES>() as u32;
         buffer.properties.LogFileNameOffset = buffer.properties.LoggerNameOffset + 2048;
-        let name = self.session_name.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
-        let result = unsafe { ControlTraceW(CONTROLTRACE_HANDLE { Value: 0 }, PCWSTR(name.as_ptr()),
-            &mut buffer.properties, EVENT_TRACE_CONTROL_QUERY) };
-        if result.0 != 0 { return format!("ETW会话统计查询失败 Win32={}（不能据此认定无丢失）", result.0); }
-        format!("EventsLost={}，RealTimeBuffersLost={}，LogBuffersLost={}，BuffersWritten={}",
-            buffer.properties.EventsLost, buffer.properties.RealTimeBuffersLost,
-            buffer.properties.LogBuffersLost, buffer.properties.BuffersWritten)
+        let name = self
+            .session_name
+            .encode_utf16()
+            .chain(Some(0))
+            .collect::<Vec<_>>();
+        let result = unsafe {
+            ControlTraceW(
+                CONTROLTRACE_HANDLE { Value: 0 },
+                PCWSTR(name.as_ptr()),
+                &mut buffer.properties,
+                EVENT_TRACE_CONTROL_QUERY,
+            )
+        };
+        if result.0 != 0 {
+            return format!(
+                "ETW会话统计查询失败 Win32={}（不能据此认定无丢失）",
+                result.0
+            );
+        }
+        format!(
+            "EventsLost={}，RealTimeBuffersLost={}，LogBuffersLost={}，BuffersWritten={}",
+            buffer.properties.EventsLost,
+            buffer.properties.RealTimeBuffersLost,
+            buffer.properties.LogBuffersLost,
+            buffer.properties.BuffersWritten
+        )
     }
 }
 
 impl Drop for WebTokenReadMonitor {
     fn drop(&mut self) {
         if self.trace.is_some() {
-            crate::logger::log_msg("INFO", "TokenETW", &format!(
-                "作用域提前结束，释放监听；{}", self.diagnostics()));
+            crate::logger::log_msg(
+                "INFO",
+                "TokenETW",
+                &format!("作用域提前结束，释放监听；{}", self.diagnostics()),
+            );
         }
-        if let Ok(mut state) = self.state.lock() { state.stopping = true; }
+        if let Ok(mut state) = self.state.lock() {
+            state.stopping = true;
+        }
         // CloseTrace releases the consumer before joining, including early returns.
         drop(self.trace.take());
-        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
     }
 }
 

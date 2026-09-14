@@ -10,8 +10,8 @@ mod status;
 pub(crate) use model::canonicalize_shortcut;
 pub use model::CURRENT_STRATEGY_VERSION;
 pub use model::{
-    FlowStrategy, FollowerJoinMode, NormalizationReport,
-    RoomAutomationConfig, RoomAutomationConfigError,
+    FlowStrategy, FollowerJoinMode, NormalizationReport, RoomAutomationConfig,
+    RoomAutomationConfigError,
 };
 pub use status::{
     WaitingMode, WorkflowPhase, WorkflowRecoveryAction, WorkflowStateError, WorkflowStatus,

@@ -12,16 +12,19 @@ describe("audio feature group truth", () => {
     expect(audioModFeatureDefaultsForPurpose("recognition")).toEqual({
       includeAudioTelemetry: true,
       includeRoomTools: true,
+      includeEscNextGame: false,
       includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("room-tools")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: true,
+      includeEscNextGame: false,
       includeAutoExitOnDeath: false,
     });
     expect(audioModFeatureDefaultsForPurpose("manage")).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: false,
+      includeEscNextGame: false,
       includeAutoExitOnDeath: false,
     });
   });
@@ -34,6 +37,7 @@ describe("audio feature group truth", () => {
     })).toEqual({
       includeAudioTelemetry: false,
       includeRoomTools: true,
+      includeEscNextGame: false,
       includeAutoExitOnDeath: true,
     });
   });

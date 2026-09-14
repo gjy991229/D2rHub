@@ -5,9 +5,7 @@
 //! window messages. Every wait and key boundary consults the caller's cancel
 //! signal so capability shutdown never leaves detached input work behind.
 
-use crate::capabilities::room_automation::{
-    FlowStrategy, RoomAutomationConfig,
-};
+use crate::capabilities::room_automation::{FlowStrategy, RoomAutomationConfig};
 use crate::infrastructure::physical_input::{modifiers_released, DesktopInput};
 use parking_lot::Mutex;
 use std::collections::HashMap;

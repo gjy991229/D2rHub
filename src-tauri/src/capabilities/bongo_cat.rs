@@ -149,7 +149,8 @@ impl BongoCatCapability {
                 continue;
             };
 
-            let cursor_is_over_cat = super::pet_wardrobe::menu_open() || is_cat_hit(normalized_x, normalized_y);
+            let cursor_is_over_cat =
+                super::pet_wardrobe::menu_open() || is_cat_hit(normalized_x, normalized_y);
             if cursor_is_over_cat && is_ignoring_cursor_events {
                 let _ = window.set_ignore_cursor_events(false);
                 is_ignoring_cursor_events = false;
