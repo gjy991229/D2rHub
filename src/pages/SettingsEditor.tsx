@@ -211,6 +211,7 @@ const settingsSections: ConfigSection[] = [
           { label: "TAA", value: 3 },
         ],
       },
+      { key: "Resolution Scale", label: "分辨率缩放(%)", type: "range", defaultValue: 100, min: 50, max: 200 },
       { key: "Dynamic Resolution Scaling", label: "分辨率动态调整", type: "toggle", defaultValue: 0 },
       { key: FRAMERATE_CAP_KEY, label: "帧数上限", type: "number", defaultValue: 0, min: 0, max: 500 },
       { key: "Vfx Quality", label: "Vfx质量", type: "select", defaultValue: 2, options: qualityLowUltra },
@@ -321,7 +322,7 @@ const graphicsQualityPresets: ReadonlyArray<{
   dlss: number;
   framerateCap: number;
 }> = [
-  { id: "low", label: "低", dlss: 5, framerateCap: 30 },
+  { id: "low", label: "低", dlss: 0, framerateCap: 30 },
   { id: "medium", label: "中", dlss: 1, framerateCap: 180 },
   { id: "high", label: "高", dlss: 2, framerateCap: 0 },
 ];
@@ -347,6 +348,7 @@ function createGraphicsQualityPreset(preset: GraphicsQualityPreset): SettingsMap
   return {
     ...patch,
     "NVIDIA DLSS": selectedPreset.dlss,
+    ...(preset === "low" ? { "Resolution Scale": 50, "Dynamic Resolution Scaling": 0 } : {}),
     "Graphic Presets": 7,
     "Anti Aliasing": 1,
     [FRAMERATE_CAP_KEY]: selectedPreset.framerateCap,
