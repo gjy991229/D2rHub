@@ -199,8 +199,8 @@ export function validateRoomAutomationConfig(
   const invalidFollowerJoinInterval = (config.follower_join_mode ?? "simultaneous") === "interval"
     && (!Number.isSafeInteger(followerJoinInterval)
       || followerJoinInterval < 1 || followerJoinInterval > 60);
-  if (!Number.isSafeInteger(config.auto_followers_delay_secs)
-    || config.auto_followers_delay_secs < 2 || config.auto_followers_delay_secs > 60
+  if (!Number.isFinite(config.auto_followers_delay_secs)
+    || config.auto_followers_delay_secs < 0.5 || config.auto_followers_delay_secs > 60
     || invalidFollowerJoinInterval
     || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)
       || !Number.isSafeInteger(flow.character_delay_ms)

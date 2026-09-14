@@ -1221,7 +1221,7 @@ impl RoomAutomationManager {
             return;
         }
 
-        if cancel.wait(Duration::from_secs(config.auto_followers_delay_secs)) {
+        if cancel.wait(Duration::from_secs_f64(config.auto_followers_delay_secs)) {
             self.fail_and_release(task_id, "自动跟房流程已取消");
             return;
         }

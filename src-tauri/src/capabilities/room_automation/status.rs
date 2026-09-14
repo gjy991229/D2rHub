@@ -24,11 +24,11 @@ impl WorkflowPhase {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "mode")]
 pub enum WaitingMode {
     Manual,
-    Automatic { delay_secs: u64 },
+    Automatic { delay_secs: f64 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -48,7 +48,7 @@ pub struct PendingRoom {
 #[serde(transparent)]
 pub struct WorkflowTaskId(pub u64);
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WorkflowStatus {
     pub revision: u64,
@@ -112,7 +112,7 @@ pub struct FollowersTask {
     pub room: PendingRoom,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct WorkflowTaskState {
     status: WorkflowStatus,

@@ -50,7 +50,7 @@ pub(crate) fn persisted_shortcuts(
 }
 
 /// Serializable state returned to commands and the settings UI.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct RoomAutomationConfigSnapshot {
     pub schema_version: u32,
     pub generation: u64,

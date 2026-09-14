@@ -664,7 +664,8 @@ export function RoomAutomationPanel({
             <NumberField
               label={copy.followerDelay}
               value={draft.auto_followers_delay_secs}
-              min={2}
+              min={0.5}
+              step={0.5}
               max={60}
               disabled={editorDisabled}
               onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_delay_secs: value }))}
@@ -935,12 +936,13 @@ interface NumberFieldProps {
   value: number;
   min?: number;
   max?: number;
+  step?: number;
   disabled?: boolean;
   invalid?: boolean;
   onChange: (value: number) => void;
 }
 
-function NumberField({ label, value, min, max, disabled, invalid, onChange }: NumberFieldProps) {
+function NumberField({ label, value, min, max, step, disabled, invalid, onChange }: NumberFieldProps) {
   const [text, setText] = useState(String(value));
   useEffect(() => setText(String(value)), [value]);
   return (
@@ -952,6 +954,7 @@ function NumberField({ label, value, min, max, disabled, invalid, onChange }: Nu
         value={text}
         min={min}
         max={max}
+        step={step}
         disabled={disabled}
         aria-invalid={invalid || undefined}
         onChange={(event) => {

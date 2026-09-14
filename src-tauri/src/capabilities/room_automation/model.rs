@@ -11,8 +11,8 @@ const DEFAULT_KEY_HOLD_MS: u64 = 50;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
 const MIN_CHARACTER_DELAY_MS: u64 = 10;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
-const MIN_AUTO_FOLLOWERS_DELAY_SECS: u64 = 2;
-const MAX_AUTO_FOLLOWERS_DELAY_SECS: u64 = 60;
+const MIN_AUTO_FOLLOWERS_DELAY_SECS: f64 = 0.5;
+const MAX_AUTO_FOLLOWERS_DELAY_SECS: f64 = 60.0;
 const MIN_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 1;
 const MAX_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 60;
 const MIN_SEQUENCE_WIDTH: u8 = 1;
@@ -81,8 +81,8 @@ impl Default for FlowStrategy {
     }
 }
 
-fn default_auto_followers_delay_secs() -> u64 {
-    5
+fn default_auto_followers_delay_secs() -> f64 {
+    5.0
 }
 
 fn default_follower_join_interval_secs() -> u64 {
@@ -137,7 +137,7 @@ fn default_standard_flow() -> FlowStrategy {
 /// V24 applies that response flow to every participant, preserving its settings.
 /// V25 removes the mouse adapter; obsolete input_method/foreground_timing fields
 /// are ignored on import and removed when the normalized configuration is saved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -148,7 +148,7 @@ pub struct RoomAutomationConfig {
     #[serde(default)]
     pub auto_followers_enabled: bool,
     #[serde(default = "default_auto_followers_delay_secs")]
-    pub auto_followers_delay_secs: u64,
+    pub auto_followers_delay_secs: f64,
     #[serde(default)]
     pub follower_join_mode: FollowerJoinMode,
     #[serde(default = "default_follower_join_interval_secs")]
