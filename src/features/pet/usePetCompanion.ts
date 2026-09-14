@@ -86,7 +86,7 @@ export function usePetCompanion(config: GlobalConfig | null) {
       if (lastInputAt - lastPaintAt >= 50) {
         lastPaintAt = lastInputAt;
         setClickCount(count.current);
-        setFrame(event.payload === "MouseLeft" ? "left" : event.payload === "MouseRight" ? "right" : Math.random() < 0.5 ? "left" : "right");
+        setFrame(Math.random() < 0.5 ? "left" : "right");
       }
       if (!idleTimer) idleTimer = setTimeout(finishFrame, 120);
       if (!progressTimer) progressTimer = setTimeout(() => void settle(), 60_000);
