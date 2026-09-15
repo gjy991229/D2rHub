@@ -28,8 +28,7 @@ const VK_END: u16 = 0x23;
 const VK_LEFT: u16 = 0x25;
 const VK_RIGHT: u16 = 0x27;
 const MAPVK_VK_TO_VSC: u32 = 0;
-const EXTRA_PANEL_SETTLE_MS: u64 = 50;
-const ROOM_FORM_SETTLE_MS: u64 = 200;
+const ROOM_FORM_SETTLE_MS: u64 = 100;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
@@ -164,7 +163,7 @@ pub(crate) fn prepare_background_room(
                             false,
                             strategy,
                             flow.key_hold_ms,
-                            550,
+                            flow.step_delay_ms,
                             cancel,
                         )?;
                     }
@@ -203,9 +202,9 @@ pub(crate) fn prepare_background_room(
         )?;
         input.release_all()?;
         for &hwnd in &background {
-            deliver_key(hwnd, VK_TAB, false, strategy, flow.key_hold_ms, 20, cancel)?;
+            deliver_key(hwnd, VK_TAB, false, strategy, flow.key_hold_ms, 0, cancel)?;
         }
-        wait(cancel, Duration::from_millis(flow.step_delay_ms.max(120)))?;
+        wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
         paste_group(
             &mut input,
             &background,
@@ -231,7 +230,7 @@ pub(crate) fn prepare_background_room(
         false,
         strategy,
         flow.key_hold_ms,
-        20,
+        flow.step_delay_ms,
         cancel,
     )?;
     for &(pid, hwnd, created) in &targets {
@@ -299,7 +298,7 @@ fn group_chord(
         }
         if ctrl {
             input.key_down(0x11)?;
-            wait(cancel, Duration::from_millis(flow.step_delay_ms.max(120)))?;
+            wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
             for &hwnd in background {
                 input.check_target()?;
                 deliver_key_message(hwnd, 0x11, true, strategy)?;
@@ -324,9 +323,14 @@ fn group_chord(
             validate_target(hwnd)?;
             deliver_key_message(hwnd, key, true, strategy)?;
         }
-        // Keep physical Ctrl and the clipboard stable while background windows
-        // consume the posted chord. This is a timing allowance, not an ACK.
-        wait(cancel, Duration::from_millis(flow.step_delay_ms.max(200)))?;
+        // Keep Ctrl active for background consumers independently of the delay
+        // between operations. The primary A/V is already up to avoid repeats.
+        let hold_ms = if ctrl {
+            flow.chord_hold_ms
+        } else {
+            flow.key_hold_ms
+        };
+        wait(cancel, Duration::from_millis(hold_ms))?;
         input.check_target()
     })();
     let mut cleanup = Ok(());
@@ -344,7 +348,7 @@ fn group_chord(
     result?;
     cleanup?;
     release?;
-    wait(cancel, Duration::from_millis(flow.step_delay_ms.max(200)))
+    wait(cancel, Duration::from_millis(flow.step_delay_ms))
 }
 
 pub(crate) fn submit_prepared_follower(
@@ -384,7 +388,7 @@ pub(crate) fn submit_prepared_follower(
         false,
         BackgroundTextStrategy::from_value(&config.background_text_strategy),
         config.flow().key_hold_ms,
-        20,
+        config.flow().step_delay_ms,
         cancel,
     )
 }
@@ -481,18 +485,18 @@ fn open_room_form(
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    let step = flow.step_delay_ms.clamp(60, 500);
+    let step = flow.step_delay_ms;
     deliver_key(
         hwnd,
         VK_ESCAPE,
         false,
         strategy,
         flow.key_hold_ms,
-        20,
+        step,
         cancel,
     )?;
-    // Let the double-Esc receiver expire before navigating the pause menu.
-    wait(cancel, Duration::from_millis(step.max(550)))?;
+    // This path sends only one Esc, followed by direction keys. Its next
+    // operation uses the configured interval, not the double-Esc timeout.
     let direction = if create { VK_LEFT } else { VK_RIGHT };
     for _ in 0..GATEWAY_DIRECTION_REPETITIONS {
         deliver_key(
@@ -501,10 +505,9 @@ fn open_room_form(
             false,
             strategy,
             flow.key_hold_ms,
-            20,
+            step,
             cancel,
         )?;
-        wait(cancel, Duration::from_millis(step))?;
     }
     deliver_key(
         hwnd,
@@ -512,13 +515,8 @@ fn open_room_form(
         false,
         strategy,
         flow.key_hold_ms,
-        20,
+        ROOM_FORM_SETTLE_MS,
         cancel,
-    )?;
-    wait(cancel, Duration::from_millis(step))?;
-    wait(
-        cancel,
-        Duration::from_millis(ROOM_FORM_SETTLE_MS + EXTRA_PANEL_SETTLE_MS),
     )
 }
 

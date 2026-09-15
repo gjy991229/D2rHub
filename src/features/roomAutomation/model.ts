@@ -123,7 +123,7 @@ export function roomAutomationConfigsEqual(
     ...config,
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
-    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },
+    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50, chord_hold_ms: config.flow.chord_hold_ms ?? 100 },
   });
   return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
 }
@@ -205,6 +205,8 @@ export function validateRoomAutomationConfig(
     || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)
       || !Number.isSafeInteger(flow.character_delay_ms)
       || !Number.isSafeInteger(flow.key_hold_ms ?? 50)
+      || !Number.isSafeInteger(flow.chord_hold_ms ?? 100)
+      || (flow.chord_hold_ms ?? 100) < 10 || (flow.chord_hold_ms ?? 100) > 1000
       || (flow.key_hold_ms ?? 50) < 10 || (flow.key_hold_ms ?? 50) > 250
       || flow.step_delay_ms < 0 || flow.step_delay_ms > 2000
       || flow.character_delay_ms < 10 || flow.character_delay_ms > 250)) {

@@ -3,6 +3,8 @@ export interface RoomFlowStrategy {
   character_delay_ms: number;
   /** Legacy snapshots default to a 50 ms key hold. */
   key_hold_ms?: number;
+  /** Time to retain Ctrl while background windows consume A/V. */
+  chord_hold_ms?: number;
 }
 
 export type FollowerJoinMode = "simultaneous" | "interval";

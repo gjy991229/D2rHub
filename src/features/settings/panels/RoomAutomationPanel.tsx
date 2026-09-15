@@ -64,7 +64,7 @@ function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     follower_account_ids: [...config.follower_account_ids],
-    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50 },
+    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50, chord_hold_ms: config.flow.chord_hold_ms ?? 100 },
   };
 }
 
@@ -752,6 +752,9 @@ export function RoomAutomationPanel({
             <NumberField label={copy.keyHold} value={draft.flow.key_hold_ms ?? 50} min={10} max={250}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(key_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, key_hold_ms } }))} />
+            <NumberField label={copy.chordHold} value={draft.flow.chord_hold_ms ?? 100} min={10} max={1000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(chord_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, chord_hold_ms } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
               options={[{ value: "post_keys", label: copy.postKeys }, { value: "send_keys", label: copy.sendKeys }]}
               disabled={editorDisabled}
