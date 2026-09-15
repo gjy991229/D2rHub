@@ -305,6 +305,9 @@ fn group_chord(
                 deliver_key_message(hwnd, 0x11, true, strategy)?;
             }
         }
+        if key == 0x56 && ctrl {
+            input.check_clipboard()?;
+        }
         input.key_down(key)?;
         wait(
             cancel,
