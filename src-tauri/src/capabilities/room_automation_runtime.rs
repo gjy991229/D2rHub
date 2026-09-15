@@ -1452,6 +1452,11 @@ impl RoomAutomationManager {
     }
 
     fn fail_and_release(&self, task_id: WorkflowTaskId, error: &str) {
+        crate::logger::log_msg(
+            "WARN",
+            "RoomAutomation",
+            &format!("自动跟房任务 {task_id:?} 失败：{error}"),
+        );
         if let Ok(status) = self.workflow.lock().fail(task_id, error) {
             self.bridge.publish_status(&status);
             self.lifecycle.lock().leases = None;

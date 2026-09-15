@@ -176,7 +176,15 @@ impl ClipboardSession {
     }
 
     pub(super) fn check(&self) -> Result<(), String> {
-        if self.sequence != unsafe { GetClipboardSequenceNumber() } {
+        // While our materialized text is published, Windows may synthesize
+        // additional text formats and advance the sequence itself. Ownership
+        // survives that conversion; an external replacement changes the owner.
+        let changed = if self.dirty {
+            unsafe { GetClipboardOwner() }.ok() != Some(self.owner)
+        } else {
+            self.sequence != unsafe { GetClipboardSequenceNumber() }
+        };
+        if changed {
             Err("剪贴板已被其他程序更改，已停止粘贴".into())
         } else {
             Ok(())

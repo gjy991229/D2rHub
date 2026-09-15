@@ -54,6 +54,33 @@ static DESKTOP: Mutex<()> = Mutex::new(());
 
 static PREPARED_FORMS: OnceLock<Mutex<HashMap<u32, PreparedForm>>> = OnceLock::new();
 
+struct PreparationAttempt {
+    pids: Vec<u32>,
+    committed: bool,
+}
+
+impl Drop for PreparationAttempt {
+    fn drop(&mut self) {
+        if self.committed {
+            return;
+        }
+        // A failed operation provides no evidence that any form or password
+        // is still present. In particular, the user may close it before retry.
+        if let Some(forms) = PREPARED_FORMS.get() {
+            let mut forms = forms.lock();
+            for pid in &self.pids {
+                forms.remove(pid);
+            }
+        }
+        if let Some(passwords) = ENTERED_PASSWORDS.get() {
+            let mut passwords = passwords.lock();
+            for pid in &self.pids {
+                passwords.remove(pid);
+            }
+        }
+    }
+}
+
 /// Open every form concurrently, then share physical Ctrl with posted A/V.
 /// Only the primary receives Enter here; followers keep their prepared forms.
 pub(crate) fn prepare_background_room(
@@ -71,6 +98,12 @@ pub(crate) fn prepare_background_room(
             break guard;
         }
         wait(cancel, Duration::from_millis(25))?;
+    };
+    let mut attempt = PreparationAttempt {
+        pids: std::iter::once(primary_pid)
+            .chain(follower_pids.iter().copied())
+            .collect(),
+        committed: false,
     };
     let deadline = Instant::now() + Duration::from_secs(3);
     while !modifiers_released() {
@@ -119,7 +152,9 @@ pub(crate) fn prepare_background_room(
             .map(|&(pid, hwnd, created)| {
                 scope.spawn(move || -> Result<(), String> {
                     let previous = forms.lock().remove(&pid);
-                    if previous.is_some_and(|entry| entry.created == created && entry.hwnd == hwnd)
+                    if pid != primary_pid
+                        && previous
+                            .is_some_and(|entry| entry.created == created && entry.hwnd == hwnd)
                     {
                         // A second create during manual waiting replaces the open
                         // join form, instead of navigating inside that old form.
@@ -134,14 +169,6 @@ pub(crate) fn prepare_background_room(
                         )?;
                     }
                     open_room_form(hwnd, pid == primary_pid, strategy, flow, cancel)?;
-                    forms.lock().insert(
-                        pid,
-                        PreparedForm {
-                            created,
-                            hwnd,
-                            room_name: String::new(),
-                        },
-                    );
                     Ok(())
                 })
             })
@@ -230,6 +257,7 @@ pub(crate) fn prepare_background_room(
             );
         }
     }
+    attempt.committed = true;
     Ok(())
 }
 
