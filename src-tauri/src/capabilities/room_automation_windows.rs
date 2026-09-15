@@ -265,10 +265,15 @@ fn group_chord(
     // Always release posted keys even on cancellation or partial delivery.
     let result = (|| {
         cancel.check()?;
+        input.check_target()?;
+        if !modifiers_released() {
+            return Err("检测到修饰键或鼠标按键按下，已停止自动输入".to_string());
+        }
         if ctrl {
             input.key_down(0x11)?;
             wait(cancel, Duration::from_millis(flow.step_delay_ms.max(120)))?;
             for &hwnd in background {
+                input.check_target()?;
                 deliver_key_message(hwnd, 0x11, true, strategy)?;
             }
         }
@@ -281,12 +286,17 @@ fn group_chord(
         // before their waits so long delays cannot paste repeatedly up front.
         input.release_last()?;
         for &hwnd in background {
+            input.check_target()?;
+            if key == 0x56 && ctrl {
+                input.check_clipboard()?;
+            }
             validate_target(hwnd)?;
             deliver_key_message(hwnd, key, true, strategy)?;
         }
         // Keep physical Ctrl and the clipboard stable while background windows
         // consume the posted chord. This is a timing allowance, not an ACK.
-        wait(cancel, Duration::from_millis(flow.step_delay_ms.max(200)))
+        wait(cancel, Duration::from_millis(flow.step_delay_ms.max(200)))?;
+        input.check_target()
     })();
     let mut cleanup = Ok(());
     for &hwnd in background {
