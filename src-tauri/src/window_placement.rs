@@ -349,6 +349,23 @@ fn resolve_saved_placement(
     current_size: PhysicalSize,
     fallback_monitor_index: usize,
 ) -> ResolvedPlacement {
+    // The pet has an explicit reset action. Preserve its physical coordinates
+    // even across scaling, disconnected monitors, and off-screen placement.
+    if label == "bongo-cat" {
+        let rect = PhysicalRect {
+            width: current_size.width,
+            height: current_size.height,
+            ..saved.preferred_rect
+        };
+        return ResolvedPlacement {
+            rect,
+            monitor_index: best_monitor_for_rect(rect, monitors)
+                .or_else(|| matching_monitor(&saved.preferred_monitor, monitors))
+                .unwrap_or(fallback_monitor_index),
+            recovered: false,
+            used_fallback: false,
+        };
+    }
     if let Some(index) = matching_monitor(&saved.preferred_monitor, monitors) {
         let monitor = &monitors[index];
         let exact = PhysicalRect {
@@ -588,7 +605,9 @@ fn restore_impl(
     }
 
     if let Some(legacy) = legacy_geometry.as_ref().filter(|geometry| {
-        geometry.x > -32000 && geometry.y > -32000 && geometry.width > 0 && geometry.height > 0
+        (label == "bongo-cat" || (geometry.x > -32000 && geometry.y > -32000))
+            && geometry.width > 0
+            && geometry.height > 0
     }) {
         window
             .set_position(LogicalPosition::new(
@@ -603,7 +622,7 @@ fn restore_impl(
         .iter()
         .position(|monitor| is_recoverable(current, monitor.work_area));
     let monitor_index = selected.unwrap_or(fallback_index);
-    let rect = if selected.is_some() {
+    let rect = if label == "bongo-cat" || selected.is_some() {
         current
     } else {
         default_rect(
@@ -623,7 +642,7 @@ fn restore_impl(
     Ok(PlacementOutcome {
         label: label.to_string(),
         moved,
-        recovered: selected.is_none(),
+        recovered: label != "bongo-cat" && selected.is_none(),
         used_fallback: false,
         monitor_name: monitors[monitor_index].name.clone(),
     })
@@ -652,10 +671,12 @@ fn save_current_impl(
     if !valid_rect(rect) {
         return Ok(false);
     }
-    let Some(monitor_index) = best_monitor_for_rect(rect, &monitors) else {
+    let Some(monitor_index) = best_monitor_for_rect(rect, &monitors)
+        .or_else(|| (label == "bongo-cat").then(|| primary_monitor_index(&window, &monitors)))
+    else {
         return Ok(false);
     };
-    if !is_recoverable(rect, monitors[monitor_index].work_area) {
+    if label != "bongo-cat" && !is_recoverable(rect, monitors[monitor_index].work_area) {
         return Ok(false);
     }
 
@@ -675,7 +696,9 @@ fn save_current_impl(
         == Some(monitor_index);
 
     let updated = match existing {
-        Some(mut placement) if !user_initiated && !same_preferred_monitor => {
+        Some(mut placement)
+            if label != "bongo-cat" && !user_initiated && !same_preferred_monitor =>
+        {
             placement.fallback_rect = Some(rect);
             placement.saved_at = chrono::Utc::now().timestamp();
             placement

@@ -39,7 +39,6 @@ export function useWindowPlacementSave({
           win.outerSize(),
           win.scaleFactor(),
         ]);
-        if (position.x <= -32000 || position.y <= -32000) return;
         const logicalWidth = Math.round(size.width / scaleFactor);
         const logicalHeight = Math.round(size.height / scaleFactor);
         if (logicalWidth < minWidth || logicalHeight < minHeight) return;
