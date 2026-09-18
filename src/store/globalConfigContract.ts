@@ -30,6 +30,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "theme",
   "theme_overlay",
   "auto_close_browser",
+  "launch_trim_memory",
   "enable_auto_update",
   "first_launch",
   "rune_audio_enabled",

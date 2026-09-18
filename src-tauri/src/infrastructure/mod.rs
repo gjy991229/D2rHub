@@ -2,6 +2,8 @@
 
 pub(crate) mod diagnostics;
 pub(crate) mod durable_fs;
+#[cfg(target_os = "windows")]
+pub(crate) mod memory_trim;
 pub mod module_config;
 #[cfg(target_os = "windows")]
 pub(crate) mod physical_input;

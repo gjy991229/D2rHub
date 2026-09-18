@@ -311,6 +311,8 @@ const textMap: Record<string, string> = {
   "每日检查更新": "Daily Update Check",
   "每天第一次启动多开工具时自动检测新版本": "Check for new versions on the first launch each day",
   "应用行为": "Application Behavior",
+  "启动时自动整理内存": "Automatically trim memory during launch",
+  "成功启动数量达到一半（向上取整）和批次结束时，整理已成功启动窗口的内存；单窗口仅整理一次，后续加载可能短暂卡顿。": "Trim successfully launched windows at halfway (rounded up) and when the batch ends. Single-window launches are trimmed once; later loading may briefly stutter.",
   "开启开关": "Turn switch on",
   "关闭开关": "Turn switch off",
 

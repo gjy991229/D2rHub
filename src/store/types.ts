@@ -60,6 +60,7 @@ export interface GlobalConfig {
   theme: string;
   theme_overlay: string;
   auto_close_browser: boolean;
+  launch_trim_memory?: boolean;
   enable_auto_update: boolean;
   first_launch: boolean;
   rune_audio_enabled: boolean;

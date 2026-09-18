@@ -90,6 +90,18 @@ export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPane
 
       <section className="spatial-panel p-3 space-y-2" aria-labelledby="application-options-title">
         <h2 id="application-options-title" className="text-xs font-bold text-text-primary">应用行为</h2>
+        <div className="flex items-center justify-between gap-3 py-1.5">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">启动时自动整理内存</span>
+            <p id="launch-memory-description" className="text-2xs text-text-muted">成功启动数量达到一半（向上取整）和批次结束时，整理已成功启动窗口的内存；单窗口仅整理一次，后续加载可能短暂卡顿。</p>
+          </div>
+          <Toggle
+            checked={config.launch_trim_memory ?? true}
+            ariaLabel="启动时自动整理内存"
+            descriptionId="launch-memory-description"
+            onChange={v => updateConfig(c => { c.launch_trim_memory = v; })}
+          />
+        </div>
         <div className="flex items-center justify-between py-1.5">
           <div>
             <span className="text-sm font-semibold text-text-secondary">自动关闭隔离浏览器</span>

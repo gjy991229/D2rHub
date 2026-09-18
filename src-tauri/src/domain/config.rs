@@ -150,6 +150,12 @@ pub struct GlobalConfig {
     /// 是否在登录后/流程结束后自动关闭浏览器，以及在启动前做清理
     #[serde(default = "default_auto_close_browser")]
     pub auto_close_browser: bool,
+    /// 在批次启动过半和结束时整理已成功启动窗口的工作集。
+    #[serde(
+        default = "default_launch_trim_memory",
+        alias = "stilllite_trim_memory"
+    )]
+    pub launch_trim_memory: bool,
     /// 是否在每天启动时自动检查更新
     #[serde(default = "default_enable_auto_update")]
     pub enable_auto_update: bool,
@@ -290,6 +296,10 @@ pub(crate) fn default_enable_overlay() -> bool {
 }
 
 fn default_auto_close_browser() -> bool {
+    true
+}
+
+fn default_launch_trim_memory() -> bool {
     true
 }
 
@@ -458,6 +468,7 @@ impl Default for GlobalConfig {
             theme: "light".to_string(),
             theme_overlay: "light".to_string(),
             auto_close_browser: true,
+            launch_trim_memory: true,
             enable_auto_update: true,
             first_launch: true,
             rune_audio_enabled: false,

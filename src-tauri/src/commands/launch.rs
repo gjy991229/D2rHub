@@ -1563,6 +1563,8 @@ async fn launch_accounts_impl(
     }
     let mut results = Vec::new();
     let total = account_ids.len();
+    #[cfg(target_os = "windows")]
+    let mut memory_trim = crate::infrastructure::memory_trim::BatchMemoryTrim::new(total);
     // 同名窗口检查不修改共享状态，因此不应被宿主运行时租约阻断。直到确实有账号
     // 要启动时才取得租约，并一直持有到本批次结束。
     let mut host_runtime_lease: Option<HostRuntimeLease> = None;
@@ -1700,7 +1702,7 @@ async fn launch_accounts_impl(
                     mutex_killed: false,
                 });
             }
-            return Ok(results);
+            break;
         }
 
         let msg = format!("[{}/{}] 开始启动账号", i + 1, total);
@@ -1729,6 +1731,8 @@ async fn launch_accounts_impl(
                 preserved_default_mod_args,
                 graphics_override,
             },
+            #[cfg(target_os = "windows")]
+            &mut memory_trim,
         )
         .await;
         let killed = result.mutex_killed;
@@ -1744,6 +1748,10 @@ async fn launch_accounts_impl(
             ),
         );
         results.push(result);
+        #[cfg(target_os = "windows")]
+        if success {
+            memory_trim.trim_halfway(&state, cancellation_ticket).await;
+        }
 
         // 当前账号必须完成对应认证模式的就绪检测，并成功清除互斥句柄，
         // 才允许启动下一账号。
@@ -1770,7 +1778,7 @@ async fn launch_accounts_impl(
                     mutex_killed: false,
                 });
             }
-            return Ok(results);
+            break;
         }
 
         // 如果还有下一个账号，等 2 秒让系统稳定
@@ -1778,6 +1786,9 @@ async fn launch_accounts_impl(
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }
     }
+
+    #[cfg(target_os = "windows")]
+    memory_trim.trim(&state, cancellation_ticket).await;
 
     Ok(results)
 }
@@ -1794,6 +1805,9 @@ fn emit_cancelled(app: &tauri::AppHandle, account_id: &str) {
     );
 }
 
+/// Runs one account launch. `memory_trim` stays a separate `&mut` borrow that
+/// outlives this call, so the arguments are passed flat.
+#[allow(clippy::too_many_arguments)]
 async fn launch_single(
     app: &tauri::AppHandle,
     config: &GlobalConfig,
@@ -1802,6 +1816,8 @@ async fn launch_single(
     account_id: &str,
     meta: AccountMeta,
     options: LaunchExecutionOptions,
+    #[cfg(target_os = "windows")]
+    memory_trim: &mut crate::infrastructure::memory_trim::BatchMemoryTrim,
 ) -> LaunchResult {
     let LaunchExecutionOptions {
         persist_position_changes,
@@ -1838,6 +1854,8 @@ async fn launch_single(
                 context: &preflight_context,
                 graphics_override: graphics_override.as_ref(),
             },
+            #[cfg(target_os = "windows")]
+            memory_trim,
         )
         .await;
     }
@@ -2274,6 +2292,14 @@ async fn launch_single(
         .await;
     }
 
+    #[cfg(target_os = "windows")]
+    let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
+        config,
+        &context.installation.game_executable,
+        account_id,
+        d2r_pid,
+    );
+
     // ── Step 7: 互斥句柄清除 (后台任务，与 Step 8 并发) ──
     let mutex_killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mutex_found_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2505,6 +2531,9 @@ async fn launch_single(
 
     mutex_task.abort();
 
+    #[cfg(target_os = "windows")]
+    memory_trim.confirm(pending_memory_trim);
+
     emit("done", "ok", "启动完成");
     LaunchResult {
         account_id: account_id.to_string(),
@@ -2520,6 +2549,8 @@ async fn launch_single_token(
     config: &GlobalConfig,
     state: &SharedState,
     request: TokenLaunchRequest<'_>,
+    #[cfg(target_os = "windows")]
+    memory_trim: &mut crate::infrastructure::memory_trim::BatchMemoryTrim,
 ) -> LaunchResult {
     let TokenLaunchRequest {
         cancellation_ticket,
@@ -2880,6 +2911,14 @@ async fn launch_single_token(
         }
     };
 
+    #[cfg(target_os = "windows")]
+    let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
+        config,
+        &context.installation.game_executable,
+        account_id,
+        d2r_pid,
+    );
+
     // ── 杀 Mutex ──
     let mutex_state = std::sync::Arc::new(MutexRemovalState::default());
     let mutex_task = {
@@ -3070,6 +3109,9 @@ async fn launch_single_token(
         }
     })
     .await;
+
+    #[cfg(target_os = "windows")]
+    memory_trim.confirm(pending_memory_trim);
 
     emit("done", "ok", "启动完成");
     LaunchResult {
