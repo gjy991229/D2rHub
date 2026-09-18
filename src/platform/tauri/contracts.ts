@@ -61,6 +61,7 @@ export const TAURI_COMMANDS = [
   "load_stats_overlay_geometry",
   "mark_settings_customized",
   "move_game_window",
+  "focus_game_window",
   "open_account_dir",
   "open_logs_dir",
   "open_mods_directory",

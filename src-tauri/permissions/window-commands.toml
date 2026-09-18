@@ -19,7 +19,7 @@ commands.allow = [
   "list_accounts", "get_account", "create_account", "update_account_meta", "update_account_region",
   "delete_account", "rename_account", "mark_settings_customized", "set_settings_customized",
   "set_account_window_position", "update_account_positions", "initialize_bnet_account", "reinitialize_account",
-  "reorder_accounts", "get_account_dir_path", "open_account_dir", "move_game_window",
+  "reorder_accounts", "get_account_dir_path", "open_account_dir", "move_game_window", "focus_game_window",
   "export_accounts", "import_accounts",
   "launch_accounts", "launch_battle_net_only", "cancel_launch",
   "get_account_settings", "save_account_settings", "get_game_settings", "snapshot_system_settings_to_account",

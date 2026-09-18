@@ -60,6 +60,7 @@ const APP_COMMANDS: &[&str] = &[
     "get_account_dir_path",
     "open_account_dir",
     "move_game_window",
+    "focus_game_window",
     "export_accounts",
     "import_accounts",
     "launch_accounts",

@@ -4117,6 +4117,30 @@ pub(crate) fn close_browser_login_windows() {
 pub(crate) fn close_browser_login_windows() {}
 
 #[tauri::command]
+pub fn focus_game_window(
+    state: tauri::State<'_, SharedState>,
+    account_id: String,
+) -> Result<(), AppError> {
+    let cfg = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+    let meta = AccountManager::load_meta(&cfg.accounts_dir, &account_id)?;
+    let title = if meta.display_name.is_empty() {
+        &meta.id
+    } else {
+        &meta.display_name
+    };
+    let windows = crate::infrastructure::system::SystemGameWindowPort;
+    state
+        .multi_instance()
+        .facade()
+        .focus_account_window(&windows, &account_id, title)
+        .ok_or_else(|| AppError::Unknown("未找到该账号的游戏窗口，请刷新状态后重试".to_string()))?;
+    Ok(())
+}
+
+#[tauri::command]
 pub fn move_game_window(
     state: tauri::State<'_, SharedState>,
     account_id: String,
