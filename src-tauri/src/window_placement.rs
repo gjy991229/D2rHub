@@ -1241,7 +1241,7 @@ mod tests {
     }
 
     #[test]
-    fn window_size_change_preserves_the_relative_anchor() {
+    fn bongo_cat_size_change_keeps_the_saved_physical_coordinates() {
         let display = monitor("DISPLAY1", 0, 0, 1920, 1080, 1.0);
         let placement = saved(
             PhysicalRect {
@@ -1262,10 +1262,12 @@ mod tests {
             },
             0,
         );
-        assert!(resolved.recovered);
-        assert!(is_recoverable(resolved.rect, display.work_area));
-        assert!(resolved.rect.x + resolved.rect.width as i32 <= 1920);
-        assert!(resolved.rect.y + resolved.rect.height as i32 <= 1040);
+        // The pet only follows the current size. Its saved coordinates survive
+        // even when the larger window leaves the work area, because it has an
+        // explicit reset action instead of automatic recovery.
+        assert!(!resolved.recovered);
+        assert_eq!((resolved.rect.x, resolved.rect.y), (1580, 700));
+        assert_eq!((resolved.rect.width, resolved.rect.height), (420, 360));
     }
 
     #[test]
