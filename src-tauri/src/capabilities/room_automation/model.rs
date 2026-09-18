@@ -6,16 +6,16 @@ pub const CURRENT_STRATEGY_VERSION: u8 = 25;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 50;
-const DEFAULT_CHARACTER_DELAY_MS: u64 = 50;
+const DEFAULT_CHARACTER_DELAY_MS: u64 = 10;
 const DEFAULT_KEY_HOLD_MS: u64 = 50;
-const DEFAULT_CHORD_HOLD_MS: u64 = 100;
+const DEFAULT_CHORD_HOLD_MS: u64 = 50;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
-const MIN_CHARACTER_DELAY_MS: u64 = 10;
+const MIN_CHARACTER_DELAY_MS: u64 = 0;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
 const MIN_AUTO_FOLLOWERS_DELAY_SECS: f64 = 0.5;
 const MAX_AUTO_FOLLOWERS_DELAY_SECS: f64 = 60.0;
-const MIN_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 1;
-const MAX_FOLLOWER_JOIN_INTERVAL_SECS: u64 = 60;
+const MIN_FOLLOWER_JOIN_INTERVAL_SECS: f64 = 0.5;
+const MAX_FOLLOWER_JOIN_INTERVAL_SECS: f64 = 60.0;
 const MIN_SEQUENCE_WIDTH: u8 = 1;
 const MAX_SEQUENCE_WIDTH: u8 = 6;
 
@@ -35,6 +35,14 @@ fn default_chord_hold_ms() -> u64 {
     DEFAULT_CHORD_HOLD_MS
 }
 
+fn default_form_settle_ms() -> u64 {
+    300
+}
+
+fn default_ctrl_settle_ms() -> u64 {
+    50
+}
+
 /// Keyboard pacing for one room-form workflow profile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
@@ -45,9 +53,14 @@ pub struct FlowStrategy {
     pub character_delay_ms: u64,
     #[serde(default = "default_key_hold_ms")]
     pub key_hold_ms: u64,
-    /// Keep Ctrl active while background windows consume the posted A/V.
+    /// Delay from the last A/V-up to Ctrl-up (legacy persisted field name).
     #[serde(default = "default_chord_hold_ms")]
     pub chord_hold_ms: u64,
+    #[serde(default = "default_form_settle_ms")]
+    pub form_settle_ms: u64,
+    /// Lead time from all Ctrl-down events to the first A/V-down.
+    #[serde(default = "default_ctrl_settle_ms")]
+    pub physical_ctrl_settle_ms: u64,
 }
 
 impl FlowStrategy {
@@ -57,6 +70,8 @@ impl FlowStrategy {
             character_delay_ms: DEFAULT_CHARACTER_DELAY_MS,
             key_hold_ms: DEFAULT_KEY_HOLD_MS,
             chord_hold_ms: DEFAULT_CHORD_HOLD_MS,
+            form_settle_ms: default_form_settle_ms(),
+            physical_ctrl_settle_ms: default_ctrl_settle_ms(),
         }
     }
 
@@ -66,14 +81,18 @@ impl FlowStrategy {
             .character_delay_ms
             .clamp(MIN_CHARACTER_DELAY_MS, MAX_CHARACTER_DELAY_MS);
         self.key_hold_ms = self.key_hold_ms.clamp(10, 250);
-        self.chord_hold_ms = self.chord_hold_ms.clamp(10, 1_000);
+        self.chord_hold_ms = self.chord_hold_ms.min(1_000);
+        self.form_settle_ms = self.form_settle_ms.min(MAX_STEP_DELAY_MS);
+        self.physical_ctrl_settle_ms = self.physical_ctrl_settle_ms.min(MAX_STEP_DELAY_MS);
     }
 
     fn validate(&self, profile: &'static str) -> Result<(), RoomAutomationConfigError> {
         if self.step_delay_ms > MAX_STEP_DELAY_MS
             || !(MIN_CHARACTER_DELAY_MS..=MAX_CHARACTER_DELAY_MS).contains(&self.character_delay_ms)
             || !(10..=250).contains(&self.key_hold_ms)
-            || !(10..=1_000).contains(&self.chord_hold_ms)
+            || self.chord_hold_ms > 1_000
+            || self.form_settle_ms > MAX_STEP_DELAY_MS
+            || self.physical_ctrl_settle_ms > MAX_STEP_DELAY_MS
         {
             return Err(RoomAutomationConfigError::InvalidFlowStrategy {
                 profile,
@@ -81,6 +100,8 @@ impl FlowStrategy {
                 character_delay_ms: self.character_delay_ms,
                 key_hold_ms: self.key_hold_ms,
                 chord_hold_ms: self.chord_hold_ms,
+                form_settle_ms: self.form_settle_ms,
+                physical_ctrl_settle_ms: self.physical_ctrl_settle_ms,
             });
         }
         Ok(())
@@ -97,8 +118,8 @@ fn default_auto_followers_delay_secs() -> f64 {
     5.0
 }
 
-fn default_follower_join_interval_secs() -> u64 {
-    3
+fn default_follower_join_interval_secs() -> f64 {
+    3.0
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -164,7 +185,7 @@ pub struct RoomAutomationConfig {
     #[serde(default)]
     pub follower_join_mode: FollowerJoinMode,
     #[serde(default = "default_follower_join_interval_secs")]
-    pub follower_join_interval_secs: u64,
+    pub follower_join_interval_secs: f64,
     #[serde(default = "default_primary_shortcut")]
     pub shortcut: String,
     #[serde(default = "default_followers_shortcut")]
@@ -266,7 +287,7 @@ pub enum RoomAutomationConfigError {
     #[error("background text strategy {0:?} is unsupported")]
     InvalidBackgroundTextStrategy(String),
     #[error(
-        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, release {character_delay_ms} ms, hold {key_hold_ms} ms, chord {chord_hold_ms} ms)"
+        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, release {character_delay_ms} ms, hold {key_hold_ms} ms, Ctrl release delay {chord_hold_ms} ms, form {form_settle_ms} ms, Ctrl lead {physical_ctrl_settle_ms} ms)"
     )]
     InvalidFlowStrategy {
         profile: &'static str,
@@ -274,6 +295,8 @@ pub enum RoomAutomationConfigError {
         character_delay_ms: u64,
         key_hold_ms: u64,
         chord_hold_ms: u64,
+        form_settle_ms: u64,
+        physical_ctrl_settle_ms: u64,
     },
     #[error("primary account is not configured")]
     MissingPrimaryAccount,
@@ -697,7 +720,7 @@ mod tests {
 
         assert!(!config.enabled);
         assert!(!config.auto_followers_enabled);
-        assert_eq!(config.auto_followers_delay_secs, 5);
+        assert_eq!(config.auto_followers_delay_secs, 5.0);
         assert_eq!(config.shortcut, "Ctrl+Alt+R");
         assert_eq!(config.strategy_version, 0);
     }
@@ -739,7 +762,7 @@ mod tests {
 
         assert_eq!(config.strategy_version, CURRENT_STRATEGY_VERSION);
         assert!(config.auto_followers_enabled);
-        assert_eq!(config.auto_followers_delay_secs, 2);
+        assert_eq!(config.auto_followers_delay_secs, 1.0);
         assert_eq!(config.flow.step_delay_ms, 200);
         assert_eq!(config.flow.character_delay_ms, 50);
         let saved = serde_json::to_value(config).unwrap();

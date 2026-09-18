@@ -28,7 +28,6 @@ const VK_END: u16 = 0x23;
 const VK_LEFT: u16 = 0x25;
 const VK_RIGHT: u16 = 0x27;
 const MAPVK_VK_TO_VSC: u32 = 0;
-const ROOM_FORM_SETTLE_MS: u64 = 100;
 const GATEWAY_DIRECTION_REPETITIONS: usize = 2;
 const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
 
@@ -289,7 +288,9 @@ fn group_chord(
     flow: &FlowStrategy,
     cancel: &dyn CancellationCheck,
 ) -> Result<(), String> {
-    // Always release posted keys even on cancellation or partial delivery.
+    // Record presses before delivery so partial failures still release them.
+    let mut background_ctrl = Vec::new();
+    let mut background_keys = Vec::new();
     let result = (|| {
         cancel.check()?;
         input.check_target()?;
@@ -298,57 +299,61 @@ fn group_chord(
         }
         if ctrl {
             input.key_down(0x11)?;
-            wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
             for &hwnd in background {
+                cancel.check()?;
                 input.check_target()?;
+                background_ctrl.push(hwnd);
                 deliver_key_message(hwnd, 0x11, true, strategy)?;
             }
+            // One lead interval after all Ctrl-down events, before any A/V.
+            wait(cancel, Duration::from_millis(flow.physical_ctrl_settle_ms))?;
         }
-        if key == 0x56 && ctrl {
-            input.check_clipboard()?;
-        }
-        input.key_down(key)?;
-        wait(
-            cancel,
-            Duration::from_millis(flow.key_hold_ms.clamp(10, 250)),
-        )?;
-        // Keep physical Ctrl active for background consumers, but release A/V
-        // before their waits so long delays cannot paste repeatedly up front.
-        input.release_last()?;
         for &hwnd in background {
+            cancel.check()?;
             input.check_target()?;
             if key == 0x56 && ctrl {
                 input.check_clipboard()?;
             }
             validate_target(hwnd)?;
+            background_keys.push(hwnd);
             deliver_key_message(hwnd, key, true, strategy)?;
         }
-        // Keep Ctrl active for background consumers independently of the delay
-        // between operations. The primary A/V is already up to avoid repeats.
-        let hold_ms = if ctrl {
-            flow.chord_hold_ms
-        } else {
-            flow.key_hold_ms
-        };
-        wait(cancel, Duration::from_millis(hold_ms))?;
+        if key == 0x56 && ctrl {
+            input.check_clipboard()?;
+        }
+        // Send the physical key last so background message delays cannot extend
+        // the primary's key hold and cause repeated pastes.
+        input.key_down(key)?;
+        wait(cancel, Duration::from_millis(flow.key_hold_ms))?;
+        input.release_last()?;
+        while let Some(&hwnd) = background_keys.last() {
+            deliver_key_message(hwnd, key, false, strategy)?;
+            background_keys.pop();
+        }
+        // The tail interval starts only after every A/V-up was delivered.
+        // Physical and posted Ctrl remain down throughout this interval.
+        if ctrl {
+            wait(cancel, Duration::from_millis(flow.chord_hold_ms))?;
+        }
         input.check_target()
     })();
+    // Cancellation/errors skip the remaining waits, but always release keys.
     let mut cleanup = Ok(());
-    for &hwnd in background {
+    for &hwnd in &background_keys {
         if let Err(error) = deliver_key_message(hwnd, key, false, strategy) {
             cleanup = Err(error);
         }
-        if ctrl {
-            if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
-                cleanup = Err(error);
-            }
+    }
+    for &hwnd in &background_ctrl {
+        if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
+            cleanup = Err(error);
         }
     }
     let release = input.release_all();
     result?;
     cleanup?;
     release?;
-    wait(cancel, Duration::from_millis(flow.step_delay_ms))
+    wait(cancel, Duration::from_millis(flow.character_delay_ms))
 }
 
 pub(crate) fn submit_prepared_follower(
@@ -515,7 +520,7 @@ fn open_room_form(
         false,
         strategy,
         flow.key_hold_ms,
-        ROOM_FORM_SETTLE_MS,
+        flow.form_settle_ms,
         cancel,
     )
 }

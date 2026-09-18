@@ -1378,7 +1378,7 @@ impl RoomAutomationManager {
         cancel: Arc<CancellationSignal>,
     ) {
         let host = Arc::clone(&self.host);
-        let interval = Duration::from_secs(config.follower_join_interval_secs);
+        let interval = Duration::from_secs_f64(config.follower_join_interval_secs);
         let dispatch_started_at = Instant::now();
 
         std::thread::scope(|scope| {
@@ -2064,7 +2064,7 @@ mod tests {
             primary_account_id: "main".to_string(),
             follower_account_ids: vec!["follower".to_string()],
             auto_followers_enabled: auto_followers,
-            auto_followers_delay_secs: 2,
+            auto_followers_delay_secs: 2.0,
             shortcut: "Ctrl+Alt+F21".to_string(),
             join_shortcut: "Ctrl+Alt+F22".to_string(),
             ..RoomAutomationConfig::default()

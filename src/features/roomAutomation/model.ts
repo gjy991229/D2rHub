@@ -1,4 +1,4 @@
-import type { RoomAutomationConfig } from "./types";
+import type { RoomAutomationConfig, RoomFlowStrategy } from "./types";
 
 export interface RoomAutomationValidation {
   valid: boolean;
@@ -114,6 +114,19 @@ export function canonicalizeRoomAutomationShortcut(value: string): string | null
   ].filter(Boolean).join("+");
 }
 
+/**
+ * Timing every room-form flow starts from. Keep in sync with the `FlowStrategy`
+ * defaults in `src-tauri/src/capabilities/room_automation/model.rs`.
+ */
+export const DEFAULT_ROOM_FLOW_TIMING: Required<RoomFlowStrategy> = {
+  step_delay_ms: 50,
+  character_delay_ms: 10,
+  key_hold_ms: 50,
+  chord_hold_ms: 50,
+  form_settle_ms: 300,
+  physical_ctrl_settle_ms: 50,
+};
+
 export function roomAutomationConfigsEqual(
   left: RoomAutomationConfig | null,
   right: RoomAutomationConfig | null,
@@ -123,7 +136,11 @@ export function roomAutomationConfigsEqual(
     ...config,
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
-    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50, chord_hold_ms: config.flow.chord_hold_ms ?? 100 },
+    flow: { ...config.flow,
+      key_hold_ms: config.flow.key_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.key_hold_ms,
+      chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
+      form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
+      physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms },
   });
   return JSON.stringify(withDefaults(left)) === JSON.stringify(withDefaults(right));
 }
@@ -197,19 +214,28 @@ export function validateRoomAutomationConfig(
   const flows = [config.flow];
   const followerJoinInterval = config.follower_join_interval_secs ?? 3;
   const invalidFollowerJoinInterval = (config.follower_join_mode ?? "simultaneous") === "interval"
-    && (!Number.isSafeInteger(followerJoinInterval)
-      || followerJoinInterval < 1 || followerJoinInterval > 60);
+    && (!Number.isFinite(followerJoinInterval)
+      || followerJoinInterval < 0.5 || followerJoinInterval > 60);
   if (!Number.isFinite(config.auto_followers_delay_secs)
     || config.auto_followers_delay_secs < 0.5 || config.auto_followers_delay_secs > 60
     || invalidFollowerJoinInterval
-    || flows.some((flow) => !Number.isSafeInteger(flow.step_delay_ms)
-      || !Number.isSafeInteger(flow.character_delay_ms)
-      || !Number.isSafeInteger(flow.key_hold_ms ?? 50)
-      || !Number.isSafeInteger(flow.chord_hold_ms ?? 100)
-      || (flow.chord_hold_ms ?? 100) < 10 || (flow.chord_hold_ms ?? 100) > 1000
-      || (flow.key_hold_ms ?? 50) < 10 || (flow.key_hold_ms ?? 50) > 250
-      || flow.step_delay_ms < 0 || flow.step_delay_ms > 2000
-      || flow.character_delay_ms < 10 || flow.character_delay_ms > 250)) {
+    || flows.some((flow) => {
+      const timing = { ...flow,
+        key_hold_ms: flow.key_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.key_hold_ms,
+        chord_hold_ms: flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
+        form_settle_ms: flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
+        physical_ctrl_settle_ms: flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms };
+      return !Number.isSafeInteger(timing.step_delay_ms)
+        || !Number.isSafeInteger(timing.character_delay_ms)
+        || !Number.isSafeInteger(timing.key_hold_ms)
+        || !Number.isSafeInteger(timing.chord_hold_ms)
+        || timing.chord_hold_ms < 0 || timing.chord_hold_ms > 1000
+        || !Number.isSafeInteger(timing.form_settle_ms) || timing.form_settle_ms < 0 || timing.form_settle_ms > 2000
+        || !Number.isSafeInteger(timing.physical_ctrl_settle_ms) || timing.physical_ctrl_settle_ms < 0 || timing.physical_ctrl_settle_ms > 2000
+        || timing.key_hold_ms < 10 || timing.key_hold_ms > 250
+        || timing.step_delay_ms < 0 || timing.step_delay_ms > 2000
+        || timing.character_delay_ms < 0 || timing.character_delay_ms > 250;
+    })) {
     fieldErrors.timing = copy.invalidTiming;
   }
 

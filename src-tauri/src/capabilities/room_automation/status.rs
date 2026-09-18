@@ -613,14 +613,14 @@ mod tests {
         let task = state.begin_primary(&config, None).unwrap();
 
         state
-            .primary_ready(task.id, WaitingMode::Automatic { delay_secs: 5 })
+            .primary_ready(task.id, WaitingMode::Automatic { delay_secs: 5.0 })
             .unwrap();
 
         assert_eq!(state.status().phase, WorkflowPhase::Waiting);
         assert!(state.status().running);
         assert_eq!(
             state.status().waiting_mode,
-            Some(WaitingMode::Automatic { delay_secs: 5 })
+            Some(WaitingMode::Automatic { delay_secs: 5.0 })
         );
     }
 
@@ -682,7 +682,7 @@ mod tests {
         let mut state = WorkflowTaskState::default();
         let first = state.begin_primary(&config, None).unwrap();
         state
-            .primary_ready(first.id, WaitingMode::Automatic { delay_secs: 5 })
+            .primary_ready(first.id, WaitingMode::Automatic { delay_secs: 5.0 })
             .unwrap();
 
         assert_eq!(

@@ -27,6 +27,7 @@ import {
 } from "../../roomAutomation/gateway";
 import {
   canonicalizeRoomAutomationShortcut,
+  DEFAULT_ROOM_FLOW_TIMING,
   generatedRoomName,
   roomAutomationConfigsEqual,
   validateRoomAutomationConfig,
@@ -64,7 +65,11 @@ function cloneConfig(config: RoomAutomationConfig): RoomAutomationConfig {
     follower_join_mode: config.follower_join_mode ?? "simultaneous",
     follower_join_interval_secs: config.follower_join_interval_secs ?? 3,
     follower_account_ids: [...config.follower_account_ids],
-    flow: { ...config.flow, key_hold_ms: config.flow.key_hold_ms ?? 50, chord_hold_ms: config.flow.chord_hold_ms ?? 100 },
+    flow: { ...config.flow,
+      key_hold_ms: config.flow.key_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.key_hold_ms,
+      chord_hold_ms: config.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms,
+      form_settle_ms: config.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms,
+      physical_ctrl_settle_ms: config.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms },
   };
 }
 
@@ -675,7 +680,8 @@ export function RoomAutomationPanel({
             <NumberField
               label={copy.followerJoinInterval}
               value={draft.follower_join_interval_secs ?? 3}
-              min={1}
+              min={0.5}
+              step={0.5}
               max={60}
               disabled={editorDisabled}
               invalid={!!validation?.fieldErrors.timing}
@@ -749,12 +755,21 @@ export function RoomAutomationPanel({
             <NumberField label={copy.stepDelay} value={draft.flow.step_delay_ms} min={0} max={2000}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(step_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, step_delay_ms } }))} />
-            <NumberField label={copy.keyHold} value={draft.flow.key_hold_ms ?? 50} min={10} max={250}
+            <NumberField label={copy.keyHold} value={draft.flow.key_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.key_hold_ms} min={10} max={250}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(key_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, key_hold_ms } }))} />
-            <NumberField label={copy.chordHold} value={draft.flow.chord_hold_ms ?? 100} min={10} max={1000}
+            <NumberField label={copy.chordHold} value={draft.flow.chord_hold_ms ?? DEFAULT_ROOM_FLOW_TIMING.chord_hold_ms} min={0} max={1000}
               invalid={!!validation?.fieldErrors.timing}
               onChange={(chord_hold_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, chord_hold_ms } }))} />
+            <NumberField label={copy.formSettle} value={draft.flow.form_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.form_settle_ms} min={0} max={2000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(form_settle_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, form_settle_ms } }))} />
+            <NumberField label={copy.physicalCtrlSettle} value={draft.flow.physical_ctrl_settle_ms ?? DEFAULT_ROOM_FLOW_TIMING.physical_ctrl_settle_ms} min={0} max={2000}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(physical_ctrl_settle_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, physical_ctrl_settle_ms } }))} />
+            <NumberField label={copy.characterDelay} value={draft.flow.character_delay_ms ?? DEFAULT_ROOM_FLOW_TIMING.character_delay_ms} min={0} max={250}
+              invalid={!!validation?.fieldErrors.timing}
+              onChange={(character_delay_ms) => updateDraft((current) => ({ ...current, flow: { ...current.flow, character_delay_ms } }))} />
             <ChoiceField label={copy.backgroundStrategy} value={draft.background_text_strategy}
               options={[{ value: "post_keys", label: copy.postKeys }, { value: "send_keys", label: copy.sendKeys }]}
               disabled={editorDisabled}
@@ -763,6 +778,11 @@ export function RoomAutomationPanel({
               }))} />
           </div>
           <p className="room-automation-consent-copy">{copy.inputTimingHelp}</p>
+          <div className="mt-3">
+            <Button size="sm" variant="ghost"
+              onClick={() => updateDraft((current) => ({ ...current, flow: { ...current.flow, ...DEFAULT_ROOM_FLOW_TIMING } }))}
+            >{copy.restoreTiming}</Button>
+          </div>
           {validation?.fieldErrors.timing && <p className="room-automation-field-error" role="alert">{validation.fieldErrors.timing}</p>}
         </fieldset>
       </details>

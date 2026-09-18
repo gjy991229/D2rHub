@@ -3,8 +3,12 @@ export interface RoomFlowStrategy {
   character_delay_ms: number;
   /** Legacy snapshots default to a 50 ms key hold. */
   key_hold_ms?: number;
-  /** Time to retain Ctrl while background windows consume A/V. */
+  /** Delay from A/V release to Ctrl release; defaults to 50 ms. */
   chord_hold_ms?: number;
+  /** Wait after opening a room form; defaults to 300 ms. */
+  form_settle_ms?: number;
+  /** Ctrl lead time before A/V down; defaults to 50 ms. */
+  physical_ctrl_settle_ms?: number;
 }
 
 export type FollowerJoinMode = "simultaneous" | "interval";

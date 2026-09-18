@@ -303,4 +303,32 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByRole("button", { name: /Apply settings/ })).toBeNull();
   });
 
+  it("restores the authored default input timing from the advanced section", async () => {
+    const { gateway, saveConfig } = makeGateway();
+    const user = userEvent.setup();
+    render(<RoomAutomationPanel accounts={accounts} language="en-US" gateway={gateway} />);
+
+    const stepDelay = await screen.findByLabelText("Step delay (ms)") as HTMLInputElement;
+    expect(stepDelay.value).toBe("80");
+
+    await user.click(screen.getByRole("button", { name: "Restore default timing" }));
+
+    expect((screen.getByLabelText("Step delay (ms)") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("Wait after chord release (ms)") as HTMLInputElement).value).toBe("10");
+    expect((screen.getByLabelText("Wait after form opens (ms)") as HTMLInputElement).value).toBe("300");
+    expect((screen.getByLabelText("Ctrl lead time before A/V down (ms)") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("Ctrl release delay after A/V up (ms)") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("Key hold duration (ms)") as HTMLInputElement).value).toBe("50");
+
+    const saved = () => saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
+    await waitFor(() => expect(saved()?.flow).toEqual({
+      step_delay_ms: 50,
+      character_delay_ms: 10,
+      key_hold_ms: 50,
+      chord_hold_ms: 50,
+      form_settle_ms: 300,
+      physical_ctrl_settle_ms: 50,
+    }));
+  });
+
 });
