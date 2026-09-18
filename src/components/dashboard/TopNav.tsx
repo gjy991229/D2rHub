@@ -10,9 +10,10 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Settings, Info, Minus, BookOpen, BarChart3, CalendarDays, CalendarRange, Check, Share2, Sun } from "lucide-react";
+import { Settings, Info, Minus, BookOpen, BarChart3, CalendarDays, CalendarRange, Check, Share2, Sun, Minimize2 } from "lucide-react";
 
 import type { BattleReportQuickRange } from "../../utils/battleReport";
+import { useGlobalConfig } from "../../store/globalConfig";
 
 const SHARE_MENU_WIDTH = 224;
 const SHARE_MENU_HEIGHT = 174;
@@ -32,6 +33,7 @@ const SHARE_RANGES: Array<{
 export function TopNav({
   onAbout, onExit, onOpenConfig, onHelp, onStats, statsModuleInstalled = false,
   onShareReport, sharingReport,
+  onMiniMode, miniModeDisabled = false,
 }: {
   onAbout: () => void;
   onExit: () => void;
@@ -41,7 +43,10 @@ export function TopNav({
   statsModuleInstalled?: boolean;
   onShareReport: (range: BattleReportQuickRange) => void;
   sharingReport: boolean;
+  onMiniMode?: () => void;
+  miniModeDisabled?: boolean;
 }) {
+  const miniLabel = useGlobalConfig(state => state.config?.app_language === "en-US" ? "Mini mode" : "迷你模式");
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const [shareMenuPosition, setShareMenuPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
   const [lastRange, setLastRange] = useState<BattleReportQuickRange>("today");
@@ -163,6 +168,10 @@ export function TopNav({
         <div className="flex-1" data-tauri-drag-region />
 
         <div className="flex items-center gap-1.5">
+          {onMiniMode && <button onClick={onMiniMode} disabled={miniModeDisabled}
+            className="icon-btn w-7 h-7 disabled:opacity-40" title={miniLabel} aria-label={miniLabel}>
+            <Minimize2 size={14} strokeWidth={1.8} />
+          </button>}
           <button
             onClick={onOpenConfig}
             className="icon-btn w-7 h-7"

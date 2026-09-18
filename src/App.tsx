@@ -5,7 +5,8 @@ import { AlertTriangle } from "lucide-react";
 import { useGlobalConfig, initConfigSync } from "./store/globalConfig";
 import { useAccounts } from "./store/accounts";
 import { syncThemeFromConfig } from "./store/theme";
-import { useWindowGeometrySave } from "./hooks/useWindowGeometrySave";
+import { useMiniMode } from "./hooks/useMiniMode";
+import { MiniDashboard } from "./components/dashboard/MiniDashboard";
 import { SetupWizard } from "./pages/SetupWizard";
 import { FeatureProfileChooser } from "./pages/FeatureProfileChooser";
 import { AboutModal } from "./pages/AboutModal";
@@ -113,6 +114,8 @@ function App() {
   const [audioModUpdate, setAudioModUpdate] = useState<AudioModSetupState | null>(null);
   const [sharingReport, setSharingReport] = useState(false);
   const [launchGroupPanelOpen, setLaunchGroupPanelOpen] = useState(false);
+  const [logRevealRevision, setLogRevealRevision] = useState(0);
+  const [launchIssueDetails, setLaunchIssueDetails] = useState<string | null>(null);
   const [exitingForDisclosure, setExitingForDisclosure] = useState(false);
 
   // Kill confirm modal states
@@ -179,7 +182,11 @@ function App() {
   const [autoUpdateUrl, setAutoUpdateUrl] = useState("");
   const [autoUpdateVersion, setAutoUpdateVersion] = useState("");
 
-  useWindowGeometrySave("save_window_geometry", 100, 100);
+  const miniMode = useMiniMode(
+    view.type === "main" && !startupServicesBlocked,
+    showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
+      || showAbout || showAutoUpdateConfirm || !!launchGroupDraft || startupServicesBlocked || view.type !== "main",
+  );
   usePreventDragRegionDoubleClick();
 
   // 等待 DOM 渲染完成后显示窗口（避免白屏闪烁）
@@ -243,7 +250,7 @@ function App() {
 
   // Execute App Side Effects
   useBongoCatWindow(startupServicesBlocked || !optionalFeaturesAvailable, config);
-  useLaunchEvents(config, optionalFeaturesAvailable);
+  useLaunchEvents(config, optionalFeaturesAvailable, miniMode.mini);
   useAutoUpdate(startupServicesBlocked, config, (version, url) => {
     setAutoUpdateVersion(version);
     setAutoUpdateUrl(url);
@@ -427,7 +434,47 @@ function App() {
   return (
     <>
       <AppShell>
+        {miniMode.mini ? <MiniDashboard
+          busy={miniMode.busy}
+          pinned={miniMode.pinned}
+          onPin={miniMode.togglePin}
+          onExpand={() => miniMode.switchMode(false)}
+          onConfigure={account => {
+            if (account && requiresTokenMigration(account.auth_mode, account.region, config)) {
+              setTokenUpdateAccount(account);
+            } else if (account && !account.initialized) {
+              if (account.auth_mode === "token") setTokenUpdateAccount(account);
+              else setReinitializeAccount(account);
+            } else {
+              setSettingsTab(account ? "accounts" : null);
+              setSettingsAccountId(account?.id ?? null);
+              setShowSettings(true);
+              setSettingsRequestRevision(revision => revision + 1);
+            }
+          }}
+          onManageGroups={() => setLaunchGroupPanelOpen(true)}
+          onTasks={() => {
+            const state = useLaunch.getState();
+            const details = state.error || state.results.filter(result => !result.success)
+              .map(result => `${accounts.find(account => account.id === result.account_id)?.display_name || result.account_id}：${result.error || "启动失败"}`)
+              .join("\n\n");
+            if (details) setLaunchIssueDetails(details);
+            setLogRevealRevision(revision => revision + 1);
+          }}
+          onRoomAutomation={() => { setSettingsTab("room-automation"); setSettingsAccountId(null); setShowSettings(true); }}
+          onAddAccount={() => setShowInit(true)}
+          onKillAll={() => setShowKillConfirm(true)}
+        /> : null}
+        <div className="flex-1 flex-col min-w-0 min-h-0" style={{ display: miniMode.mini ? "none" : "flex" }}>
         <Dashboard
+          onMiniMode={() => {
+            if (launchGroupDraft) {
+              showToast("warning", "请先保存或取消当前启动方案编辑");
+              return;
+            }
+            void miniMode.switchMode(true);
+          }}
+          miniModeDisabled={miniMode.busy || showSettings || showInit || showAbout || sharingReport}
           onAbout={() => setShowAbout(true)}
           onExit={async () => {
             await invokeCommand("hide_main_window");
@@ -581,9 +628,11 @@ function App() {
               accounts={accounts}
               logs={logs}
               onClear={clearLogs}
+              revealRevision={logRevealRevision}
             />
           )}
         </Dashboard>
+        </div>
       </AppShell>
 
       <AccountInitDialog
@@ -594,6 +643,12 @@ function App() {
         reinitializeAccount={reinitializeAccount}
       />
       <AboutModal open={showAbout} onClose={() => setShowAbout(false)} />
+      <Modal open={launchIssueDetails !== null} onClose={() => setLaunchIssueDetails(null)}
+        title={config?.app_language === "en-US" ? "Launch details" : "启动详情"}>
+        <div className="max-h-[55vh] overflow-auto whitespace-pre-wrap break-words py-2 text-sm text-text-secondary">
+          {launchIssueDetails}
+        </div>
+      </Modal>
       <Modal
         open={showKillConfirm}
         onClose={() => setShowKillConfirm(false)}

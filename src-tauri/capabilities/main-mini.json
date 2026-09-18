@@ -1,0 +1,8 @@
+{
+  "identifier": "main-mini",
+  "description": "Main window mini-mode always-on-top pinning",
+  "windows": ["main"],
+  "permissions": [
+    "core:window:allow-set-always-on-top"
+  ]
+}

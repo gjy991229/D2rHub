@@ -36,7 +36,7 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
 }
 
-export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAvailable = true) {
+export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAvailable = true, retainLaunchFailures = false) {
   const { launching, results, reset: resetLaunch } = useLaunch();
   const { accounts } = useAccounts();
   const prevLaunchingRef = useRef(launching);
@@ -82,10 +82,11 @@ export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAva
 
   useEffect(() => {
     if (!launching && results.length > 0) {
+      if (retainLaunchFailures && results.some(result => !result.success)) return;
       const t = setTimeout(() => resetLaunch(), 5000);
       return () => clearTimeout(t);
     }
-  }, [launching, results.length, resetLaunch]);
+  }, [launching, results, resetLaunch, retainLaunchFailures]);
 
   useEffect(() => {
     const wasLaunching = prevLaunchingRef.current;

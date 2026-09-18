@@ -7,10 +7,15 @@ interface Props {
   accounts: AccountMeta[];
   logs: LaunchLog[];
   onClear: () => void;
+  revealRevision?: number;
 }
 
-export function LaunchProgressView({ accounts, logs, onClear }: Props) {
+export function LaunchProgressView({ accounts, logs, onClear, revealRevision = 0 }: Props) {
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (revealRevision > 0) setExpanded(true);
+  }, [revealRevision]);
 
   // 当有新日志输出时自动展开，且 3 秒内无新日志则自动收起
   useEffect(() => {

@@ -5,7 +5,7 @@ import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
 import { useTheme } from "../../store/theme";
 import { showToast } from "../ui/Toast";
-import { flushWindowGeometrySaves } from "../../hooks/useWindowGeometrySave";
+import { flushWindowGeometrySaves } from "../../hooks/windowGeometryFlush";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
