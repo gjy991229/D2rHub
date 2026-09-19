@@ -34,9 +34,16 @@ function refreshRunning(): Promise<Set<string>> {
   if (runningRefresh) return runningRefresh;
   runningRefresh = invokeCommand<string[]>("refresh_account_running_state").then(values => {
     const ids = new Set(values);
-    useAccounts.setState(state => ({ accounts: state.accounts.map(account =>
-      account.is_running === ids.has(account.id) ? account : { ...account, is_running: ids.has(account.id) }),
-    }));
+    useAccounts.setState(state => {
+      let changed = false;
+      const accounts = state.accounts.map(account => {
+        const running = ids.has(account.id);
+        if (account.is_running === running) return account;
+        changed = true;
+        return { ...account, is_running: running };
+      });
+      return changed ? { accounts } : state;
+    });
     return ids;
   }).finally(() => { runningRefresh = null; });
   return runningRefresh;

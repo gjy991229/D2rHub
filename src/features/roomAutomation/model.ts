@@ -120,9 +120,9 @@ export function canonicalizeRoomAutomationShortcut(value: string): string | null
  */
 export const DEFAULT_ROOM_FLOW_TIMING: Required<RoomFlowStrategy> = {
   step_delay_ms: 50,
-  character_delay_ms: 10,
+  character_delay_ms: 50,
   key_hold_ms: 50,
-  chord_hold_ms: 50,
+  chord_hold_ms: 100,
   form_settle_ms: 300,
   physical_ctrl_settle_ms: 50,
 };
@@ -199,9 +199,12 @@ export function validateRoomAutomationConfig(
     fieldErrors.shortcuts = copy.shortcutConflict;
   }
 
-  const asciiRoomText = /^[A-Za-z0-9_-]*$/;
-  if (!config.name_prefix || !asciiRoomText.test(config.name_prefix)) fieldErrors.prefix = copy.invalidRoomText;
-  if (!asciiRoomText.test(config.password)) fieldErrors.password = copy.invalidRoomText;
+  const hasRoomControlCharacters = (value: string) => Array.from(value).some((character) => {
+    const code = character.codePointAt(0)!;
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+  });
+  if (!config.name_prefix || hasRoomControlCharacters(config.name_prefix)) fieldErrors.prefix = copy.invalidRoomText;
+  if (hasRoomControlCharacters(config.password)) fieldErrors.password = copy.invalidRoomText;
   if (generatedRoomName(config).length > 15 || config.password.length > 15) {
     if (generatedRoomName(config).length > 15) fieldErrors.prefix = copy.roomTooLong;
     if (config.password.length > 15) fieldErrors.password = copy.roomTooLong;

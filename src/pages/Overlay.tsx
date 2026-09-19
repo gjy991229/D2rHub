@@ -91,6 +91,13 @@ interface TerrorZoneSnapshot {
   next: TerrorZoneForecast | null;
 }
 
+function advanceTerrorZones(snapshot: TerrorZoneSnapshot, now = Date.now() / 1000): TerrorZoneSnapshot {
+  const zones = [snapshot.next, snapshot.current];
+  const current = zones.find((zone) => zone && zone.start_time <= now && zone.end_time > now) ?? null;
+  const next = snapshot.next && snapshot.next.start_time > now ? snapshot.next : null;
+  return current === snapshot.current && next === snapshot.next ? snapshot : { current, next };
+}
+
 type TerrorZoneStatus = "loading" | "ready" | "empty" | "error";
 type OverlayDisplayMode = "mini" | "expanded";
 type DropScope = "current" | "previous" | "overview";
@@ -1281,6 +1288,20 @@ export function Overlay() {
   const [terrorZones, setTerrorZones] = useState<TerrorZoneSnapshot>({ current: null, next: null });
   const [terrorZoneStatus, setTerrorZoneStatus] = useState<TerrorZoneStatus>("loading");
 
+  // Advance cached forecasts at the boundary independently of network requests.
+  useEffect(() => {
+    if (isStatsOverlay) return;
+    const boundary = Math.min(
+      terrorZones.next?.start_time ?? Infinity,
+      terrorZones.current?.end_time ?? Infinity,
+    );
+    if (!Number.isFinite(boundary)) return;
+    const timer = window.setTimeout(() => {
+      setTerrorZones((previous) => advanceTerrorZones(previous));
+    }, Math.max(0, boundary * 1000 - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [terrorZones, isStatsOverlay]);
+
   // Sync theme on startup / changes
   useEffect(() => {
     let cancelled = false;
@@ -1375,13 +1396,17 @@ export function Overlay() {
       try {
         const snapshot = await invokeCommand<TerrorZoneSnapshot>("get_terror_zone_snapshot");
         if (cancelled) return;
-        setTerrorZones(snapshot);
+        setTerrorZones((previous) => {
+          const cached = advanceTerrorZones(previous);
+          const fresh = advanceTerrorZones(snapshot);
+          return { current: fresh.current ?? cached.current, next: fresh.next ?? cached.next };
+        });
         setTerrorZoneStatus(snapshot.current || snapshot.next ? "ready" : "empty");
-        queueNextLoad(snapshot, 60 * 1000);
+        queueNextLoad(advanceTerrorZones(snapshot), 60 * 1000);
       } catch (err) {
         reportOverlayIssue("WARN", "get_terror_zone_snapshot failed", err);
         if (!cancelled) {
-          setTerrorZones({ current: null, next: null });
+          setTerrorZones((previous) => advanceTerrorZones(previous));
           setTerrorZoneStatus("error");
           queueNextLoad(null);
         }
@@ -1928,11 +1953,13 @@ export function Overlay() {
   const miniNextTerrorZoneLabel = useEnglish ? "Next TZ" : "下一个 TZ";
   const miniNextTerrorZoneName = nextTerrorZone
     ? translateTerrorZoneAreaName(nextTerrorZone.location_name, useEnglish)
-    : terrorZoneStatus === "error"
-      ? (useEnglish ? "Unavailable" : "暂不可用")
-      : terrorZoneStatus === "empty"
-        ? (useEnglish ? "Awaiting forecast" : "等待预报")
-        : (useEnglish ? "Syncing" : "同步中");
+    : currentTerrorZone
+      ? (useEnglish ? "Terror is spreading" : "恐惧正在蔓延")
+      : terrorZoneStatus === "error"
+        ? (useEnglish ? "Unavailable" : "暂不可用")
+        : terrorZoneStatus === "empty"
+          ? (useEnglish ? "Awaiting forecast" : "等待预报")
+          : (useEnglish ? "Syncing" : "同步中");
   const overlayRegionLabel = isStatsOverlay
     ? displayMode === "mini"
       ? (useEnglish
@@ -2420,6 +2447,14 @@ export function Overlay() {
                     zone={nextTerrorZone}
                     useEnglish={useEnglish}
                   />
+                )}
+                {currentTerrorZone && !nextTerrorZone && (
+                  <>
+                    <div className="tz-forecast-divider" aria-hidden="true" />
+                    <div className="px-3 py-2 text-xs text-text-muted">
+                      {nextTerrorZoneLabel} · {useEnglish ? "Terror is spreading" : "恐惧正在蔓延"}
+                    </div>
+                  </>
                 )}
               </div>
             ) : (

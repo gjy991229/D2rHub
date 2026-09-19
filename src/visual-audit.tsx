@@ -309,7 +309,7 @@ let roomAutomationSnapshot: RoomAutomationConfigSnapshot = {
     password: "pw",
     next_sequence: 27,
     sequence_width: 3,
-    background_text_strategy: "post_keys",
+    background_text_strategy: "send_keys",
     strategy_version: 17,
     flow: { step_delay_ms: 100, character_delay_ms: 25 },
   },

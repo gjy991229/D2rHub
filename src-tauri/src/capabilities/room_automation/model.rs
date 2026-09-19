@@ -6,9 +6,9 @@ pub const CURRENT_STRATEGY_VERSION: u8 = 25;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 50;
-const DEFAULT_CHARACTER_DELAY_MS: u64 = 10;
+const DEFAULT_CHARACTER_DELAY_MS: u64 = 50;
 const DEFAULT_KEY_HOLD_MS: u64 = 50;
-const DEFAULT_CHORD_HOLD_MS: u64 = 50;
+const DEFAULT_CHORD_HOLD_MS: u64 = 100;
 const MAX_STEP_DELAY_MS: u64 = 2_000;
 const MIN_CHARACTER_DELAY_MS: u64 = 0;
 const MAX_CHARACTER_DELAY_MS: u64 = 250;
@@ -53,12 +53,12 @@ pub struct FlowStrategy {
     pub character_delay_ms: u64,
     #[serde(default = "default_key_hold_ms")]
     pub key_hold_ms: u64,
-    /// Delay from the last A/V-up to Ctrl-up (legacy persisted field name).
+    /// Delay from A to V while the same Ctrl remains held.
     #[serde(default = "default_chord_hold_ms")]
     pub chord_hold_ms: u64,
     #[serde(default = "default_form_settle_ms")]
     pub form_settle_ms: u64,
-    /// Lead time from all Ctrl-down events to the first A/V-down.
+    /// Delay from Ctrl-down to A-down.
     #[serde(default = "default_ctrl_settle_ms")]
     pub physical_ctrl_settle_ms: u64,
 }
@@ -151,7 +151,7 @@ fn default_sequence_width() -> u8 {
 }
 
 fn default_background_text_strategy() -> String {
-    "post_keys".to_string()
+    "send_keys".to_string()
 }
 
 fn default_standard_flow() -> FlowStrategy {
@@ -287,7 +287,7 @@ pub enum RoomAutomationConfigError {
     #[error("background text strategy {0:?} is unsupported")]
     InvalidBackgroundTextStrategy(String),
     #[error(
-        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, release {character_delay_ms} ms, hold {key_hold_ms} ms, Ctrl release delay {chord_hold_ms} ms, form {form_settle_ms} ms, Ctrl lead {physical_ctrl_settle_ms} ms)"
+        "flow profile {profile} has invalid timing (step {step_delay_ms} ms, V-to-Ctrl release {character_delay_ms} ms, key hold {key_hold_ms} ms, A-to-V {chord_hold_ms} ms, form {form_settle_ms} ms, Ctrl-to-A {physical_ctrl_settle_ms} ms)"
     )]
     InvalidFlowStrategy {
         profile: &'static str,
@@ -491,7 +491,7 @@ impl RoomAutomationConfig {
     }
 
     pub fn generate_room_name(&self, sequence: u32) -> Result<String, RoomAutomationConfigError> {
-        validate_ascii_room_value(&self.name_prefix, false).map_err(|error| match error {
+        validate_room_value(&self.name_prefix, false).map_err(|error| match error {
             RoomValueError::Empty => RoomAutomationConfigError::EmptyNamePrefix,
             RoomValueError::InvalidCharacter => RoomAutomationConfigError::InvalidNamePrefix,
             RoomValueError::TooLong => RoomAutomationConfigError::RoomNameTooLong {
@@ -508,7 +508,7 @@ impl RoomAutomationConfig {
             sequence,
             width = usize::from(self.sequence_width)
         );
-        if room_name.len() > MAX_ROOM_TEXT_LENGTH {
+        if room_name.encode_utf16().count() > MAX_ROOM_TEXT_LENGTH {
             return Err(RoomAutomationConfigError::RoomNameTooLong { room_name });
         }
         Ok(room_name)
@@ -530,7 +530,7 @@ impl RoomAutomationConfig {
 
     fn validate_room_text(&self) -> Result<(), RoomAutomationConfigError> {
         self.generate_room_name(self.next_sequence)?;
-        validate_ascii_room_value(&self.password, true).map_err(|error| match error {
+        validate_room_value(&self.password, true).map_err(|error| match error {
             RoomValueError::Empty => unreachable!("empty passwords are allowed"),
             RoomValueError::InvalidCharacter => RoomAutomationConfigError::InvalidPassword,
             RoomValueError::TooLong => RoomAutomationConfigError::PasswordTooLong,
@@ -550,16 +550,17 @@ enum RoomValueError {
     TooLong,
 }
 
-fn validate_ascii_room_value(value: &str, allow_empty: bool) -> Result<(), RoomValueError> {
+fn validate_room_value(value: &str, allow_empty: bool) -> Result<(), RoomValueError> {
     if value.is_empty() {
         return allow_empty.then_some(()).ok_or(RoomValueError::Empty);
     }
-    if value.len() > MAX_ROOM_TEXT_LENGTH {
+    // Match the frontend and Windows clipboard's UTF-16 representation.
+    if value.encode_utf16().count() > MAX_ROOM_TEXT_LENGTH {
         return Err(RoomValueError::TooLong);
     }
-    if !value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    if value
+        .chars()
+        .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
     {
         return Err(RoomValueError::InvalidCharacter);
     }

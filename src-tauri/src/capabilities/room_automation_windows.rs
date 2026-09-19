@@ -270,13 +270,107 @@ fn paste_group(
     if !value.is_empty() {
         input.clipboard_text(value)?;
     }
-    group_chord(input, background, 0x41, true, strategy, flow, cancel)?;
     if value.is_empty() {
+        group_chord(input, background, 0x41, true, strategy, flow, cancel)?;
         group_chord(input, background, VK_BACK, false, strategy, flow, cancel)
     } else {
+        paste_select_and_paste(input, background, strategy, flow, cancel)?;
         input.check_clipboard()?;
-        group_chord(input, background, 0x56, true, strategy, flow, cancel)
+        Ok(())
     }
+}
+
+/// Send Ctrl+A and Ctrl+V as one timed step. Ctrl stays down for the whole
+/// sequence; the three flow delays are Ctrl->A, A->V, and V->Ctrl-up.
+fn paste_select_and_paste(
+    input: &mut DesktopInput,
+    background: &[isize],
+    strategy: BackgroundTextStrategy,
+    flow: &FlowStrategy,
+    cancel: &dyn CancellationCheck,
+) -> Result<(), String> {
+    let mut background_ctrl = Vec::new();
+    let mut background_a_down = Vec::new();
+    let mut background_v_down = Vec::new();
+    let result = (|| {
+        cancel.check()?;
+        input.check_target()?;
+        if !modifiers_released() {
+            return Err("检测到修饰键或鼠标按键按下，已停止自动输入".to_string());
+        }
+        input.key_down(0x11)?;
+        for &hwnd in background {
+            cancel.check()?;
+            input.check_target()?;
+            input.check_clipboard()?;
+            background_ctrl.push(hwnd);
+            deliver_key_message(hwnd, 0x11, true, strategy)?;
+        }
+
+        wait(cancel, Duration::from_millis(flow.physical_ctrl_settle_ms))?;
+
+        for &hwnd in background {
+            cancel.check()?;
+            input.check_target()?;
+            background_a_down.push(hwnd);
+            deliver_key_message(hwnd, 0x41, true, strategy)?;
+            if let Err(error) = deliver_key_message(hwnd, 0x41, false, strategy) {
+                let _ = deliver_key_message(hwnd, 0x41, false, strategy);
+                return Err(error);
+            }
+            background_a_down.pop();
+        }
+        input.key_down(0x41)?;
+        input.release_last()?;
+
+        wait(cancel, Duration::from_millis(flow.chord_hold_ms))?;
+        input.check_clipboard()?;
+
+        for &hwnd in background {
+            cancel.check()?;
+            input.check_target()?;
+            input.check_clipboard()?;
+            background_v_down.push(hwnd);
+            deliver_key_message(hwnd, 0x56, true, strategy)?;
+            if let Err(error) = deliver_key_message(hwnd, 0x56, false, strategy) {
+                let _ = deliver_key_message(hwnd, 0x56, false, strategy);
+                return Err(error);
+            }
+            background_v_down.pop();
+        }
+        input.key_down(0x56)?;
+        input.release_last()?;
+
+        wait(cancel, Duration::from_millis(flow.character_delay_ms))?;
+        Ok(())
+    })();
+    let mut cleanup_error = None;
+    for &hwnd in background_v_down.iter().rev() {
+        if let Err(error) = deliver_key_message(hwnd, 0x56, false, strategy) {
+            cleanup_error = Some(error);
+        }
+    }
+    for &hwnd in background_a_down.iter().rev() {
+        if let Err(error) = deliver_key_message(hwnd, 0x41, false, strategy) {
+            cleanup_error = Some(error);
+        }
+    }
+    for &hwnd in background_ctrl.iter().rev() {
+        if let Err(error) = deliver_key_message(hwnd, 0x11, false, strategy) {
+            cleanup_error = Some(error);
+        }
+    }
+    let release = input.release_all();
+    if let Err(error) = result {
+        let _ = release;
+        return Err(error);
+    }
+    if let Some(error) = cleanup_error {
+        let _ = release;
+        return Err(error);
+    }
+    release?;
+    Ok(())
 }
 
 fn group_chord(
@@ -627,14 +721,14 @@ fn validate_target(hwnd: isize) -> Result<(), String> {
 }
 
 fn validate_text(value: &str) -> Result<(), String> {
-    if value.len() > 15 {
+    if value.encode_utf16().count() > 15 {
         return Err("输入内容超过 15 个字符".to_string());
     }
-    if !value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    if value
+        .chars()
+        .any(|character| character.is_control() || matches!(character, '\u{2028}' | '\u{2029}'))
     {
-        return Err("后台房间表单输入只支持英文字母、数字、短横线和下划线".to_string());
+        return Err("房间表单输入不支持换行或控制字符".to_string());
     }
     Ok(())
 }
