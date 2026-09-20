@@ -833,20 +833,14 @@ mod tests {
     }
 
     #[test]
-    fn room_name_and_password_reject_unicode_before_runtime_delivery() {
+    fn room_name_and_password_accept_unicode_before_runtime_delivery() {
         let mut config = enabled_config();
         config.name_prefix = "巴尔-".to_string();
-        assert_eq!(
-            config.validate_for_activation(std::iter::empty()),
-            Err(RoomAutomationConfigError::InvalidNamePrefix)
-        );
+        assert!(config.validate_for_activation(std::iter::empty()).is_ok());
 
         config.name_prefix = "run-".to_string();
         config.password = "密码".to_string();
-        assert_eq!(
-            config.validate_for_activation(std::iter::empty()),
-            Err(RoomAutomationConfigError::InvalidPassword)
-        );
+        assert!(config.validate_for_activation(std::iter::empty()).is_ok());
     }
 
     #[test]
