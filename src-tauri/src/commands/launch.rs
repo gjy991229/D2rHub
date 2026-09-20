@@ -2300,6 +2300,10 @@ async fn launch_single(
         d2r_pid,
     );
 
+    // 从识别到新 PID 的时刻开始计算按键窗口：延迟 2 秒，最多持续 9 秒。
+    // ETW/TCP 任一命中时会立即结束按键发送。
+    let d2r_started_at = std::time::Instant::now();
+
     // ── Step 7: 互斥句柄清除 (后台任务，与 Step 8 并发) ──
     let mutex_killed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let mutex_found_once = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2342,11 +2346,10 @@ async fn launch_single(
     let mut readiness_source = None;
     let mut network_ready_samples = 0u8;
 
-    // 先等 2 秒让游戏窗口初始化
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
     let mut keys_logged = false;
-    let mut next_key_send = std::time::Instant::now();
+    let key_start = d2r_started_at + std::time::Duration::from_secs(2);
+    let key_deadline = key_start + std::time::Duration::from_secs(9);
+    let mut next_key_send = key_start;
     let mut next_tcp_sample = std::time::Instant::now();
     while readiness_source.is_none() && start.elapsed() < timeout {
         if is_cancelled(state, cancellation_ticket) {
@@ -2398,7 +2401,7 @@ async fn launch_single(
             break;
         }
 
-        if now >= next_key_send {
+        if now >= next_key_send && now < key_deadline {
             let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
             if !keys_logged {
                 emit("connect", "running", "正在发送按键跳过动画...");
@@ -2911,6 +2914,10 @@ async fn launch_single_token(
         }
     };
 
+    // 从识别到新 PID 的时刻开始计算按键窗口：延迟 2 秒，最多持续 9 秒。
+    // ETW/TCP 任一命中时会立即结束按键发送。
+    let d2r_started_at = std::time::Instant::now();
+
     #[cfg(target_os = "windows")]
     let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
         config,
@@ -2980,7 +2987,9 @@ async fn launch_single_token(
     let mut readiness_source = None;
     let mut network_ready_samples = 0u8;
     let mut next_tcp_sample = start;
-    let mut next_key_send = start;
+    let key_start = d2r_started_at + std::time::Duration::from_secs(2);
+    let key_deadline = key_start + std::time::Duration::from_secs(9);
+    let mut next_key_send = key_start;
     let mut etw_diagnostics = None;
     let mut launch_ready;
     let mut mutex_closed_logged = false;
@@ -3038,7 +3047,7 @@ async fn launch_single_token(
                         "TCP 1119 检测到目标 D2R 联网连接已稳定，停止 ETW 与跳过按键检测",
                     ),
                 }
-            } else if now >= next_key_send {
+            } else if now >= next_key_send && now < key_deadline {
                 let _ = crate::infrastructure::system::send_keys_to_window(d2r_pid);
                 next_key_send = now + std::time::Duration::from_millis(500);
             }

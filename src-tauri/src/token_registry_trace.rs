@@ -4,9 +4,9 @@ use std::thread::JoinHandle;
 use std::time::Instant;
 
 use ferrisetw::parser::Parser;
-use ferrisetw::provider::Provider;
+use ferrisetw::provider::{EventFilter, Provider};
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{RealTimeTraceTrait, TraceTrait, UserTrace};
+use ferrisetw::trace::{RealTimeTraceTrait, TraceProperties, TraceTrait, UserTrace};
 use ferrisetw::EventRecord;
 
 const KERNEL_REGISTRY_PROVIDER_GUID: &str = "70eb4f03-c1de-4f73-a051-33d13d5413bd";
@@ -79,6 +79,10 @@ impl WebTokenReadMonitor {
         let callback_state = Arc::clone(&state);
 
         let provider = Provider::by_guid(KERNEL_REGISTRY_PROVIDER_GUID)
+            // WEB_TOKEN 使用 QueryValue（事件 ID 7）。先在 ETW 会话层过滤事件类型，
+            // 避免把无关的注册表 Create/Set/Delete 等事件全部送入消费者。
+            // ValueName 仍需在回调中判断，ETW 不支持按事件字段做此过滤。
+            .add_filter(EventFilter::ByEventIds(vec![QUERY_VALUE_EVENT_ID]))
             .add_callback(
                 move |record: &EventRecord, schema_locator: &SchemaLocator| {
                     if let Ok(mut state) = callback_state.lock() {
@@ -147,13 +151,24 @@ impl WebTokenReadMonitor {
             )
             .build();
 
-        let (trace, handle) = UserTrace::new().enable(provider).start().map_err(|error| {
-            let message = format!(
-                "启动 WEB_TOKEN ETW 监听失败（StartTrace/EnableProvider/OpenTrace）: {error:?}"
-            );
-            crate::logger::log_msg("ERROR", "TokenETW", &message);
-            message
-        })?;
+        let trace_properties = TraceProperties {
+            // 默认 32KB 对高频注册表事件偏小；提高缓冲数量，降低突发丢失。
+            buffer_size: 64,
+            min_buffer: 64,
+            max_buffer: 256,
+            ..TraceProperties::default()
+        };
+        let (trace, handle) = UserTrace::new()
+            .set_trace_properties(trace_properties)
+            .enable(provider)
+            .start()
+            .map_err(|error| {
+                let message = format!(
+                    "启动 WEB_TOKEN ETW 监听失败（StartTrace/EnableProvider/OpenTrace）: {error:?}"
+                );
+                crate::logger::log_msg("ERROR", "TokenETW", &message);
+                message
+            })?;
         let session_name = trace.trace_name().to_string_lossy().into_owned();
         let worker_state = Arc::clone(&state);
         let worker_session = session_name.clone();
