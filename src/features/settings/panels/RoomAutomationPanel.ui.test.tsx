@@ -314,18 +314,18 @@ describe("RoomAutomationPanel", () => {
     await user.click(screen.getByRole("button", { name: "Restore default timing" }));
 
     expect((screen.getByLabelText("Step delay (ms)") as HTMLInputElement).value).toBe("50");
-    expect((screen.getByLabelText("Wait after chord release (ms)") as HTMLInputElement).value).toBe("10");
+    expect((screen.getByLabelText("A to V interval (ms)") as HTMLInputElement).value).toBe("100");
     expect((screen.getByLabelText("Wait after form opens (ms)") as HTMLInputElement).value).toBe("300");
-    expect((screen.getByLabelText("Ctrl lead time before A/V down (ms)") as HTMLInputElement).value).toBe("50");
-    expect((screen.getByLabelText("Ctrl release delay after A/V up (ms)") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("Ctrl-to-A delay (ms)") as HTMLInputElement).value).toBe("50");
+    expect((screen.getByLabelText("V to Ctrl release delay (ms)") as HTMLInputElement).value).toBe("50");
     expect((screen.getByLabelText("Key hold duration (ms)") as HTMLInputElement).value).toBe("50");
 
     const saved = () => saveConfig.mock.calls[saveConfig.mock.calls.length - 1]?.[1];
     await waitFor(() => expect(saved()?.flow).toEqual({
       step_delay_ms: 50,
-      character_delay_ms: 10,
+      character_delay_ms: 50,
       key_hold_ms: 50,
-      chord_hold_ms: 50,
+      chord_hold_ms: 100,
       form_settle_ms: 300,
       physical_ctrl_settle_ms: 50,
     }));
