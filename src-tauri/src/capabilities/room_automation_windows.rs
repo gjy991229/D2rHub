@@ -213,6 +213,9 @@ pub(crate) fn prepare_background_room(
             cancel,
         )?;
     }
+    // Let the game observe Ctrl-up before the externally visible submit.
+    // This gap is outside the Ctrl+A/V step and prevents Ctrl+Enter coupling.
+    wait(cancel, Duration::from_millis(flow.step_delay_ms))?;
     input.check_target()?;
     for &(pid, hwnd, created) in &targets {
         if process_creation_time(pid) != Some(created)
