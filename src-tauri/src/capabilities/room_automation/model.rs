@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use thiserror::Error;
 
-pub const CURRENT_STRATEGY_VERSION: u8 = 25;
+pub const CURRENT_STRATEGY_VERSION: u8 = 26;
 pub const MAX_ROOM_TEXT_LENGTH: usize = 15;
 
 const DEFAULT_STANDARD_STEP_DELAY_MS: u64 = 50;
@@ -170,6 +170,8 @@ fn default_standard_flow() -> FlowStrategy {
 /// V24 applies that response flow to every participant, preserving its settings.
 /// V25 removes the mouse adapter; obsolete input_method/foreground_timing fields
 /// are ignored on import and removed when the normalized configuration is saved.
+/// V26 resets legacy room automation timing and keyboard delivery to the current
+/// defaults once, so upgrades do not retain incompatible older behavior.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RoomAutomationConfig {
     #[serde(default)]
@@ -321,7 +323,7 @@ pub enum RoomAutomationConfigError {
 }
 
 impl RoomAutomationConfig {
-    /// Normalizes legacy strategies from the unversioned shape through v24.
+    /// Normalizes legacy strategies from the unversioned shape through v25.
     /// Unknown obsolete mouse/profile fields are ignored by Serde and disappear
     /// on the next serialization.
     pub fn normalize_legacy(&mut self) -> Result<NormalizationReport, RoomAutomationConfigError> {
@@ -363,6 +365,10 @@ impl RoomAutomationConfig {
         };
 
         self.flow.normalize();
+        if source_strategy_version < 26 {
+            self.background_text_strategy = default_background_text_strategy();
+            self.flow = default_standard_flow();
+        }
         let primary_account_id = self.primary_account_id.clone();
         let primary_identity = account_identity(&primary_account_id);
         let mut followers_seen = BTreeSet::new();
@@ -727,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn every_legacy_strategy_from_v0_through_v17_normalizes() {
+    fn every_legacy_strategy_from_v0_through_v26_normalizes() {
         for version in 0..=CURRENT_STRATEGY_VERSION {
             let mut config = RoomAutomationConfig {
                 strategy_version: version,
@@ -742,7 +748,37 @@ mod tests {
     }
 
     #[test]
-    fn v15_drops_obsolete_mouse_fields_and_preserves_keyboard_timing() {
+    fn v25_configuration_resets_legacy_delivery_and_timing_once() {
+        let mut legacy = RoomAutomationConfig {
+            strategy_version: 25,
+            background_text_strategy: "post_keys".to_string(),
+            flow: FlowStrategy {
+                step_delay_ms: 800,
+                character_delay_ms: 10,
+                key_hold_ms: 100,
+                chord_hold_ms: 50,
+                form_settle_ms: 600,
+                physical_ctrl_settle_ms: 120,
+            },
+            ..RoomAutomationConfig::default()
+        };
+
+        legacy.normalize_legacy().unwrap();
+
+        assert_eq!(legacy.strategy_version, CURRENT_STRATEGY_VERSION);
+        assert_eq!(legacy.background_text_strategy, "send_keys");
+        assert_eq!(legacy.flow, FlowStrategy::standard());
+
+        let mut current = legacy.clone();
+        current.background_text_strategy = "post_keys".to_string();
+        current.flow.step_delay_ms = 800;
+        current.normalize_legacy().unwrap();
+        assert_eq!(current.background_text_strategy, "post_keys");
+        assert_eq!(current.flow.step_delay_ms, 800);
+    }
+
+    #[test]
+    fn v15_drops_obsolete_mouse_fields_and_resets_keyboard_timing() {
         let value = json!({
             "enabled": true,
             "strategy_version": 15,
@@ -764,7 +800,7 @@ mod tests {
         assert_eq!(config.strategy_version, CURRENT_STRATEGY_VERSION);
         assert!(config.auto_followers_enabled);
         assert_eq!(config.auto_followers_delay_secs, 1.0);
-        assert_eq!(config.flow.step_delay_ms, 200);
+        assert_eq!(config.flow, FlowStrategy::standard());
         assert_eq!(config.flow.character_delay_ms, 50);
         let saved = serde_json::to_value(config).unwrap();
         for obsolete in [
