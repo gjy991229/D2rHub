@@ -283,7 +283,10 @@ mod tests {
             }]),
         )
         .unwrap();
-        assert!(plan.apply_for("acount1", account()).is_err());
+        // Shared Mod catalog availability is checked by the launch adapter
+        // against the effective installation; applying a plan only normalizes
+        // the transient arguments.
+        assert!(plan.apply_for("acount1", account()).is_ok());
 
         let mut partial = overrides();
         partial.fps = None;

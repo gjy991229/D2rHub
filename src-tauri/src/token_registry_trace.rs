@@ -6,12 +6,18 @@ use std::time::Instant;
 use ferrisetw::parser::Parser;
 use ferrisetw::provider::{EventFilter, Provider};
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::{RealTimeTraceTrait, TraceProperties, TraceTrait, UserTrace};
+use ferrisetw::trace::{
+    stop_trace_by_name, RealTimeTraceTrait, TraceProperties, TraceTrait, UserTrace,
+};
 use ferrisetw::EventRecord;
 
 const KERNEL_REGISTRY_PROVIDER_GUID: &str = "70eb4f03-c1de-4f73-a051-33d13d5413bd";
 const QUERY_VALUE_EVENT_ID: u16 = 7;
 pub(crate) const WEB_TOKEN_VALUE_NAME: &str = "WEB_TOKEN";
+// A stable, private name lets the next launch clean up a session left behind by
+// an abnormal process exit. D2RHub serializes launches through HostRuntimeLease,
+// so there is never more than one live monitor owned by this application.
+const WEB_TOKEN_TRACE_SESSION_NAME: &str = "D2RHub-WebToken";
 
 #[derive(Default)]
 struct ObservationState {
@@ -72,6 +78,18 @@ pub(crate) struct WebTokenReadMonitor {
 impl WebTokenReadMonitor {
     pub(crate) fn start() -> Result<Self, String> {
         let started = Instant::now();
+        // ferrisetw normally generates a random session name. That is safe for
+        // normal shutdown, but an interrupted process can leave the session in
+        // Windows ETW. Stop only our own stable session; never touch system
+        // kernel logger sessions or sessions owned by other tools.
+        match stop_trace_by_name(WEB_TOKEN_TRACE_SESSION_NAME) {
+            Ok(()) => crate::logger::log_msg(
+                "WARN",
+                "TokenETW",
+                "发现上一次遗留的 D2RHub ETW 会话，已自动清理",
+            ),
+            Err(_) => {}
+        }
         let state = Arc::new(Mutex::new(ObservationState {
             processor: "待启动".to_string(),
             ..Default::default()
@@ -153,12 +171,13 @@ impl WebTokenReadMonitor {
 
         let trace_properties = TraceProperties {
             // 默认 32KB 对高频注册表事件偏小；提高缓冲数量，降低突发丢失。
-            buffer_size: 64,
-            min_buffer: 64,
-            max_buffer: 256,
+            buffer_size: 128,
+            min_buffer: 128,
+            max_buffer: 512,
             ..TraceProperties::default()
         };
         let (trace, handle) = UserTrace::new()
+            .named(WEB_TOKEN_TRACE_SESSION_NAME.to_string())
             .set_trace_properties(trace_properties)
             .enable(provider)
             .start()
@@ -345,6 +364,10 @@ impl Drop for WebTokenReadMonitor {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        // The normal stop path above owns the handle. This fallback is for a
+        // partially initialized or interrupted trace where ferrisetw could not
+        // issue the control call itself. The name is private to D2RHub.
+        let _ = stop_trace_by_name(WEB_TOKEN_TRACE_SESSION_NAME);
     }
 }
 

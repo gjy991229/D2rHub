@@ -233,8 +233,8 @@ fn graphics_settings_path(
 }
 
 fn preflight_scheme_mod(meta: &AccountMeta, context: &LaunchContext) -> Result<(), AppError> {
-    let name = crate::audio_mod::active_mod_name(&meta.mod_args)
-        .map_err(AppError::ConfigReadError)?;
+    let name =
+        crate::audio_mod::active_mod_name(&meta.mod_args).map_err(AppError::ConfigReadError)?;
     let Some(name) = name else {
         return Ok(());
     };
@@ -247,7 +247,9 @@ fn preflight_scheme_mod(meta: &AccountMeta, context: &LaunchContext) -> Result<(
     }
     Err(AppError::ConfigReadError(format!(
         "账号 {} 的方案 Mod“{}”在游戏目录 {} 中不存在，请检查该账号的客户端目录和 Mod 文件夹",
-        meta.id, name, mods_directory.display()
+        meta.id,
+        name,
+        mods_directory.display()
     )))
 }
 
@@ -1779,8 +1781,8 @@ async fn launch_accounts_impl(
             memory_trim.trim_halfway(&state, cancellation_ticket).await;
         }
 
-        // 当前账号必须完成对应认证模式的就绪检测，并成功清除互斥句柄，
-        // 才允许启动下一账号。
+        // 正常结果必须完成就绪检测并清除互斥句柄；ETW/TCP 均不可用时，
+        // launch_single 只有在互斥句柄已确认的安全降级路径才会返回 success。
         if !launch_queue_can_continue(success, killed) && i + 1 < total {
             let (queue_message, remaining_error) = if success {
                 ("互斥句柄未清除，后续账号暂停启动", "互斥句柄未清除，已暂停")
@@ -2455,19 +2457,18 @@ async fn launch_single(
         },
     );
 
-    if readiness_source.is_none() {
-        let error = format!(
-            "等待游戏登录就绪超时：ETW 未命中（{etw_diagnostics}）；TCP 1119 未连续两次检测到目标 D2R 联网连接"
+    let readiness_degraded = readiness_source.is_none();
+    if readiness_degraded {
+        // ETW/TCP are readiness signals, not proof that the game process is
+        // usable. Keep the account eligible for a degraded batch continuation,
+        // but require the independent mutex cleanup below before proceeding.
+        emit(
+            "connect",
+            "warning",
+            &format!(
+                "登录信号未确认，将自动清理 ETW 并检查互斥状态后再决定是否继续：{etw_diagnostics}"
+            ),
         );
-        emit("connect", "error", &error);
-        mutex_task.abort();
-        return LaunchResult {
-            account_id: account_id.to_string(),
-            success: false,
-            d2r_pid: None,
-            error: Some(error),
-            mutex_killed: false,
-        };
     }
 
     // ── 任一登录信号已就绪，等待互斥句柄确认（最多 3s）──
@@ -2503,6 +2504,21 @@ async fn launch_single(
             "warning",
             "未检测到互斥句柄，下一个游戏可能无法成功启动",
         );
+    }
+
+    if readiness_degraded && !mutex_killed.load(std::sync::atomic::Ordering::SeqCst) {
+        let error = format!(
+            "登录信号等待超时且互斥句柄未确认：ETW 未命中（{etw_diagnostics}）；TCP 1119 未连续两次检测到目标 D2R 联网连接"
+        );
+        emit("connect", "error", &error);
+        mutex_task.abort();
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: None,
+            error: Some(error),
+            mutex_killed: false,
+        };
     }
 
     // ── Step 9: 优雅关闭战网 → 等待退出 → 回写最新状态 ──
@@ -2563,12 +2579,21 @@ async fn launch_single(
     #[cfg(target_os = "windows")]
     memory_trim.confirm(pending_memory_trim);
 
-    emit("done", "ok", "启动完成");
+    let result_message = if readiness_degraded {
+        "启动完成（登录信号未确认，已通过互斥状态安全降级）"
+    } else {
+        "启动完成"
+    };
+    emit(
+        "done",
+        if readiness_degraded { "warning" } else { "ok" },
+        result_message,
+    );
     LaunchResult {
         account_id: account_id.to_string(),
         success: true,
         d2r_pid: Some(d2r_pid),
-        error: None,
+        error: readiness_degraded.then(|| result_message.to_string()),
         mutex_killed: mutex_killed.load(std::sync::atomic::Ordering::SeqCst),
     }
 }
@@ -3105,6 +3130,20 @@ async fn launch_single_token(
         "登录信号等待超时，保留 ETW 诊断",
     );
 
+    // A missing ETW/TCP signal is recoverable for this account only when the
+    // independent mutex monitor has already confirmed that the instance can
+    // coexist with the next launch. This keeps the batch moving without
+    // treating an unverified login as a normal success.
+    let readiness_degraded = readiness_source.is_none() && mutex_state.is_closed();
+    if readiness_degraded {
+        launch_ready = true;
+        emit(
+            "connect",
+            "warning",
+            "登录信号未确认，但互斥句柄已清除；已自动清理 ETW 并以降级状态继续",
+        );
+    }
+
     if !launch_ready {
         let error = format!(
             "等待游戏登录就绪与互斥句柄清除超时：ETW {}（{}）；TCP 1119 {}；互斥句柄 {}",
@@ -3148,12 +3187,21 @@ async fn launch_single_token(
     #[cfg(target_os = "windows")]
     memory_trim.confirm(pending_memory_trim);
 
-    emit("done", "ok", "启动完成");
+    let result_message = if readiness_degraded {
+        "启动完成（登录信号未确认，已通过互斥状态安全降级）"
+    } else {
+        "启动完成"
+    };
+    emit(
+        "done",
+        if readiness_degraded { "warning" } else { "ok" },
+        result_message,
+    );
     LaunchResult {
         account_id: account_id.to_string(),
         success: true,
         d2r_pid: Some(d2r_pid),
-        error: None,
+        error: readiness_degraded.then(|| result_message.to_string()),
         mutex_killed: mutex_state.is_closed(),
     }
 }
