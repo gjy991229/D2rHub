@@ -2,7 +2,7 @@ import { AlertTriangle, Pencil, Play, Plus, Star, X } from "lucide-react";
 import { useState } from "react";
 
 import { useI18n } from "../../i18n";
-import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
+import type { AccountMeta, GlobalConfig, LaunchGroup, ModCapsulePool } from "../../store/types";
 import {
   inspectLaunchGroup,
   launchGroupAccountIds,
@@ -15,6 +15,7 @@ interface LaunchGroupPanelProps {
   groups: LaunchGroup[];
   accounts: AccountMeta[];
   config: GlobalConfig | null;
+  modCapsulePool?: ModCapsulePool | null;
   favoriteGroupIds?: string[];
   disabled?: boolean;
   onClose: () => void;
@@ -28,6 +29,7 @@ export function LaunchGroupPanel({
   groups,
   accounts,
   config,
+  modCapsulePool,
   favoriteGroupIds = [],
   disabled = false,
   onClose,
@@ -66,7 +68,7 @@ export function LaunchGroupPanel({
             </div>
           </div>
         ) : orderedGroups.map((group) => {
-          const availability = inspectLaunchGroup(group, accounts, config);
+          const availability = inspectLaunchGroup(group, accounts, config, modCapsulePool);
           const memberCount = launchGroupAccountIds(group).length;
           const isFavorite = favorites.has(group.id);
           const status = memberCount === 0

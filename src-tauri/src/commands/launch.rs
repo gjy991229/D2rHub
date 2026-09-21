@@ -232,6 +232,25 @@ fn graphics_settings_path(
     }
 }
 
+fn preflight_scheme_mod(meta: &AccountMeta, context: &LaunchContext) -> Result<(), AppError> {
+    let name = crate::audio_mod::active_mod_name(&meta.mod_args)
+        .map_err(AppError::ConfigReadError)?;
+    let Some(name) = name else {
+        return Ok(());
+    };
+    let mods_directory = context.installation.game_directory.join("mods");
+    if crate::audio_mod::installed_mods(&mods_directory)
+        .iter()
+        .any(|installed| installed.name.eq_ignore_ascii_case(&name))
+    {
+        return Ok(());
+    }
+    Err(AppError::ConfigReadError(format!(
+        "账号 {} 的方案 Mod“{}”在游戏目录 {} 中不存在，请检查该账号的客户端目录和 Mod 文件夹",
+        meta.id, name, mods_directory.display()
+    )))
+}
+
 fn preflight_launch_graphics(
     config: &GlobalConfig,
     meta: &AccountMeta,
@@ -1558,6 +1577,7 @@ async fn launch_accounts_impl(
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
             let context =
                 LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
+            preflight_scheme_mod(&effective_meta, &context)?;
             preflight_launch_graphics(&config, &effective_meta, &context, graphics.as_ref())?;
         }
     }
@@ -1651,6 +1671,12 @@ async fn launch_accounts_impl(
                     continue;
                 }
             };
+        if plan.override_for(account_id).is_some() {
+            if let Err(error) = preflight_scheme_mod(&meta, &preflight_context) {
+                results.push(account_path_error(account_id, error));
+                continue;
+            }
+        }
         if let Err(error) = preflight_launch_graphics(
             &config,
             &meta,

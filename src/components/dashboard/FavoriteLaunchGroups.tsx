@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { createPortal } from "react-dom";
 import { AlertTriangle, Play, Plus } from "lucide-react";
 
-import type { AccountMeta, GlobalConfig, LaunchGroup } from "../../store/types";
+import type { AccountMeta, GlobalConfig, LaunchGroup, ModCapsulePool } from "../../store/types";
 import {
   favoriteLaunchGroups,
   inspectLaunchGroup,
@@ -16,6 +16,7 @@ interface FavoriteLaunchGroupsProps {
   favoriteGroupIds?: string[];
   accounts: AccountMeta[];
   config: GlobalConfig | null;
+  modCapsulePool?: ModCapsulePool | null;
   disabled?: boolean;
   onLaunch: (group: LaunchGroup) => void;
   onToggleFavorite: (group: LaunchGroup) => void;
@@ -26,6 +27,7 @@ export function FavoriteLaunchGroups({
   favoriteGroupIds,
   accounts,
   config,
+  modCapsulePool,
   disabled = false,
   onLaunch,
   onToggleFavorite,
@@ -122,7 +124,7 @@ export function FavoriteLaunchGroups({
   return (
     <div className="favorite-launch-groups" role="group" aria-label={t("launch.favorite.groupLabel")}>
       {favorites.map(group => {
-        const availability = inspectLaunchGroup(group, accounts, config);
+        const availability = inspectLaunchGroup(group, accounts, config, modCapsulePool);
         const unavailableReason = launchGroupIssueDetails(availability.issues)
           || t("launch.favorite.emptyReason");
         return (

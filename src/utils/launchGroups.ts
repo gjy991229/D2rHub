@@ -4,6 +4,7 @@ import type {
   LaunchAccountEntry,
   LaunchGroup,
   LaunchGroupMember,
+  ModCapsulePool,
 } from "../store/types";
 import { sortAccountsByCardOrder } from "./accountOrder";
 import { requiresTokenMigration } from "./regionPaths";
@@ -88,6 +89,39 @@ export function launchGroupAccountIds(group: LaunchGroup): string[] {
   return [...new Set(source.map(id => id.trim()).filter(Boolean))];
 }
 
+/**
+ * Return the Mod name from a D2R launch argument string.  Scheme members may
+ * carry a normalized/shared argument string while an account's historical
+ * mod_list can contain additional flags, so availability must be based on
+ * the selected Mod rather than the whole command line.
+ */
+function launchModName(argumentsText: string | null | undefined): string | null {
+  const value = argumentsText?.trim() ?? "";
+  if (!value) return null;
+  const match = value.match(/(?:^|\s)-mod(?:\s+|=)(?:"([^"]+)"|'([^']+)'|([^\s]+))/i);
+  return (match?.[1] ?? match?.[2] ?? match?.[3] ?? "").trim().toLocaleLowerCase() || null;
+}
+
+function accountHasLaunchMod(account: AccountMeta, memberArguments: string): boolean {
+  const requestedName = launchModName(memberArguments);
+  const candidates = [account.mod_args, ...(account.mod_list ?? [])];
+  if (requestedName) {
+    return candidates.some(candidate => launchModName(candidate) === requestedName);
+  }
+  return candidates.some(candidate => candidate.trim() === memberArguments.trim());
+}
+
+function poolHasLaunchMod(pool: ModCapsulePool | null | undefined, accountId: string, memberArguments: string): boolean {
+  const requestedName = launchModName(memberArguments);
+  const edition = pool?.accounts.find(account => account.account_id === accountId)?.edition;
+  if (!edition) return false;
+  return (pool?.capsules ?? []).some(capsule =>
+    capsule.edition === edition && capsule.ready && (requestedName
+      ? launchModName(capsule.launch_arguments) === requestedName
+      : capsule.launch_arguments.trim() === memberArguments.trim()),
+  );
+}
+
 function explicitMember(group: LaunchGroup, accountId: string): LaunchGroupMember | undefined {
   return group.members?.find(member => member.account_id === accountId);
 }
@@ -118,6 +152,7 @@ export function inspectLaunchGroup(
   group: LaunchGroup,
   accounts: readonly AccountMeta[],
   config?: GlobalConfig | null,
+  modCapsulePool?: ModCapsulePool | null,
 ): LaunchGroupAvailability {
   const accountsById = new Map(accounts.map(account => [account.id, account]));
   const issues: LaunchGroupMemberIssue[] = [];
@@ -148,7 +183,8 @@ export function inspectLaunchGroup(
 
     const member = explicitMember(group, accountId);
     if (member?.mod_args != null && member.mod_args.trim()) {
-      const exists = (account.mod_list || []).some(mod => mod.trim() === member.mod_args?.trim());
+      const exists = accountHasLaunchMod(account, member.mod_args)
+        || poolHasLaunchMod(modCapsulePool, accountId, member.mod_args);
       if (!exists) {
         issues.push({
           account_id: accountId,

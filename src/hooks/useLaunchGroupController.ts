@@ -4,7 +4,7 @@ import { showToast } from "../components/ui/Toast";
 import { useAccounts } from "../store/accounts";
 import { useGlobalConfig } from "../store/globalConfig";
 import { useLaunch } from "../store/launch";
-import type { AccountMeta, LaunchGroup, LaunchGroupMember } from "../store/types";
+import type { AccountMeta, LaunchGroup, LaunchGroupMember, ModCapsulePool } from "../store/types";
 import {
   inspectLaunchGroup,
   launchEntriesForGroup,
@@ -42,7 +42,7 @@ function createLaunchGroupMember(account: AccountMeta): LaunchGroupMember {
   };
 }
 
-export function useLaunchGroupController() {
+export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null) {
   const { config, saving, patch } = useGlobalConfig();
   const { accounts } = useAccounts();
   const { startSchemeLaunch } = useLaunch();
@@ -207,7 +207,7 @@ export function useLaunchGroupController() {
   };
 
   const launch = (group: LaunchGroup) => {
-    const availability = inspectLaunchGroup(group, accounts, config);
+    const availability = inspectLaunchGroup(group, accounts, config, modCapsulePool);
     if (!availability.can_launch) {
       showToast("warning", `启动方案“${group.name}”配置不完整，请先修复后再启动`);
       return;

@@ -8,6 +8,7 @@ import { FavoriteLaunchGroups } from "./FavoriteLaunchGroups";
 import { LaunchButton } from "./LaunchButton";
 import { LaunchGroupMenu } from "./LaunchGroupMenu";
 import { RoomAutomationQuickEdit } from "./RoomAutomationQuickEdit";
+import type { ModCapsulePool } from "../../store/types";
 
 interface MainActionBarProps {
   launching: boolean;
@@ -22,6 +23,7 @@ interface MainActionBarProps {
   onOpenModManager: () => void;
   onOpenRoomAutomation: () => void;
   showOptionalFeatures?: boolean;
+  modCapsulePool?: ModCapsulePool | null;
 }
 
 export function MainActionBar({
@@ -37,6 +39,7 @@ export function MainActionBar({
   onOpenModManager,
   onOpenRoomAutomation,
   showOptionalFeatures = true,
+  modCapsulePool,
 }: MainActionBarProps) {
   const { config, saving } = useGlobalConfig();
   const { accounts } = useAccounts();
@@ -124,6 +127,7 @@ export function MainActionBar({
             favoriteGroupIds={config?.favorite_launch_group_ids}
             accounts={accounts}
             config={config}
+            modCapsulePool={modCapsulePool}
             disabled={launching || saving}
             onLaunch={launchGroups.launch}
             onToggleFavorite={group => void launchGroups.toggleFavorite(group)}

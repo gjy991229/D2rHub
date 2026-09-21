@@ -143,13 +143,13 @@ function App() {
 
   const [tokenUpdateAccount, setTokenUpdateAccount] = useState<AccountMeta | null>(null);
   const [reinitializeAccount, setReinitializeAccount] = useState<AccountMeta | null>(null);
-  const launchGroups = useLaunchGroupController();
-  const launchGroupDraft = launchGroups.draft;
-  const launchGroupPendingDelete = launchGroups.pendingDelete;
   const modCapsules = useModCapsulePool({
     active: view.type === "main" && !startupServicesBlocked && optionalFeaturesAvailable,
     onAssigned: loadAccounts,
   });
+  const launchGroups = useLaunchGroupController(modCapsules.pool);
+  const launchGroupDraft = launchGroups.draft;
+  const launchGroupPendingDelete = launchGroups.pendingDelete;
   const openModManager = (action?: "add", edition?: string | null) => {
     setSettingsTab(action === "add" ? `mod-processing:add:${edition ?? ""}` : "mod-processing");
     setSettingsAccountId(null);
@@ -516,6 +516,7 @@ function App() {
               setShowSettings(true);
             }}
             showOptionalFeatures={optionalFeaturesAvailable}
+            modCapsulePool={modCapsules.pool}
           />
 
           {optionalFeaturesAvailable && audioModUpdate && (
@@ -603,6 +604,7 @@ function App() {
                 groups={config?.launch_groups ?? []}
                 accounts={accounts}
                 config={config}
+                modCapsulePool={modCapsules.pool}
                 favoriteGroupIds={config?.favorite_launch_group_ids}
                 disabled={launching || configSaving}
                 onClose={() => setLaunchGroupPanelOpen(false)}

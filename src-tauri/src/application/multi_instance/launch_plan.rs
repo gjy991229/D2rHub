@@ -160,17 +160,8 @@ fn apply_account_overrides(
     overrides: &LaunchAccountOverrides,
 ) -> Result<AccountMeta, AppError> {
     let mod_args = overrides.mod_args.trim().to_string();
-    if !mod_args.is_empty()
-        && !account
-            .mod_list
-            .iter()
-            .any(|configuration| configuration.trim() == mod_args)
-    {
-        return Err(AppError::ConfigReadError(format!(
-            "账号 {} 的方案 Mod 已从胶囊库删除，请先修复启动方案",
-            account.id
-        )));
-    }
+    // Schemes select from the shared Mod catalog, not the account's historical
+    // mod_list. The launch adapter checks the effective installation on disk.
     account.mod_args = mod_args;
 
     let position_id = overrides
