@@ -168,7 +168,23 @@ impl ClipboardSession {
                     "剪贴板包含无法安全备份的格式 {format}，已保留原内容并停止自动输入"
                 ));
             }
-            session.saved.push(unsafe { ClipboardData::copy(format) }?);
+            match unsafe { ClipboardData::copy(format) } {
+                Ok(data) => session.saved.push(data),
+                Err(error) if format >= 0xC000 => {
+                    // Registered formats are frequently advertised by rich
+                    // text/OLE providers before they can render their data.
+                    // They are optional clipboard views; failing to materialize
+                    // one must not abort room automation or discard the formats
+                    // we can safely restore. The standard formats above remain
+                    // strict because they are portable clipboard data.
+                    crate::logger::log_msg(
+                        "DEBUG",
+                        "PhysicalInput",
+                        &format!("跳过无法物化的剪贴板自定义格式 {format}: {error}"),
+                    );
+                }
+                Err(error) => return Err(error),
+            }
         }
         // Fetching delayed formats may advance the sequence while we own it.
         session.sequence = unsafe { GetClipboardSequenceNumber() };

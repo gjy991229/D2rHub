@@ -74,8 +74,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     saved: "下一局房间已更新",
     savedWithWarning: "房间命名已保存，但运行配置未能立即应用",
     saveFailed: "无法更新下一局房间",
-    invalidRoomText: "房名和密码只能使用英文字母、数字、连字符和下划线。",
-    roomTooLong: "生成后的房名和密码都不能超过 15 个字符。",
+    invalidRoomText: "房名前缀不能为空；支持中文和可粘贴的特殊字符，不支持换行或控制字符。",
+    roomTooLong: "生成后的房名和密码不能超过 15 个字符。",
     invalidSequence: "序号应为 0–4294967295 的整数，位数应为 1–6。",
   },
   "en-US": {
@@ -96,8 +96,8 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     saved: "Next room updated",
     savedWithWarning: "Room naming was saved, but the runtime could not apply it immediately",
     saveFailed: "Could not update the next room",
-    invalidRoomText: "Use letters, numbers, hyphens, and underscores only.",
-    roomTooLong: "The generated room name and password must be at most 15 characters.",
+    invalidRoomText: "A room name prefix is required. Chinese and pasteable special characters are supported; line breaks and control characters are not.",
+    roomTooLong: "Generated room names and passwords are limited to 15 UTF-16 characters.",
     invalidSequence: "Sequence must be an integer from 0–4294967295; width must be 1–6.",
   },
 };
@@ -116,8 +116,11 @@ function errorMessage(error: unknown): string {
 }
 
 function validateDraft(draft: RoomNamingDraft, copy: QuickEditCopy): string | null {
-  const asciiRoomText = /^[A-Za-z0-9_-]*$/;
-  if (!draft.prefix || !asciiRoomText.test(draft.prefix) || !asciiRoomText.test(draft.password)) {
+  const hasRoomControlCharacters = (value: string) => Array.from(value).some((character) => {
+    const code = character.codePointAt(0)!;
+    return code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029;
+  });
+  if (!draft.prefix || hasRoomControlCharacters(draft.prefix) || hasRoomControlCharacters(draft.password)) {
     return copy.invalidRoomText;
   }
   const nextSequence = Number(draft.nextSequence);
@@ -128,7 +131,8 @@ function validateDraft(draft: RoomNamingDraft, copy: QuickEditCopy): string | nu
     return copy.invalidSequence;
   }
   const roomName = `${draft.prefix}${String(nextSequence).padStart(sequenceWidth, "0")}`;
-  if (roomName.length > 15 || draft.password.length > 15) return copy.roomTooLong;
+  const utf16Length = (value: string) => value.length;
+  if (utf16Length(roomName) > 15 || utf16Length(draft.password) > 15) return copy.roomTooLong;
   return null;
 }
 
@@ -143,6 +147,7 @@ export function RoomAutomationQuickEdit({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openRef = useRef(false);
+  const draftDirtyRef = useRef(false);
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<RoomNamingDraft | null>(null);
   const [open, setOpen] = useState(false);
@@ -157,6 +162,7 @@ export function RoomAutomationQuickEdit({
     if (!active) {
       setSnapshot(null);
       setDraft(null);
+      draftDirtyRef.current = false;
       setOpen(false);
       return;
     }
@@ -166,7 +172,13 @@ export function RoomAutomationQuickEdit({
       onConfig: (next) => {
         if (disposed) return;
         setSnapshot((current) => !current || next.generation >= current.generation ? next : current);
-        if (!openRef.current) setDraft(namingDraft(next.config));
+        // Keep an untouched open popover live when the settings page commits
+        // an edit. Once the user starts typing, preserve that local draft until
+        // it is explicitly applied or the editor is reopened.
+        if (!openRef.current || !draftDirtyRef.current) {
+          setDraft(namingDraft(next.config));
+          draftDirtyRef.current = false;
+        }
         if (!next.config.enabled) setOpen(false);
       },
       onStatus: () => undefined,
@@ -214,12 +226,14 @@ export function RoomAutomationQuickEdit({
 
   const updateDraft = (patch: Partial<RoomNamingDraft>) => {
     setDraft((current) => current ? { ...current, ...patch } : current);
+    draftDirtyRef.current = true;
     setError(null);
   };
 
   const openEditor = () => {
     setError(null);
     setDraft(namingDraft(snapshot.config));
+    draftDirtyRef.current = false;
     setOpen((current) => !current);
   };
 
@@ -244,6 +258,7 @@ export function RoomAutomationQuickEdit({
       const outcome = await roomAutomationGateway.saveConfig(latest.generation, candidate);
       setSnapshot(outcome.snapshot);
       setDraft(namingDraft(outcome.snapshot.config));
+      draftDirtyRef.current = false;
       setOpen(false);
       if (outcome.apply_warning) {
         showToast("warning", `${copy.savedWithWarning}: ${outcome.apply_warning}`);
