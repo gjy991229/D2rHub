@@ -11,7 +11,8 @@ readme = "../README.md"
 
 [lib]
 name = "d2rhub_lib"
-crate-type = ["lib", "cdylib", "staticlib"]
+# Windows desktop links this Rust library into d2rhub.exe; no standalone DLL is needed.
+crate-type = ["lib"]
 
 [[bin]]
 name = "d2rhub"

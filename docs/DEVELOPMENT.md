@@ -52,7 +52,15 @@ npm run tauri build
 
 # 仅构建 NSIS 安装包
 npm run build:nsis
+
+# 验证说明书全部路线、图库引用与安装包资源清单
+npm run check:guide
 ```
+
+打包前会自动执行说明书资源检查，遍历分步上手路线及图库，阻止漏打包或未使用的图示资源。
+Windows 桌面仅需要 Rust `lib` 链接进主程序，不生成独立 `cdylib` / `staticlib`。
+旧构建目录若残留 `DirectML.dll` 或 `d2rhub_lib.dll`，需先移出再打包；它们不是当前程序的
+运行依赖，却可能被 MSI 收集。发布前检查 MSI/NSIS 文件清单，确保不包含这两个 DLL。
 
 桌面程序始终包含 SQLite、WAV 诊断录音和 Windows WASAPI 声纹识别依赖。普通前端修改通常只需
 运行 `npm test` 和 `npm run build`；涉及 Rust 代码时还必须运行完整 Rust 测试和严格 Clippy。

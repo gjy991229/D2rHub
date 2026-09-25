@@ -54,6 +54,10 @@ jobs:
         run: npm run build
         shell: cmd
 
+      - name: Check packaged guide resources
+        run: npm run check:guide
+        shell: cmd
+
       - name: Rust format
         working-directory: src-tauri
         run: cargo fmt -- --check
