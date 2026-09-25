@@ -29,7 +29,7 @@ impl DesktopInput {
         let mut session = Self {
             hwnd: HWND(hwnd as *mut _),
             pid,
-            clipboard: ClipboardSession::capture()?,
+            clipboard: ClipboardSession::new()?,
             releases: Vec::new(),
             hotkeys: None,
         };

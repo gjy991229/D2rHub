@@ -1,24 +1,16 @@
-//! Materialized clipboard data, never a live IDataObject pointing back at the
-//! clipboard that we are about to replace. All handles stay on the owner thread.
+//! Publishes room text directly without saving or restoring previous clipboard
+//! contents. All handles stay on the owner thread.
 use std::marker::PhantomData;
 use std::rc::Rc;
-use windows::core::{w, PCWSTR};
-use windows::Win32::Foundation::{
-    GetLastError, GlobalFree, SetLastError, ERROR_SUCCESS, HANDLE, HGLOBAL, HWND,
-};
-use windows::Win32::Graphics::Gdi::{
-    CopyEnhMetaFileW, DeleteEnhMetaFile, DeleteMetaFile, DeleteObject, HENHMETAFILE, HGDIOBJ,
-};
+use windows::core::w;
+use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::DataExchange::*;
 use windows::Win32::System::Memory::*;
-use windows::Win32::System::Ole::{OleDuplicateData, CLIPBOARD_FORMAT};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 pub(super) struct ClipboardSession {
     owner: HWND,
-    saved: Vec<ClipboardData>,
-    sequence: u32,
-    dirty: bool,
+    has_text: bool,
     _thread_bound: PhantomData<Rc<()>>,
 }
 
@@ -44,79 +36,21 @@ impl Drop for OpenGuard {
     }
 }
 
-struct ClipboardData {
-    format: u32,
-    handle: HANDLE,
-}
+/// Frees unpublished text on failure; successful publication transfers ownership
+/// to Windows, which keeps the text after this session ends.
+struct ClipboardText(HANDLE);
 
-impl ClipboardData {
-    // Caller holds OpenGuard. Never retain a handle owned by the old clipboard.
-    unsafe fn copy(format: u32) -> Result<Self, String> {
-        let source =
-            GetClipboardData(format).map_err(|e| format!("读取剪贴板格式 {format} 失败：{e}"))?;
-        let handle = match format {
-            14 | 142 => HANDLE(CopyEnhMetaFileW(HENHMETAFILE(source.0), PCWSTR::null()).0),
-            _ => {
-                let kind = match format {
-                    130 => 2, // CF_DSPBITMAP uses the same handle type as CF_BITMAP.
-                    131 => 3, // CF_DSPMETAFILEPICT.
-                    _ => format,
-                };
-                // This helper only duplicates native handles; it does not fetch,
-                // publish or retain an OLE clipboard object or initialize COM.
-                OleDuplicateData(source, CLIPBOARD_FORMAT(kind as u16), GMEM_MOVEABLE)
-            }
-        };
-        if handle.is_invalid() {
-            return Err(format!(
-                "无法备份剪贴板格式 {format}，已保留原剪贴板并停止自动输入"
-            ));
-        }
-        Ok(Self { format, handle })
-    }
-
-    unsafe fn publish(&mut self) -> Result<(), String> {
-        SetClipboardData(self.format, self.handle).map_err(|e| e.to_string())?;
-        // The system owns the handle only after successful publication.
-        self.handle = HANDLE::default();
-        Ok(())
-    }
-}
-
-impl Drop for ClipboardData {
+impl Drop for ClipboardText {
     fn drop(&mut self) {
-        if self.handle.is_invalid() {
-            return;
-        }
-        unsafe {
-            match self.format {
-                2 | 9 | 130 => {
-                    let _ = DeleteObject(HGDIOBJ(self.handle.0));
-                }
-                14 | 142 => {
-                    let _ = DeleteEnhMetaFile(HENHMETAFILE(self.handle.0));
-                }
-                3 | 131 => {
-                    let memory = HGLOBAL(self.handle.0);
-                    let picture = GlobalLock(memory) as *const METAFILEPICT;
-                    if !picture.is_null() {
-                        let _ = DeleteMetaFile((*picture).hMF);
-                        let _ = GlobalUnlock(memory);
-                    }
-                    let _ = GlobalFree(memory);
-                }
-                _ => {
-                    let _ = GlobalFree(HGLOBAL(self.handle.0));
-                }
-            }
+        if !self.0.is_invalid() {
+            let _ = unsafe { GlobalFree(HGLOBAL(self.0 .0)) };
         }
     }
 }
 
 impl ClipboardSession {
-    pub(super) fn capture() -> Result<Self, String> {
-        // A built-in, message-only window gives the clipboard a local owner.
-        // Using the game's HWND made another process own our temporary data.
+    pub(super) fn new() -> Result<Self, String> {
+        // A local, message-only window owns the text we publish.
         let owner = unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE::default(),
@@ -134,73 +68,18 @@ impl ClipboardSession {
             )
         }
         .map_err(|e| format!("创建剪贴板窗口失败：{e}"))?;
-        let mut session = Self {
+        Ok(Self {
             owner,
-            saved: Vec::new(),
-            sequence: 0,
-            dirty: false,
+            has_text: false,
             _thread_bound: PhantomData,
-        };
-        let _open = OpenGuard::acquire(owner)?;
-        let mut format = 0;
-        loop {
-            unsafe {
-                SetLastError(ERROR_SUCCESS);
-            }
-            format = unsafe { EnumClipboardFormats(format) };
-            if format == 0 {
-                let error = unsafe { GetLastError() };
-                if error != ERROR_SUCCESS {
-                    return Err(format!("枚举剪贴板格式失败：{error:?}"));
-                }
-                break;
-            }
-            if format >= 0xC000 {
-                let mut name = [0u16; 256];
-                let length = unsafe { GetClipboardFormatNameW(format, &mut name) };
-                let name = String::from_utf16_lossy(&name[..length.max(0) as usize]);
-                // These contain live OLE bookkeeping, not portable content.
-                if matches!(name.as_str(), "DataObject" | "Ole Private Data") {
-                    continue;
-                }
-            } else if !matches!(format, 1..=17 | 129..=131 | 142) {
-                return Err(format!(
-                    "剪贴板包含无法安全备份的格式 {format}，已保留原内容并停止自动输入"
-                ));
-            }
-            match unsafe { ClipboardData::copy(format) } {
-                Ok(data) => session.saved.push(data),
-                Err(error) if format >= 0xC000 => {
-                    // Registered formats are frequently advertised by rich
-                    // text/OLE providers before they can render their data.
-                    // They are optional clipboard views; failing to materialize
-                    // one must not abort room automation or discard the formats
-                    // we can safely restore. The standard formats above remain
-                    // strict because they are portable clipboard data.
-                    crate::logger::log_msg(
-                        "DEBUG",
-                        "PhysicalInput",
-                        &format!("跳过无法物化的剪贴板自定义格式 {format}: {error}"),
-                    );
-                }
-                Err(error) => return Err(error),
-            }
-        }
-        // Fetching delayed formats may advance the sequence while we own it.
-        session.sequence = unsafe { GetClipboardSequenceNumber() };
-        Ok(session)
+        })
     }
 
     pub(super) fn check(&self) -> Result<(), String> {
-        // While our materialized text is published, Windows may synthesize
-        // additional text formats and advance the sequence itself. Ownership
-        // survives that conversion; an external replacement changes the owner.
-        let changed = if self.dirty {
-            unsafe { GetClipboardOwner() }.ok() != Some(self.owner)
-        } else {
-            self.sequence != unsafe { GetClipboardSequenceNumber() }
-        };
-        if changed {
+        // Only guard the room text we published, never the previous contents.
+        // Windows may synthesize additional text formats without changing the
+        // owner, so ownership avoids false positives from those conversions.
+        if self.has_text && unsafe { GetClipboardOwner() }.ok() != Some(self.owner) {
             Err("剪贴板已被其他程序更改，已停止粘贴".into())
         } else {
             Ok(())
@@ -211,10 +90,7 @@ impl ClipboardSession {
         let text = value.encode_utf16().chain(Some(0)).collect::<Vec<_>>();
         unsafe {
             let memory = GlobalAlloc(GMEM_MOVEABLE, text.len() * 2).map_err(|e| e.to_string())?;
-            let mut data = ClipboardData {
-                format: 13,
-                handle: HANDLE(memory.0),
-            };
+            let mut data = ClipboardText(HANDLE(memory.0));
             let pointer = GlobalLock(memory) as *mut u16;
             if pointer.is_null() {
                 return Err("无法分配剪贴板文本".into());
@@ -224,43 +100,19 @@ impl ClipboardSession {
             let _open = OpenGuard::acquire(self.owner)?;
             self.check()?;
             EmptyClipboard().map_err(|e| e.to_string())?;
-            self.dirty = true;
-            let result = data.publish();
-            // Record our write before closing: a later external write must not
-            // be mistaken for ours and overwritten during restoration.
-            self.sequence = GetClipboardSequenceNumber();
-            result
+            self.has_text = false;
+            SetClipboardData(13, data.0).map_err(|e| e.to_string())?;
+            data.0 = HANDLE::default();
+            self.has_text = true;
+            Ok(())
         }
-    }
-
-    fn restore(&mut self) -> Result<(), String> {
-        if !self.dirty || self.check().is_err() {
-            return Ok(());
-        }
-        let _open = OpenGuard::acquire(self.owner)?;
-        // Recheck inside the clipboard lock, including after any retry waits.
-        if self.check().is_err() {
-            return Ok(());
-        }
-        unsafe { EmptyClipboard() }.map_err(|e| e.to_string())?;
-        let mut failure = None;
-        for data in &mut self.saved {
-            if let Err(error) = unsafe { data.publish() } {
-                failure = Some(error);
-            }
-        }
-        self.dirty = false;
-        failure.map_or(Ok(()), Err)
     }
 }
 
 impl Drop for ClipboardSession {
     fn drop(&mut self) {
-        if let Err(error) = self.restore() {
-            crate::logger::log_msg("WARN", "PhysicalInput", &format!("恢复剪贴板失败：{error}"));
-        }
-        // All restored formats already contain actual data; none needs an OLE
-        // callback or a surviving worker thread to render it later.
+        // Text is already materialized and owned by Windows. Leave it in the
+        // clipboard; destroying this window does not require a render callback.
         let _ = unsafe { DestroyWindow(self.owner) };
     }
 }
