@@ -82,13 +82,12 @@ impl WebTokenReadMonitor {
         // normal shutdown, but an interrupted process can leave the session in
         // Windows ETW. Stop only our own stable session; never touch system
         // kernel logger sessions or sessions owned by other tools.
-        match stop_trace_by_name(WEB_TOKEN_TRACE_SESSION_NAME) {
-            Ok(()) => crate::logger::log_msg(
+        if let Ok(()) = stop_trace_by_name(WEB_TOKEN_TRACE_SESSION_NAME) {
+            crate::logger::log_msg(
                 "WARN",
                 "TokenETW",
                 "发现上一次遗留的 D2RHub ETW 会话，已自动清理",
-            ),
-            Err(_) => {}
+            );
         }
         let state = Arc::new(Mutex::new(ObservationState {
             processor: "待启动".to_string(),

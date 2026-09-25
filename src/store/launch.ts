@@ -49,9 +49,13 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
 
       const hasFailed = results.some((r) => !r.success);
       results
-        .filter((result) => result.success && result.error)
+        .filter((result) => (result.success || result.login_unconfirmed) && result.error)
         .forEach((result) => showToast("warning", result.error as string));
-      emitEvent("launch-ended", { success: !hasFailed });
+      emitEvent("launch-ended", {
+        success: !hasFailed,
+        login_unconfirmed: results.some(result => result.login_unconfirmed)
+          && !results.some(result => !result.success && !result.login_unconfirmed),
+      });
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动失败: ${e}`);
@@ -67,9 +71,13 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
 
       const hasFailed = results.some((result) => !result.success);
       results
-        .filter((result) => result.success && result.error)
+        .filter((result) => (result.success || result.login_unconfirmed) && result.error)
         .forEach((result) => showToast("warning", result.error as string));
-      emitEvent("launch-ended", { success: !hasFailed });
+      emitEvent("launch-ended", {
+        success: !hasFailed,
+        login_unconfirmed: results.some(result => result.login_unconfirmed)
+          && !results.some(result => !result.success && !result.login_unconfirmed),
+      });
     } catch (e) {
       set({ error: String(e), launching: false });
       showToast("error", `启动方案失败: ${e}`);

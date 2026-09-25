@@ -45,6 +45,19 @@ afterEach(async () => {
 });
 
 describe("desktop companion input", () => {
+  it("does not announce an unconfirmed login as a failure, but still announces real failures", () => {
+    const { result } = renderHook(() => usePetCompanion({ ...config, bongo_cat_chatterbox: true }));
+    act(() => mocks.listeners.get("launch-ended")?.({
+      payload: { success: false, login_unconfirmed: true },
+    }));
+    expect(result.current.activeDrops).toHaveLength(0);
+    act(() => mocks.listeners.get("launch-ended")?.({
+      payload: { success: false, login_unconfirmed: false },
+    }));
+    expect(result.current.activeDrops).toHaveLength(1);
+    expect(result.current.activeDrops[0].color).toBe("#b54040");
+  });
+
   it("lets keyboard and either mouse button choose both hands from the same random source", () => {
     const random = vi.spyOn(Math, "random");
     const { result } = renderHook(() => usePetCompanion(config));

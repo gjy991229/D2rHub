@@ -166,8 +166,9 @@ export function MiniDashboard(props: MiniDashboardProps) {
     else failures.delete(log.account_id);
   }
   for (const result of launch.results) {
-    if (!result.success) failures.set(result.account_id, result.error || copy("启动失败", "Launch failed"));
+    if (!result.success && !result.login_unconfirmed) failures.set(result.account_id, result.error || copy("启动失败", "Launch failed"));
   }
+  const unconfirmedCount = launch.results.filter(result => result.login_unconfirmed).length;
   const roomOwnsFooter = !launch.launching && !launch.error && !failures.size
     && (room?.running || room?.phase === "error");
   const activeName = accounts.find(account => account.id === activeProgress?.account_id)?.display_name;
@@ -176,6 +177,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
     : launch.error || (failures.size ? copy(`${failures.size} 个账号启动失败 · 查看详情`, `${failures.size} launches failed · Details`)
       : room?.running ? copy("自动跟房进行中", "Room automation running")
       : room?.phase === "error" ? copy("自动跟房失败 · 查看详情", "Room automation failed · Details")
+      : unconfirmedCount ? copy(`${unconfirmedCount} 个账号登录状态未确认 · 查看详情`, `${unconfirmedCount} logins unconfirmed · Details`)
       : copy("任务空闲", "No active tasks"));
 
   return <section className="mini-dashboard" data-i18n-skip aria-label={copy("迷你模式", "Mini mode")}>
@@ -205,11 +207,12 @@ export function MiniDashboard(props: MiniDashboardProps) {
         const progress = launch.progress[account.id];
         const active = launch.launching && progress && progress.step !== "done" && progress.status !== "error";
         const failure = failures.get(account.id);
-        const status = active ? progress.message : account.is_running ? copy("运行中", "Running")
+        const loginUnconfirmed = launch.results.some(result => result.account_id === account.id && result.login_unconfirmed);
+        const status = active ? progress.message : loginUnconfirmed ? copy("登录未确认", "Login unconfirmed") : account.is_running ? copy("运行中", "Running")
           : needsConfig ? copy("待配置", "Needs setup") : failure ? copy("启动失败", "Launch failed") : copy("未运行", "Stopped");
         const label = active ? copy("启动中", "Starting") : account.is_running ? copy("切回", "Switch")
           : needsConfig ? copy("配置", "Setup") : failure ? copy("重试", "Retry") : copy("启动", "Start");
-        return <article key={account.id} className="mini-account" data-state={active ? "busy" : account.is_running ? "running" : needsConfig ? "warning" : failure ? "error" : "idle"}>
+        return <article key={account.id} className="mini-account" data-state={active ? "busy" : loginUnconfirmed ? "warning" : account.is_running ? "running" : needsConfig ? "warning" : failure ? "error" : "idle"}>
           <span className="mini-index">{String(index + 1).padStart(2, "0")}</span>
           <div className="mini-account-copy"><strong title={account.display_name || account.id}>{account.display_name || account.id}</strong>
             <div className="mini-account-meta"><span className="hig-badge hig-badge-neutral">{english ? regionLabels[accountRegionLabel(account.region)] : accountRegionLabel(account.region)}</span>

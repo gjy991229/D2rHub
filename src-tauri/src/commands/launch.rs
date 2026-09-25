@@ -32,6 +32,9 @@ use crate::token_registry_trace::{WebTokenReadMonitor, WEB_TOKEN_VALUE_NAME};
 pub struct LaunchResult {
     pub account_id: String,
     pub success: bool,
+    /// A live game with its mutex cleared, but no confirmed login signal.
+    #[serde(default)]
+    pub login_unconfirmed: bool,
     pub d2r_pid: Option<u32>,
     pub error: Option<String>,
     pub mutex_killed: bool,
@@ -400,9 +403,21 @@ fn finish_launch_task(task: TaskHandle, result: &Result<Vec<LaunchResult>, AppEr
             let _ = task.cancelled("启动已取消");
         }
         Ok(results) => {
-            let failures = results.iter().filter(|result| !result.success).count();
+            let failures = results
+                .iter()
+                .filter(|result| !result.success && !result.login_unconfirmed)
+                .count();
+            let unconfirmed = results
+                .iter()
+                .filter(|result| result.login_unconfirmed)
+                .count();
             if failures == 0 {
-                let _ = task.succeed("启动任务完成");
+                let message = if unconfirmed > 0 {
+                    format!("启动队列完成，其中 {unconfirmed} 个账号登录状态未确认")
+                } else {
+                    "启动任务完成".to_string()
+                };
+                let _ = task.succeed(&message);
             } else {
                 let _ = task.fail(
                     "account-launch-partial-failure",
@@ -431,6 +446,7 @@ fn account_path_error(account_id: &str, err: AppError) -> LaunchResult {
         d2r_pid: None,
         error: Some(err.to_string()),
         mutex_killed: false,
+        login_unconfirmed: false,
     }
 }
 
@@ -493,6 +509,7 @@ fn already_running_result(
         error: Some(message),
         // 已存在的实例不会进入后续队列安全判断，视为无需处理互斥句柄。
         mutex_killed: true,
+        login_unconfirmed: false,
     }
 }
 
@@ -832,6 +849,7 @@ async fn cancel_with_cleanup(
         d2r_pid: None,
         error: Some("启动已被用户取消".to_string()),
         mutex_killed: false,
+        login_unconfirmed: false,
     }
 }
 
@@ -918,6 +936,7 @@ async fn launch_battle_net_only_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
             for remaining in &account_ids[i + 1..] {
                 emit_cancelled(&app, remaining);
@@ -927,6 +946,7 @@ async fn launch_battle_net_only_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
+                    login_unconfirmed: false,
                 });
             }
             return Ok(results);
@@ -983,6 +1003,7 @@ async fn launch_battle_net_only_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
             for remaining in &account_ids[i + 1..] {
                 emit_cancelled(&app, remaining);
@@ -992,6 +1013,7 @@ async fn launch_battle_net_only_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
+                    login_unconfirmed: false,
                 });
             }
             return Ok(results);
@@ -1092,6 +1114,7 @@ async fn prepare_bnet_environment(
             d2r_pid: None,
             error: Some("启动已被用户取消".to_string()),
             mutex_killed: false,
+            login_unconfirmed: false,
         }
     };
 
@@ -1113,6 +1136,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(message),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
         Err(error) => {
@@ -1124,6 +1148,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(message),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
     }
@@ -1269,6 +1294,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(e),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
         Err(_) => {
@@ -1280,6 +1306,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
     }
@@ -1302,6 +1329,7 @@ async fn prepare_bnet_environment(
             d2r_pid: None,
             error: Some(msg),
             mutex_killed: false,
+            login_unconfirmed: false,
         });
     }
     let battle_net_spawn_path = battle_net_path.clone();
@@ -1319,6 +1347,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
         Err(_) => {
@@ -1330,6 +1359,7 @@ async fn prepare_bnet_environment(
                 d2r_pid: None,
                 error: Some(msg),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
         }
     }
@@ -1478,6 +1508,7 @@ async fn launch_single_bnet_only(
         d2r_pid: None,
         error: None,
         mutex_killed: false,
+        login_unconfirmed: false,
     }
 }
 
@@ -1718,6 +1749,7 @@ async fn launch_accounts_impl(
                 d2r_pid: None,
                 error: Some("启动已被用户取消".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             });
             // 剩余未启动的账号也标记为取消
             for remaining in &account_ids[i + 1..] {
@@ -1728,6 +1760,7 @@ async fn launch_accounts_impl(
                     d2r_pid: None,
                     error: Some("启动已被用户取消".to_string()),
                     mutex_killed: false,
+                    login_unconfirmed: false,
                 });
             }
             break;
@@ -1765,10 +1798,18 @@ async fn launch_accounts_impl(
         .await;
         let killed = result.mutex_killed;
         let success = result.success;
+        let can_continue = launch_queue_can_continue(success || result.login_unconfirmed, killed);
+        let result_level = if result.login_unconfirmed {
+            "WARN"
+        } else if success {
+            "INFO"
+        } else {
+            "ERROR"
+        };
         let pid = result.d2r_pid;
         let err = result.error.clone();
         crate::logger::log_msg(
-            if success { "INFO" } else { "ERROR" },
+            result_level,
             "Launch",
             &format!(
                 "[Account {}] 启动结果: success={}, pid={:?}, error={:?}, mutex_killed={}",
@@ -1782,8 +1823,8 @@ async fn launch_accounts_impl(
         }
 
         // 正常结果必须完成就绪检测并清除互斥句柄；ETW/TCP 均不可用时，
-        // launch_single 只有在互斥句柄已确认的安全降级路径才会返回 success。
-        if !launch_queue_can_continue(success, killed) && i + 1 < total {
+        // 已确认存活且清除互斥的降级结果可以继续，但不会标为登录成功。
+        if !can_continue && i + 1 < total {
             let (queue_message, remaining_error) = if success {
                 ("互斥句柄未清除，后续账号暂停启动", "互斥句柄未清除，已暂停")
             } else {
@@ -1804,6 +1845,7 @@ async fn launch_accounts_impl(
                     d2r_pid: None,
                     error: Some(remaining_error.to_string()),
                     mutex_killed: false,
+                    login_unconfirmed: false,
                 });
             }
             break;
@@ -2305,6 +2347,7 @@ async fn launch_single(
                 d2r_pid: None,
                 error: Some(error),
                 mutex_killed: false,
+                login_unconfirmed: false,
             };
         }
     };
@@ -2319,6 +2362,11 @@ async fn launch_single(
         )
         .await;
     }
+
+    let game_process = crate::infrastructure::system::LaunchProcessGuard::capture(
+        d2r_pid,
+        &context.installation.game_executable,
+    );
 
     #[cfg(target_os = "windows")]
     let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
@@ -2458,6 +2506,33 @@ async fn launch_single(
     );
 
     let readiness_degraded = readiness_source.is_none();
+    if readiness_degraded
+        && !game_process
+            .as_ref()
+            .is_some_and(|process| process.is_running())
+    {
+        mutex_task.abort();
+        if game_process
+            .as_ref()
+            .is_some_and(|process| process.has_exited())
+        {
+            state
+                .multi_instance()
+                .instances()
+                .remove_if_pid(account_id, d2r_pid);
+        }
+        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        emit("done", "error", error);
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: None,
+            error: Some(error.to_string()),
+            mutex_killed: false,
+            login_unconfirmed: false,
+        };
+    }
+
     if readiness_degraded {
         // ETW/TCP are readiness signals, not proof that the game process is
         // usable. Keep the account eligible for a degraded batch continuation,
@@ -2518,6 +2593,7 @@ async fn launch_single(
             d2r_pid: None,
             error: Some(error),
             mutex_killed: false,
+            login_unconfirmed: false,
         };
     }
 
@@ -2579,8 +2655,34 @@ async fn launch_single(
     #[cfg(target_os = "windows")]
     memory_trim.confirm(pending_memory_trim);
 
+    if readiness_degraded
+        && !game_process
+            .as_ref()
+            .is_some_and(|process| process.is_running())
+    {
+        if game_process
+            .as_ref()
+            .is_some_and(|process| process.has_exited())
+        {
+            state
+                .multi_instance()
+                .instances()
+                .remove_if_pid(account_id, d2r_pid);
+        }
+        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        emit("done", "error", error);
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: None,
+            error: Some(error.to_string()),
+            mutex_killed: false,
+            login_unconfirmed: false,
+        };
+    }
+
     let result_message = if readiness_degraded {
-        "启动完成（登录信号未确认，已通过互斥状态安全降级）"
+        "游戏进程已启动，登录状态未确认；互斥句柄已清除，允许继续队列"
     } else {
         "启动完成"
     };
@@ -2591,10 +2693,11 @@ async fn launch_single(
     );
     LaunchResult {
         account_id: account_id.to_string(),
-        success: true,
+        success: !readiness_degraded,
         d2r_pid: Some(d2r_pid),
         error: readiness_degraded.then(|| result_message.to_string()),
         mutex_killed: mutex_killed.load(std::sync::atomic::Ordering::SeqCst),
+        login_unconfirmed: readiness_degraded,
     }
 }
 
@@ -2632,6 +2735,7 @@ async fn launch_single_token(
             d2r_pid: None,
             error: Some("启动已被用户取消".to_string()),
             mutex_killed: false,
+            login_unconfirmed: false,
         }
     };
 
@@ -2700,6 +2804,7 @@ async fn launch_single_token(
                         d2r_pid: None,
                         error: Some(format!("Token 解码失败: {}", e)),
                         mutex_killed: false,
+                        login_unconfirmed: false,
                     };
                 }
             }
@@ -2711,6 +2816,7 @@ async fn launch_single_token(
                 d2r_pid: None,
                 error: Some("账号缺少 Token".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             };
         }
     };
@@ -2814,6 +2920,7 @@ async fn launch_single_token(
                 d2r_pid: None,
                 error: Some("启动 D2R.exe 失败".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             };
         }
     }
@@ -2870,6 +2977,7 @@ async fn launch_single_token(
                     d2r_pid: None,
                     error: Some(format!("刷新游戏进程列表失败: {error}")),
                     mutex_killed: false,
+                    login_unconfirmed: false,
                 };
             }
         };
@@ -2961,6 +3069,7 @@ async fn launch_single_token(
                 d2r_pid: None,
                 error: Some("等待游戏进程启动超时".to_string()),
                 mutex_killed: false,
+                login_unconfirmed: false,
             };
         }
     };
@@ -2968,6 +3077,11 @@ async fn launch_single_token(
     // 从识别到新 PID 的时刻开始计算按键窗口：延迟 2 秒，最多持续 9 秒。
     // ETW/TCP 任一命中时会立即结束按键发送。
     let d2r_started_at = std::time::Instant::now();
+
+    let game_process = crate::infrastructure::system::LaunchProcessGuard::capture(
+        d2r_pid,
+        &context.installation.game_executable,
+    );
 
     #[cfg(target_os = "windows")]
     let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
@@ -3135,6 +3249,33 @@ async fn launch_single_token(
     // coexist with the next launch. This keeps the batch moving without
     // treating an unverified login as a normal success.
     let readiness_degraded = readiness_source.is_none() && mutex_state.is_closed();
+    if readiness_degraded
+        && !game_process
+            .as_ref()
+            .is_some_and(|process| process.is_running())
+    {
+        mutex_task.abort();
+        if game_process
+            .as_ref()
+            .is_some_and(|process| process.has_exited())
+        {
+            state
+                .multi_instance()
+                .instances()
+                .remove_if_pid(account_id, d2r_pid);
+        }
+        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        emit("done", "error", error);
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: None,
+            error: Some(error.to_string()),
+            mutex_killed: false,
+            login_unconfirmed: false,
+        };
+    }
+
     if readiness_degraded {
         launch_ready = true;
         emit(
@@ -3169,6 +3310,7 @@ async fn launch_single_token(
             d2r_pid: None,
             error: Some(error),
             mutex_killed: false,
+            login_unconfirmed: false,
         };
     }
     let _ = mutex_task.await;
@@ -3187,8 +3329,34 @@ async fn launch_single_token(
     #[cfg(target_os = "windows")]
     memory_trim.confirm(pending_memory_trim);
 
+    if readiness_degraded
+        && !game_process
+            .as_ref()
+            .is_some_and(|process| process.is_running())
+    {
+        if game_process
+            .as_ref()
+            .is_some_and(|process| process.has_exited())
+        {
+            state
+                .multi_instance()
+                .instances()
+                .remove_if_pid(account_id, d2r_pid);
+        }
+        let error = "登录信号未确认，且原游戏进程已退出或无法确认存活，已停止启动队列";
+        emit("done", "error", error);
+        return LaunchResult {
+            account_id: account_id.to_string(),
+            success: false,
+            d2r_pid: None,
+            error: Some(error.to_string()),
+            mutex_killed: false,
+            login_unconfirmed: false,
+        };
+    }
+
     let result_message = if readiness_degraded {
-        "启动完成（登录信号未确认，已通过互斥状态安全降级）"
+        "游戏进程已启动，登录状态未确认；互斥句柄已清除，允许继续队列"
     } else {
         "启动完成"
     };
@@ -3199,10 +3367,11 @@ async fn launch_single_token(
     );
     LaunchResult {
         account_id: account_id.to_string(),
-        success: true,
+        success: !readiness_degraded,
         d2r_pid: Some(d2r_pid),
         error: readiness_degraded.then(|| result_message.to_string()),
         mutex_killed: mutex_state.is_closed(),
+        login_unconfirmed: readiness_degraded,
     }
 }
 

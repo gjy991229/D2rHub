@@ -80,6 +80,86 @@ impl GameWindowPort for SystemGameWindowPort {
 
 // ── 进程管理 ──
 
+/// Keeps the original process object alive so a recycled PID cannot pass the
+/// launch readiness fallback. Failure to acquire/query it fails closed.
+pub(crate) struct LaunchProcessGuard {
+    #[cfg(target_os = "windows")]
+    process: std::os::windows::io::OwnedHandle,
+}
+
+impl LaunchProcessGuard {
+    pub(crate) fn capture(pid: u32, executable: &std::path::Path) -> Option<Self> {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::{ffi::OsStringExt, io::FromRawHandle};
+            use windows::core::PWSTR;
+            use windows::Win32::System::Threading::{
+                OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+            };
+            let handle = unsafe {
+                OpenProcess(
+                    PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                    false,
+                    pid,
+                )
+            }
+            .ok()?;
+            let process = unsafe { std::os::windows::io::OwnedHandle::from_raw_handle(handle.0) };
+            let mut image = vec![0u16; 32_768];
+            let mut length = image.len() as u32;
+            unsafe {
+                QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_WIN32,
+                    PWSTR(image.as_mut_ptr()),
+                    &mut length,
+                )
+            }
+            .ok()?;
+            let actual =
+                std::path::PathBuf::from(std::ffi::OsString::from_wide(&image[..length as usize]));
+            if !executable_paths_match(&actual, executable) {
+                return None;
+            }
+            Some(Self { process })
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = (pid, executable);
+            None
+        }
+    }
+
+    pub(crate) fn is_running(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::Foundation::{HANDLE, WAIT_TIMEOUT};
+            use windows::Win32::System::Threading::WaitForSingleObject;
+            unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), 0) == WAIT_TIMEOUT }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    }
+
+    pub(crate) fn has_exited(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::io::AsRawHandle;
+            use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
+            use windows::Win32::System::Threading::WaitForSingleObject;
+            unsafe { WaitForSingleObject(HANDLE(self.process.as_raw_handle()), 0) == WAIT_OBJECT_0 }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            false
+        }
+    }
+}
+
 /// 检测当前有哪些 D2R 进程在运行（返回 PID 列表）
 pub fn get_d2r_pids() -> Vec<u32> {
     let mut pids = vec![];

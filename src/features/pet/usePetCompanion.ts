@@ -96,8 +96,9 @@ export function usePetCompanion(config: GlobalConfig | null) {
         if (line) addDrop(line, "#54403b");
       }
     });
-    const launchSubscription = listenEvent<{ success: boolean }>("launch-ended", event => {
+    const launchSubscription = listenEvent<{ success: boolean; login_unconfirmed?: boolean }>("launch-ended", event => {
       if (cancelled || latest.current.config?.bongo_cat_chatterbox === false) return;
+      if (event.payload.login_unconfirmed) return;
       const english = latest.current.config?.app_language === "en-US";
       const pool = event.payload.success ? PET_EVENT_LINES.launchSuccess : PET_EVENT_LINES.launchFailure;
       const line = pool[Math.floor(Math.random() * pool.length)];
