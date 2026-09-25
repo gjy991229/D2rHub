@@ -3,7 +3,7 @@
   <h1>D2RHub</h1>
   <p><strong>Diablo II: Resurrected 多账号、双客户端与音频遥测刷图助手</strong></p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.9.102-d5a85a" alt="Version 0.9.102" />
+    <img src="https://img.shields.io/badge/version-0.9.103-d5a85a" alt="Version 0.9.103" />
     <img src="https://img.shields.io/badge/platform-Windows_11-blue" alt="Windows 11" />
     <img src="https://img.shields.io/badge/game_memory-no_injection-2f855a" alt="No game-memory injection" />
     <img src="https://img.shields.io/badge/license-MIT-lightgrey" alt="MIT License" />
@@ -17,6 +17,13 @@
 D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重制版》的多个账号、国服/国际服客户端配置和多开流程，并通过 mod 音频声纹记录符文掉落和本地统计数据。
 
 当前只维护一个桌面发行版：多开核心始终可用，桌面悬浮窗、识别与统计、桌宠和自动跟房作为内置可选模块按需添加。MSI 与 NSIS 只是安装格式不同，不是两个功能版本。
+
+### v0.9.103 更新
+
+- 桌宠新增成就与统计页签，保存累计键鼠次数、有效陪伴时间与收藏进度；扩充至 43 件饰品、11 项成就及 242 条双语日常台词。
+- 修复共享启动方案的 Mod 可用性校验；回收遗留 ETW 会话，确认原游戏进程存活且互斥已清除后，才允许以“登录状态未确认”继续队列。
+- 跟房快捷编辑支持中文并同步未编辑的设置；自动粘贴后保留最后写入的房名或密码，不再备份和恢复旧剪贴板。
+- 增加说明书打包资源完整性检查，精简无用库产物；从 v0.9.102 升级无需重新加工 Mod。
 
 ### v0.9.102 更新
 
@@ -65,7 +72,7 @@ D2RHub 是一款 Windows 本地工具，用于管理《暗黑破坏神 II：重�
 - 账号初始化统一由向导驱动，支持已有账号重新初始化；Token 账号使用隔离的浏览器 Profile，避免登录状态互相污染。
 - 内置生成器更新为 **[d2r-audio-mod v1.3.3](https://github.com/gjy991229/d2r-audio-mod)**，源代码按 MIT 许可公开；包含局内房间工具 r28，以及独立可选的双击 Esc 下一局地狱，三个局内按钮始终隐藏。
 
-完整操作说明见 [v0.9.102 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
+完整操作说明见 [v0.9.103 使用手册](docs/user-guide.html)。生成器可从其 [Releases](https://github.com/gjy991229/d2r-audio-mod/releases) 单独下载，也可直接使用 D2RHub 安装包内置版本。
 
 ### 当前能力
 
