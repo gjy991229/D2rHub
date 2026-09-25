@@ -72,7 +72,7 @@ export function usePetCompanion(config: GlobalConfig | null) {
           const name = item ? english ? item.en : item.name : reward.id;
           // Receipts only come from committed backend rewards, independent of chatter.
           addDrop(reward.duplicate ? `${name} · ${english ? "duplicate, +4 fragments" : "重复装扮，碎片 +4"}` :
-            `${reward.achievement ? english ? "Achievement" : "成就解锁" : english ? "New accessory" : "获得装扮"}：${name}`, "#856404");
+            `${reward.achievement ? english ? "Achievement" : "成就解锁" : english ? "New accessory" : "获得装扮"}：${name}${reward.bonus_fragments ? ` · +${reward.bonus_fragments} ${english ? "fragments" : "碎片"}` : ""}`, "#856404");
         }
       } catch { /* Retain progress; the wardrobe shows the storage error. */ }
       finally { progressTimer = undefined; }

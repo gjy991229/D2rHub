@@ -12,6 +12,8 @@ pub struct Item {
     pub cost: u32,
     pub metric: Option<String>,
     pub target: Option<u64>,
+    #[serde(default)]
+    pub bonus_fragments: u32,
 }
 pub fn catalog() -> &'static [Item] {
     static ITEMS: OnceLock<Vec<Item>> = OnceLock::new();
@@ -27,6 +29,8 @@ pub struct Wardrobe {
     pub equipped: Outfit,
     pub presets: Vec<Outfit>,
     pub seconds: u64,
+    #[serde(default)]
+    pub inputs: u64,
     pub days: u32,
     pub last_day: String,
     pub daily_rolls: u32,
@@ -54,6 +58,7 @@ impl Wardrobe {
             equipped,
             presets: vec![Outfit::new(); 3],
             seconds: 0,
+            inputs: 0,
             days: 0,
             last_day: String::new(),
             daily_rolls: 0,
@@ -70,11 +75,36 @@ impl Wardrobe {
         } else {
             self.owned.push(id.into());
         }
+        let bonus_fragments = if achievement && !duplicate {
+            catalog()
+                .iter()
+                .find(|item| item.id == id)
+                .map_or(0, |item| item.bonus_fragments)
+        } else {
+            0
+        };
+        self.fragments = self.fragments.saturating_add(bonus_fragments);
         Reward {
             id: id.into(),
             duplicate,
             achievement,
+            bonus_fragments,
         }
+    }
+    pub fn advance_activity(
+        &mut self,
+        seconds: u64,
+        inputs: u64,
+        day: &str,
+        random: impl FnMut(u32) -> u32,
+    ) -> Vec<Reward> {
+        self.inputs = self.inputs.saturating_add(inputs);
+        if inputs > 0 && seconds == 0 && day > self.last_day.as_str() {
+            self.last_day = day.into();
+            self.days = self.days.saturating_add(1);
+            self.daily_rolls = 0;
+        }
+        self.advance(seconds, day, random)
     }
     /// Randomness and civil time are provided by the runtime, never the webview.
     pub fn advance(
@@ -85,7 +115,7 @@ impl Wardrobe {
     ) -> Vec<Reward> {
         let mut rewards = Vec::new();
         if seconds == 0 {
-            return rewards;
+            return self.unlock_achievements();
         }
         if day > self.last_day.as_str() {
             self.last_day = day.into();
@@ -122,14 +152,31 @@ impl Wardrobe {
         if self.daily_rolls >= 12 {
             self.roll_seconds = 0;
         }
-        for item in catalog().iter().filter(|i| i.source == "achievement") {
-            let progress = if item.metric.as_deref() == Some("days") {
-                self.days as u64
-            } else {
-                self.seconds
-            };
-            if progress >= item.target.unwrap_or(u64::MAX) && !self.owned.contains(&item.id) {
-                rewards.push(self.grant(&item.id, true));
+        rewards.extend(self.unlock_achievements());
+        rewards
+    }
+    pub fn unlock_achievements(&mut self) -> Vec<Reward> {
+        let mut rewards = Vec::new();
+        // A newly unlocked item can finish a collection milestone in the same transaction.
+        loop {
+            let before = rewards.len();
+            for item in catalog().iter().filter(|i| i.source == "achievement") {
+                let progress = match item.metric.as_deref() {
+                    Some("days") => self.days as u64,
+                    Some("seconds") => self.seconds,
+                    Some("inputs") => self.inputs,
+                    Some("owned") => catalog()
+                        .iter()
+                        .filter(|entry| self.owned.contains(&entry.id))
+                        .count() as u64,
+                    _ => continue,
+                };
+                if progress >= item.target.unwrap_or(u64::MAX) && !self.owned.contains(&item.id) {
+                    rewards.push(self.grant(&item.id, true));
+                }
+            }
+            if rewards.len() == before {
+                break;
             }
         }
         rewards
@@ -183,6 +230,7 @@ pub struct Reward {
     pub id: String,
     pub duplicate: bool,
     pub achievement: bool,
+    pub bonus_fragments: u32,
 }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -194,4 +242,90 @@ pub enum Action {
     Tone { tone: String },
     SavePreset { index: usize },
     LoadPreset { index: usize },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_saves_default_to_zero_inputs_without_losing_progress() {
+        let mut old = Wardrobe::from_legacy("mage", &[]);
+        old.seconds = 12345;
+        let mut json = serde_json::to_value(&old).unwrap();
+        json.as_object_mut().unwrap().remove("inputs");
+        let restored: Wardrobe = serde_json::from_value(json).unwrap();
+        assert_eq!(restored.inputs, 0);
+        assert_eq!(restored.seconds, 12345);
+        assert!(restored.owned.contains(&"circlet".to_string()));
+    }
+
+    #[test]
+    fn input_only_batches_unlock_once_and_survive_reload() {
+        let mut w = Wardrobe::from_legacy("default", &[]);
+        let rewards = w.advance_activity(0, 10000, "2026-09-25", |_| 99);
+        assert_eq!(w.inputs, 10000);
+        assert_eq!(w.seconds, 0);
+        assert_eq!(w.days, 1);
+        assert_eq!(
+            rewards
+                .iter()
+                .find(|r| r.id == "rhythm-wraps")
+                .unwrap()
+                .bonus_fragments,
+            12
+        );
+        assert_eq!(w.fragments, 12);
+        let mut restored: Wardrobe =
+            serde_json::from_str(&serde_json::to_string(&w).unwrap()).unwrap();
+        assert!(restored
+            .advance_activity(0, 1, "2026-09-25", |_| 99)
+            .is_empty());
+        assert_eq!(restored.fragments, 12);
+        assert_eq!(restored.days, 1);
+        restored.advance_activity(0, 1, "2026-09-27", |_| 99);
+        assert_eq!(restored.days, 2);
+    }
+
+    #[test]
+    fn collection_rewards_follow_redemption_and_do_not_repeat() {
+        let mut w = Wardrobe::from_legacy("default", &[]);
+        w.owned = catalog()
+            .iter()
+            .filter(|i| i.source != "achievement")
+            .take(19)
+            .map(|i| i.id.clone())
+            .collect();
+        let id = catalog()
+            .iter()
+            .find(|i| i.source == "random" && !w.owned.contains(&i.id))
+            .unwrap()
+            .id
+            .clone();
+        w.fragments = 100;
+        w.apply(Action::Redeem { id }).unwrap();
+        let before = w.fragments;
+        let rewards = w.unlock_achievements();
+        assert!(rewards.iter().any(|r| r.id == "sun-crown"));
+        assert_eq!(w.fragments, before + 12);
+        assert!(w.unlock_achievements().is_empty());
+        assert_eq!(w.fragments, before + 12);
+    }
+
+    #[test]
+    fn daily_cap_does_not_cap_stats_or_achievement_rewards() {
+        let mut w = Wardrobe::from_legacy("default", &[]);
+        w.last_day = "2026-09-25".into();
+        w.daily_rolls = 12;
+        w.seconds = 359999;
+        let rewards = w.advance_activity(1, 100000, "2026-09-25", |_| {
+            panic!("No random rolls past cap")
+        });
+        assert_eq!(w.seconds, 360000);
+        assert_eq!(w.inputs, 100000);
+        assert_eq!(w.daily_rolls, 12);
+        assert_eq!(w.roll_seconds, 0);
+        assert!(rewards.iter().any(|r| r.id == "heart-locket"));
+        assert!(rewards.iter().any(|r| r.id == "music-sprite"));
+    }
 }

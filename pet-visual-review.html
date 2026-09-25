@@ -9,6 +9,8 @@ import {PetStage} from '/src/features/pet/PetStage.tsx';
 import {PET_ITEMS} from '/src/features/pet/catalog.ts';
 const h=React.createElement;
 const outfits=[
+ {name:'星夜混搭',equipped:{head:'moon-hat',face:'star-monocle',neck:'compass-pendant',body:'aurora-cape',hands:'alchemist-cuffs',companion:'potion-bottle'}},
+ {name:'花园茶歇',equipped:{head:'herbal-wreath',face:'explorer-goggles',neck:'ribbon-bow',body:'leaf-cape',hands:'smith-mitts',companion:'tea-cup'}},
  {name:'法师混搭',equipped:{head:'circlet',face:'glasses',neck:'red-scarf',body:'star-cape',hands:'assassin-wraps',companion:'rune-jah'}},
  {name:'自然混搭',equipped:{head:'druid-antlers',face:'glasses',neck:'bell',body:'paladin-cape',hands:'assassin-wraps',companion:'little-ghost'}},
  {name:'战士混搭',equipped:{head:'barbarian-horns',face:'glasses',neck:'necromancer-skull',body:'paladin-cape',hands:'assassin-wraps',companion:'rune-ber'}},
@@ -16,9 +18,10 @@ const outfits=[
 ];
 function avatar(frame,equipped,width){return h(PetStage,{frame,equipped,width,count:123456});}
 function App(){const[page,setPage]=React.useState(0),[dark,setDark]=React.useState(false),[width,setWidth]=React.useState(195);
-const all=[{name:'基础猫咪',equipped:{}},...PET_ITEMS.map(i=>({name:i.name,id:i.id,equipped:{[i.slot]:i.id}})),...outfits];
-const shown=all.slice(page*6,page*6+6);
-return h(React.Fragment,null,h('header',null,h('h1',null,'桌宠装扮 · 真实组件视觉审核'),[0,1,2,3].map(i=>h('button',{key:i,onClick:()=>setPage(i)},'第 '+(i+1)+' 组')),h('button',{onClick:()=>setDark(!dark)},dark?'浅色背景':'深色背景'),h('select',{'aria-label':'预览大小',value:width,onChange:e=>setWidth(+e.target.value)},[97.5,195,390].map(w=>h('option',{key:w,value:w},w+' px'))),h('span',{id:'status'},'第 '+(page+1)+' 组 · '+shown.length+' 套 · 每套三帧')),
+const handPreview=new URLSearchParams(location.search).get('slot')==='hands';
+const all=handPreview?PET_ITEMS.filter(i=>i.slot==='hands').map(i=>({name:i.name,id:i.id,equipped:{hands:i.id}})):[{name:'基础猫咪',equipped:{}},...PET_ITEMS.map(i=>({name:i.name,id:i.id,equipped:{[i.slot]:i.id}})),...outfits];
+const shown=new URLSearchParams(location.search).has('new')?PET_ITEMS.slice(-12).slice(page*6,page*6+6).map(i=>({name:i.name,id:i.id,equipped:{[i.slot]:i.id}})):all.slice(page*6,page*6+6);
+return h(React.Fragment,null,h('header',null,h('h1',null,'桌宠装扮 · 真实组件视觉审核'),Array.from({length:(new URLSearchParams(location.search).has('new')?2:Math.ceil(all.length/6))},(_,i)=>i).map(i=>h('button',{key:i,onClick:()=>setPage(i)},'第 '+(i+1)+' 组')),h('button',{onClick:()=>setDark(!dark)},dark?'浅色背景':'深色背景'),h('select',{'aria-label':'预览大小',value:width,onChange:e=>setWidth(+e.target.value)},[97.5,195,390].map(w=>h('option',{key:w,value:w},w+' px'))),h('span',{id:'status'},'第 '+(page+1)+' 组 · '+shown.length+' 套 · 每套三帧')),
 h('main',{className:dark?'dark':''},shown.map((item,i)=>h('section',{className:'row',key:item.name},h('div',{className:'name'},item.name,h('small',null,item.id||'组合')),...['up','left','right'].map(frame=>h('div',{className:'pose',key:frame},h('span',{className:'label'},frame),avatar(frame,item.equipped,width)))))))}
 createRoot(document.getElementById('root')).render(h(App));
 </script></body></html>

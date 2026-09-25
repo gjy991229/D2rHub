@@ -1,3 +1,4 @@
+import { achievementLabel } from "./progress";
 import { useEffect, useState } from "react";
 import { PET_ITEMS, PET_SLOTS } from "./catalog";
 import { PetAvatar } from "./PetAvatar";
@@ -38,14 +39,12 @@ export function PetWardrobePanel({ english = false }: { english?: boolean }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{PET_ITEMS.filter(item => item.slot === slot).map(item => {
         const owned = w.owned.includes(item.id);
         const equipped = w.equipped[slot] === item.id;
-        const current = item.metric === "days" ? w.days : Math.floor(w.seconds / 3600);
-        const target = item.metric === "days" ? item.target! : item.target! / 3600;
         const weightTotal = PET_ITEMS.reduce((sum, entry) => sum + entry.weight, 0);
         return <article key={item.id} className={`rounded-lg border p-2 space-y-2 ${equipped ? "border-accent" : "border-border-default"}`}>
           <button className="flex w-full items-center gap-2 text-left" onClick={() => setPreview(item.id)} aria-label={`${text("试穿", "Preview")} ${english ? item.en : item.name}`}>
             <PetAvatar equipped={{ [slot]: item.id }} width={75} /><span className="text-xs font-semibold">{english ? item.en : item.name}<span className="block font-normal text-text-muted">{equipped ? text("已装备", "Equipped") : owned ? text("已拥有", "Owned") : text("未解锁 · 可试穿", "Locked · preview available")}</span></span>
           </button>
-          <p className="text-2xs text-text-muted">{item.source === "starter" ? text("初始赠送", "Starter gift") : item.source === "achievement" ? `${text("成就：累计陪伴", "Achievement: companionship")} ${Math.min(current, target)}/${target} ${item.metric === "days" ? text("天（无需连续）", "days, non-consecutive") : text("小时", "hours")}` : `${text("随机装扮池占比", "Share of accessory pool")} ${(item.weight / weightTotal * 100).toFixed(1)}% · ${item.cost} ${text("碎片可定向兑换", "fragments to redeem")}`}</p>
+          <p className="text-2xs text-text-muted">{item.source === "starter" ? text("初始赠送", "Starter gift") : item.source === "achievement" ? `${achievementLabel(item, w, english)}${item.bonus_fragments ? ` · +${item.bonus_fragments} ${text("碎片", "fragments")}` : ""}` : `${text("随机装扮池占比", "Share of accessory pool")} ${(item.weight / weightTotal * 100).toFixed(1)}% · ${item.cost} ${text("碎片可定向兑换", "fragments to redeem")}`}</p>
           <div className="flex gap-1">{owned ? <button disabled={busy} className={button} onClick={() => void act(equipped ? { kind: "unequip", slot } : { kind: "equip", id: item.id })}>{equipped ? text("卸下", "Remove") : text("装备", "Equip")}</button> : item.source === "random" ? <button className={button} disabled={busy || w.fragments < item.cost} onClick={() => void act({ kind: "redeem", id: item.id })}>{text("兑换", "Redeem")} · {item.cost}</button> : null}</div>
         </article>;
       })}</div>

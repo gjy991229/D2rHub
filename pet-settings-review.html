@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light"><head><meta charset="UTF-8"><title>小猫设置 · 成就与统计预览</title>
+<style>body{background:var(--surface-base)!important;overflow:auto!important}#root{height:auto!important;max-width:960px;margin:auto;padding:24px}#demo{font-size:12px;color:var(--text-muted);margin-bottom:18px;padding:12px;border:1px dashed var(--border-default);border-radius:10px}</style>
+</head><body><div id="root"></div><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {mockIPC} from '@tauri-apps/api/mocks';
+import {PetPanel} from '/src/features/settings/panels/PetPanel.tsx';
+import {PET_ITEMS} from '/src/features/pet/catalog.ts';
+import '/src/styles/globals.css';
+const english=new URLSearchParams(location.search).get('lang')==='en';
+const starter=new URLSearchParams(location.search).get('state')==='new';
+const owned=starter?PET_ITEMS.filter(i=>i.source==='starter').map(i=>i.id):[...PET_ITEMS.filter(i=>i.source!=='achievement').slice(0,17).map(i=>i.id),'traveler-hood','bronze-charm','little-ghost','aurora-cape','rhythm-wraps','sun-crown','captain-hat','sailor-knot','paper-boat'];
+const snapshot={generation:1,revision:1,wardrobe:{owned,equipped:starter?{}:{head:'captain-hat',neck:'sailor-knot',companion:'paper-boat'},presets:[{},{},{}],seconds:starter?0:98640,inputs:starter?0:28640,days:starter?0:16,last_day:'2026-09-25',daily_rolls:3,roll_seconds:240,misses:4,fragments:28,tone:'mixed'}};
+mockIPC((command)=>{
+  if(command==='pet_get_wardrobe'||command==='pet_settle_activity')return {snapshot:structuredClone(snapshot),rewards:[]};
+  throw new Error(english?'Preview only: changes are not saved.':'仅供预览：不会保存变更。');
+},{shouldMockEvents:true});
+function App(){const[config,setConfig]=React.useState({app_language:english?'en-US':'zh-CN',enable_bongo_cat:true,bongo_cat_chatterbox:true,bongo_cat_scale:1});return React.createElement(React.Fragment,null,
+  React.createElement('div',{id:'demo'},english?'Preview with sample data · Your real pet progress is not read or modified.':'真实组件预览 · 当前为演示数据，不读取或修改你的真实小猫进度。'),
+  React.createElement(PetPanel,{config,windowPlacementBusy:null,updateConfig:update=>setConfig(old=>{const next={...old};update(next);return next}),persistConfig:async()=>{},onLocate:()=>{}}));}
+createRoot(document.getElementById('root')).render(React.createElement(App));
+</script></body></html>

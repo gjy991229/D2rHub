@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { PetProgressPanel } from "../../pet/PetProgressPanel";
 import { PetWardrobePanel } from "../../pet/PetWardrobePanel";
 import { LocateFixed } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
@@ -20,8 +22,15 @@ export function PetPanel({
   persistConfig,
   onLocate,
 }: PetPanelProps) {
+  const [tab, setTab] = useState("wardrobe");
+  const english = config.app_language === "en-US";
+  const tabs = [["wardrobe", english ? "Wardrobe" : "装扮衣柜"], ["progress", english ? "Achievements & stats" : "成就与统计"], ["settings", english ? "Behavior" : "行为设置"]];
   return (
-    <div className="settings-content-grid">
+    <div className="space-y-4">
+      <nav className="flex flex-wrap gap-1 border-b border-border-default pb-2" aria-label={english ? "Pet sections" : "小猫设置分页"}>{tabs.map(([id, label]) => <button key={id} type="button" aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)} className={`rounded-md px-4 py-2 text-sm font-semibold transition-colors ${tab === id ? "bg-surface-active text-accent" : "text-text-muted hover:bg-surface-hover"}`}>{label}</button>)}</nav>
+      {tab === "wardrobe" && <PetWardrobePanel english={english} />}
+      {tab === "progress" && <PetProgressPanel english={english} />}
+      {tab === "settings" && (
       <section className="spatial-panel p-3 space-y-2" aria-labelledby="pet-module-title">
         <div className="flex items-center justify-between gap-3 py-1">
           <div>
@@ -92,7 +101,7 @@ export function PetPanel({
           </div>
         )}
       </section>
-      <PetWardrobePanel english={config.app_language === "en-US"} />
+      )}
     </div>
   );
 }

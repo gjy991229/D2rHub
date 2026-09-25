@@ -47,7 +47,7 @@ pub(crate) fn flush_activity(app: &tauri::AppHandle) -> Result<(), String> {
     }
     let mut next = runtime.snapshot.wardrobe.clone();
     for (day, seconds) in &activity {
-        let _ = next.advance(*seconds, day, random_below);
+        let _ = next.advance_activity(seconds.seconds, seconds.inputs, day, random_below);
     }
     commit(app, runtime, next, &activity)
 }
@@ -139,12 +139,15 @@ pub(crate) fn transact(
     };
     let mut rewards = Vec::new();
     for (day, seconds) in &activity {
-        rewards.extend(next.advance(*seconds, day, random_below));
+        rewards.extend(next.advance_activity(seconds.seconds, seconds.inputs, day, random_below));
     }
-    let changed = !activity.is_empty() || action.is_some();
+    let mut changed = !activity.is_empty() || action.is_some();
     if let Some(action) = action {
         next.apply(action)?;
     }
+    let achievements = next.unlock_achievements();
+    changed |= !achievements.is_empty();
+    rewards.extend(achievements);
     if changed {
         // Failed saves keep the pending time. Concurrent input remains pending.
         commit(app, runtime, next, &activity)?;

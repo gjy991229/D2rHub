@@ -1,4 +1,6 @@
 import type { PetFrame } from "./types";
+import { PetHandAccessory } from "./PetHandAccessory";
+import { PetAdventureAccessory } from "./PetAdventureAccessory";
 import { PetCirclet } from "./PetCirclet";
 import { PET_FRAME_GEOMETRY } from "./petGeometry";
 
@@ -9,6 +11,18 @@ export function PetAccessory({ id, frame }: { id: string; frame: PetFrame }) {
   const [eyeLeftX, eyeLeftY, eyeRightX, eyeRightY] = PET_FRAME_GEOMETRY[frame].eyes;
   if (id === "circlet") return <PetCirclet frame={frame} />;
   switch (id) {
+    case "moon-hat": return <g transform={head}><path d="M79 46 Q96 24 115 8 Q112 28 140 48Z" fill="#756595" /><path d="M73 47 Q107 59 146 47 L149 54 Q110 66 72 54Z" fill="#9786b1" /><path d="M108 24 Q99 35 113 36 Q101 42 98 32 Q99 25 108 24Z" fill="#f2d58a" stroke="none" /></g>;
+    case "herbal-wreath": return <g transform={head}><path d="M75 49 Q108 61 143 48" fill="none" stroke="#7c9c73" strokeWidth="5" />{[82, 105, 131].map((x, i) => <g key={x} transform={`translate(${x} ${i === 1 ? 54 : 49})`}><path d="M-3 0 Q-16 -14 -17 -4 Q-13 4 -3 0 M3 0 Q14 -15 17 -5 Q14 4 3 0" fill="#9ebd85" /><path d="M0 -7 Q8 -9 7 -1 Q12 6 3 7 Q-3 12 -6 5 Q-13 0 -6 -4 Q-5 -11 0 -7Z" fill="#ead0bf" /><circle r="2.5" fill="#d4ab63" stroke="none" /></g>)}</g>;
+    case "explorer-goggles": return <g><path d={`M${eyeLeftX - 13} ${eyeLeftY} l-7 -3 M${eyeLeftX + 13} ${eyeLeftY} L${eyeRightX - 13} ${eyeRightY} M${eyeRightX + 13} ${eyeRightY} l7 -2`} fill="none" stroke="#96704c" strokeWidth="4" />{[[eyeLeftX, eyeLeftY], [eyeRightX, eyeRightY]].map(([x, y]) => <g key={x}><rect x={x - 13} y={y - 10} width="26" height="20" rx="7" fill="#e9bd76" fillOpacity="0.35" stroke="#997c53" strokeWidth="3" /><path d={`M${x - 7} ${y - 5} l5 -2`} stroke="#fff0d2" /></g>)}</g>;
+    case "star-monocle": return <g fill="none" stroke="#b59154"><circle cx={eyeRightX} cy={eyeRightY} r="12" /><path d={`M${eyeRightX + 11} ${eyeRightY + 5} q15 29 -5 34`} /><path d={`M${eyeRightX + 13} ${eyeRightY + 22} l2 4 4 2 -4 2 -2 4 -2 -4 -4 -2 4 -2Z`} fill="#f2d58a" strokeWidth="1" /></g>;
+    case "ribbon-bow": return <g transform={head}><path d="M77 93 Q100 101 123 94" fill="none" stroke="#84ad9d" strokeWidth="3" /><path d="M99 99 L83 92 Q78 101 84 109 L99 104 L116 110 Q122 101 116 94 L103 99Z" fill="#9bc5ad" /><path d="M88 100 L97 102 M106 102 L113 101" fill="none" /><rect x="97" y="97" width="8" height="9" rx="3" fill="#e7c77f" /></g>;
+    case "compass-pendant": return <g transform={head}><path d="M76 91 Q99 107 124 94" fill="none" stroke="#b99a65" /><circle cx="101" cy="104" r="10" fill="#dfbd78" /><circle cx="101" cy="104" r="7" fill="#f0e5c9" strokeWidth="1" /><path d="M104 98 L103 105 L98 110 L99 103Z" fill="#b86d64" strokeWidth="1" /></g>;
+    case "leaf-cape": return <g transform={head}><path d="M60 64 Q106 45 151 62 Q160 89 195 110 Q166 122 146 99 L111 90 L76 96 Q53 117 23 109 Q47 88 60 64Z" fill="#81a580" /><path d="M56 76 L32 106 M45 90 L48 104 M45 90 L33 94 M151 76 L184 108 M167 93 L181 95 M167 93 L165 107" fill="none" stroke="#c8d2a1" /></g>;
+    case "aurora-cape": return <g transform={head}><path d="M60 64 Q108 44 151 62 L197 112 Q167 119 148 99 L114 90 L76 95 Q53 115 22 109 L46 76Z" fill="#536b88" /><path d="M26 105 Q45 107 64 81 M151 79 Q174 115 192 108" fill="none" stroke="#8bc4b7" strokeWidth="6" /><path d="M33 103 Q48 99 57 83 M154 91 Q173 115 184 110" fill="none" stroke="#b4a6d2" strokeWidth="3" /><path d="M177 91 l0 8 M173 95 l8 0" stroke="#efe3b9" /></g>;
+    case "smith-mitts": case "alchemist-cuffs": case "assassin-wraps": case "winter-cuffs": case "rhythm-wraps":
+      return <PetHandAccessory id={id} frame={frame} />;
+    case "potion-bottle": return <g transform={pulse}><path d="M186 61 L197 61 L197 71 Q205 76 203 88 Q192 96 180 88 Q177 77 186 71Z" fill="#d7e3dd" /><path d="M183 79 Q191 82 201 78 L200 86 Q192 91 184 86Z" fill="#80adc4" stroke="none" /><rect x="185" y="57" width="13" height="7" rx="2" fill="#ba936c" /><path d="M184 74 L182 79 M188 83 L188 85" stroke="#fff4d8" /></g>;
+    case "tea-cup": return <g transform={pulse}><path d="M199 73 Q210 71 205 82 L199 85" fill="none" stroke="#b68a70" strokeWidth="3" /><path d="M179 73 L201 73 L198 90 Q190 96 182 90Z" fill="#dfb899" /><ellipse cx="190" cy="73" rx="11" ry="4" fill="#795b4b" /><path d="M185 65 Q181 61 185 57 M195 65 Q191 61 195 57" fill="none" stroke="#b7c3bb" /><path d="M187 82 Q190 78 193 82 Q193 85 190 87 Q187 85 187 82Z" fill="#f1dfbb" stroke="none" /></g>;
     case "cloth-cap": return <g transform={head}><path d="M76 45 Q84 16 114 28 Q137 32 143 48 L115 55Z" fill="#b9bba2" /><path d="M74 45 Q113 59 145 48 L149 54 Q112 64 73 51Z" fill="#727e65" /></g>;
     case "amazon-band": return <g transform={head}><path d="M74 48 Q109 61 145 48 L145 54 Q110 68 73 54Z" fill="#b48c4e" /><path d="M140 49 Q130 17 153 9 Q162 34 140 49Z" fill="#e5d9be" /><path d="M141 47 L150 17" fill="none" /><circle cx="106" cy="58" r="4" fill="#77bcae" /></g>;
     case "barbarian-horns": return <g transform={head}><path d="M76 43 Q104 18 138 40 L143 52 Q108 46 75 49Z" fill="#8b9aa1" /><path d="M82 39 Q60 41 60 17 Q70 30 87 30Z M130 37 Q151 42 157 23 Q142 31 129 29Z" fill="#efe1bd" /><path d="M104 28 L104 48" stroke="#dfcaa1" strokeWidth="4" /></g>;
@@ -21,15 +35,11 @@ export function PetAccessory({ id, frame }: { id: string; frame: PetFrame }) {
     case "bronze-charm": return <g transform={head}><path d="M76 91 Q100 107 124 94" fill="none" stroke="#aa8860" /><path d="M101 95 L111 104 L102 114 L92 104Z" fill="#c39761" /><path d="M98 103 L101 107 L106 101" fill="none" /></g>;
     case "paladin-cape": return <g transform={head}><path d="M60 64 Q108 44 151 62 L197 112 Q167 119 148 99 L114 90 L76 95 Q53 115 22 109 L46 76Z" fill="#7f99b0" /><path d="M151 69 L191 108 L179 113 L143 72Z" fill="#d4b875" /><path d="M183 98 L183 109 M178 103 L188 103" fill="none" stroke="#fff0c4" strokeWidth="3" /><path d="M51 82 L33 105 M153 84 L165 106" fill="none" stroke="#58758f" /></g>;
     case "star-cape": return <g transform={head}><path d="M60 64 Q108 44 151 62 L197 112 Q167 119 148 99 L114 90 L76 95 Q53 115 22 109 L46 76Z" fill="#665b8b" /><path d="M183 96 L185 102 L191 104 L185 106 L183 112 L181 106 L175 104 L181 102Z" fill="#e9dca7" /><circle cx="40" cy="105" r="2" fill="#e9dca7" stroke="none" /><path d="M51 82 L33 105 M153 84 L161 101" fill="none" stroke="#9185b1" /></g>;
-    case "assassin-wraps": return <g>{(["left", "right"] as const).map(side => {
-      const x = side === "left" ? 43 : 143;
-      const y = frame === side ? 94 : frame === "up" ? 85 : 78;
-      return <g key={side} transform={`translate(${x} ${y}) rotate(${frame === side ? -20 : 25})`}><rect x="-9" y="-4" width="18" height="8" rx="3" fill="#817490" /><path d="M-4 -3 L0 3 M2 -3 L6 3" stroke="#d9c8dd" fill="none" /></g>;
-    })}</g>;
+
     case "warlock-tome": return <g transform={pulse}><path d="M179 61 L201 57 L204 88 L181 93Z" fill="#70566b" /><path d="M183 88 L202 84 L204 88 L181 93Z" fill="#e2ccb0" /><path d="M188 66 L196 77 L186 80 L193 64" fill="none" stroke="#a6c493" /></g>;
     case "little-ghost": return <g transform={pulse}><path d="M180 92 L180 74 Q180 58 192 58 Q204 58 204 74 L204 92 L198 88 L192 94 L187 89Z" fill="#d9e3de" /><circle cx="187" cy="73" r="2" fill="#54403b" /><circle cx="197" cy="73" r="2" fill="#54403b" /><path d="M189 80 Q192 83 195 80" fill="none" /></g>;
     case "rune-lo": case "rune-ber": case "rune-jah": return <g transform={pulse}><path d="M180 62 L196 58 L204 67 L201 90 L184 94 L176 84Z" fill={id === "rune-jah" ? "#b6bdc4" : id === "rune-ber" ? "#b8bea7" : "#c2ad96"} /><path d="M183 65 L194 62 M182 86 L187 89" fill="none" stroke="#e8ddc5" /><path d={id === "rune-jah" ? "M185 69 L194 69 L190 83 M182 78 L198 75" : id === "rune-ber" ? "M185 68 L185 85 L196 79 L185 74 L196 68" : "M185 68 L185 83 L195 83 M192 69 L196 74 L191 78"} fill="none" stroke="#72502e" strokeWidth="2.5" /></g>;
-    default: return null;
+    default: return <PetAdventureAccessory id={id} frame={frame} />;
   }
 }
 
