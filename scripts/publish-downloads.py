@@ -7,6 +7,7 @@ import argparse
 import copy
 import json
 import re
+import sys
 from pathlib import Path
 from datetime import datetime, timezone
 from release_platforms import CONFIG, Platform, credentials, anonymous_verify, anonymous_json, sha256, windows_file_version
@@ -29,6 +30,8 @@ def guard_asset(previous, asset):
         if previous and next_version < version(previous['version']): raise RuntimeError('Refusing software/processor downgrade')
 
 def publish(spec, revision, output, config_path, previous=None):
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     problems = []
     try: cfg, token = credentials(config_path)
     except Exception:
