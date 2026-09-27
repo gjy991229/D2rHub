@@ -7,19 +7,23 @@ import { taskGateway } from "../../tasks/gateway";
 import { subscribeBeforeReadingTasks } from "../../tasks/taskSync";
 import type { TaskSnapshot } from "../../tasks/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
+import { useGlobalConfig } from "../../../store/globalConfig";
 import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
 import "./modResources.css";
 
-interface Asset { id: string; version: string; url: string; size: number; game_data_version: string | null }
+interface Asset { id: string; version: string; url: string; mirrors?: {platform: string; url: string}[]; size: number; game_data_version: string | null }
 interface ResourceState {
   catalog: { release_url: string; assets: Asset[] };
-  processor: { ready: boolean; installed_version: string | null; recommended_version: string;
+  processor: { ready: boolean; update_available?: boolean; installed_version: string | null; recommended_version: string;
     installed_path: string | null; install_directory: string; legacy: boolean };
   mods_directory: string | null; game_data_version: string | null; warning: string | null;
+  preferred_source?: string;
+  mods?: {id: string; installed_version: string | null; update_available: boolean; protected: boolean; message: string}[];
 }
 interface Props { edition: string; en: boolean; catalog?: ModCapsuleController; processorOnly?: boolean; onReady?: (ready: boolean) => void }
 
 export function ModResourceLibrary({ edition, en, catalog, processorOnly = false, onReady }: Props) {
+  const autoCheck = useGlobalConfig(s => s.config?.enable_auto_update ?? true);
   const [data, setData] = useState<ResourceState | null>(null);
   const [checking, setChecking] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,11 +45,11 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
     // Show local state immediately; network failure never hides installed resources.
     void invokeCommand<ResourceState>("get_mod_resources", { edition, refresh: false }).then((value) => {
       if (live) { setData(value); onReady?.(value.processor.ready); }
-      return invokeCommand<ResourceState>("get_mod_resources", { edition, refresh: true });
+      return autoCheck ? invokeCommand<ResourceState>("get_mod_resources", { edition, refresh: true }) : value;
     }).then((value) => { if (live) { setData(value); onReady?.(value.processor.ready); } })
       .catch((e) => { if (live) setError(String(e)); }).finally(() => { if (live) setChecking(false); });
     return () => { live = false; };
-  }, [edition, onReady]);
+  }, [edition, onReady, autoCheck]);
   useEffect(() => {
     let live = true; let stop: (() => void) | undefined;
     void subscribeBeforeReadingTasks(taskGateway, (snapshot) => {
@@ -97,9 +101,11 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
     {data && <div className="resource-cards">{data.catalog.assets.filter((a) => !processorOnly || a.id === "processor").map((asset) => {
       const processor = asset.id === "processor";
       const p = data.processor;
+      const modStatus = data.mods?.find(m => m.id === asset.id);
       const existing = !processor && catalog?.pool?.capsules.find((c) => c.edition === edition && c.name.toLowerCase() === asset.id.toLowerCase() && c.origin === "scanned");
       const mismatch = !processor && data.game_data_version !== asset.game_data_version;
-      const ready = processor ? p.ready : !!existing;
+      const ready = processor ? p.ready && !p.update_available : !!existing && !modStatus?.update_available;
+      const protectedMod = !!modStatus?.protected;
       const location = processor ? p.install_directory : data.mods_directory ? `${data.mods_directory}\\${asset.id}` : "";
       const profile = LIGHTWEIGHT_PROFILES.find((value) => value.name === asset.id);
       return <article key={asset.id} className="resource-card">
@@ -111,14 +117,16 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
           {` · ${p.installed_version ?? (en ? "Unknown version" : "版本未知")}`}
           {!p.ready && (en ? ". Install the compatible version below before processing." : "。请安装下方兼容版本后再加工。")}
           <code>{p.installed_path}</code></p>}
-        {existing && <p className="resource-note">{en ? "A folder with this name already exists. Use it from Mod Management; it will not be overwritten." : "本地已有同名 Mod，可在 Mod 管理中直接使用；不会覆盖现有文件。"}</p>}
+        {modStatus?.message && <p className="resource-note">{modStatus.message}</p>}
+        {modStatus?.installed_version && <small>{en ? "Installed" : "已安装"} {modStatus.installed_version}</small>}
+        {processor && p.ready && p.update_available && <p className="resource-note">{en ? "A compatible update is available. Your installed processor remains usable." : "有兼容新版本，当前加工器仍可使用。"}</p>}
         {mismatch && <p className="resource-note">{en ? `Current game: ${data.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.` : `当前游戏版本：${data.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
         <div className="resource-location"><span>{en ? "Install location" : "安装位置"}</span><code>{location || (en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录")}</code></div>
         <div className="resource-actions">
-          <Button size="sm" variant="primary" disabled={active || ready || mismatch || (!processor && !location)} onClick={() => void install(asset, false)}><Download size={13} />
-            {ready ? (en ? "Installed" : "已存在") : processor && p.installed_path ? (en ? "Update processor" : "更新加工器") : (en ? "Download & install" : "下载并安装")}</Button>
-          <Button size="sm" variant="ghost" disabled={active || ready || mismatch || (!processor && !location)} onClick={() => void install(asset, true)}>{en ? "Import downloaded file" : "导入已下载文件"}</Button>
-          <Button size="sm" variant="ghost" onClick={() => void external(asset.url)}><ExternalLink size={12} />{en ? "Browser download" : "浏览器下载"}</Button>
+          <Button size="sm" variant="primary" disabled={active || ready || protectedMod || mismatch || (!processor && !location)} onClick={() => void install(asset, false)}><Download size={13} />
+            {protectedMod ? (en ? "Preserved" : "保留现有 Mod") : ready ? (en ? "Installed" : "已是当前版本") : processor && p.installed_path ? (en ? "Update processor" : "更新加工器") : modStatus?.update_available ? (en ? "Verify & update" : "校验并原位更新") : (en ? "Download & install" : "下载并安装")}</Button>
+          <Button size="sm" variant="ghost" disabled={active || ready || protectedMod || mismatch || (!processor && !location)} onClick={() => void install(asset, true)}>{en ? "Import downloaded file" : "导入已下载文件"}</Button>
+          <Button size="sm" variant="ghost" onClick={() => void external(asset.mirrors?.find(m => m.platform === data.preferred_source)?.url ?? asset.mirrors?.[0]?.url ?? asset.url)}><ExternalLink size={12} />{en ? "Browser download" : "浏览器下载"}</Button>
           <Button size="sm" variant="ghost" disabled={!location} onClick={() => void folder(processor)}><FolderOpen size={12} />{en ? "Open folder" : "打开目录"}</Button>
         </div>
       </article>;

@@ -14,4 +14,6 @@ reasonix.toml
 /.codex-vite*.log
 /temp.txt
 /artifacts/
+__pycache__/
+*.pyc
 src-tauri/permissions/*

@@ -32,6 +32,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "auto_close_browser",
   "launch_trim_memory",
   "enable_auto_update",
+  "download_source",
   "first_launch",
   "rune_audio_enabled",
   "rune_audio_target_account",

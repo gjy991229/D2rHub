@@ -2,6 +2,7 @@
 identifier = "main-window-commands"
 description = "Allows the main application window to invoke the complete D2RHub command surface."
 commands.allow = [
+  "check_mod_resource_updates", "check_software_update", "download_software_update", "launch_downloaded_update",
   "get_mod_resources", "install_mod_resource", "open_mod_processor_directory",
   "inspect_account_launch_health", "close_selected_accounts",
   "get_global_config", "get_capability_statuses", "get_capability_descriptors",

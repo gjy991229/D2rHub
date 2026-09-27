@@ -453,6 +453,12 @@
           "markdownDescription": "Enables the check_cloud_version command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_mod_resource_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-mod-resource-updates",
+          "markdownDescription": "Enables the check_mod_resource_updates command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-path-exists",
@@ -463,6 +469,12 @@
           "type": "string",
           "const": "allow-check-saved-games-settings",
           "markdownDescription": "Enables the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the check_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-software-update",
+          "markdownDescription": "Enables the check_software_update command without any pre-configured scope."
         },
         {
           "description": "Enables the close_selected_accounts command without any pre-configured scope.",
@@ -529,6 +541,12 @@
           "type": "string",
           "const": "allow-detect-saved-games-path",
           "markdownDescription": "Enables the detect_saved_games_path command without any pre-configured scope."
+        },
+        {
+          "description": "Enables the download_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-download-software-update",
+          "markdownDescription": "Enables the download_software_update command without any pre-configured scope."
         },
         {
           "description": "Enables the exit_app command without any pre-configured scope.",
@@ -795,6 +813,12 @@
           "markdownDescription": "Enables the launch_browser_for_account command without any pre-configured scope."
         },
         {
+          "description": "Enables the launch_downloaded_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-launch-downloaded-update",
+          "markdownDescription": "Enables the launch_downloaded_update command without any pre-configured scope."
+        },
+        {
           "description": "Enables the list_accounts command without any pre-configured scope.",
           "type": "string",
           "const": "allow-list-accounts",
@@ -981,12 +1005,6 @@
           "markdownDescription": "Enables the room_automation_cancel command without any pre-configured scope."
         },
         {
-          "description": "Enables the room_automation_get_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-room-automation-get-chat-binding",
-          "markdownDescription": "Enables the room_automation_get_chat_binding command without any pre-configured scope."
-        },
-        {
           "description": "Enables the room_automation_get_config command without any pre-configured scope.",
           "type": "string",
           "const": "allow-room-automation-get-config",
@@ -997,18 +1015,6 @@
           "type": "string",
           "const": "allow-room-automation-get-status",
           "markdownDescription": "Enables the room_automation_get_status command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the room_automation_install_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-room-automation-install-chat-binding",
-          "markdownDescription": "Enables the room_automation_install_chat_binding command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the room_automation_restore_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-room-automation-restore-chat-binding",
-          "markdownDescription": "Enables the room_automation_restore_chat_binding command without any pre-configured scope."
         },
         {
           "description": "Enables the room_automation_retry command without any pre-configured scope.",
@@ -1135,12 +1141,6 @@
           "type": "string",
           "const": "allow-set-shortcut-capture-active",
           "markdownDescription": "Enables the set_shortcut_capture_active command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the set_stats_overlay_mini_input_region command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-set-stats-overlay-mini-input-region",
-          "markdownDescription": "Enables the set_stats_overlay_mini_input_region command without any pre-configured scope."
         },
         {
           "description": "Enables the snapshot_processes command without any pre-configured scope.",
@@ -1299,6 +1299,12 @@
           "markdownDescription": "Denies the check_cloud_version command without any pre-configured scope."
         },
         {
+          "description": "Denies the check_mod_resource_updates command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-mod-resource-updates",
+          "markdownDescription": "Denies the check_mod_resource_updates command without any pre-configured scope."
+        },
+        {
           "description": "Denies the check_path_exists command without any pre-configured scope.",
           "type": "string",
           "const": "deny-check-path-exists",
@@ -1309,6 +1315,12 @@
           "type": "string",
           "const": "deny-check-saved-games-settings",
           "markdownDescription": "Denies the check_saved_games_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-software-update",
+          "markdownDescription": "Denies the check_software_update command without any pre-configured scope."
         },
         {
           "description": "Denies the close_selected_accounts command without any pre-configured scope.",
@@ -1375,6 +1387,12 @@
           "type": "string",
           "const": "deny-detect-saved-games-path",
           "markdownDescription": "Denies the detect_saved_games_path command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the download_software_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-download-software-update",
+          "markdownDescription": "Denies the download_software_update command without any pre-configured scope."
         },
         {
           "description": "Denies the exit_app command without any pre-configured scope.",
@@ -1641,6 +1659,12 @@
           "markdownDescription": "Denies the launch_browser_for_account command without any pre-configured scope."
         },
         {
+          "description": "Denies the launch_downloaded_update command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-launch-downloaded-update",
+          "markdownDescription": "Denies the launch_downloaded_update command without any pre-configured scope."
+        },
+        {
           "description": "Denies the list_accounts command without any pre-configured scope.",
           "type": "string",
           "const": "deny-list-accounts",
@@ -1827,12 +1851,6 @@
           "markdownDescription": "Denies the room_automation_cancel command without any pre-configured scope."
         },
         {
-          "description": "Denies the room_automation_get_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-room-automation-get-chat-binding",
-          "markdownDescription": "Denies the room_automation_get_chat_binding command without any pre-configured scope."
-        },
-        {
           "description": "Denies the room_automation_get_config command without any pre-configured scope.",
           "type": "string",
           "const": "deny-room-automation-get-config",
@@ -1843,18 +1861,6 @@
           "type": "string",
           "const": "deny-room-automation-get-status",
           "markdownDescription": "Denies the room_automation_get_status command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the room_automation_install_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-room-automation-install-chat-binding",
-          "markdownDescription": "Denies the room_automation_install_chat_binding command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the room_automation_restore_chat_binding command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-room-automation-restore-chat-binding",
-          "markdownDescription": "Denies the room_automation_restore_chat_binding command without any pre-configured scope."
         },
         {
           "description": "Denies the room_automation_retry command without any pre-configured scope.",
@@ -1981,12 +1987,6 @@
           "type": "string",
           "const": "deny-set-shortcut-capture-active",
           "markdownDescription": "Denies the set_shortcut_capture_active command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the set_stats_overlay_mini_input_region command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-set-stats-overlay-mini-input-region",
-          "markdownDescription": "Denies the set_stats_overlay_mini_input_region command without any pre-configured scope."
         },
         {
           "description": "Denies the snapshot_processes command without any pre-configured scope.",

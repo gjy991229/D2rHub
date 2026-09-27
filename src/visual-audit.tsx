@@ -11,6 +11,7 @@ import "./styles/visualAudit.css";
 
 type Surface =
   | "mod-resources"
+  | "software-update"
   | "main"
   | "setup"
   | "settings"
@@ -500,6 +501,12 @@ function installIpcMock() {
         return modCapsulePool;
       case "assign_mod_capsule_to_account":
         return null;
+      case "check_software_update":
+        return {version:"0.9.105",available:true,downloaded:false,path:"C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\downloads\\installers\\D2RHub-0.9.105-setup.exe"};
+      case "download_software_update":
+        return {version:"0.9.105",available:true,downloaded:true};
+      case "check_mod_resource_updates":
+        return ["加工器 1.4.0-beta.17", "国服 LiteHub"];
       case "get_mod_resources":
         return {
           catalog: { release_url: "https://github.com/gjy991229/D2rHub/releases", assets: [
@@ -507,6 +514,7 @@ function installIpcMock() {
             ...["LiteHub", "BoHub", "NullHub"].map((id) => ({ id, version: "mod-resources-20260927.1", size: 24000000, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: "93854" })),
           ] },
           processor: { ready: false, installed_version: "1.3.3", recommended_version: "1.4.0-beta.17", installed_path: "C:\\Program Files\\D2RHub\\d2r-audio-mod.exe", install_directory: "C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\tools\\d2r-audio-mod", legacy: true },
+          preferred_source: "gitee", mods: [{id:"LiteHub",installed_version:"mod-resources-20260920.1",update_available:true,protected:false,message:"发现官方 Mod 更新；关闭游戏后可原位更新"}],
           mods_directory: "C:\\Diablo II Resurrected\\mods", game_data_version: "93854", warning: null,
         };
       case "get_audio_mod_setup_state":
@@ -766,6 +774,11 @@ function AuditRuntime() {
     async function loadSurface() {
       try {
         const statsStore = await primeStores();
+        if (surface === "software-update") {
+          const { default: UpdateConfirmModal } = await import("./components/ui/UpdateConfirmModal");
+          if (!cancelled) setContent(<UpdateConfirmModal open onClose={() => {}} version="0.9.105" />);
+          return;
+        }
         if (surface === "mod-resources") {
           const { ModResourceDialog } = await import("./features/settings/panels/ModResourceLibrary");
           if (!cancelled) setContent(<ModResourceDialog open onClose={() => {}} edition="CN" en={requestedLanguage === "en-US"} />);

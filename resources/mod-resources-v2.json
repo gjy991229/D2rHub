@@ -1,0 +1,95 @@
+{
+  "schema": 2,
+  "channel": "v7-r25-r28-lightweight-v1",
+  "revision": 2026092804,
+  "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
+  "kind": "resources",
+  "hub_min": "0.9.104",
+  "hub_max_exclusive": "0.10.0",
+  "assets": [
+    {
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/d2r-audio-mod-1.4.0-beta.17-windows-x64.exe",
+      "size": 3098624,
+      "sha256": "ae763b17ca054051c6cc34e7510452bf57fedd15ce6896b5bd7982e4f4539ac9",
+      "id": "processor",
+      "version": "1.4.0-beta.17",
+      "mod_name": null,
+      "profile": null,
+      "game_data_version": null,
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/d2r-audio-mod-1.4.0-beta.17-windows-x64.exe"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260927.1/d2r-audio-mod-1.4.0-beta.17-windows-x64.exe"
+        }
+      ],
+      "sequence": 0
+    },
+    {
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/LiteHub-mod-resources-20260927.1.zip",
+      "size": 24289399,
+      "sha256": "dd071461d8ccaefcd9bebee4b9738c3317dab1e4dea68bdf802297161e40d554",
+      "id": "LiteHub",
+      "version": "mod-resources-20260927.1",
+      "mod_name": "LiteHub",
+      "profile": "main",
+      "game_data_version": "93854",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/LiteHub-mod-resources-20260927.1.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260927.1/LiteHub-mod-resources-20260927.1.zip"
+        }
+      ],
+      "sequence": 0
+    },
+    {
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/BoHub-mod-resources-20260927.1.zip",
+      "size": 23746477,
+      "sha256": "5dde856297a3ca1208a7db5d35671493b6d957d93af0d647107c79c8644fe075",
+      "id": "BoHub",
+      "version": "mod-resources-20260927.1",
+      "mod_name": "BoHub",
+      "profile": "filler",
+      "game_data_version": "93854",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/BoHub-mod-resources-20260927.1.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260927.1/BoHub-mod-resources-20260927.1.zip"
+        }
+      ],
+      "sequence": 0
+    },
+    {
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/NullHub-mod-resources-20260927.1.zip",
+      "size": 25714226,
+      "sha256": "8348a48b00197fd52d2e7e5369d0c836f812f5117c359184da40642bdf8648d4",
+      "id": "NullHub",
+      "version": "mod-resources-20260927.1",
+      "mod_name": "NullHub",
+      "profile": "min",
+      "game_data_version": "93854",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/NullHub-mod-resources-20260927.1.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260927.1/NullHub-mod-resources-20260927.1.zip"
+        }
+      ],
+      "sequence": 0
+    }
+  ]
+}

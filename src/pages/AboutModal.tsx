@@ -122,16 +122,15 @@ export function AboutModal({ open, onClose }: Props) {
     try {
       interface CloudVersionInfo {
         version: string;
-        download_url: string;
+        available: boolean;
       }
-      const info = await invokeCommand<CloudVersionInfo>("check_cloud_version");
+      const info = await invokeCommand<CloudVersionInfo>("check_software_update");
       const cloudVersion = info.version;
-      const downloadUrl = info.download_url;
+      const downloadUrl = "";
 
-      const cleanLocal = version.replace(/^v/, "").trim();
       const cleanCloud = cloudVersion.replace(/^v/, "").trim();
 
-      if (cleanLocal === cleanCloud) {
+      if (!info.available) {
         setUpdateStatus("已是最新版本");
         showToast("success", "当前已是最新版本");
         localStorage.removeItem("d2rhub-update-available-version");

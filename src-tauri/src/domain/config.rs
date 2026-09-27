@@ -1,4 +1,13 @@
 use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadSource {
+    #[default]
+    Auto,
+    Gitee,
+    Github,
+}
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -159,6 +168,8 @@ pub struct GlobalConfig {
     /// 是否在每天启动时自动检查更新
     #[serde(default = "default_enable_auto_update")]
     pub enable_auto_update: bool,
+    #[serde(default)]
+    pub download_source: DownloadSource,
     /// 是否首次启动（自动弹出帮助文档）
     #[serde(default = "default_first_launch")]
     pub first_launch: bool,
@@ -470,6 +481,7 @@ impl Default for GlobalConfig {
             auto_close_browser: true,
             launch_trim_memory: true,
             enable_auto_update: true,
+            download_source: DownloadSource::Auto,
             first_launch: true,
             rune_audio_enabled: false,
             rune_audio_target_account: String::new(),

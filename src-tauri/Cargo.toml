@@ -1,6 +1,6 @@
 [package]
 name = "d2rhub"
-version = "0.9.103"
+version = "0.9.104"
 description = "Diablo II Resurrected Multi-Account Manager"
 authors = ["D2RHub"]
 edition = "2021"
@@ -63,6 +63,7 @@ hound = "3.5.1"
 reqwest = { version = "0.12", features = ["stream", "rustls-tls"], default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 sha2 = "0.10"
+semver = "1"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.24.0"

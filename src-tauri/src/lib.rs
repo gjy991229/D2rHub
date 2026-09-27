@@ -5,6 +5,7 @@ mod battle_net_config;
 mod capabilities;
 mod commands;
 mod domain;
+mod downloads;
 mod error;
 #[doc(hidden)]
 pub mod infrastructure;
@@ -14,9 +15,11 @@ mod lightweight_mod;
 pub mod logger;
 mod mod_catalog;
 mod mod_resources;
+mod resource_install;
 mod rune_audio;
 mod rune_data;
 mod runtime_restart;
+mod software_update;
 mod state;
 mod stats;
 mod stats_page;
@@ -45,6 +48,7 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
     if !config.feature_profile_decided() {
         return Err("尚未选择 D2RHub 使用模式，拒绝激活运行服务".to_string());
     }
+    mod_resources::recover_updates(app, state.inner())?;
     mod_catalog::recover_before_launch(state.inner(), app)?;
     // Internal window creation uses the same activation gate as commands.
     state.runtime_activated.store(true, Ordering::Release);
@@ -304,6 +308,10 @@ pub fn run() {
             mod_resources::get_mod_resources,
             mod_resources::install_mod_resource,
             mod_resources::open_mod_processor_directory,
+            mod_resources::check_mod_resource_updates,
+            software_update::check_software_update,
+            software_update::download_software_update,
+            software_update::launch_downloaded_update,
             mod_catalog::get_mod_capsule_pool,
             mod_catalog::scan_mod_capsule_pool,
             mod_catalog::open_mods_directory,

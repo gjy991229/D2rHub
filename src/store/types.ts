@@ -62,6 +62,7 @@ export interface GlobalConfig {
   auto_close_browser: boolean;
   launch_trim_memory?: boolean;
   enable_auto_update: boolean;
+  download_source?: "auto" | "gitee" | "github";
   first_launch: boolean;
   rune_audio_enabled: boolean;
   rune_audio_target_account: string;

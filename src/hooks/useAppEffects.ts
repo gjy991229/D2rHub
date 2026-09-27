@@ -117,43 +117,37 @@ export function useAutoUpdate(
   config: GlobalConfig | null,
   onUpdateAvailable: (version: string, url: string) => void
 ) {
+  const checking = useRef(false);
+  const attempted = useRef(false);
+  const onAvailable = useRef(onUpdateAvailable);
+  onAvailable.current = onUpdateAvailable;
   useEffect(() => {
-    if (loading || !config || !config.first_run_complete || !config.enable_auto_update) return;
-
-    const runAutoCheck = async () => {
-      const today = new Date().toISOString().split("T")[0];
-      const lastCheck = localStorage.getItem("d2rhub-last-update-check-date");
-
-      if (lastCheck === today) return;
-      localStorage.setItem("d2rhub-last-update-check-date", today);
-
-      try {
-        interface CloudVersionInfo {
-          version: string;
-          download_url: string;
-        }
-        const info = await invokeCommand<CloudVersionInfo>("check_cloud_version");
-        const cloudVersion = info.version;
-        const downloadUrl = info.download_url;
-
-        const currentVer = await invokeCommand<string>("get_app_version");
-        const cleanLocal = currentVer.replace(/^v/, "").trim();
-        const cleanCloud = cloudVersion.replace(/^v/, "").trim();
-
-        if (cleanLocal !== cleanCloud) {
-          localStorage.setItem("d2rhub-update-available-version", cleanCloud);
-          onUpdateAvailable(cloudVersion, downloadUrl);
+    if (loading || !config?.first_run_complete || !config.enable_auto_update || checking.current || attempted.current) return;
+    const run = async () => {
+      checking.current = true; attempted.current = true;
+      const today = new Date().toLocaleDateString("en-CA");
+      const check = async (kind: "software" | "resources") => {
+        const key = `d2rhub-v2-${kind}-check-date`;
+        if (localStorage.getItem(key) === today) return;
+        if (kind === "software") {
+          const info = await invokeCommand<{ version: string; available: boolean }>("check_software_update");
+          if (info.available) {
+            localStorage.setItem("d2rhub-update-available-version", info.version);
+            onAvailable.current(info.version, "");
+          } else localStorage.removeItem("d2rhub-update-available-version");
         } else {
-          localStorage.removeItem("d2rhub-update-available-version");
+          const notices = await invokeCommand<string[]>("check_mod_resource_updates");
+          if (notices.length) showToast("info", `可更新：${notices.join("、")}。请在 Mod 管理 → 下载 Mod 与加工器中更新。`);
         }
-      } catch (err) {
-        console.error("启动自动检查更新失败:", err);
-      }
+        // A network failure must not suppress the next startup's check.
+        localStorage.setItem(key, today);
+      };
+      await Promise.allSettled([check("software"), check("resources")]);
+      checking.current = false;
     };
-
-    const timer = setTimeout(runAutoCheck, 3000);
+    const timer = setTimeout(() => void run(), 3000);
     return () => clearTimeout(timer);
-  }, [loading, config, onUpdateAvailable]);
+  }, [loading, config?.first_run_complete, config?.enable_auto_update]);
 }
 
 export function useFirstLaunch(

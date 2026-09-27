@@ -112,10 +112,18 @@ export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPane
         <div className="flex items-center justify-between py-1.5 border-t border-border-default/50 pt-2">
           <div>
             <span className="text-sm font-semibold text-text-secondary">每日检查更新</span>
-            <p className="text-2xs text-text-muted">每天第一次启动多开工具时自动检测新版本</p>
+            <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装官方 Mod；仅提示，不自动安装</p>
           </div>
           <Toggle checked={!!config.enable_auto_update} onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
         </div>
+        <label className="flex items-center justify-between gap-3 py-1.5">
+          <span className="text-sm font-semibold text-text-secondary">下载源</span>
+          <select className="settings-input" style={{ width: "auto" }} value={config.download_source ?? "auto"}
+            onChange={e => updateConfig(c => { c.download_source = e.target.value as "auto" | "gitee" | "github"; })}>
+            <option value="auto">自动</option><option value="gitee">优先 Gitee</option><option value="github">优先 GitHub</option>
+          </select>
+        </label>
+        <p className="text-2xs text-text-muted">自动模式按网络地区选择；首选源失败时切换备用源，取消下载不会重试。</p>
       </section>
     </div>
   );

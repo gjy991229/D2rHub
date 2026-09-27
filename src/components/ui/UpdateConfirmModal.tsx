@@ -1,66 +1,48 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Download } from "lucide-react";
 import { Modal } from "./Modal";
-import { showToast } from "./Toast";
+import { Button } from "./Button";
+import { invokeCommand } from "../../platform/tauri";
+import { taskGateway } from "../../features/tasks/gateway";
+import { subscribeBeforeReadingTasks } from "../../features/tasks/taskSync";
+import type { TaskSnapshot } from "../../features/tasks/types";
 
-interface Props {
-  open: boolean;
-  onClose: () => void;
-  version: string;
-  downloadUrl: string;
-}
-
-export default function UpdateConfirmModal({ open, onClose, version, downloadUrl }: Props) {
-  const [isUpdating, setIsUpdating] = useState(false);
-
-  const handleUpdate = async () => {
-    setIsUpdating(true);
+interface Props { open: boolean; onClose: () => void; version: string; downloadUrl?: string }
+export default function UpdateConfirmModal({ open, onClose, version }: Props) {
+  const [busy, setBusy] = useState(false);
+  const [downloaded, setDownloaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [task, setTask] = useState<TaskSnapshot | null>(null);
+  useEffect(() => { setDownloaded(false); setError(null); setTask(null); }, [version]);
+  useEffect(() => {
+    if (!open) return;
+    let live = true; let stop: (() => void) | undefined;
+    void subscribeBeforeReadingTasks(taskGateway, snapshot => {
+      if (!live) return;
+      const current = [...snapshot.values()].filter(t => t.kind === "software-update-download" && t.subject === version).sort((a,b) => b.task_id-a.task_id)[0];
+      if (current) { setTask(current); if (current.state === "succeeded") setDownloaded(true); }
+    }).then(s => { if (live) stop=s; else s(); }).catch(e => { if (live) setError(String(e)); });
+    return () => { live=false; stop?.(); };
+  }, [open, version]);
+  const running = busy || task?.state === "running";
+  const act = async () => {
+    setBusy(true); setError(null);
     try {
-      const { open: openExternal } = await import("@tauri-apps/plugin-shell");
-      await openExternal(downloadUrl);
-      showToast("info", "已打开安装包下载链接，请下载后手动安装。");
-      onClose();
-    } catch (err) {
-      showToast("error", `打开下载链接失败: ${err}`);
-    } finally {
-      setIsUpdating(false);
-    }
+      if (downloaded) await invokeCommand("launch_downloaded_update", { version });
+      else { await invokeCommand("download_software_update", { version }); setDownloaded(true); }
+    } catch (e) { setError(String(e)); if (downloaded) setDownloaded(false); }
+    finally { setBusy(false); }
   };
-
-  if (!open) return null;
-
-  return (
-    <Modal
-      open={open}
-      onClose={isUpdating ? () => {} : onClose}
-      title="软件更新"
-      width="max-w-xs"
-    >
-      <div className="space-y-4 text-center py-2">
-        <div className="w-12 h-12 rounded-full bg-accent/10 border border-accent/20 flex items-center justify-center mx-auto mb-1">
-          <Download size={20} className="text-accent" />
-        </div>
-        <div>
-          <p className="text-sm font-semibold text-text-primary">发现新版本 v{version.replace(/^v/, "")}</p>
-          <p className="text-sm text-text-muted mt-1 leading-normal">将打开完整安装包下载链接，请下载后手动安装。</p>
-        </div>
-        <div className="flex gap-2.5 pt-2">
-          <button
-            disabled={isUpdating}
-            onClick={onClose}
-            className="flex-1 h-8 rounded-lg text-sm font-medium text-text-secondary hover:text-text-primary hover:bg-surface-hover transition-all duration-150 border border-border disabled:opacity-50"
-          >
-            稍后
-          </button>
-          <button
-            disabled={isUpdating}
-            onClick={handleUpdate}
-            className="flex-1 h-8 rounded-lg text-sm font-medium text-white hover:opacity-90 active:scale-[0.97] transition-all duration-150 bg-accent disabled:opacity-50"
-          >
-            {isUpdating ? "正在打开..." : "下载安装包"}
-          </button>
-        </div>
-      </div>
-    </Modal>
-  );
+  return <Modal open={open} onClose={onClose} title="软件更新" width="max-w-sm" footer={<>
+    <Button variant="ghost" onClick={onClose}>{running ? "后台下载" : "稍后"}</Button>
+    {task?.state === "running" ? <Button disabled={task.cancel_requested} onClick={() => void taskGateway.cancel(task.task_id).catch(e => setError(String(e)))}>取消下载</Button>
+      : <Button variant="primary" disabled={running} onClick={() => void act()}>{downloaded ? "安装更新" : "下载安装包"}</Button>}
+  </>}>
+    <div className="space-y-3">
+      <p className="text-sm font-semibold"><Download size={17} className="inline mr-2" />发现新版本 v{version.replace(/^v/, "")}</p>
+      <p className="text-xs text-text-muted">{downloaded ? "下载完成，校验通过。点击安装将退出 Hub 并启动完整安装器。" : "应用内下载安装包，首选源失败时自动切换；校验通过后才允许安装。"}</p>
+      {running && <div role="status"><p className="text-xs">{task?.message || "正在准备下载…"}</p><progress className="w-full" value={task?.progress ?? 0} max={100} /></div>}
+      {error && <p role="alert" className="text-xs text-red-400 break-words">{error}</p>}
+    </div>
+  </Modal>;
 }
