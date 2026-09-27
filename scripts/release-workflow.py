@@ -175,8 +175,8 @@ def build_processor(repo, destination):
     run(['cargo', 'build', '--locked', '--release', '--bin', 'd2r-audio-mod',
          '--target-dir', target], repo)
     executable = target / 'release/d2r-audio-mod.exe'
-    actual = run([executable, '--version'], repo, capture=True).split()
-    if len(actual) != 2 or actual[1] != version:
+    actual = run([executable, '--version'], repo, capture=True)
+    if not processor_version_matches(actual, version):
         raise RuntimeError('加工器实际版本与 Cargo.toml 不符。')
     path = destination / f'd2r-audio-mod-{version}-windows-x64.exe'
     shutil.copyfile(executable, path)
@@ -185,6 +185,11 @@ def build_processor(repo, destination):
     return {'id': 'processor', 'version': version, 'file': str(path),
             'release_tag': 'processor-v' + version, 'mod_name': None,
             'profile': None, 'game_data_version': None}, commit
+
+
+def processor_version_matches(output, version):
+    match = re.fullmatch(r'd2r-audio-mod\s+(\S+)(?:\s+\(protocol v\d+\))?', output.strip())
+    return match is not None and match.group(1) == version
 
 
 def prepare(target, cfg):

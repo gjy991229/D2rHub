@@ -135,6 +135,12 @@ class WorkflowTests(unittest.TestCase):
                 workflow.build_software(self.root / 'output')
             run.assert_not_called()
 
+    def test_processor_version_includes_protocol_suffix(self):
+        self.assertTrue(workflow.processor_version_matches('d2r-audio-mod 1.4.0-beta.17 (protocol v7)', '1.4.0-beta.17'))
+        self.assertTrue(workflow.processor_version_matches('d2r-audio-mod 1.4.0-beta.17', '1.4.0-beta.17'))
+        self.assertFalse(workflow.processor_version_matches('d2r-audio-mod 1.4.0-beta.16 (protocol v7)', '1.4.0-beta.17'))
+        self.assertFalse(workflow.processor_version_matches('other-tool 1.4.0-beta.17', '1.4.0-beta.17'))
+
 
 if __name__ == '__main__':
     sys.stdout.reconfigure(encoding='utf-8')
