@@ -18,6 +18,8 @@ GitHub：`gjy991229/D2rHub`。Gitee：`garyi7e/d2-rhub_-resource`，公开资源
 
 ## 本地统一发布入口
 
+日常请双击仓库根目录的 `release.cmd`，或运行 `.\release.ps1 -Target mods -Publish`。它会自动构建/打包、生成下述 spec、校验来源并调用底层发布器，支持原任务补传与软件正式版提升。首次配置、四类任务及完整命令见 [一键发布工作流](release-workflow.md)。以下是底层发布接口，供自定义集成使用。
+
 依赖：Windows、Python、`requests`、GitHub CLI（已登录）、PowerShell。软件或资源都使用同一个命令：
 
 ```powershell

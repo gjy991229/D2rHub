@@ -55,6 +55,7 @@ jobs:
         run: |
           python -m pip install -r scripts/publisher-requirements.txt
           python scripts/test_publish_downloads.py
+          python scripts/test_release_workflow.py
 
       - name: TypeScript check
         run: npm exec tsc -- --noEmit

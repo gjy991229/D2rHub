@@ -62,5 +62,21 @@ class PublishingTests(unittest.TestCase):
         self.spec['assets'][0]['version']='2.0.0'
         with self.assertRaises(RuntimeError):self.publish(1)
         self.assertEqual(FakePlatform.uploads,[])
+    def test_workflow_skips_identical_mods_even_with_new_generated_tag(self):
+        self.spec={'kind':'resources','skip_unchanged':True,'assets':[
+            {'id':name,'version':'1.0.0','file':str(self.file),'release_tag':'resources-1',
+             'profile':name,'game_data_version':'93854'}
+            for name in ('processor','LiteHub','BoHub','NullHub')]}
+        self.publish(1)
+        first=list(FakePlatform.uploads)
+        for asset in self.spec['assets']:
+            if asset['id'] != 'processor':
+                asset['version']='resources-2'
+                asset['release_tag']='resources-2'
+        manifest=self.publish(2)
+        self.assertEqual(sum(name==self.file.name for _,name in first),
+                         sum(name==self.file.name for _,name in FakePlatform.uploads))
+        self.assertTrue(all(a['version']=='1.0.0' for a in manifest['assets']))
+        self.assertNotIn('skip_unchanged',manifest)
 
 if __name__=='__main__':unittest.main()

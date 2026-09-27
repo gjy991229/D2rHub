@@ -196,6 +196,8 @@ Runtime data is stored in `%APPDATA%\D2RHub`; launch logs remain in `logs/` besi
 
 ### Development
 
+Maintainers can double-click `release.cmd` for the local release menu, or run `./release.ps1 -Target mods -Publish` to prepare and publish verified assets to GitHub and Gitee. See the [one-command release workflow](docs/release-workflow.md) for source paths, software builds, retrying an existing job, and promoting a stable release.
+
 ```powershell
 npm install
 npm run dev

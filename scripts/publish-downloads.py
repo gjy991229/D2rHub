@@ -52,7 +52,7 @@ def publish(spec, revision, output, config_path, previous=None):
                 raise RuntimeError('The two platform indices disagree at the same revision')
             if not previous or current['revision'] > previous['revision']: previous = current
     manifest = copy.deepcopy(previous or {})
-    manifest.update({k:v for k,v in spec.items() if k != 'assets'})
+    manifest.update({k:v for k,v in spec.items() if k not in ('assets', 'skip_unchanged')})
     manifest.update(schema=2, kind=kind, revision=revision)
     manifest['assets'] = copy.deepcopy((previous or {}).get('assets', []))
     if previous and revision < previous['revision']: raise RuntimeError('Use a revision no lower than the current index')
@@ -64,6 +64,12 @@ def publish(spec, revision, output, config_path, previous=None):
         asset = {k:v for k,v in definition.items() if k not in ('file','release_tag')}
         path = Path(definition['file']); asset.update(size=path.stat().st_size, sha256=sha256(path), mirrors=[])
         old = next((a for a in manifest['assets'] if a['id'] == asset['id']), None)
+        if (spec.get('skip_unchanged') and old and
+                all(old.get(k) == asset.get(k) for k in ('size','sha256','game_data_version','profile')) and
+                (asset['id'] in ('LiteHub','BoHub','NullHub') or old['version'] == asset['version']) and
+                {m['platform'] for m in old.get('mirrors',[])} == {'github','gitee'}):
+            print(f"{asset['id']}: unchanged; retaining published version {old['version']}",flush=True)
+            continue
         guard_asset(old, asset)
         if asset['size'] <= 0: raise RuntimeError('Cannot publish an empty artifact')
         if asset['id']=='hub' and windows_file_version(path)!=asset['version']:
