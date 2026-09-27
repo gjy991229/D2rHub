@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, FolderOpen, PackageOpen, PackagePlus, Plus, RefreshCw, RotateCcw, Trash2, X } from "lucide-react";
 
 import { Button } from "../../../components/ui/Button";
-import { ModResourceDialog } from "./ModResourceLibrary";
+import { ModDownloadsPage } from "./ModResourceLibrary";
 import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
 import { Modal } from "../../../components/ui/Modal";
 import { Toggle } from "../../../components/ui/Toggle";
@@ -33,7 +33,7 @@ const COPY = {
     updateSuccess: "共享参数已更新，引用它的账号和启动方案已同步",
     autoExit: "死亡自动退房", autoExitOn: "已启用；关闭游戏后可在此停用", autoExitOff: "已停用；关闭游戏后可在此启用",
     autoExitEnabled: "死亡自动退房已启用，重新启动游戏后生效", autoExitDisabled: "死亡自动退房已停用，重新启动游戏后生效",
-    process: "加工", editTitle: "点击编辑启动参数", restoreTitle: "恢复官方预设", restore: "恢复",
+    process: "加工", editTitle: "点击编辑启动参数", restoreTitle: "恢复默认预设", restore: "恢复",
     restoreSuccess: "已恢复标准启动参数", delete: "删除",
     deleteScannedTitle: (name: string) => `删除 Mod“${name}”？`,
     deleteScannedDescription: (name: string) => `删除此参数会同时永久删除游戏目录中的 Mod 文件夹“mods\\${name}”。此操作不可撤销。`,
@@ -96,11 +96,12 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   }, [autoOpenAdd, initialEdition]);
 
   useEffect(() => {
+    if (generateOpen) return;
     const all = catalog.pool?.capsules ?? [];
     if (all.length && !all.some((capsule) => capsule.edition === edition)) {
       setEdition(all.some((capsule) => capsule.edition === "CN") ? "CN" : "Global");
     }
-  }, [catalog.pool, edition]);
+  }, [catalog.pool, edition, generateOpen]);
 
   useEffect(() => {
     if (!generatedName || generateOpen) return;
@@ -139,6 +140,9 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   const closeDeleteConfirmation = () => {
     if (!catalog.loading) setDeleteTarget(null);
   };
+
+  if (generateOpen) return <ModDownloadsPage edition={edition} en={isEnglish} catalog={catalog}
+    onBack={() => setGenerateOpen(false)} onEditionChange={setEdition} />;
 
   return (
     <div className="mod-catalog-manager">
@@ -343,8 +347,6 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       <footer className="mod-catalog-footnote">
         {copy.footnote}
       </footer>
-      <ModResourceDialog open={generateOpen} onClose={() => setGenerateOpen(false)} edition={edition}
-        en={isEnglish} catalog={catalog} />
       <Modal
         open={deleteTarget !== null}
         onClose={closeDeleteConfirmation}

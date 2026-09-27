@@ -112,7 +112,7 @@ export function LaunchStrategyPanel({ config, updateConfig }: LaunchStrategyPane
         <div className="flex items-center justify-between py-1.5 border-t border-border-default/50 pt-2">
           <div>
             <span className="text-sm font-semibold text-text-secondary">每日检查更新</span>
-            <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装官方 Mod；仅提示，不自动安装</p>
+            <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装Mod；仅提示，不自动安装</p>
           </div>
           <Toggle checked={!!config.enable_auto_update} onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
         </div>

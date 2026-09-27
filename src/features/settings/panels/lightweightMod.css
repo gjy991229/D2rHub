@@ -17,7 +17,6 @@
 .lightweight-error { color: var(--error); overflow-wrap: anywhere; }
 .lightweight-existing { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .lightweight-progress { display: grid; gap: 8px; }
-.lightweight-progress progress { width: 100%; height: 7px; accent-color: var(--accent); }
 .lightweight-success { display: grid; gap: 12px; }
 .lightweight-success h3 { display: flex; gap: 8px; align-items: center; margin: 0; color: var(--text-primary); }
 .lightweight-success p { margin: 0; line-height: 1.6; }

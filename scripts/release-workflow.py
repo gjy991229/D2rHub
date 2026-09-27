@@ -115,13 +115,13 @@ def package_mod(root, name, target):
     files = list(safe_files(root))
     before = {str(f): (f.stat().st_size, f.stat().st_mtime_ns) for f in files}
     if any(f.name.lower() in MARKERS for f in files):
-        raise RuntimeError(f'{name} 含加工记录，不能作为纯净官方包发布。')
+        raise RuntimeError(f'{name} 含加工记录，不能作为纯净Mod 包发布。')
     report = read_json(root / 'generation-manifest.json')
     if (report.get('mod_name') != name or report.get('profile') != PROFILES[name]
             or report.get('producer') != 'd2r-native-bundled-generator'
             or report.get('mode') != 'bundled_rebuild'
             or report.get('verified_output_integrity') is not True):
-        raise RuntimeError(f'{name} 的官方生成来源或方案不符。')
+        raise RuntimeError(f'{name} 的生成来源或方案不符。')
     data_version = (root / f'{name}.mpq/data/global/dataversionbuild.txt').read_text(encoding='utf-8-sig').strip()
     if not data_version.isdigit() or str(report.get('game_data_version')) != data_version:
         raise RuntimeError(f'{name} 的实际游戏数据版本与生成记录不符。')
@@ -366,7 +366,7 @@ def main():
         parser.error('--promote 只适用于 software、all 或包含软件的补传任务')
     cfg = configuration(args.config.resolve())
     if not args.target and not args.resume:
-        print('\nD2RHub 发布工作流\n1. Hub 软件\n2. Mod 加工器\n3. 三个官方 Mod\n4. 全部\n5. 补传已有任务\n6. 修改本机路径配置\n0. 退出')
+        print('\nD2RHub 发布工作流\n1. Hub 软件\n2. Mod 加工器\n3. 三个Mod\n4. 全部\n5. 补传已有任务\n6. 修改本机路径配置\n0. 退出')
         choice = input('选择：').strip()
         if choice == '0':
             return 0

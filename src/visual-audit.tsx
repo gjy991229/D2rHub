@@ -513,8 +513,8 @@ function installIpcMock() {
             { id: "processor", version: "1.4.0-beta.17", size: 3098624, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: null },
             ...["LiteHub", "BoHub", "NullHub"].map((id) => ({ id, version: "mod-resources-20260927.1", size: 24000000, url: "https://github.com/gjy991229/D2rHub/releases", game_data_version: "93854" })),
           ] },
-          processor: { ready: false, installed_version: "1.3.3", recommended_version: "1.4.0-beta.17", installed_path: "C:\\Program Files\\D2RHub\\d2r-audio-mod.exe", install_directory: "C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\tools\\d2r-audio-mod", legacy: true },
-          preferred_source: "gitee", mods: [{id:"LiteHub",installed_version:"mod-resources-20260920.1",update_available:true,protected:false,message:"发现官方 Mod 更新；关闭游戏后可原位更新"}],
+          processor: { ready: params.get("processor") === "current", update_available: false, installed_version: params.get("processor") === "current" ? "1.4.0-beta.17" : "1.3.3", recommended_version: "1.4.0-beta.17", installed_path: "C:\\Program Files\\D2RHub\\d2r-audio-mod.exe", install_directory: "C:\\Users\\Player\\AppData\\Local\\com.d2rhub.app\\tools\\d2r-audio-mod", legacy: params.get("processor") !== "current" },
+          preferred_source: "gitee", mods: [{id:"LiteHub",installed_version:"mod-resources-20260920.1",update_available:true,protected:false,message:"发现 Mod 更新；关闭游戏后可原位更新"}],
           mods_directory: "C:\\Diablo II Resurrected\\mods", game_data_version: "93854", warning: null,
         };
       case "get_audio_mod_setup_state":
@@ -573,6 +573,7 @@ function installIpcMock() {
       case "room_automation_get_config":
         return roomAutomationSnapshot;
       case "get_tasks":
+        if (params.get("resourceTask") === "1") return [{ revision: 1, task_id: 105, kind: "mod-resource-install", subject: "CN:LiteHub", state: "running", progress: 46, message: "正在从 Gitee 下载：11 / 23 MB", cancel_requested: false, started_at_ms: Date.now() }];
         return seedSampleTasks ? [
           {
             revision: 4,
@@ -785,8 +786,9 @@ function AuditRuntime() {
           return;
         }
         if (surface === "mod-resources") {
-          const { ModResourceDialog } = await import("./features/settings/panels/ModResourceLibrary");
-          if (!cancelled) setContent(<ModResourceDialog open onClose={() => {}} edition="CN" en={requestedLanguage === "en-US"} />);
+          const { ModDownloadsPage } = await import("./features/settings/panels/ModResourceLibrary");
+          const { AppShell } = await import("./components/layout/AppShell");
+          if (!cancelled) setContent(<AppShell><div className="visual-downloads-preview"><ModDownloadsPage onBack={() => {}} onEditionChange={() => {}} edition="CN" en={requestedLanguage === "en-US"} /></div></AppShell>);
           return;
         }
 

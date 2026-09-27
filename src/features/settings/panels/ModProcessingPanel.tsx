@@ -1,3 +1,4 @@
+import { ProgressBar } from "../../../components/ui/ProgressBar";
 import {
   AlertTriangle,
   Check,
@@ -9,7 +10,8 @@ import {
 } from "lucide-react";
 import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
-import { ModResourceLibrary } from "./ModResourceLibrary";
+import { ModDownloadsPage } from "./ModResourceLibrary";
+import { ModProcessorStatus } from "./ModProcessorStatus";
 import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
@@ -126,7 +128,8 @@ export function ModProcessingPanel({
   autoPrepareRequest = 0,
   onAutoPrepareConsumed,
 }: ModProcessingPanelProps) {
-  const [workspace, setWorkspace] = useState<"catalog" | "processing">(purpose === "manage" ? "catalog" : "processing");
+  const [workspace, setWorkspace] = useState<"catalog" | "processing" | "downloads">(purpose === "manage" ? "catalog" : "processing");
+  const [downloadEdition, setDownloadEdition] = useState<"CN" | "Global">(initialEdition === "Global" ? "Global" : "CN");
   const [processorReady, setProcessorReady] = useState(false);
   useEffect(() => {
     setWorkspace(purpose === "manage" ? "catalog" : "processing");
@@ -188,6 +191,9 @@ export function ModProcessingPanel({
     void onPrepare();
   }, [audioModState?.account_id, audioPrepareBlockedReason, audioModStateLoading, audioPreparing,
     autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget, processorReady]);
+
+  if (workspace === "downloads") return <ModDownloadsPage edition={downloadEdition} en={isEnglish} catalog={modCatalog}
+    onBack={() => setWorkspace("processing")} onEditionChange={setDownloadEdition} />;
 
   if (workspace === "catalog" && modCatalog) {
     return (
@@ -251,7 +257,8 @@ export function ModProcessingPanel({
         </div>
       </header>
 
-      <div className="mod-processing-processor"><ModResourceLibrary edition={initialEdition === "Global" ? "Global" : "CN"} en={isEnglish} processorOnly onReady={setProcessorReady} /></div>
+      <div className="mod-processing-processor"><ModProcessorStatus edition={targetEdition ?? initialEdition ?? "CN"} en={isEnglish} onReady={setProcessorReady}
+        onManage={() => { setProcessorReady(false); setDownloadEdition((targetEdition ?? initialEdition) === "Global" ? "Global" : "CN"); setWorkspace("downloads"); }} /></div>
       <section className="spatial-panel mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
@@ -488,7 +495,7 @@ export function ModProcessingPanel({
             {audioPreparing && audioPrepareProgress && (
               <div className="mod-processing-progress" aria-live="polite">
                 <div><span>{audioPrepareProgress.message}</span><strong>{Math.round(audioPrepareProgress.percent)}%</strong></div>
-                <div><span style={{ width: `${Math.max(2, audioPrepareProgress.percent)}%` }} /></div>
+                <ProgressBar value={audioPrepareProgress.percent} label={isEnglish ? "Mod processing progress" : "Mod 加工进度"} />
               </div>
             )}
             {!!audioPrepareBlockedReason && !audioPreparing && (

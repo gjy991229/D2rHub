@@ -1,11 +1,16 @@
 .mod-resources { display: grid; gap: 14px; min-width: 0; }
-.resource-dialog-scroll { max-height: calc(100dvh - 180px); overflow-y: auto; overscroll-behavior: contain; padding-right: 5px; }
+.mod-downloads-page { display: grid; gap: 18px; min-width: 0; }
+.mod-downloads-page > .mod-processing-header { flex-wrap: wrap; }
+.mod-downloads-page > .mod-catalog-editions { justify-self: start; }
+.visual-downloads-preview { width: min(820px, 100%); margin: auto; padding: 24px; box-sizing: border-box; overflow-y: auto; max-height: 100%; }
 .mod-resources header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .mod-resources h3 { font-size: 14px; font-weight: 650; margin: 0 0 5px; }
 .mod-resources p { font-size: 12px; line-height: 1.6; margin: 4px 0; }
 .mod-resources small { font-size: 11px; opacity: .75; }
+.resource-card > small { display: block; margin: 4px 0; }
 .resource-cards { display: grid; gap: 12px; }
-.resource-card { border: 1px solid var(--border-color, #8884); border-radius: 10px; padding: 14px; background: var(--bg-secondary, #8881); }
+.resource-card { border: 1px solid var(--border-default); border-radius: 12px; padding: 16px; background: var(--surface-hover); }
+.resource-card[aria-busy="true"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border-default)); }
 .resource-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .resource-title strong { font-size: 13px; }
 .resource-title span { font-size: 11px; opacity: .7; }
@@ -13,7 +18,10 @@
 .mod-resources code { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 11px; padding: 4px 0; }
 .resource-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .resource-note { color: var(--text-secondary, inherit); }
-.resource-error { color: #e87979; overflow-wrap: anywhere; }
-.resource-success { border-left: 3px solid #62b998; padding: 8px 12px; }
-.resource-progress { display: grid; gap: 6px; }
-.resource-progress progress { width: 100%; accent-color: var(--accent-color, #b89a5b); }
+.resource-error { color: var(--error); overflow-wrap: anywhere; }
+.resource-success { color: var(--success); padding-top: 8px; }
+.resource-progress { display: grid; gap: 10px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-default); }
+.resource-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.resource-progress-heading > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.processor-status { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: 10px; color: var(--text-secondary); font-size: 12px; }
+@media (max-width: 600px) { .mod-resources header { flex-wrap: wrap; } .resource-card { padding: 12px; } .resource-progress-heading { flex-wrap: wrap; } }

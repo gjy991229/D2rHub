@@ -1,3 +1,4 @@
+import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, PackagePlus } from "lucide-react";
 import { Modal } from "../../../components/ui/Modal";
@@ -121,7 +122,7 @@ export function LightweightModDialog({ open, onClose, edition, isEnglish: en, ca
           <Button size="sm" variant="ghost" onClick={() => setName(alternateName)}>{en ? `Save as ${alternateName}` : `另存为 ${alternateName}`}</Button>
         </div>}
       </>}
-      {running && <div className="lightweight-progress" role="status" aria-live="polite"><span>{task?.message || (en ? "Starting generation…" : "正在开始生成…")}</span><progress value={task?.progress ?? 0} max={100} /><small>{en ? "You can close this dialog and follow progress in Background tasks." : "可以关闭弹窗，进度会保留在后台任务中。"}</small></div>}
+      {running && <div className="lightweight-progress" role="status" aria-live="polite"><span>{task?.message || (en ? "Starting generation…" : "正在开始生成…")}</span><ProgressBar value={task?.progress} label={en ? "Mod generation progress" : "Mod 生成进度"} /><small>{en ? "You can close this dialog and follow progress in Background tasks." : "可以关闭弹窗，进度会保留在后台任务中。"}</small></div>}
       {error && <p className="lightweight-error" role="alert">{error}</p>}
       {result && !running && <section className="lightweight-success">
         <h3><CheckCircle2 size={18} />{result.mod_name} {en ? "is ready" : "已就绪"}</h3>

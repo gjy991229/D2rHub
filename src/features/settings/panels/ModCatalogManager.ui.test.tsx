@@ -5,6 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModCapsulePool } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { ModCatalogManager } from "./ModCatalogManager";
+vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({
+  catalog: { assets: [] }, processor: { ready: true },
+})) }));
 
 const pool: ModCapsulePool = {
   generation: 3,
@@ -76,6 +79,21 @@ function controller(overrides: Partial<ModCapsuleController> = {}): ModCapsuleCo
 afterEach(cleanup);
 
 describe("ModCatalogManager", () => {
+  it("opens downloads as a sibling page without nesting another modal", async () => {
+    render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "下载 Mod 与加工器" }));
+    expect(screen.getByRole("heading", { name: "Mod 下载与更新" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByText("Plain")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(screen.getByText("Plain")).toBeTruthy();
+  });
+  it("allows downloading into an edition that has no installed Mods", async () => {
+    render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
+    await userEvent.click(screen.getByRole("button", { name: "下载 Mod 与加工器" }));
+    await userEvent.click(screen.getByRole("tab", { name: "国际服" }));
+    expect(screen.getByRole("tab", { name: "国际服" }).getAttribute("aria-selected")).toBe("true");
+  });
   it("shows scanned folder presets as immutable shared entries", () => {
     render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
 

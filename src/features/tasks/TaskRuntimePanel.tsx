@@ -1,3 +1,4 @@
+import { ProgressBar } from "../../components/ui/ProgressBar";
 import {
   Ban,
   CheckCircle2,
@@ -284,16 +285,7 @@ export function TaskRuntimePanel({
                     </div>
                     <p>{task.message || copy.noMessage}</p>
                     {task.state === "running" && (
-                      <div
-                        className="task-runtime-progress"
-                        role="progressbar"
-                        aria-valuemin={0}
-                        aria-valuemax={100}
-                        aria-valuenow={task.progress}
-                        aria-label={`${KIND_LABELS[locale][task.kind] ?? task.kind} ${task.progress}%`}
-                      >
-                        <span style={{ width: `${task.progress}%` }} />
-                      </div>
+                      <ProgressBar value={task.progress} label={`${KIND_LABELS[locale][task.kind] ?? task.kind} ${task.progress}%`} />
                     )}
                   </div>
                   <div className="task-runtime-actions">

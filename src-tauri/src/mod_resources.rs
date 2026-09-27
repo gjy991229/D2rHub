@@ -129,11 +129,11 @@ fn mod_statuses(mods: &Path, c: &Catalog) -> Vec<ModResourceStatus> {
                 update_available: update,
                 protected,
                 message: if protected {
-                    "此目录已加工或无法确认官方身份，保留现有内容"
+                    "此目录已加工或无法确认来源，保留现有内容"
                 } else if root.exists() && receipt.is_none() {
-                    "旧版官方 Mod：首次更新前将校验原始文件，确认未修改后接管"
+                    "旧版 Mod：首次更新前将校验原始文件，确认未修改后接管"
                 } else if update {
-                    "发现官方 Mod 更新；关闭游戏后可原位更新"
+                    "发现 Mod 更新；关闭游戏后可原位更新"
                 } else {
                     ""
                 }
@@ -683,7 +683,7 @@ pub async fn install_mod_resource(
     };
     crate::resource_install::recover(&parent)?;
     if a.id != "processor" && destination.exists() && processed(&destination) {
-        return Err("此 Mod 已加工，不能用纯官方成品覆盖；请保留它或从新官方 Mod 重新加工".into());
+        return Err("此 Mod 已加工，不能用下载的成品覆盖；请保留它或从新Mod 重新加工".into());
     }
     let task = shared
         .tasks()
@@ -748,7 +748,7 @@ pub async fn install_mod_resource(
                     return Err("拒绝降级或覆盖同版本的不同内容".into());
                 }
                 if crate::resource_install::tree_hash(&destination)? != receipt.tree_sha256 {
-                    return Err("官方 Mod 已被本地修改，保留现有目录；请先另存修改后的 Mod".into());
+                    return Err("Mod 已被本地修改，保留现有目录；请先另存修改后的 Mod".into());
                 }
             } else if crate::resource_install::tree_hash(&destination)? != new_tree {
                 return Err(
@@ -763,7 +763,7 @@ pub async fn install_mod_resource(
                 .values()
                 .any(|p| p.name().to_string_lossy().eq_ignore_ascii_case("D2R.exe"))
             {
-                return Err("请关闭游戏后更新官方 Mod".into());
+                return Err("请关闭游戏后更新 Mod".into());
             }
         }
         crate::downloads::save_json(

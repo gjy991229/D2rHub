@@ -1,0 +1,5 @@
+.hub-progress { width: 100%; height: 5px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
+.hub-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.hub-progress[data-indeterminate="true"] > span { width: 32%; animation: hub-progress-travel 1.4s ease-in-out infinite; }
+@keyframes hub-progress-travel { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
+@media (prefers-reduced-motion: reduce) { .hub-progress > span { transition: none; } .hub-progress[data-indeterminate="true"] > span { animation: none; margin-left: 34%; } }
