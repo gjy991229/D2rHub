@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  Download,
   Layers3,
   PackageOpen,
   PackagePlus,
@@ -12,6 +13,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { useEffect, useState } from "react";
 import { ModDownloadsPage } from "./ModResourceLibrary";
 import { ModProcessorStatus } from "./ModProcessorStatus";
+import { invokeCommand } from "../../../platform/tauri";
 import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
 import type { AccountMeta, AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
@@ -130,7 +132,8 @@ export function ModProcessingPanel({
 }: ModProcessingPanelProps) {
   const [workspace, setWorkspace] = useState<"catalog" | "processing" | "downloads">(purpose === "manage" ? "catalog" : "processing");
   const [downloadEdition, setDownloadEdition] = useState<"CN" | "Global">(initialEdition === "Global" ? "Global" : "CN");
-  const [processorReady, setProcessorReady] = useState(false);
+  const [processorReady, setProcessorReady] = useState<boolean | null>(null);
+  const [downloadReturn, setDownloadReturn] = useState<"catalog" | "processing">("processing");
   useEffect(() => {
     setWorkspace(purpose === "manage" ? "catalog" : "processing");
   }, [purpose]);
@@ -192,8 +195,14 @@ export function ModProcessingPanel({
   }, [audioModState?.account_id, audioPrepareBlockedReason, audioModStateLoading, audioPreparing,
     autoPrepareRequest, onAutoPrepareConsumed, onPrepare, trackingTarget, processorReady]);
 
+  const openProcessorDownloads = () => {
+    setProcessorReady(null);
+    setDownloadReturn("processing");
+    setDownloadEdition((targetEdition ?? initialEdition) === "Global" ? "Global" : "CN");
+    setWorkspace("downloads");
+  };
   if (workspace === "downloads") return <ModDownloadsPage edition={downloadEdition} en={isEnglish} catalog={modCatalog}
-    onBack={() => setWorkspace("processing")} onEditionChange={setDownloadEdition} />;
+    onBack={() => setWorkspace(downloadReturn)} onEditionChange={setDownloadEdition} />;
 
   if (workspace === "catalog" && modCatalog) {
     return (
@@ -205,6 +214,18 @@ export function ModProcessingPanel({
         autoOpenAdd={openAddRequest}
         initialEdition={initialEdition}
         onProcess={async (capsule) => {
+          try {
+            const local = await invokeCommand<{ processor: { ready: boolean } }>("get_mod_resources", { edition: capsule.edition, refresh: false });
+            if (!local.processor.ready) {
+              setDownloadEdition(capsule.edition === "Global" ? "Global" : "CN");
+              setDownloadReturn("catalog");
+              setWorkspace("downloads");
+              return;
+            }
+          } catch (error) {
+            showToast("error", String(error));
+            return;
+          }
           const target = modCatalog.pool?.accounts.find((entry) => entry.edition === capsule.edition
             && initializedAccounts.some((account) => account.id === entry.account_id));
           if (!target) {
@@ -258,7 +279,7 @@ export function ModProcessingPanel({
       </header>
 
       <div className="mod-processing-processor"><ModProcessorStatus edition={targetEdition ?? initialEdition ?? "CN"} en={isEnglish} onReady={setProcessorReady}
-        onManage={() => { setProcessorReady(false); setDownloadEdition((targetEdition ?? initialEdition) === "Global" ? "Global" : "CN"); setWorkspace("downloads"); }} /></div>
+        onManage={openProcessorDownloads} /></div>
       <section className="spatial-panel mod-processing-section mod-processing-target">
         <div className="mod-processing-section-heading">
           <div>
@@ -514,12 +535,16 @@ export function ModProcessingPanel({
                 variant="primary"
                 size="md"
                 loading={audioPreparing}
-                disabled={!!audioPrepareBlockedReason || !processorReady}
-                onClick={() => void onPrepare()}
+                disabled={audioPreparing || processorReady === null || (processorReady && !!audioPrepareBlockedReason)}
+                onClick={() => { if (processorReady) void onPrepare(); else openProcessorDownloads(); }}
               >
-                <PackageOpen size={14} />
+                {processorReady ? <PackageOpen size={14} /> : <Download size={14} />}
                 {audioPreparing
                   ? (isEnglish ? "Processing…" : "正在加工…")
+                  : processorReady === null
+                    ? (isEnglish ? "Checking processor…" : "正在读取加工器…")
+                    : !processorReady
+                      ? (isEnglish ? "Download processor" : "下载加工器")
                   : isAudioModFeatureManagement
                     ? (isEnglish ? "Add selected modules" : "增补所选模块")
                     : isAudioModUpgrade

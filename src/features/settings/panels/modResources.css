@@ -14,7 +14,8 @@
 .resource-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .resource-title strong { font-size: 13px; }
 .resource-title span { font-size: 11px; opacity: .7; }
-.resource-location { margin-top: 10px; font-size: 11px; opacity: .85; }
+.resource-memory { display: inline-flex; align-items: center; gap: 6px; margin: 5px 0 7px; padding: 4px 8px; border-radius: 6px; background: color-mix(in srgb, var(--accent) 6%, transparent); color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
+.resource-memory strong { font-weight: 600; color: var(--text-primary); font-variant-numeric: tabular-nums; }
 .mod-resources code { display: block; white-space: normal; overflow-wrap: anywhere; font-size: 11px; padding: 4px 0; }
 .resource-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .resource-note { color: var(--text-secondary, inherit); }

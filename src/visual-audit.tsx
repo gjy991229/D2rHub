@@ -573,6 +573,7 @@ function installIpcMock() {
       case "room_automation_get_config":
         return roomAutomationSnapshot;
       case "get_tasks":
+        if (params.get("softwareTask") === "1") return [{ revision: 1, task_id: 106, kind: "software-update-download", subject: "0.9.105", state: "running", progress: 42, message: "正在从 Gitee 下载：3 / 7 MB", cancel_requested: false, started_at_ms: Date.now() }];
         if (params.get("resourceTask") === "1") return [{ revision: 1, task_id: 105, kind: "mod-resource-install", subject: "CN:LiteHub", state: "running", progress: 46, message: "正在从 Gitee 下载：11 / 23 MB", cancel_requested: false, started_at_ms: Date.now() }];
         return seedSampleTasks ? [
           {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Download, ExternalLink, FolderOpen, RefreshCw } from "lucide-react";
+import { Download, ExternalLink, FolderOpen, MemoryStick, RefreshCw } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { invokeCommand } from "../../../platform/tauri";
@@ -11,6 +11,8 @@ import { LIGHTWEIGHT_PROFILES } from "../../modCapsules/lightweightModel";
 import "./modResources.css";
 
 interface Asset { id: string; version: string; url: string; mirrors?: {platform: string; url: string}[]; size: number; game_data_version: string | null }
+const RESOURCE_ORDER = ["processor", "NullHub", "BoHub", "LiteHub"];
+const MEMORY_REFERENCE: Record<string, number> = { NullHub: 300, BoHub: 500, LiteHub: 800 };
 interface ResourceState {
   catalog: { release_url: string; assets: Asset[] };
   processor: { ready: boolean; update_available?: boolean; installed_version: string | null; recommended_version: string;
@@ -101,11 +103,12 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
   };
   return <section className="mod-resources" aria-label={en ? "Mod resources" : "Mod 资源下载"}>
     <header><div><h3>{processorOnly ? (en ? "Mod processor" : "Mod 加工器") : (en ? "Download and install" : "下载与安装")}</h3>
-      <p>{en ? "Choose a resource. Hub verifies it and installs it in the location shown below." : "选择资源后自动下载、校验并安装到下方位置；无需手动解压或搬运。"}</p></div>
+      <p>{en ? "Choose a resource. Hub downloads, verifies and installs it for you." : "选择资源后自动下载、校验并安装；无需手动解压或搬运。"}</p></div>
       <Button size="sm" variant="ghost" disabled={active} loading={checking} onClick={() => void read(true)}><RefreshCw size={13} />{en ? "Check updates" : "检查更新"}</Button></header>
     {!data && <p role="status">{en ? "Checking installed resources…" : "正在检查本地资源…"}</p>}
     {data?.warning && <p className="resource-note" role="status">{data.warning}</p>}
-    {data && <div className="resource-cards">{data.catalog.assets.filter((a) => !processorOnly || a.id === "processor").map((asset) => {
+    {data && <div className="resource-cards">{data.catalog.assets.filter((a) => !processorOnly || a.id === "processor")
+      .sort((a, b) => (RESOURCE_ORDER.indexOf(a.id) + 1 || 99) - (RESOURCE_ORDER.indexOf(b.id) + 1 || 99)).map((asset) => {
       const processor = asset.id === "processor";
       const p = data.processor;
       const modStatus = data.mods?.find(m => m.id === asset.id);
@@ -119,18 +122,21 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
       const profile = LIGHTWEIGHT_PROFILES.find((value) => value.name === asset.id);
       return <article key={asset.id} className="resource-card" aria-label={processor ? (en ? "Mod processor" : "Mod 加工器") : asset.id} aria-busy={rowActive}>
         <div className="resource-title"><strong>{processor ? (en ? "Independent Mod processor" : "独立 Mod 加工器") : asset.id}</strong>
-          <span>{(asset.size / 1048576).toFixed(1)} MB</span></div>
+          <span>{en ? "Download" : "下载"} {(asset.size / 1048576).toFixed(1)} MB</span></div>
         <p>{processor ? (en ? "Adds selected features to your own Mods. Installed separately from Hub." : "为已有 Mod 添加所选功能，独立安装和更新。") : (en ? profile?.enDetail : profile?.detail)}</p>
+        {!processor && MEMORY_REFERENCE[asset.id] && <div className="resource-memory" title={en ? "Reference only; actual use varies with the scene and settings." : "仅供参考，实际占用随场景和设置变化。"}>
+          <MemoryStick size={13} aria-hidden="true" /><span>{en ? "Memory reference" : "内存参考"}</span>
+          <strong>{en ? "~" : "约 "}{MEMORY_REFERENCE[asset.id]} MB</strong>
+        </div>}
         <small>{processor ? `${en ? "Recommended" : "推荐版本"} ${p.recommended_version}` : `${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
         {processor && p.installed_path && <p className="resource-note">{p.legacy ? (en ? "Legacy bundled processor found" : "检测到旧版内置加工器") : (en ? "Installed processor" : "已安装加工器")}
           {` · ${p.installed_version ?? (en ? "Unknown version" : "版本未知")}`}
           {!p.ready && (en ? ". Install the compatible version below before processing." : "。请安装下方兼容版本后再加工。")}
-          <code>{p.installed_path}</code></p>}
+          </p>}
         {modStatus?.message && <p className="resource-note">{modStatus.message}</p>}
-        {modStatus?.installed_version && <small>{en ? "Installed" : "已安装"} {modStatus.installed_version}</small>}
         {processor && p.ready && p.update_available && <p className="resource-note">{en ? "A compatible update is available. Your installed processor remains usable." : "有兼容新版本，当前加工器仍可使用。"}</p>}
         {mismatch && <p className="resource-note">{en ? `Current game: ${data.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.` : `当前游戏版本：${data.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
-        <div className="resource-location"><span>{en ? "Install location" : "安装位置"}</span><code>{location || (en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录")}</code></div>
+        {!processor && !location && <p className="resource-note">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
         <div className="resource-actions">
           <Button size="sm" variant="primary" disabled={active || ready || protectedMod || mismatch || (!processor && !location)} onClick={() => void install(asset, false)}><Download size={13} />
             {rowActive ? (en ? "Working…" : "正在处理…") : protectedMod ? (en ? "Preserved" : "保留现有 Mod") : ready ? (en ? "Installed" : "已是当前版本") : processor && p.installed_path ? (en ? "Update processor" : "更新加工器") : modStatus?.update_available ? (en ? "Verify & update" : "校验并原位更新") : (en ? "Download & install" : "下载并安装")}</Button>
@@ -146,7 +152,7 @@ export function ModResourceLibrary({ edition, en, catalog, processorOnly = false
             {rowTask?.state === "running" && <Button size="sm" variant="ghost" disabled={rowTask.cancel_requested} onClick={() => void taskGateway.cancel(rowTask.task_id).catch(e => { setFeedbackAsset(asset.id); setError(String(e)); })}>{rowTask.cancel_requested ? (en ? "Cancelling…" : "正在取消…") : (en ? "Cancel" : "取消")}</Button>}</div>
         </div>}
         {feedbackAsset === asset.id && error && <p className="resource-error" role="alert">{error}</p>}
-        {feedbackAsset === asset.id && installed && <p className="resource-success" role="status">{en ? "Installed at" : "已安装到"}<code>{installed}</code></p>}
+        {feedbackAsset === asset.id && installed && <p className="resource-success" role="status">{en ? "Installation complete. Use Open folder to view the files." : "安装完成，可通过“打开目录”查看文件。"}</p>}
         {!busy && rowTask?.state === "failed" && !error && <p className="resource-error" role="alert">{rowTask.message}</p>}
       </article>;
     })}</div>}

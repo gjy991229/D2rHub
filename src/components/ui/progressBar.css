@@ -1,5 +1,9 @@
 .hub-progress { width: 100%; height: 5px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
 .hub-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.software-update-progress { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--surface-hover); }
+.software-update-progress > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.software-update-progress > div:first-child > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.software-update-progress > div:first-child > span:last-child { font-variant-numeric: tabular-nums; }
 .hub-progress[data-indeterminate="true"] > span { width: 32%; animation: hub-progress-travel 1.4s ease-in-out infinite; }
 @keyframes hub-progress-travel { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
 @media (prefers-reduced-motion: reduce) { .hub-progress > span { transition: none; } .hub-progress[data-indeterminate="true"] > span { animation: none; margin-left: 34%; } }

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AudioModSetupState, GlobalConfig, ModCapsulePool } from "../../../store/types";
 import type { ModCapsuleController } from "../../modCapsules/useModCapsulePool";
 import { ModProcessingPanel } from "./ModProcessingPanel";
+vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ processor: { ready: true }, catalog: { assets: [] } })) }));
 
 const readyAudioOnlyMod: AudioModSetupState = {
   account_id: "one",
@@ -169,7 +170,7 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(screen.getByText("自动跟房必选")).toBeTruthy();
   });
 
-  it("preserves installed modules while allowing additive management", () => {
+  it("preserves installed modules while allowing additive management", async () => {
     render(<ModProcessingPanel {...baseProps({
       purpose: "manage",
       audioSetupMode: "original",
@@ -192,7 +193,7 @@ describe("ModProcessingPanel feature inheritance", () => {
     expect(installedAudio.disabled).toBe(true);
     expect((screen.getByRole("checkbox", { name: /局内房间工具/ }) as HTMLInputElement).disabled).toBe(false);
     expect(screen.queryByText("-mod D2rHubTools -txt -assettestmode 1")).toBeNull();
-    expect(screen.getByRole("button", { name: /增补所选模块/ })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: /增补所选模块/ })).toBeTruthy();
   });
 
   it("keeps activation controls out of the processing flow", () => {

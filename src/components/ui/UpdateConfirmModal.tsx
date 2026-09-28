@@ -26,6 +26,7 @@ export default function UpdateConfirmModal({ open, onClose, version }: Props) {
     return () => { live=false; stop?.(); };
   }, [open, version]);
   const running = busy || task?.state === "running";
+  const liveTask = task?.state === "running" ? task : null;
   const act = async () => {
     setBusy(true); setError(null);
     try {
@@ -42,7 +43,11 @@ export default function UpdateConfirmModal({ open, onClose, version }: Props) {
     <div className="space-y-3">
       <p className="text-sm font-semibold"><Download size={17} className="inline mr-2" />发现新版本 v{version.replace(/^v/, "")}</p>
       <p className="text-xs text-text-muted">{downloaded ? "下载完成，校验通过。点击安装将退出 Hub 并启动完整安装器。" : "应用内下载安装包，首选源失败时自动切换；校验通过后才允许安装。"}</p>
-      {running && <div role="status"><p className="text-xs">{task?.message || "正在准备下载…"}</p><ProgressBar value={task?.progress} label="安装包下载进度" /></div>}
+      {running && <div className="software-update-progress" role="status" aria-live="polite">
+        <div><span>{liveTask?.message || (downloaded ? "正在启动安装器…" : "正在准备下载…")}</span>
+          {liveTask && <span>{liveTask.progress}%</span>}</div>
+        <ProgressBar value={liveTask?.progress} label="安装包下载进度" />
+      </div>}
       {error && <p role="alert" className="text-xs text-red-400 break-words">{error}</p>}
     </div>
   </Modal>;

@@ -3,17 +3,17 @@ import { invokeCommand } from "../../../platform/tauri";
 import { Button } from "../../../components/ui/Button";
 import "./modResources.css";
 
-interface Props { edition: string; en: boolean; onReady: (ready: boolean) => void; onManage: () => void }
+interface Props { edition: string; en: boolean; onReady: (ready: boolean | null) => void; onManage: () => void }
 export function ModProcessorStatus({ edition, en, onReady, onManage }: Props) {
   const [status, setStatus] = useState<{ ready: boolean; update_available?: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    setStatus(null); setError(null); onReady(false);
+    setStatus(null); setError(null); onReady(null);
     // Only inspect local availability. The app's daily update check owns automatic networking.
     void invokeCommand<{ processor: { ready: boolean; update_available?: boolean } }>("get_mod_resources", { edition, refresh: false })
       .then(value => { if (live) { setStatus(value.processor); onReady(value.processor.ready); } })
-      .catch(cause => { if (live) setError(String(cause)); });
+      .catch(cause => { if (live) { setError(String(cause)); onReady(false); } });
     return () => { live = false; };
   }, [edition, onReady]);
   if (status?.ready && !status.update_available) return null;
