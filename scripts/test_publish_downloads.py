@@ -79,4 +79,19 @@ class PublishingTests(unittest.TestCase):
         self.assertTrue(all(a['version']=='1.0.0' for a in manifest['assets']))
         self.assertNotIn('skip_unchanged',manifest)
 
+    def test_compatibility_only_update_preserves_all_resource_identities(self):
+        self.spec={'kind':'resources','hub_min':'0.9.104','hub_max_exclusive':'0.10.0','assets':[
+            {'id':name,'version':'1.0.0','file':str(self.file),'release_tag':'resources-1'}
+            for name in ('processor','LiteHub','BoHub','NullHub')]}
+        first=self.publish(1)
+        before=list(FakePlatform.uploads)
+        self.spec={'kind':'resources','hub_max_exclusive':'0.99.107','assets':[]}
+        updated=self.publish(2)
+        self.assertEqual(updated['assets'],first['assets'])
+        self.assertEqual(updated['hub_min'],'0.9.104')
+        self.assertEqual(updated['hub_max_exclusive'],'0.99.107')
+        self.assertTrue(all(name=='resources-v2-2.json' for _,name in FakePlatform.uploads[len(before):]))
+        for platform in ('github','gitee'):
+            self.assertEqual(json.loads(FakePlatform.stores[platform]['mod-update-index-v2']['body']),updated)
+
 if __name__=='__main__':unittest.main()

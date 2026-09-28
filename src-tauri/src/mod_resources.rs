@@ -1018,6 +1018,12 @@ mod tests {
     fn packaged_catalog_is_complete_and_trusted() {
         let c: Catalog = serde_json::from_str(EMBEDDED).unwrap();
         validate_catalog(&c).unwrap();
+        let min = semver::Version::parse(&c.hub_min).unwrap();
+        let max = semver::Version::parse(&c.hub_max_exclusive).unwrap();
+        for supported in ["0.9.104", "0.9.105", "0.99.106"] {
+            let version = semver::Version::parse(supported).unwrap();
+            assert!(min <= version && version < max);
+        }
         let mut bad = c.clone();
         bad.assets[0].url = "https://github.com/attacker/releases/tool.exe".into();
         assert!(validate_catalog(&bad).is_err());

@@ -1,11 +1,11 @@
 {
   "schema": 2,
   "channel": "v7-r25-r28-lightweight-v1",
-  "revision": 2026092804,
+  "revision": 20260928024429,
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
   "hub_min": "0.9.104",
-  "hub_max_exclusive": "0.10.0",
+  "hub_max_exclusive": "0.99.107",
   "assets": [
     {
       "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260927.1/d2r-audio-mod-1.4.0-beta.17-windows-x64.exe",
