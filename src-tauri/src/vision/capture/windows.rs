@@ -1,4 +1,6 @@
 use super::{region, CaptureMetrics, Captured, Roi};
+#[path = "dxgi.rs"]
+mod dxgi;
 use image::RgbImage;
 use parking_lot::Mutex;
 use std::sync::{
@@ -446,6 +448,14 @@ fn broker() -> Result<&'static mpsc::SyncSender<Command>, String> {
     Ok(BROKER.get().unwrap())
 }
 pub(super) fn capture(pid: u32, roi: Option<Roi>) -> Result<Captured, String> {
+    // Windows 10 21H2 cannot reliably suppress WGC's colored capture border.
+    // Use DXGI Desktop Duplication instead; deliberately do not fall back to WGC,
+    // because that would reintroduce the very border this backend avoids.
+    dxgi::capture(pid, roi)
+}
+
+#[allow(dead_code)]
+fn capture_wgc(pid: u32, roi: Option<Roi>) -> Result<Captured, String> {
     let (tx, rx) = mpsc::sync_channel(1);
     broker()?
         .try_send(Command::Capture(Request {
@@ -460,6 +470,7 @@ pub(super) fn capture(pid: u32, roi: Option<Roi>) -> Result<Captured, String> {
         .map_err(|_| "截图服务响应超时".to_string())?
 }
 pub(super) fn release_sessions() {
+    dxgi::release_sessions();
     RELEASE_EPOCH.fetch_add(1, Ordering::AcqRel);
     if let Some(tx) = BROKER.get() {
         let _ = tx.try_send(Command::Release);

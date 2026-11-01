@@ -56,7 +56,12 @@ windows = { version = "0.58", features = [
     "Win32_UI_HiDpi",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Gdi",
-    "Win32_UI_Shell_PropertiesSystem"
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D_Fxc",
+    "Win32_Graphics_Direct3D11",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common"
 ] }
 winreg = "0.52"
 # 数据统计 SQLite
