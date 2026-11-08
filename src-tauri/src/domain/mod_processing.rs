@@ -535,11 +535,11 @@ mod tests {
     const TEST_AUDIO_PROTOCOL: u8 = 7;
 
     #[test]
-    fn party_loot_r1_can_upgrade_but_is_not_current() {
+    fn party_loot_r3_can_upgrade_but_is_not_current() {
         let old = GeneratorFeatureGroup {
             id: PARTY_LOOT_FEATURE_ID.into(),
-            recipe_version: 1,
-            fingerprint: LEGACY_PARTY_LOOT_FINGERPRINT.into(),
+            recipe_version: 3,
+            fingerprint: V3_PARTY_LOOT_FINGERPRINT.into(),
             reused_from_source: true,
         };
         let new = GeneratorFeatureGroup {
