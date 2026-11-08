@@ -7,7 +7,7 @@
 
 当前版本 **v0.9.120**。
 
-本版改进叠加掉落音频识别，恢复地区声纹并保留 OCR 兜底，增加高号符文截图，修复模块更新提示，并改善账号设置保存和多开操作。完整变更见 [v0.9.120 发行说明](docs/releases/v0.9.120.md)。
+本版改进启动前 Mod 提示、方案快捷键与实际游戏目录识别，支持场景声纹独立选择及超级迪亚波罗分房，并统一设置与账号界面。完整变更见 [v0.9.120 发行说明](docs/releases/v0.9.120.md)。
 
 [下载安装](https://github.com/gjy991229/D2RHub/releases/latest) · [使用手册](docs/user-guide.html) 提供多开、识别、跟房和组合使用的分步路线。[加工器源码](https://github.com/gjy991229/d2r-audio-mod) 单独维护，EXE 随 Hub 安装和更新，不再独立下载或互认软件版本。LiteHub、BoHub、NullHub 仍按需下载。
 

@@ -39,4 +39,3 @@
 .resource-details summary { cursor: pointer; width: fit-content; padding: 4px 0; }
 .resource-details summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 @media (max-width: 600px) { .mod-resources header { flex-wrap: wrap; } .resource-card { padding: 12px; } .resource-progress-heading { flex-wrap: wrap; } }
-
