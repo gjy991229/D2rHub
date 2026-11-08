@@ -37,7 +37,7 @@ pub(super) fn recipe(
             "in_game_room_tools" => IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
             "esc_next_game" => 4,
             "scene_shortcuts" => 7,
-            "party_loot" => 3,
+            "party_loot" => 4,
             "hostile_auto_restart" => 1,
             "auto_exit_on_death" => AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION,
             _ => {

@@ -49,8 +49,15 @@ pub(in crate::audio_mod) fn validate_party_loot(
         let expected_y = number(&pf["rect"]["y"])?;
         let pitch =
             number(&pf["nextIconOffset"]["y"])? * pf["rect"]["scale"].as_f64().unwrap_or(1.0);
-        if x != 0.0
-            || y != 0.0
+        let scale = pf["rect"]["scale"].as_f64().unwrap_or(1.0);
+        let (bx, by) = if recipe >= 4 {
+            (-0.8 * scale, 2.4 * scale)
+        } else {
+            (0.0, 0.0)
+        };
+        if (x - bx).abs() > 0.01
+            || (y - by).abs() > 0.01
+            || (recipe >= 4 && (number(&fields["rect"]["scale"])? - 1.6 * scale).abs() > 0.001)
             || (number(&list["fields"]["rect"]["x"])? - expected_x).abs() > 0.01
             || (number(&row["fields"]["rect"]["y"])? - expected_y).abs() > 0.01
             || (number(&row["fields"]["rect"]["height"])? - pitch).abs() > 0.01
