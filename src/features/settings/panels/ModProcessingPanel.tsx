@@ -309,7 +309,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Player loot buttons" : "左侧玩家尸体拾取按钮"}
-                detail={isEnglish ? "Show corpse-loot buttons beside player portraits." : "在左侧玩家头像旁显示尸体拾取按钮。"}
+                detail={isEnglish ? "Show corpse-loot buttons over player portraits." : "在左侧玩家头像上显示尸体拾取按钮。"}
                 checked={!!analysis.selection.includePartyLoot}
                 locked={inheritedFeatureGroups.includes("party_loot")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
