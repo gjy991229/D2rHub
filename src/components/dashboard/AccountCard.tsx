@@ -103,7 +103,9 @@ function ProgressInline({ progress }: { progress: NonNullable<LaunchProgress> })
   if (!isActive && progress.step === "done") return null;
 
   return (
-    <div className="flex items-center gap-[3px]">
+    <div className="flex items-center gap-[3px]" role="progressbar" aria-label={progress.message}
+      aria-valuemin={0} aria-valuemax={stepOrder.length} aria-valuenow={Math.max(0, curIdx + (progress.status === "ok" ? 1 : 0))}
+      aria-valuetext={progress.message} title={progress.message}>
       {stepOrder.map((step, i) => {
         const done = i < curIdx || (i === curIdx && progress.status === "ok");
         const active = i === curIdx && progress.status === "running";
@@ -485,6 +487,7 @@ export function AccountGridItem({
                     }} />
                   <button
                     type="button"
+                    aria-pressed={selectedPositionId === null}
                     className={`hig-badge mod-chip position-chip ${selectedPositionId === null ? "mod-chip-active" : ""}`}
                     onClick={event => { event.stopPropagation(); selectPosition(null); }}
                     title="启动时不调整窗口位置"
@@ -502,6 +505,7 @@ export function AccountGridItem({
                       >
                         <button
                           type="button"
+                          aria-pressed={active}
                           className={`hig-badge mod-chip position-chip active:scale-[0.97] ${active ? "mod-chip-active" : ""}`}
                           onClick={event => { event.stopPropagation(); selectPosition(position.id); }}
                           title={`${position.name}（${position.x}, ${position.y}）`}
@@ -651,6 +655,7 @@ export function AccountGridItem({
             <div className="title-mod-row">
               {editingName ? (
                 <input
+                  aria-label={english ? `Rename ${display}` : `重命名 ${display}`}
                   className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
                   value={nameDraft}
                   onChange={e => setNameDraft(e.target.value)}
@@ -661,7 +666,7 @@ export function AccountGridItem({
                 />
               ) : (
                 <button
-                  title={lastLaunchText ? `最近启动：${lastLaunchText}` : undefined}
+                  title={`${display}${lastLaunchText ? `\n最近启动：${lastLaunchText}` : ""}`}
                   className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
                   onClick={e => {
                     if (isSelectionMode) return;
@@ -681,6 +686,7 @@ export function AccountGridItem({
             name={display} running={account.is_running}
             issue={!account.initialized ? "账号尚未初始化" : tokenMigrationRequired ? "请先迁移为 Token 直启" : null}
             {...runtimeStatus}
+            english={english}
             activity={runtimeStatus?.activity || (progress?.status === "running" ? "启动中" : undefined)}
             disabled={isSelectionMode || runtimeStatus?.disabled}
             onRepair={() => {

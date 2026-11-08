@@ -15,6 +15,7 @@ it("keeps failure details readable and separates clearing from disclosure", () =
   expect(disclosure.getAttribute("aria-expanded")).toBe("true");
   fireEvent.click(disclosure);
   expect(disclosure.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("region", { name: "日志条目" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "清除日志" }));
   expect(clear).toHaveBeenCalledOnce();
   expect(disclosure.getAttribute("aria-expanded")).toBe("false");

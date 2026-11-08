@@ -94,7 +94,7 @@ pub struct Candidate {
     pub announcement: Option<u64>,
 }
 pub enum Kind {
-    Area(Vec<Candidate>),
+    Area(Vec<Candidate>, Option<Candidate>),
 }
 pub struct Request {
     pub pid: u32,
@@ -305,7 +305,7 @@ fn run(
         let request = rx.recv_timeout(Duration::from_millis(50)).ok();
         if let Some(request) = request {
             let kind = match request.kind {
-                Kind::Area(_) => "area",
+                Kind::Area(..) => "area",
             };
             let mut trace =
                 diagnostics::Trace::new(configuration().diagnostic_enabled, kind, request.pid);
@@ -360,7 +360,7 @@ fn evaluate_area(
     gate: &mut area::Gate,
     trace: &mut diagnostics::Trace,
 ) -> Result<Option<Candidate>, String> {
-    let Kind::Area(candidates) = &r.kind;
+    let Kind::Area(candidates, current) = &r.kind;
     let captured = trace.measure_result("capture", || capture::capture(r.pid, Some(c.area_roi)))?;
     trace.fields["capture_metrics"] = serde_json::json!(captured.metrics);
     let feature = trace.measure("red_text_gate", || area::feature(&captured.image));
@@ -370,7 +370,18 @@ fn evaluate_area(
     let Some(line) = area::crop(&captured.image, &feature) else {
         gate.absent();
         trace.fields["ocr_skip"] = serde_json::json!("no_red_text");
-        return Ok(None);
+        let Some(mut current) = current.clone().filter(|v| !v.tz) else {
+            return Ok(None);
+        };
+        let Some(tz) = area::tz_crop(&captured.image, &feature) else {
+            return Ok(None);
+        };
+        let (text, _) = ocr.ok_or("OCR 资源尚未就绪")?.recognize(&tz)?;
+        if !area::terror_text(&text) {
+            return Ok(None);
+        }
+        current.tz = true;
+        return Ok(Some(current));
     };
     let tz = area::tz_crop(&captured.image, &feature);
     trace.fields["tz_candidate"] = serde_json::json!(tz.is_some());
@@ -387,6 +398,15 @@ fn evaluate_area(
     }
     if let Some(reason) = gate.last_rejection {
         trace.fields["name_rejection"] = serde_json::json!(reason);
+    }
+    if matches!(result, Ok(None)) {
+        if let (Some(mut current), Some(tz)) = (current.clone().filter(|v| !v.tz), tz.as_ref()) {
+            let (text, _) = ocr.recognize(tz)?;
+            if area::terror_text(&text) {
+                current.tz = true;
+                return Ok(Some(current));
+            }
+        }
     }
     result
 }

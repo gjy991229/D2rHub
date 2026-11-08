@@ -40,6 +40,54 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Mod workflow", () => {
+  it.each([true, false])("copies the displayed source scene-audio setting without editing the checkbox: %s", async enabled => {
+    vi.mocked(invokeCommand).mockImplementation(async (command, args) => {
+      if (command === "get_audio_mod_setup_state") return { ...modState, account_id: (args as { accountId: string }).accountId,
+        installed_mods: [{ ...modState.installed_mods[0], scene_audio_enabled: enabled }] } as never;
+      if (command === "prepare_audio_mod") return { mod_name: "New", feature_groups: [{ id: "audio_telemetry" }] } as never;
+      return ready as never;
+    });
+    const { result } = mount();
+    await openDraft(result);
+    act(() => result.current.actions.changeRecipe({ kind: "create", source: "MyExistingMod", name: "New" }));
+    expect(result.current.analysis?.selection.includeSceneAudio).toBe(enabled);
+    await act(() => result.current.actions.prepare());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({ includeSceneAudio: enabled }));
+  });
+  it.each([true, false])("does not rebuild when scene audio is restored to its persisted value: %s", async enabled => {
+    vi.mocked(invokeCommand).mockImplementation(async (command, args) => {
+      if (command === "get_audio_mod_setup_state") return { ...modState, account_id: (args as { accountId: string }).accountId,
+        installed_mods: [{ ...modState.installed_mods[0], scene_audio_enabled: enabled, source_mod_name: "MissingOriginal" }] } as never;
+      return ready as never;
+    });
+    const { result } = mount();
+    act(() => result.current.actions.requestProcessing({ origin: "recognition", accountId: "one", source: { name: "MyExistingMod", processed: true } }));
+    await waitFor(() => expect(result.current.inspection.state?.account_id).toBe("one"));
+    act(() => {
+      result.current.actions.changeFeatures({ includeSceneAudio: !enabled });
+      result.current.actions.setProcessorReady(true);
+    });
+    expect(result.current.analysis?.updating).toBe(true);
+    expect(result.current.blockedReason).toContain("原始源 Mod");
+    act(() => result.current.actions.changeFeatures({ includeSceneAudio: enabled }));
+    expect(result.current.analysis?.updating).toBe(false);
+    expect(result.current.blockedReason).toContain("已包含所选功能");
+    act(() => result.current.actions.changeFeatures({ includePartyLoot: true }));
+    expect(result.current.blockedReason).toBe("");
+    await act(() => result.current.actions.prepare());
+    const upgrade = vi.mocked(invokeCommand).mock.calls.find(([command]) => command === "upgrade_audio_mod");
+    expect(upgrade).toBeDefined();
+    expect(upgrade?.[1]).not.toHaveProperty("includeSceneAudio");
+  });
+
+  it("forwards an actual scene-audio change to the processor", async () => {
+    const { result } = mount();
+    await openDraft(result);
+    act(() => result.current.actions.changeFeatures({ includeSceneAudio: false }));
+    await act(() => result.current.actions.prepare());
+    expect(invokeCommand).toHaveBeenCalledWith("prepare_audio_mod", expect.objectContaining({ includeAudioTelemetry: true, includeSceneAudio: false }));
+  });
+
   it("forwards the disabled default-Hell processing preference", async () => {
     const { result } = mount();
     await openDraft(result);

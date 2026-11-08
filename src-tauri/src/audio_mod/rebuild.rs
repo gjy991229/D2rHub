@@ -37,7 +37,7 @@ pub(super) fn recipe(
             "in_game_room_tools" => IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
             "esc_next_game" => 4,
             "scene_shortcuts" => 7,
-            "party_loot" => 2,
+            "party_loot" => 3,
             "hostile_auto_restart" => 1,
             "auto_exit_on_death" => AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION,
             _ => {
@@ -69,6 +69,7 @@ pub(super) fn audio_options(document: &serde_json::Value) -> Result<AudioOptions
         let field = |key: &str| parts.iter().find_map(|part| part.strip_prefix(key));
         options.areas = match field("areas=") {
             Some("all_areas") => "all",
+            Some("none") => "none",
             Some("countess_route") => "countess",
             _ => return Err("旧声纹模块缺少可恢复的覆盖范围".into()),
         }

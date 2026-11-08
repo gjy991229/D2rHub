@@ -2,11 +2,9 @@ import { useEffect, useRef } from "react";
 import { invokeCommand, listenEvent } from "../platform/tauri";
 import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
-import { useAccounts } from "../store/accounts";
 import { showToast } from "../components/ui/Toast";
 import type { AudioModRuntimeWarning, GlobalConfig, ModCapsulePool, LaunchProgress } from "../store/types";
 import type { GlobalConfigPatch } from "../utils/globalConfigPatch";
-import { validateTrackingTarget } from "../utils/trackingTarget";
 
 export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null) {
   const prevScaleRef = useRef(config?.bongo_cat_scale);
@@ -36,10 +34,8 @@ export function useBongoCatWindow(loading: boolean, config: GlobalConfig | null)
   }, [loading, config?.enable_bongo_cat, config?.bongo_cat_scale]);
 }
 
-export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAvailable = true, retainLaunchFailures = false) {
+export function useLaunchEvents(_config: GlobalConfig | null, optionalFeaturesAvailable = true, retainLaunchFailures = false) {
   const { launching, results, reset: resetLaunch } = useLaunch();
-  const { accounts } = useAccounts();
-  const prevLaunchingRef = useRef(launching);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,28 +84,7 @@ export function useLaunchEvents(config: GlobalConfig | null, optionalFeaturesAva
     }
   }, [launching, results, resetLaunch, retainLaunchFailures]);
 
-  useEffect(() => {
-    const wasLaunching = prevLaunchingRef.current;
-    prevLaunchingRef.current = launching;
-    if (!optionalFeaturesAvailable || !wasLaunching || launching || !config) return;
-    if (!config.rune_audio_enabled || config.rune_audio_external_target) return;
 
-    const target = validateTrackingTarget(config.rune_audio_target_account, accounts);
-    if (!target.valid) return;
-
-    const targetResult = results.find(r => r.account_id === target.account.id);
-    if (!targetResult || !targetResult.success) return;
-
-    const timer = setTimeout(async () => {
-      try {
-        await invokeCommand("start_rune_audio_monitor");
-        showToast("success", "符文声纹监控已自动启动");
-      } catch (e) {
-        showToast("error", `符文声纹监控启动失败: ${e}`);
-      }
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [launching, results, config, accounts, optionalFeaturesAvailable]);
 }
 
 export function useAutoUpdate(

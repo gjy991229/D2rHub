@@ -72,10 +72,10 @@ export function useShortcutBindingController({
       return;
     }
 
-    if (target.startsWith("app:")
+    if ((target.startsWith("app:") || target.startsWith("scheme:"))
       && !/^(Ctrl|Alt|Shift)\+/.test(combo)
       && !/^F(?:[1-9]|1\d|2[0-4])$/.test(combo)) {
-      rejectShortcut(isEnglish ? "Use Ctrl, Alt, Shift, or a function key for the main window shortcut." : "主面板快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
+      rejectShortcut(isEnglish ? "Use Ctrl, Alt, Shift, or a function key for this global shortcut." : "全局快捷键必须包含 Ctrl、Alt、Shift，或使用 F1-F24 功能键");
       return;
     }
 
@@ -88,6 +88,10 @@ export function useShortcutBindingController({
       }
 
       const assigned = [
+        ...(config.launch_scheme_shortcuts ?? []).map((binding, slot) => ({
+          target: `scheme:${slot}`, shortcut: binding.shortcut,
+          label: isEnglish ? `launch scheme slot ${slot + 1}` : `启动方案配置 ${slot + 1}`,
+        })),
         ...Object.entries(bindings).map(([position, shortcut]) => ({
           target: `account:${position}`,
           shortcut,
@@ -109,6 +113,7 @@ export function useShortcutBindingController({
         if (request !== shortcutRequest.current) return;
         const latest = configRef.current;
         if (latest?.shortcut_bindings_json !== config.shortcut_bindings_json
+          || JSON.stringify(latest?.launch_scheme_shortcuts) !== JSON.stringify(config.launch_scheme_shortcuts)
           || latest?.show_main_window_shortcut !== config.show_main_window_shortcut
           || latest?.hide_main_window_shortcut !== config.hide_main_window_shortcut) {
           throw new Error(isEnglish ? "Settings changed during the check. Record the shortcut again." : "检查期间设置已变化，请重新录入快捷键");
@@ -117,6 +122,10 @@ export function useShortcutBindingController({
           if (target === "app:toggle") {
             c.show_main_window_shortcut = combo;
             c.hide_main_window_shortcut = "";
+          } else if (target.startsWith("scheme:")) {
+            const slot = Number(target.slice("scheme:".length));
+            const binding = c.launch_scheme_shortcuts?.[slot];
+            if (binding?.group_id) binding.shortcut = combo;
           } else if (target.startsWith("account:")) {
             bindings[target.slice("account:".length)] = combo;
             c.shortcut_bindings_json = JSON.stringify(bindings);
@@ -148,6 +157,9 @@ export function useShortcutBindingController({
         if (target === "app:toggle") {
           c.show_main_window_shortcut = "";
           c.hide_main_window_shortcut = "";
+        } else if (target.startsWith("scheme:")) {
+          const binding = c.launch_scheme_shortcuts?.[Number(target.slice("scheme:".length))];
+          if (binding) binding.shortcut = "";
         } else if (target.startsWith("account:")) {
           delete bindings[target.slice("account:".length)];
           c.shortcut_bindings_json = JSON.stringify(bindings);

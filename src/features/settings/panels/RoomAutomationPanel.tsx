@@ -17,13 +17,7 @@ import { parseShortcutFromKeyEvent, useShortcutRecorder, validateShortcutAvailab
 import { useGlobalConfig } from "../../../store/globalConfig";
 import { normalizeShortcut } from "../../../utils/shortcut";
 import type { AccountMeta, ModCapsulePool } from "../../../store/types";
-import {
-  accountsMissingCapsuleFeature,
-  capsuleSelectionForAccount,
-  compatibleCapsulesForAccount,
-  ROOM_TOOLS_CAPSULE_FEATURE,
-  selectedCapsuleForAccount,
-} from "../../modCapsules/model";
+
 import { ROOM_AUTOMATION_COPY } from "../../roomAutomation/copy";
 import {
   roomAutomationGateway,
@@ -100,12 +94,6 @@ export function RoomAutomationPanel({
   accounts,
   language,
   gateway = roomAutomationGateway,
-  modCapsulePool = null,
-  modCapsulePoolLoading = false,
-  modCapsulePoolError = null,
-  assigningAccountId = null,
-  onAssignModCapsule,
-  onRequireRoomTools,
   onSaveLaunchScheme,
 }: RoomAutomationPanelProps) {
   const locale = normalizeSettingsLanguage(language);
@@ -238,17 +226,12 @@ export function RoomAutomationPanel({
   const workflowActive = isWorkflowActive(status);
   const saving = operation === "save";
   const editorDisabled = loading || !!unavailable || (!!operation && operation !== "save");
+  const independentRooms = draft?.collaboration_mode === "uber_diablo";
   const sharedFollower = draft?.collaboration_mode === "follower";
   const followerJoinMode = draft?.follower_join_mode ?? "simultaneous";
   const participantAccountIds = useMemo(() => draft
     ? [draft.primary_account_id, ...draft.follower_account_ids].filter(Boolean)
     : [], [draft]);
-  const participantsMissingRoomTools = useMemo(() => accountsMissingCapsuleFeature(
-    modCapsulePool,
-    participantAccountIds,
-    ROOM_TOOLS_CAPSULE_FEATURE,
-  ), [modCapsulePool, participantAccountIds]);
-
   const persistDraft = useCallback(async (candidate: RoomAutomationConfig) => {
     const currentSnapshot = snapshotRef.current;
     if (!currentSnapshot || operationRef.current || stale) return;
@@ -356,27 +339,6 @@ export function RoomAutomationPanel({
       setOperationError(Object.values(candidateValidation.fieldErrors)[0] ?? copy.completeRequired);
       return;
     }
-    if (modCapsulePoolLoading) {
-      setOperationError(copy.capsulePoolLoading);
-      return;
-    }
-    if (modCapsulePoolError) {
-      setOperationError(`${copy.capsulePoolUnavailable}: ${modCapsulePoolError}`);
-      return;
-    }
-    const candidateParticipants = [candidate.primary_account_id, ...candidate.follower_account_ids].filter(Boolean);
-    const missingAccountId = accountsMissingCapsuleFeature(
-      modCapsulePool,
-      candidateParticipants,
-      ROOM_TOOLS_CAPSULE_FEATURE,
-    )[0];
-    if (missingAccountId) {
-      const account = eligibleAccounts.find((candidate) => candidate.id === missingAccountId);
-      const selected = selectedCapsuleForAccount(modCapsulePool, missingAccountId);
-      setOperationError(copy.capsuleRequired(account ? accountLabel(account) : missingAccountId));
-      onRequireRoomTools?.(missingAccountId, selected?.id, !!selected?.processed);
-      return;
-    }
     updateDraft(() => candidate);
   };
 
@@ -402,18 +364,14 @@ export function RoomAutomationPanel({
     );
   }
 
-  const statusTone = status?.phase === "error"
-    ? "danger"
-    : !draft.enabled
-      ? "neutral"
-      : workflowActive
-        ? "warning"
-        : "success";
-  const statusTitle = status?.phase === "error"
-    ? copy.error
-    : !draft.enabled
-      ? copy.disabled
-      : copy.ready;
+  const statusNeedsAttention = status?.phase === "error" || stale || !!operationError;
+  const runtimeEnabled = snapshot?.config.enabled ?? false;
+  const statusTone = statusNeedsAttention ? "danger" : workflowActive && status?.phase !== "waiting" ? "success" : runtimeEnabled ? "warning" : "neutral";
+  const statusTitle = statusNeedsAttention ? (locale === "en-US" ? "Needs attention" : "需要处理")
+    : !runtimeEnabled ? copy.disabled
+      : status?.phase === "waiting" ? (locale === "en-US" ? "Waiting for followers" : "等待跟随")
+        : workflowActive ? (locale === "en-US" ? "Running" : "运行中")
+          : (locale === "en-US" ? "Configured · Waiting for action" : "已配置 · 等待操作");
   return (
     <div className="room-automation-panel settings-guided-page">
       <header className="spatial-panel room-automation-header">
@@ -427,7 +385,7 @@ export function RoomAutomationPanel({
               <Button
                 size="sm"
                 variant="secondary"
-                disabled={editorDisabled || dirty || !validation?.valid || participantsMissingRoomTools.length > 0
+                disabled={editorDisabled || dirty || !validation?.valid
                   || !onSaveLaunchScheme}
                 onClick={() => void onSaveLaunchScheme?.(participantAccountIds)}
               >{copy.saveLaunchScheme}</Button>
@@ -446,7 +404,7 @@ export function RoomAutomationPanel({
           </div>
         </div>
         <div className="room-automation-readiness" data-tone={statusTone} role="status" aria-live="polite">
-          <span className="room-automation-semantic-status" data-tone={statusTone}>
+          <span className="room-automation-semantic-status runtime-state" data-state={statusNeedsAttention ? "attention" : !runtimeEnabled ? "off" : workflowActive && status?.phase !== "waiting" ? "running" : "waiting"} data-tone={statusTone}>
             <span className="room-automation-state-dot" data-tone={statusTone} aria-hidden="true" />
             {statusTitle}
           </span>
@@ -462,7 +420,7 @@ export function RoomAutomationPanel({
       </header>
       <nav className="settings-section-tabs" aria-label={locale === "en-US" ? "Room automation sections" : "跟房设置分页"}>
         {[["room", locale === "en-US" ? "Room & actions" : "房间与操作"], ["accounts", locale === "en-US" ? "Accounts & Mods" : "参与账号"], ["advanced", locale === "en-US" ? "Advanced timing" : "高级时序"]].map(([id, label]) =>
-          <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>{label}{id === "accounts" && <span className="settings-section-count"> {participantAccountIds.length}{(validation?.fieldErrors.primary || validation?.fieldErrors.followers || participantsMissingRoomTools.length > 0) && <span className="text-warning"> · {locale === "en-US" ? "Setup needed" : "待完善"}</span>}</span>}</button>)}
+          <button type="button" key={id} aria-current={section === id ? "page" : undefined} onClick={() => setSection(id)}>{label}{id === "accounts" && <span className="settings-section-count"> {participantAccountIds.length}{(validation?.fieldErrors.primary || validation?.fieldErrors.followers) && <span className="text-warning"> · {locale === "en-US" ? "Setup needed" : "待完善"}</span>}</span>}</button>)}
       </nav>
 
       {(stale || operationError) && (
@@ -604,58 +562,7 @@ export function RoomAutomationPanel({
               {validation?.fieldErrors.followers && <small role="alert">{validation.fieldErrors.followers}</small>}
             </fieldset>
 
-            {participantAccountIds.length > 0 && (
-              <div className="room-automation-capsules" aria-label={copy.participantCapsules}>
-                <div className="room-automation-capsules-heading">
-                  <strong>{copy.participantCapsules}</strong>
-                  <span>{copy.participantCapsulesHelp}</span>
-                </div>
-                {participantAccountIds.map((accountId) => {
-                  const account = eligibleAccounts.find((candidate) => candidate.id === accountId);
-                  if (!account) return null;
-                  const selection = capsuleSelectionForAccount(modCapsulePool, accountId);
-                  const selected = selectedCapsuleForAccount(modCapsulePool, accountId);
-                  const compatible = compatibleCapsulesForAccount(modCapsulePool, accountId)
-                    .filter((capsule) => capsule.feature_groups.includes(ROOM_TOOLS_CAPSULE_FEATURE));
-                  const processable = compatibleCapsulesForAccount(modCapsulePool, accountId)
-                    .filter((capsule) => capsule.source_eligible);
-                  const ready = !!selected?.feature_groups.includes(ROOM_TOOLS_CAPSULE_FEATURE) && selected.ready;
-                  return (
-                    <div className="room-automation-capsule-row" data-ready={ready ? "true" : "false"} key={accountId}>
-                      <span className="room-automation-capsule-account">{accountLabel(account)}</span>
-                      {compatible.length > 0 || processable.length > 0 ? <ChoiceField
-                          label={`${accountLabel(account)} · ${copy.selectCapsule}`}
-                          hideLabel
-                          options={(compatible.length ? compatible : processable).map((capsule) => ({
-                            value: capsule.id, label: capsule.name,
-                          }))}
-                          placeholder={copy.selectCapsule}
-                          value={ready ? selection?.selected_capsule_id ?? "" : ""}
-                          disabled={editorDisabled || assigningAccountId === accountId
-                            || (compatible.length ? !onAssignModCapsule : !onRequireRoomTools)}
-                          onChange={(value) => {
-                            const capsule = (compatible.length ? compatible : processable)
-                              .find((candidate) => candidate.id === value);
-                            if (!capsule) return;
-                            if (compatible.length) void onAssignModCapsule?.(accountId, capsule.id);
-                            else onRequireRoomTools?.(accountId, capsule.id, !!capsule.processed);
-                          }}
-                        /> : (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            disabled={modCapsulePoolLoading || !onRequireRoomTools}
-                            onClick={() => onRequireRoomTools?.(accountId)}
-                          >{copy.prepareCapsule}</Button>
-                        )}
-                      <span className="room-automation-capsule-state" data-ready={ready ? "true" : "false"}>
-                        {ready ? copy.capsuleReady : selection?.issue || copy.capsuleMissing}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            <p className="feature-help">{locale === "en-US" ? "Room tools are checked against each participating account’s launch arguments before starting." : "启动前会检查本次参与账号实际使用的 Mod 是否支持局内房间工具。"}</p>
 
           </>
         )}
@@ -716,8 +623,8 @@ export function RoomAutomationPanel({
         <details className="settings-help-disclosure room-join-options">
           <summary><span>{locale === "en-US" ? "Shortcuts & join behavior" : "快捷键与进房方式"}<small>{draft.shortcut} · {draft.join_shortcut}</small></span><ChevronDown size={14} aria-hidden="true" /></summary>
           <div className="settings-disclosure-content">
-        <p className="room-automation-consent-copy">{sharedFollower ? (locale === "en-US" ? "A new chat signal starts a group join after 1 second plus the configured wait. Both shortcuts can also join manually." : "识别到新聊天信号后，等待 1 秒加下方等待时间，再让本机主号和小号加入。两个快捷键也可手动触发加入。") : copy.backgroundMethodHelp}</p>
-        <div className="room-automation-behavior-fields">
+        <p className="room-automation-consent-copy">{independentRooms ? (locale === "en-US" ? "Create assigns one separate room per account, primary first. Password is shared. Reserved numbers are not reused after failure." : "创建时主号优先，再按小号配置顺序各建一间，共用密码。整段序号在操作前预留，失败后不复用。") : sharedFollower ? (locale === "en-US" ? "A new chat signal starts a group join after 1 second plus the configured wait. Both shortcuts can also join manually." : "识别到新聊天信号后，等待 1 秒加下方等待时间，再让本机主号和小号加入。两个快捷键也可手动触发加入。") : copy.backgroundMethodHelp}</p>
+        {!independentRooms && <div className="room-automation-behavior-fields">
           {!sharedFollower && <ChoiceField label={copy.followTrigger} value={draft.auto_followers_enabled ? "auto" : "manual"}
             options={[{ value: "manual", label: copy.manualMode }, { value: "auto", label: copy.automaticMode }]}
             disabled={editorDisabled}
@@ -735,10 +642,10 @@ export function RoomAutomationPanel({
             onChange={(value) => updateDraft((current) => ({
               ...current, follower_join_mode: value as RoomAutomationConfig["follower_join_mode"],
             }))} />
-        </div>
+        </div>}
 
         <div className="room-automation-shortcuts">
-          {(draft.auto_followers_enabled || sharedFollower) && (
+          {!independentRooms && (draft.auto_followers_enabled || sharedFollower) && (
             <NumberField
               label={sharedFollower ? (locale === "en-US" ? "Signal wait (seconds)" : "信号后等待（秒）") : copy.followerDelay}
               value={draft.auto_followers_delay_secs}
@@ -749,7 +656,7 @@ export function RoomAutomationPanel({
               onChange={(value) => updateDraft((current) => ({ ...current, auto_followers_delay_secs: value }))}
             />
           )}
-          {followerJoinMode === "interval" && (
+          {!independentRooms && followerJoinMode === "interval" && (
             <NumberField
               label={copy.followerJoinInterval}
               value={draft.follower_join_interval_secs ?? 3}
@@ -773,7 +680,7 @@ export function RoomAutomationPanel({
             onChange={(shortcut) => updateDraft((current) => ({ ...current, shortcut }))}
           />
           <ShortcutField
-            label={sharedFollower ? (locale === "en-US" ? "Manual group join" : "手动加入队伍") : copy.followerShortcut}
+            label={independentRooms ? (locale === "en-US" ? "Join shortcut (unused in this mode)" : "跟房快捷键（此模式不使用）") : sharedFollower ? (locale === "en-US" ? "Manual group join" : "手动加入队伍") : copy.followerShortcut}
             checkingLabel={locale === "en-US" ? "Checking availability..." : "正在检查占用..."}
             checkConflict={shortcut => checkShortcutConflict(shortcut, "join_shortcut")}
             value={draft.join_shortcut}

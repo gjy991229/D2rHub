@@ -47,6 +47,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "rune_audio_min_gem_level",
   "rune_audio_tracked_charm_codes",
   "shortcut_bindings_json",
+  "launch_scheme_shortcuts",
   "show_main_window_shortcut",
   "hide_main_window_shortcut",
   "overlay_opacity",

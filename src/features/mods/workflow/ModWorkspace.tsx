@@ -10,6 +10,7 @@ export function ModWorkspace({ workflow }: { workflow: ModWorkflowController }) 
   if (view === "processing" && draft) return <ModProcessingPanel workflow={workflow} />;
   return <>
     {draft && <div className="mod-draft-notice">
+      <p>{en ? "You have an unfinished processing draft." : "有一份尚未完成的 Mod 加工草稿。"}</p>
       <Button size="sm" variant="ghost" onClick={actions.resume}>{en ? "Continue editing draft" : "继续编辑加工草稿"}</Button>
       <Button size="sm" variant="ghost" disabled={workflow.busy} onClick={actions.discardDraft}>{en ? "Discard draft" : "放弃草稿"}</Button>
     </div>}

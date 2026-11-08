@@ -1323,6 +1323,12 @@
           "markdownDescription": "Enables the upgrade_audio_mod command without any pre-configured scope."
         },
         {
+          "description": "Enables the validate_config_path_selection command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-validate-config-path-selection",
+          "markdownDescription": "Enables the validate_config_path_selection command without any pre-configured scope."
+        },
+        {
           "description": "Enables the validate_shortcut_availability command without any pre-configured scope.",
           "type": "string",
           "const": "allow-validate-shortcut-availability",
@@ -2317,6 +2323,12 @@
           "type": "string",
           "const": "deny-upgrade-audio-mod",
           "markdownDescription": "Denies the upgrade_audio_mod command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the validate_config_path_selection command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-validate-config-path-selection",
+          "markdownDescription": "Denies the validate_config_path_selection command without any pre-configured scope."
         },
         {
           "description": "Denies the validate_shortcut_availability command without any pre-configured scope.",

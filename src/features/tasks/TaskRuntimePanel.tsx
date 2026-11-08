@@ -10,7 +10,7 @@ import {
   RotateCcw,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../../components/ui/Button";
 import { taskGateway, type TaskGateway } from "./gateway";
@@ -27,19 +27,21 @@ interface TaskRuntimePanelProps {
 const COPY = {
   "zh-CN": {
     title: "后台任务",
-    description: "启动、账号初始化、Mod 加工和自动跟房共用同一套状态、取消与诊断时间线。",
+    description: "查看账号启动、初始化、Mod 加工与自动跟房的进度，需要时可取消或查看执行详情。",
     loading: "正在读取任务状态",
     loadFailed: "任务状态暂时不可用",
     reload: "重新加载",
     emptyTitle: "还没有后台任务",
     emptyDescription: "开始启动账号、加工 Mod 或运行自动跟房后，任务会出现在这里。",
     active: "进行中",
-    recent: "最近完成",
+    recent: "最近任务",
     cancel: "取消",
     cancelling: "正在取消",
     retry: "重试",
+    retrying: "正在重试",
     timeline: "时间线",
     timelineFailed: "无法读取任务时间线",
+    timelineEmpty: "此任务还没有执行记录。",
     retryFailed: "无法重试此任务，请查看任务时间线中的错误详情。",
     cancelFailed: "取消请求未能提交",
     noMessage: "等待下一步状态",
@@ -52,7 +54,7 @@ const COPY = {
   },
   "en-US": {
     title: "Background tasks",
-    description: "Launches, account setup, Mod processing, and room automation share one status, cancellation, and diagnostic timeline.",
+    description: "Follow account launches, setup, Mod processing, and room automation. Cancel a task or inspect its progress when needed.",
     loading: "Loading task status",
     loadFailed: "Task status is temporarily unavailable",
     reload: "Reload",
@@ -63,8 +65,10 @@ const COPY = {
     cancel: "Cancel",
     cancelling: "Cancelling",
     retry: "Retry",
+    retrying: "Retrying",
     timeline: "Timeline",
     timelineFailed: "Could not load the task timeline",
+    timelineEmpty: "No execution details have been recorded yet.",
     retryFailed: "This task could not be retried. Review its timeline for details.",
     cancelFailed: "The cancellation request could not be submitted",
     noMessage: "Waiting for the next update",
@@ -128,7 +132,8 @@ export function TaskRuntimePanel({
   const [tasks, setTasks] = useState<TaskSnapshotMap>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [operation, setOperation] = useState<{ taskId: number; kind: "cancel" | "retry" } | null>(null);
+  const [operations, setOperations] = useState<Record<number, "cancel" | "retry">>({});
+  const operationBusy = useRef(new Set<number>());
   const [operationError, setOperationError] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<number | null>(null);
   const [timeline, setTimeline] = useState<Record<number, TaskTimelineEntry[]>>({});
@@ -202,7 +207,9 @@ export function TaskRuntimePanel({
   }, [expandedTaskId, expandedTaskRevision, gateway]);
 
   const runOperation = async (task: TaskSnapshot, kind: "cancel" | "retry") => {
-    setOperation({ taskId: task.task_id, kind });
+    if (operationBusy.current.has(task.task_id)) return;
+    operationBusy.current.add(task.task_id);
+    setOperations(current => ({ ...current, [task.task_id]: kind }));
     setOperationError(null);
     try {
       if (kind === "cancel") await gateway.cancel(task.task_id);
@@ -210,7 +217,12 @@ export function TaskRuntimePanel({
     } catch {
       setOperationError(kind === "cancel" ? copy.cancelFailed : copy.retryFailed);
     } finally {
-      setOperation(null);
+      operationBusy.current.delete(task.task_id);
+      setOperations(current => {
+        const next = { ...current };
+        delete next[task.task_id];
+        return next;
+      });
     }
   };
 
@@ -256,7 +268,7 @@ export function TaskRuntimePanel({
           {orderedTasks.map((task, index) => {
             const Icon = stateIcon(task.state);
             const expanded = expandedTaskId === task.task_id;
-            const activeOperation = operation?.taskId === task.task_id ? operation.kind : null;
+            const activeOperation = operations[task.task_id] ?? null;
             const previous = orderedTasks[index - 1];
             const showGroup = index === 0 || previous.state === "running" !== (task.state === "running");
             return (
@@ -278,12 +290,15 @@ export function TaskRuntimePanel({
                       {task.subject && (
                         <span className="task-runtime-subject" title={task.subject}>{task.subject}</span>
                       )}
-                      <span className="task-runtime-state" data-state={task.state}>{copy.states[task.state]}</span>
+                      <span className="task-runtime-state runtime-state" data-state={task.state === "failed" ? "attention" : task.state}>{copy.states[task.state]}</span>
                       <time dateTime={new Date(task.started_at_ms).toISOString()}>
                         {formatTime(task.started_at_ms, locale)}
                       </time>
                     </div>
-                    <p>{task.message || copy.noMessage}</p>
+                    <p className="task-runtime-reason">{task.message || copy.noMessage}</p>
+                    {task.state === "failed" && <p className="task-runtime-next-step">{task.retryable
+                      ? (locale === "en-US" ? "Resolve the cause above, then retry this task." : "处理上述原因后，可重试此任务。")
+                      : (locale === "en-US" ? "Review the timeline, then return to the original feature to try again." : "查看时间线中的详情，再返回原功能重新操作。")}</p>}
                     {task.state === "running" && (
                       <ProgressBar value={task.progress} label={`${KIND_LABELS[locale][task.kind] ?? task.kind} ${task.progress}%`} />
                     )}
@@ -293,21 +308,23 @@ export function TaskRuntimePanel({
                       <Button
                         size="sm"
                         variant="danger"
+                        loading={activeOperation === "cancel"}
                         disabled={task.cancel_requested || activeOperation !== null}
                         onClick={() => void runOperation(task, "cancel")}
                       >
                         <X size={12} aria-hidden="true" />
-                        {task.cancel_requested ? copy.cancelling : copy.cancel}
+                        {task.cancel_requested || activeOperation === "cancel" ? copy.cancelling : copy.cancel}
                       </Button>
                     )}
                     {task.state !== "running" && task.retryable && task.state !== "succeeded" && (
                       <Button
                         size="sm"
+                        loading={activeOperation === "retry"}
                         disabled={activeOperation !== null}
                         onClick={() => void runOperation(task, "retry")}
                       >
                         <RotateCcw size={12} aria-hidden="true" />
-                        {copy.retry}
+                        {activeOperation === "retry" ? copy.retrying : copy.retry}
                       </Button>
                     )}
                     <Button
@@ -327,6 +344,7 @@ export function TaskRuntimePanel({
                       {!timelineError[task.task_id] && !timeline[task.task_id] && (
                         <Loader2 size={14} className="task-runtime-spin" aria-label={copy.loading} />
                       )}
+                      {!timelineError[task.task_id] && timeline[task.task_id]?.length === 0 && <p>{copy.timelineEmpty}</p>}
                       {timeline[task.task_id]?.map(entry => (
                         <div key={entry.revision} className="task-runtime-timeline-row">
                           <time>{formatTime(entry.timestamp_ms, locale)}</time>

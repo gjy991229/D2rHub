@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { GlobalConfig } from "../../../store/types";
@@ -8,6 +8,18 @@ const config = { app_language: "zh-CN" } as GlobalConfig;
 afterEach(cleanup);
 
 describe("ModuleManagementPanel", () => {
+  it("dispatches an extension change only once and exposes its in-progress status", async () => {
+    let finish!: () => void;
+    const onInstall = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    render(<ModuleManagementPanel config={config} installedModules={[]} onInstall={onInstall} onUninstall={vi.fn()} onOpen={vi.fn()} />);
+    const add = screen.getByRole("button", { name: "添加识别与统计" });
+    act(() => { fireEvent.click(add); fireEvent.click(add); });
+    expect(onInstall).toHaveBeenCalledExactlyOnceWith("automation");
+    expect(screen.getByRole("article", { name: "识别与统计" }).getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("正在添加…")).toBeTruthy();
+    await act(async () => finish());
+  });
+
   it("offers configuration for added extensions and contextual dependencies for adding recognition", async () => {
     const onInstall = vi.fn();
     const onOpen = vi.fn();

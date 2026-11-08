@@ -723,7 +723,7 @@ function installIpcMock() {
       case "room_automation_get_config":
         return roomAutomationSnapshot;
       case "get_tasks":
-        if (params.get("softwareTask") === "1") return [{ revision: 1, task_id: 106, kind: "software-update-download", subject: "0.9.105", state: "running", progress: 42, message: "正在从 Gitee 下载：3 / 7 MB", cancel_requested: false, started_at_ms: Date.now() }];
+        if (params.get("softwareTask") === "1") return [{ revision: 1, task_id: 106, kind: "software-update-download", subject: appVersion, state: "running", progress: 42, message: "正在从 Gitee 下载：3 / 7 MB", cancel_requested: false, started_at_ms: Date.now() }];
         if (params.get("resourceTask") === "1") return [{ revision: 1, task_id: 105, kind: "mod-resource-install", subject: "CN:LiteHub", state: "running", progress: 46, message: "正在从 Gitee 下载：11 / 23 MB", cancel_requested: false, started_at_ms: Date.now() }];
         return seedSampleTasks ? [
           {
@@ -804,8 +804,8 @@ function installIpcMock() {
       case "get_terror_zone_snapshot":
         return {
           current: {
-            start_time: 1782916800,
-            end_time: 1782920400,
+            start_time: Math.floor(Date.now() / 3_600_000) * 3600,
+            end_time: (Math.floor(Date.now() / 3_600_000) + 1) * 3600,
             display_time: "20:00-21:00",
             location_name: "Chaos Sanctuary",
             location_detail: "Act IV · Chaos Sanctuary",
@@ -817,8 +817,8 @@ function installIpcMock() {
             ],
           },
           next: {
-            start_time: 1782920400,
-            end_time: 1782924000,
+            start_time: (Math.floor(Date.now() / 3_600_000) + 1) * 3600,
+            end_time: (Math.floor(Date.now() / 3_600_000) + 2) * 3600,
             display_time: "21:00-22:00",
             location_name: "Worldstone Keep",
             location_detail: "Act V · Worldstone Keep",

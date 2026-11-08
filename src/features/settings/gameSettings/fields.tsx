@@ -4,6 +4,7 @@ import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
 import { FRAMERATE_CAP_KEY } from "../../../utils/gameSettings";
 import { ResolutionInput } from "../../../components/ui/ResolutionInput";
+import "./fields.css";
 type Tab = "display" | "graphics" | "audio" | "gameplay" | "automap";
 type FieldType = "toggle" | "select" | "range" | "number" | "resolution";
 type GraphicsQualityPreset = "low" | "medium" | "high";
@@ -379,9 +380,9 @@ function clamp(value: number, min: number, max: number) {
 
 export function SettingRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-1.5">
+    <div className="game-setting-row">
       <span className="text-sm text-text-secondary">{label}</span>
-      <div className="shrink-0">{children}</div>
+      <div className="game-setting-control">{children}</div>
     </div>
   );
 }
@@ -397,7 +398,7 @@ export function SectionCard({
 }) {
   return (
     <div
-      className="rounded-card p-3"
+      className="game-setting-section rounded-card p-3"
       style={{
         background: "var(--surface-card)",
         border: "1px solid var(--border-default)",
@@ -413,12 +414,14 @@ export function SectionCard({
 }
 
 export function SliderInput({
+  label,
   value,
   min,
   max,
   step = 1,
   onChange,
 }: {
+  label?: string;
   value: number;
   min: number;
   max: number;
@@ -426,8 +429,9 @@ export function SliderInput({
   onChange: (v: number) => void;
 }) {
   return (
-    <div className="flex items-center gap-2 w-48">
+    <div className="game-setting-slider">
       <RangeSlider
+        aria-label={label}
         min={min}
         max={max}
         step={step}
@@ -441,16 +445,19 @@ export function SliderInput({
 }
 
 export function DropdownInput({
+  label,
   value,
   options,
   onChange,
 }: {
+  label?: string;
   value: number | string;
   options: ConfigOption[];
   onChange: (v: number | string) => void;
 }) {
   return (
     <select
+      aria-label={label}
       value={value}
       onChange={(e) => {
         const v = e.target.value;
@@ -470,23 +477,41 @@ export function DropdownInput({
 }
 
 function NumberInput({
+  label,
   value,
   min,
   max,
   onChange,
 }: {
+  label: string;
   value: number;
   min: number;
   max: number;
   onChange: (v: number) => void;
 }) {
+  const [draft, setDraft] = React.useState(String(value));
+  const focused = React.useRef(false);
+  React.useEffect(() => { if (!focused.current) setDraft(String(value)); }, [value]);
   return (
     <input
+      aria-label={label}
       type="number"
       min={min}
       max={max}
-      value={value}
-      onChange={(e) => onChange(clamp(Number(e.target.value) || 0, min, max))}
+      value={draft}
+      onFocus={() => { focused.current = true; }}
+      onChange={event => setDraft(event.target.value)}
+      onBlur={() => {
+        focused.current = false;
+        const number = draft.trim() ? Number(draft) : NaN;
+        const next = Number.isFinite(number) ? clamp(Math.round(number), min, max) : value;
+        setDraft(String(next));
+        if (next !== value) onChange(next);
+      }}
+      onKeyDown={event => {
+        if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+        if (event.key === "Escape" && draft !== String(value)) { event.stopPropagation(); setDraft(String(value)); }
+      }}
       className="h-8 w-28 rounded-input bg-surface-card px-2.5 text-right text-xs text-text-primary focus:border-accent focus:outline-none"
       style={{ border: "1px solid var(--border-default)" }}
     />
@@ -516,6 +541,7 @@ function FieldControl({
     const fallback = field.defaultValue;
     return (
       <DropdownInput
+        label={field.label}
         value={settings[field.key] == null ? fallback : (settings[field.key] as number | string)}
         options={field.options ?? offOnOptions}
         onChange={(v) => update(field.key, v)}
@@ -526,6 +552,7 @@ function FieldControl({
   if (field.type === "resolution") {
     return (
       <ResolutionInput
+        label={field.label}
         value={String(settings[field.key] ?? field.defaultValue)}
         onChange={(v) => update(field.key, v)}
       />
@@ -539,6 +566,7 @@ function FieldControl({
   if (field.type === "range") {
     return (
       <SliderInput
+        label={field.label}
         value={clamp(value, min, max)}
         min={min}
         max={max}
@@ -550,6 +578,7 @@ function FieldControl({
 
   return (
     <NumberInput
+      label={field.label}
       value={clamp(value, min, max)}
       min={min}
       max={max}

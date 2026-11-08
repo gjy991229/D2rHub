@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModProcessingPanel } from "./ModProcessingPanel";
@@ -10,6 +10,21 @@ vi.mock("../../../platform/tauri", () => ({ invokeCommand: vi.fn(async () => ({ 
 afterEach(cleanup);
 
 describe("ModProcessingPanel", () => {
+
+
+  it("supports arrow keys for source and output radio choices", async () => {
+    const workflow = workflowFixture({ draft: { recipe: { kind: "create", source: "MyExistingMod", name: "New", replaceSource: false } } });
+    render(<ModProcessingPanel workflow={workflow} />);
+    const source = screen.getByRole("radio", { name: /已有 Mod/ });
+    source.focus();
+    await userEvent.keyboard("{ArrowLeft}");
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: /原版游戏/ }));
+    expect(workflow.actions.changeRecipe).toHaveBeenLastCalledWith({ kind: "create", source: null, name: "New" });
+    screen.getByRole("radio", { name: /生成新副本/ }).focus();
+    await userEvent.keyboard("{End}");
+    expect(document.activeElement).toBe(screen.getByRole("radio", { name: /沿用源名称/ }));
+    expect(workflow.actions.changeRecipe).toHaveBeenLastCalledWith(expect.objectContaining({ replaceSource: true }));
+  });
   it("offers default Hell as an editable room-tool option and preserves saved choices", async () => {
     const workflow = workflowFixture();
     const view = render(<ModProcessingPanel workflow={workflow} />);
@@ -46,11 +61,11 @@ describe("ModProcessingPanel", () => {
     await userEvent.click(screen.getByRole("radio", { name: /生成新副本/ }));
     expect(workflow.actions.changeRecipe).toHaveBeenCalledWith(expect.objectContaining({ replaceSource: false }));
   });
-  it("exposes scene restart with its help-page replacement disclosure", async () => {
+  it("exposes scene restart with a concise waypoint description", async () => {
     const workflow = workflowFixture();
     render(<ModProcessingPanel workflow={workflow} />);
     const choice = screen.getByRole("checkbox", { name: /场景重开/ });
-    expect(screen.getByText(/替换高清帮助页并备份/)).toBeTruthy();
+    expect(screen.getByText(/小站处重开或创房/)).toBeTruthy();
     await userEvent.click(choice);
     expect(workflow.actions.changeFeatures).toHaveBeenCalledWith({ includeSceneShortcuts: true });
   });
@@ -105,7 +120,7 @@ describe("ModProcessingPanel", () => {
     const blocked = workflowFixture({ draft: { recipe: { kind: "create", source: null, name: "" } } });
     const { rerender } = render(<ModProcessingPanel workflow={blocked} />);
     const button = screen.getByRole("button", { name: "开始加工并应用" }) as HTMLButtonElement;
-    const reason = within(button.closest("section")!).getByRole("status");
+    const reason = document.getElementById(button.getAttribute("aria-describedby")!)!;
     expect(reason.textContent).toContain("请输入新 Mod 名称");
     expect(document.getElementById(button.getAttribute("aria-describedby")!)).toBe(reason);
     expect(button.disabled).toBe(true);

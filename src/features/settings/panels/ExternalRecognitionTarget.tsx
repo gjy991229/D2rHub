@@ -59,7 +59,7 @@ export function ExternalRecognitionTarget({ config, state, status, pool, busy, i
       </select>
       <Button size="sm" variant="secondary" disabled={busy} onClick={onPrepare}><Package size={12} />{state?.ready ? (en ? "Manage Mod" : "管理 Mod") : (en ? "Prepare Mod" : "准备 Mod")}</Button>
     </div>
-    {argumentsText && <div className="flex items-center justify-between gap-3 text-2xs text-text-secondary">
+    {argumentsText && <div className="recognition-launch-arguments">
       <span>{en ? "Game launch arguments" : "游戏启动参数"}：<code>{argumentsText}</code></span>
       <Button size="sm" variant="ghost" onClick={() => void writeText(argumentsText).then(() => showToast("success", en ? "Launch arguments copied" : "启动参数已复制"))
         .catch(error => showToast("error", `${en ? "Copy failed" : "复制失败"}：${error}`))}><Copy size={12} />{en ? "Copy" : "复制"}</Button>

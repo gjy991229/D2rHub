@@ -30,6 +30,36 @@ use crate::token_registry_change::{WebTokenChangeMonitor, WEB_TOKEN_VALUE_NAME};
 
 const LOGIN_KEY_SEND_WINDOW: std::time::Duration = std::time::Duration::from_secs(20);
 
+// Battle.net decides which installation to start. Identify the game by the new PID,
+// then carry its actual executable through all subsequent process guards.
+fn newly_started_battle_net_game(
+    before_pids: &[u32],
+    games: &[(u32, Option<PathBuf>)],
+    configured_executable: &Path,
+) -> Option<(u32, PathBuf)> {
+    games
+        .iter()
+        .find(|(pid, _)| !before_pids.contains(pid))
+        .map(|(pid, executable)| {
+            (
+                *pid,
+                executable
+                    .clone()
+                    .unwrap_or_else(|| configured_executable.to_path_buf()),
+            )
+        })
+}
+
+fn battle_net_game_directory_warning(actual: &Path, configured: &Path) -> Option<String> {
+    (!crate::infrastructure::system::executable_paths_match(actual, configured)).then(|| {
+        format!(
+            "当前战网运行的游戏目录与软件配置目录不一致，建议统一战网游戏目录，保持单游戏目录统一，不需要多份游戏目录。实际游戏目录：{}；软件配置目录：{}。本次启动将继续。",
+            actual.parent().unwrap_or(actual).display(),
+            configured.parent().unwrap_or(configured).display(),
+        )
+    })
+}
+
 /// 启动进度详情
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LaunchResult {
@@ -1907,6 +1937,7 @@ pub async fn launch_accounts(
     state: tauri::State<'_, SharedState>,
     account_ids: Option<Vec<String>>,
     entries: Option<Vec<LaunchAccountEntry>>,
+    accepted_mod_warning: Option<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
     let shared = state.inner().clone();
     let _admission = shared
@@ -1914,6 +1945,24 @@ pub async fn launch_accounts(
         .try_lock()
         .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
     let (account_ids, entries) = resolve_session_launch(&app, &state, account_ids, entries)?;
+    let config = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))?;
+    let room = if config
+        .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION)
+    {
+        crate::commands::launch_scheme::room_manager(&app).map(|m| m.get_config().config)
+    } else {
+        None
+    };
+    let plan = LaunchBatchPlan::from_request(account_ids.clone(), entries.clone())?;
+    check_launch_mod_support(
+        &config,
+        &plan,
+        room.as_ref(),
+        accepted_mod_warning.as_deref(),
+    )?;
     launch_accounts_task(app, state, account_ids, entries, None).await
 }
 
@@ -1934,14 +1983,20 @@ pub(crate) async fn launch_saved_scheme(
     state: tauri::State<'_, SharedState>,
     id: String,
     revision: u64,
+    accepted_mod_warning: Option<String>,
 ) -> Result<Vec<LaunchResult>, AppError> {
     let shared = state.inner().clone();
     let _admission = shared
         .launch_admission
         .try_lock()
         .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
-    let entries =
-        crate::commands::launch_scheme::prepare_scheme_launch(&app, &state, &id, revision)?;
+    let entries = crate::commands::launch_scheme::prepare_scheme_launch(
+        &app,
+        &state,
+        &id,
+        revision,
+        accepted_mod_warning.as_deref(),
+    )?;
     let result = launch_accounts_task(app.clone(), state.clone(), None, Some(entries), None).await;
     let survivors = crate::commands::account::list_accounts(state.clone())?
         .iter()
@@ -1959,11 +2014,81 @@ pub(crate) async fn launch_saved_scheme(
     result
 }
 
+pub(crate) fn check_launch_mod_support(
+    config: &GlobalConfig,
+    plan: &LaunchBatchPlan,
+    room: Option<&crate::domain::room_automation::RoomAutomationConfig>,
+    accepted: Option<&str>,
+) -> Result<(), AppError> {
+    let mut problems = Vec::new();
+    for id in plan.account_ids() {
+        let audio = config.rune_audio_enabled
+            && config.rune_audio_external_target.is_none()
+            && config.rune_audio_target_account == *id
+            && config
+                .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION);
+        let hostile = config.hostile_auto_restart_enabled
+            && config.rune_audio_external_target.is_none()
+            && config.rune_audio_target_account == *id
+            && config
+                .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION);
+        let follows = room.is_some_and(|r| {
+            r.runtime_enabled()
+                && (r.primary_account_id == *id || r.follower_account_ids.contains(id))
+        });
+        if !audio && !hostile && !follows {
+            continue;
+        }
+        let (account, _) = plan.apply_for(
+            id,
+            AccountManager::load_meta(&config.accounts_dir, id)?,
+            config.window_layout_enabled,
+        )?;
+        let name = crate::audio_mod::active_mod_name(&account.mod_args)
+            .map_err(AppError::ConfigReadError)?
+            .unwrap_or_else(|| "原版游戏".into());
+        if audio
+            && crate::audio_mod::validate_runtime_audio_mod(config, &account, &account.mod_args)
+                .is_err()
+        {
+            problems.push(format!("当前识别模块监控的账号“{}”使用的 Mod“{name}”不支持识别。请加工该 Mod、选择支持识别的 Mod，或切换识别主号。", account.display_name));
+        }
+        if hostile {
+            let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
+            if let Err(reason) = crate::audio_mod::validate_runtime_feature_directory(
+                &context.installation.game_directory,
+                &account.mod_args,
+                "hostile_auto_restart",
+            ) {
+                problems.push(format!("账号“{}”使用的 Mod“{name}”无法启用敌对自动重开：{reason}。请加工该 Mod 或更换监听目标；继续启动时该功能不可用。", account.display_name));
+            }
+        }
+        if follows {
+            let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
+            if crate::audio_mod::validate_in_game_room_tools_for_arguments(
+                &account.display_name,
+                &context,
+                &account.mod_args,
+            )
+            .is_err()
+            {
+                problems.push(format!("跟房账号“{}”使用的 Mod“{name}”不支持局内房间工具。请加工该 Mod、选择支持跟房的 Mod，或调整参与账号。", account.display_name));
+            }
+        }
+    }
+    let warning = problems.join("\n");
+    if !warning.is_empty() && accepted != Some(warning.as_str()) {
+        return Err(AppError::ConfigReadError(format!(
+            "[MOD_PREFLIGHT]{warning}"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn preflight_scheme_entries(
     config: &GlobalConfig,
     state: &SharedState,
     entries: &[LaunchAccountEntry],
-    room_enabled: bool,
 ) -> Result<(), AppError> {
     let plan = LaunchBatchPlan::from_request(None, Some(entries.to_vec()))?;
     if plan.is_empty() {
@@ -1976,31 +2101,6 @@ pub(crate) fn preflight_scheme_entries(
         preflight_account_meta(config, &account, ContextPurpose::LaunchGame)?;
         let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
         preflight_scheme_mod(&account, &context)?;
-        if config.rune_audio_enabled
-            && config.rune_audio_target_account == *id
-            && config
-                .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
-        {
-            crate::audio_mod::validate_runtime_audio_mod(config, &account, &account.mod_args)
-                .map_err(AppError::ConfigReadError)?;
-        }
-        if config
-            .launch_session
-            .as_ref()
-            .and_then(|session| session.scheme.environment.as_ref())
-            .is_some_and(|environment| {
-                room_enabled
-                    && (environment.room.primary_account_id == *id
-                        || environment.room.follower_account_ids.contains(id))
-            })
-        {
-            crate::audio_mod::validate_in_game_room_tools_for_arguments(
-                &account.display_name,
-                &context,
-                &account.mod_args,
-            )
-            .map_err(AppError::ConfigReadError)?;
-        }
         preflight_launch_graphics(
             config,
             &account,
@@ -2592,6 +2692,7 @@ async fn launch_single(
     let mut last_launch_sent: Option<std::time::Instant> = None;
     let mut last_launch_error: Option<String> = None;
     let mut d2r_pid_opt: Option<u32> = None;
+    let mut actual_game_path = expected_game_path.clone();
     let mut sys = sysinfo::System::new(); // 优化：复用 System 实例以提高效率
                                           // 跟踪已尝试 kill 的 Agent PID，避免重复日志洪水
     let mut killed_agent_pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
@@ -2614,17 +2715,16 @@ async fn launch_single(
         struct SysStatus {
             agent_pids: Vec<u32>,
             bnet_count: usize,
-            d2r_pids: Vec<u32>,
+            d2r_games: Vec<(u32, Option<PathBuf>)>,
         }
 
         let monitored_bnet_path = battle_net_path.clone();
-        let monitored_game_path = expected_game_path.clone();
         let (status, sys_ret) = tokio::task::spawn_blocking(move || {
             sys.refresh_processes(sysinfo::ProcessesToUpdate::All);
 
             let mut agent_pids = Vec::new();
             let mut bnet_count = 0;
-            let mut d2r_pids = Vec::new();
+            let mut d2r_games = Vec::new();
 
             for (pid, proc) in sys.processes() {
                 let name = proc.name().to_string_lossy();
@@ -2639,15 +2739,8 @@ async fn launch_single(
                     }) {
                         bnet_count += 1;
                     }
-                } else if name.eq_ignore_ascii_case("D2R.exe")
-                    && proc.exe().is_some_and(|actual| {
-                        crate::infrastructure::system::executable_paths_match(
-                            actual,
-                            &monitored_game_path,
-                        )
-                    })
-                {
-                    d2r_pids.push(pid.as_u32());
+                } else if name.eq_ignore_ascii_case("D2R.exe") {
+                    d2r_games.push((pid.as_u32(), proc.exe().map(Path::to_path_buf)));
                 }
             }
 
@@ -2655,7 +2748,7 @@ async fn launch_single(
                 SysStatus {
                     agent_pids,
                     bnet_count,
-                    d2r_pids,
+                    d2r_games,
                 },
                 sys,
             )
@@ -2665,22 +2758,23 @@ async fn launch_single(
             SysStatus {
                 agent_pids: Vec::new(),
                 bnet_count: 0,
-                d2r_pids: Vec::new(),
+                d2r_games: Vec::new(),
             },
             sysinfo::System::new(),
         ));
         sys = sys_ret;
 
-        // 1. 检查是否有新进程
-        let mut found_new = false;
-        for pid in &status.d2r_pids {
-            if !before_pids.contains(pid) {
-                d2r_pid_opt = Some(*pid);
-                found_new = true;
-                break;
+        // 1. 以新增游戏进程为准；目录不一致仅警告，不阻断启动。
+        if let Some((pid, executable)) =
+            newly_started_battle_net_game(&before_pids, &status.d2r_games, &expected_game_path)
+        {
+            d2r_pid_opt = Some(pid);
+            actual_game_path = executable;
+            if let Some(warning) =
+                battle_net_game_directory_warning(&actual_game_path, &expected_game_path)
+            {
+                emit("game", "warning", &warning);
             }
-        }
-        if found_new {
             break;
         }
 
@@ -2856,7 +2950,7 @@ async fn launch_single(
                 account_id,
                 pid,
                 &meta.mod_args,
-                &context.installation.game_executable,
+                &actual_game_path,
             );
             crate::audio_mod::emit_runtime_compatibility_warning(
                 app,
@@ -2880,7 +2974,7 @@ async fn launch_single(
                 let app_user_model_id = format!("D2RHub.Account.{account_id}");
                 let app_for_window = app.clone();
                 let account_id_for_window = account_id.to_string();
-                let layout_executable = context.installation.game_executable.clone();
+                let layout_executable = actual_game_path.clone();
                 let geometry_request = WindowGeometryRequest::capture(config, account_id);
                 tokio::task::spawn_blocking(move || {
                     let Some(process) = crate::infrastructure::system::LaunchProcessGuard::capture(
@@ -3022,15 +3116,13 @@ async fn launch_single(
         .await;
     }
 
-    let game_process = crate::infrastructure::system::LaunchProcessGuard::capture(
-        d2r_pid,
-        &context.installation.game_executable,
-    );
+    let game_process =
+        crate::infrastructure::system::LaunchProcessGuard::capture(d2r_pid, &actual_game_path);
 
     #[cfg(target_os = "windows")]
     let pending_memory_trim = crate::infrastructure::memory_trim::PendingMemoryTrim::prepare(
         config,
-        &context.installation.game_executable,
+        &actual_game_path,
         account_id,
         d2r_pid,
     );
@@ -3044,7 +3136,7 @@ async fn launch_single(
         state,
         cancellation_ticket,
         d2r_pid,
-        &context.installation.game_executable,
+        &actual_game_path,
         mutex_state.clone(),
     );
 
@@ -3819,6 +3911,22 @@ mod tests {
     use crate::launch_context::ContextPurpose;
     use crate::state::{AccountLifecycleLease, AppState};
 
+    #[test]
+    fn battle_net_game_uses_new_pid_and_actual_path_even_when_directory_differs() {
+        let configured = std::path::PathBuf::from(r"C:\configured\D2R.exe");
+        let actual = std::path::PathBuf::from(r"D:\battle-net-game\D2R.exe");
+        let games = vec![(10, Some(configured.clone())), (20, Some(actual.clone()))];
+        assert_eq!(
+            super::newly_started_battle_net_game(&[10], &games, &configured),
+            Some((20, actual.clone()))
+        );
+        let warning = super::battle_net_game_directory_warning(&actual, &configured).unwrap();
+        assert!(warning.contains("本次启动将继续"));
+        assert!(warning.contains("当前战网运行的游戏目录与软件配置目录不一致"));
+        assert!(super::battle_net_game_directory_warning(&actual, &actual).is_none());
+        assert!(super::newly_started_battle_net_game(&[10, 20], &games, &configured).is_none());
+    }
+
     fn successful_game_launch(id: &str) -> super::LaunchResult {
         super::LaunchResult {
             account_id: id.into(),
@@ -4329,6 +4437,59 @@ mod tests {
         let account_dir = AccountManager::account_dir_checked(&config.accounts_dir, id).unwrap();
         std::fs::create_dir_all(account_dir).unwrap();
         AccountManager::save_meta(&config.accounts_dir, &meta).unwrap();
+    }
+
+    #[test]
+    fn mod_warning_uses_scheme_arguments_and_only_accepts_the_current_warning() {
+        use crate::application::multi_instance::{
+            LaunchAccountEntry, LaunchAccountOverrides, LaunchBatchPlan,
+        };
+        use crate::domain::config::{
+            CURRENT_FEATURE_PROFILE_PROMPT_REVISION, OPTIONAL_MODULE_AUTOMATION,
+        };
+        let root = temp_dir("launch_mod_warning");
+        let mut config = configure_global_install(&root, false);
+        save_account(&config, "acount1", "token", Some("00"));
+        config.feature_profile = "normal".into();
+        config.feature_profile_prompt_revision = CURRENT_FEATURE_PROFILE_PROMPT_REVISION;
+        config.installed_optional_modules = vec![OPTIONAL_MODULE_AUTOMATION.into()];
+        config.rune_audio_enabled = true;
+        config.rune_audio_target_account = "acount1".into();
+        let plan = LaunchBatchPlan::from_request(
+            None,
+            Some(vec![LaunchAccountEntry {
+                account_id: "acount1".into(),
+                overrides: LaunchAccountOverrides {
+                    snapshot: None,
+                    mod_args: "-mod SchemeMod -txt".into(),
+                    position_preset_id: None,
+                    resolution: None,
+                    fps: None,
+                },
+            }]),
+        )
+        .unwrap();
+        let warning = super::check_launch_mod_support(&config, &plan, None, None)
+            .unwrap_err()
+            .to_string();
+        let warning = warning.split_once("[MOD_PREFLIGHT]").unwrap().1;
+        assert!(warning.contains("SchemeMod"));
+        assert!(super::check_launch_mod_support(&config, &plan, None, Some(warning)).is_ok());
+        assert!(
+            super::check_launch_mod_support(&config, &plan, None, Some("old warning")).is_err()
+        );
+        config.rune_audio_target_account = "other".into();
+        assert!(super::check_launch_mod_support(&config, &plan, None, None).is_ok());
+        config.rune_audio_target_account = "acount1".into();
+        config.rune_audio_enabled = false;
+        config.hostile_auto_restart_enabled = true;
+        let warning = super::check_launch_mod_support(&config, &plan, None, None)
+            .unwrap_err()
+            .to_string();
+        let warning = warning.split_once("[MOD_PREFLIGHT]").unwrap().1;
+        assert!(warning.contains("敌对自动重开"));
+        assert!(super::check_launch_mod_support(&config, &plan, None, Some(warning)).is_ok());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

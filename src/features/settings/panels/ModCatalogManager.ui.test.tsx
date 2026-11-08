@@ -126,13 +126,23 @@ describe("ModCatalogManager", () => {
   it("shows readable Mod summaries with advanced actions disclosed on demand", () => {
     render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
 
-    expect(screen.getAllByText(/已安装 Mod/)).toHaveLength(3);
+    expect(screen.getByText("源 Mod")).toBeTruthy();
+    expect(screen.getAllByText(/加工成品/)).toHaveLength(2);
     const processed = screen.getByText("Ready").closest("article");
     expect(processed?.textContent).toContain("原版");
     expect(processed?.textContent).toContain("声纹识别");
     expect(screen.queryByRole("button", { name: "加工功能" })).toBeNull();
     expect(screen.getAllByRole("button", { name: /^设置 / })).toHaveLength(3);
     expect(screen.queryByTitle("删除自定义参数")).toBeNull();
+  });
+
+  it("opens processing for the exact outdated Mod without expanding settings", async () => {
+    const onProcess = vi.fn();
+    const capsules = pool.capsules.map(capsule => ({ ...capsule, update_required: capsule.name === "Ready" }));
+    render(<ModCatalogManager catalog={controller({ pool: { ...pool, capsules } })} accounts={[]} onProcess={onProcess} />);
+    expect(screen.getAllByRole("button", { name: "更新" })).toHaveLength(1);
+    await userEvent.click(within(screen.getByRole("article", { name: "Ready" })).getByRole("button", { name: "更新" }));
+    expect(onProcess).toHaveBeenCalledWith(capsules[1]);
   });
 
   it("toggles death-exit on the concrete supported Mod row", async () => {

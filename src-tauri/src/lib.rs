@@ -258,6 +258,7 @@ pub fn run() {
             commands::global_config::detection::detect_saved_games_path,
             commands::global_config::detection::detect_global_saved_games_path,
             commands::global_config::check_saved_games_settings,
+            commands::global_config::validate_config_path_selection,
             commands::global_config::detection::detect_program_data_agent_path,
             commands::global_config::detection::detect_app_data_roaming_bnet_path,
             commands::global_config::detection::detect_browser_path,

@@ -712,6 +712,7 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                             audio_reusable: false,
                             auto_exit_on_death_enabled: false,
                             room_tools_default_hell: true,
+                            scene_audio_enabled: true,
                         });
                     }
                 }
@@ -730,6 +731,7 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                     audio_reusable: false,
                     auto_exit_on_death_enabled: false,
                     room_tools_default_hell: true,
+                    scene_audio_enabled: true,
                 });
             }
             if !mpq.is_dir() {
@@ -801,6 +803,11 @@ pub(super) fn installed_mods(mods_directory: &Path) -> Vec<InstalledMod> {
                 feature_groups,
                 audio_reusable,
                 auto_exit_on_death_enabled,
+                scene_audio_enabled: processing_manifest_path(&entry.path())
+                    .and_then(|path| std::fs::read(path).ok())
+                    .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+                    .and_then(|document| super::rebuild::audio_options(&document).ok())
+                    .is_none_or(|options| options.areas != "none"),
                 room_tools_default_hell: super::room_tool_options::default_hell(&entry.path())
                     .unwrap_or(true),
             })

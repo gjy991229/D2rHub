@@ -110,6 +110,9 @@
   background: var(--surface-hover);
 }
 
+.room-automation-choice:disabled .room-automation-choice-buttons label { cursor: not-allowed; }
+.room-automation-choice:disabled .room-automation-choice-buttons label:hover > span { background: var(--surface-card); border-color: var(--border-default); }
+
 .room-automation-choice-buttons label[data-selected="true"] > span {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 10%, var(--surface-card));
@@ -197,6 +200,10 @@
   max-height: 240px;
   overflow-y: auto;
 }
+
+.room-automation-panel :is(button, summary, input, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.room-automation-panel .room-rule-sharing { flex-wrap: wrap; }
+.room-automation-panel .room-rule-sharing > p { flex: 1 1 240px; font-size: var(--text-xs); }
 
 .room-automation-panel .room-automation-room-builder-heading {
   flex-wrap: wrap;

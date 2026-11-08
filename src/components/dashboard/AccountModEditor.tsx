@@ -77,7 +77,7 @@ export function AccountModEditor({
       && rect.top > height + gap + padding;
     setPosition({
       left: Math.min(window.innerWidth - width - padding, Math.max(padding, rect.left)),
-      top: opensUpward ? Math.max(padding, rect.top - height - gap) : rect.bottom + gap,
+      top: Math.max(padding, Math.min(opensUpward ? rect.top - height - gap : rect.bottom + gap, window.innerHeight - height - padding)),
       opensUpward,
     });
   }, [capsules.length]);
@@ -95,6 +95,7 @@ export function AccountModEditor({
   useEffect(() => {
     if (!open || !position) return;
     const frame = window.requestAnimationFrame(() => {
+      if (menuRef.current?.contains(document.activeElement)) return;
       const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>(
         'button:not([disabled])',
       ) ?? []);
@@ -124,7 +125,7 @@ export function AccountModEditor({
 
   useEffect(() => {
     if (!open || !position) return;
-    const outside = (event: PointerEvent) => {
+    const outside = (event: PointerEvent | FocusEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
@@ -134,16 +135,19 @@ export function AccountModEditor({
       if (event.key === "Escape") close(true);
     };
     document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("focusin", outside);
     document.addEventListener("keydown", escape);
     window.addEventListener("resize", updatePosition);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("resize", updatePosition);
     };
   }, [close, open, position, updatePosition]);
 
   const choose = async (capsuleId: string | null, launchArguments: string) => {
+    if (assigning) return;
     if (isSelectionMode) {
       onSchemeMemberChange?.(account.id, { mod_args: launchArguments });
     } else {
@@ -187,6 +191,7 @@ export function AccountModEditor({
           ref={menuRef}
           id={menuId}
           role="menu"
+          aria-busy={assigning}
           aria-label={isEnglish
             ? `Select a Mod for ${account.display_name || account.id}`
             : `${account.display_name || account.id} 选择 Mod`}
@@ -203,6 +208,7 @@ export function AccountModEditor({
             <button
               type="button"
               role="menuitemradio"
+              disabled={assigning}
               aria-checked={!activeArguments.trim()}
               className="account-mod-picker-capsule"
               data-active={!activeArguments.trim() ? "true" : undefined}
@@ -218,6 +224,7 @@ export function AccountModEditor({
                 <button
                   type="button"
                   role="menuitemradio"
+                  disabled={assigning}
                   aria-checked={active}
                   className="account-mod-picker-capsule"
                   data-active={active ? "true" : undefined}

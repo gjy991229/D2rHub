@@ -279,6 +279,7 @@ impl RuntimeHost for WindowsRuntimeHost {
             .filter(|instance| instance.launch.is_some())
         {
             if crate::infrastructure::system::find_game_hwnd(instance.pid).is_some() {
+                crate::audio_mod::validate_in_game_room_tools_for_account(&self.state, account_id)?;
                 return Ok(instance);
             }
         }
@@ -937,6 +938,19 @@ impl RoomAutomationManager {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
         let mut raw_config = self.workflow_config_snapshot()?;
+        if raw_config.collaboration_mode == CollaborationMode::UberDiablo {
+            if join_only {
+                return Err("超级迪亚波罗模式请使用创建快捷键".into());
+            }
+            let last = raw_config
+                .next_sequence
+                .checked_add(raw_config.follower_account_ids.len() as u32)
+                .filter(|last| *last < u32::MAX)
+                .ok_or("房间序号不足以分配全部账号")?;
+            raw_config
+                .generate_room_name(last)
+                .map_err(|error| error.to_string())?;
+        }
         let shared_follower = raw_config.collaboration_mode == CollaborationMode::Follower;
         let join_only = join_only || shared_follower;
         if shared_follower {
@@ -1023,6 +1037,9 @@ impl RoomAutomationManager {
         expected_chat_epoch: Option<u64>,
     ) -> Result<WorkflowStatus, String> {
         let _operation = self.operation.lock();
+        if self.get_config().config.collaboration_mode == CollaborationMode::UberDiablo {
+            return Err("超级迪亚波罗模式请使用创建快捷键".into());
+        }
         if expected_chat_epoch
             .is_some_and(|epoch| epoch != self.get_config().config.chat_signal_epoch)
         {
@@ -1268,6 +1285,9 @@ impl RoomAutomationManager {
             match prepared {
                 Ok(instance) => followers.push((account_id.clone(), instance)),
                 Err(error) => {
+                    if config.collaboration_mode == CollaborationMode::UberDiablo {
+                        return Err(error);
+                    }
                     skipped.push(format!("{account_id}: {error}"));
                     crate::logger::log_msg(
                         "WARN",
@@ -1347,6 +1367,63 @@ impl RoomAutomationManager {
         _retrying: bool,
         cancel: Arc<CancellationSignal>,
     ) {
+        if config.collaboration_mode == CollaborationMode::UberDiablo {
+            let result = (|| -> Result<(), String> {
+                cancel.check_active()?;
+                let last = sequence
+                    .checked_add(followers.len() as u32)
+                    .filter(|last| *last < u32::MAX)
+                    .ok_or("房间序号不足以分配全部账号")?;
+                config
+                    .generate_room_name(last)
+                    .map_err(|error| error.to_string())?;
+                self.persist_used_sequence(task_id, last)?;
+                let mut create_config = config.clone();
+                create_config.follower_account_ids.clear();
+                create_config.join_only = false;
+                self.host.prepare_background_room(
+                    &create_config,
+                    primary.pid,
+                    &[],
+                    &room_name,
+                    &cancel,
+                )?;
+                self.workflow
+                    .lock()
+                    .primary_ready(task_id, WaitingMode::Automatic { delay_secs: 0.0 })
+                    .map_err(|error| error.to_string())?;
+                self.workflow
+                    .lock()
+                    .begin_selected_followers(
+                        task_id,
+                        followers.iter().map(|(id, _)| id.clone()).collect(),
+                    )
+                    .map_err(|error| error.to_string())?;
+                for (index, (account, instance)) in followers.iter().enumerate() {
+                    cancel.check_active()?;
+                    create_config.primary_account_id = account.clone();
+                    let name = config
+                        .generate_room_name(sequence + index as u32 + 1)
+                        .map_err(|error| error.to_string())?;
+                    self.host
+                        .prepare_background_room(&create_config, instance.pid, &[], &name, &cancel)
+                        .map_err(|error| format!("{account} 创建 {name} 失败：{error}"))?;
+                    let status = self
+                        .workflow
+                        .lock()
+                        .record_follower_complete(task_id, account)
+                        .map_err(|error| error.to_string())?;
+                    self.bridge.publish_status(&status);
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                self.fail_and_release(task_id, &error);
+            } else {
+                self.lifecycle.lock().leases = None;
+            }
+            return;
+        }
         let room_password = config.password.clone();
         if cancel.check_active().is_err() {
             self.fail_and_release(task_id, "自动跟房流程已取消");
@@ -2370,6 +2447,53 @@ mod tests {
             "timed out waiting for {phase:?}: {:?}",
             manager.get_status()
         );
+    }
+
+    #[test]
+    fn uber_diablo_creates_separate_rooms_and_reserves_sequence_range() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, _leases, host) = manager("uber_diablo", false, false);
+        let original = manager.get_config();
+        let mut config = original.config.clone();
+        config.collaboration_mode = CollaborationMode::UberDiablo;
+        config.name_prefix = "qwe".into();
+        config.next_sequence = 1;
+        config.sequence_width = 3;
+        config.password = "1".into();
+        config.follower_account_ids.push("follower-b".into());
+        manager.save_config(original.generation, config).unwrap();
+        manager.start().unwrap();
+        assert!(manager.start_followers().is_err());
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(
+            *host.primary_calls.lock(),
+            vec!["qwe001", "qwe002", "qwe003"]
+        );
+        assert!(host.follower_calls.lock().is_empty());
+        assert_eq!(manager.get_config().config.next_sequence, 4);
+        assert_eq!(manager.get_config().config.password, "1");
+    }
+
+    #[test]
+    fn uber_diablo_failed_creation_consumes_reserved_names() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, _leases, _host) = manager("uber_diablo_failure", false, true);
+        let original = manager.get_config();
+        let mut config = original.config.clone();
+        config.collaboration_mode = CollaborationMode::UberDiablo;
+        config.next_sequence = 1;
+        manager.save_config(original.generation, config).unwrap();
+        manager.start().unwrap();
+        manager.start_primary().unwrap();
+        wait_for_phase(&manager, WorkflowPhase::Error);
+        manager
+            .join_previous_workflow(manager.get_status().task_id)
+            .unwrap();
+        assert_eq!(manager.get_config().config.next_sequence, 3);
     }
 
     #[test]

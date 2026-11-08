@@ -55,10 +55,10 @@ export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: 
 
 export function AccountGridLoading() {
   return (
-    <div className="flex-1 overflow-auto px-5 pb-5">
+    <div className="dashboard-accounts flex-1 overflow-auto px-5 pb-5" role="status" aria-label="正在读取账号" aria-busy="true">
       <div className="spatial-grid">
         {[1,2,3,4,5,6].map(i => (
-          <div key={i} className="skeleton rounded-[22px] h-[172px]" />
+          <div key={i} className="skeleton rounded-xl h-[172px]" aria-hidden="true" />
         ))}
       </div>
     </div>
@@ -67,13 +67,13 @@ export function AccountGridLoading() {
 
 export function AccountGridEmpty({ onAddAccount, onOpenRecognition }: { onAddAccount: () => void; onOpenRecognition?: () => void }) {
   return (
-    <div className="flex-1 flex items-center justify-center px-8">
+    <div className="dashboard-empty flex-1 flex items-center justify-center px-8">
       <div className="text-center spatial-panel px-8 py-7 max-w-sm w-full">
         <div className="w-12 h-12 rounded-[18px] flex items-center justify-center mx-auto mb-4"
           style={{ background: "rgb(var(--accent-rgb) / 0.06)", border: "1px solid var(--border-default)" }}>
           <Zap size={20} className="text-text-muted" strokeWidth={1.7} />
         </div>
-        <p className="text-sm font-semibold text-text-primary mb-1">还没有账号</p>
+        <h2 className="text-sm font-semibold text-text-primary mb-1">还没有账号</h2>
         <p className="micro-meta mb-5">添加一个账号开始多开</p>
         <button onClick={onAddAccount}
           className="primary-cta">

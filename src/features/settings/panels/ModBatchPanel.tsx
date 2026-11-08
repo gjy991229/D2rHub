@@ -55,7 +55,11 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
       {batch.mode !== "rebuild" && <fieldset className="mod-processing-section mod-batch-features">
         <legend>{en ? "Modules for this batch" : "本批次添加的模块"}</legend>
         <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={detail}
-          checked={!!batch.features[key]} onChange={checked => batch.changeFeatures({ ...batch.features, [key]: checked })} />
+          checked={!!batch.features[key] || (key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart)}
+          locked={key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart}
+          lockLabel={en ? "Required by hostile auto-restart" : "敌对自动重开必选"} disabled={batch.busy}
+          onChange={checked => batch.changeFeatures({ ...batch.features, [key]: checked,
+            ...(key === "includeHostileAutoRestart" && checked ? { includeEscNextGame: true } : {}) })} />
           {key === "includeRoomTools" && batch.features.includeRoomTools && <RoomToolProcessingOptions en={en}
             enabled={batch.features.roomToolsDefaultHell ?? true} disabled={batch.busy}
             onChange={enabled => batch.changeFeatures({ ...batch.features, roomToolsDefaultHell: enabled })} />}

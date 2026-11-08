@@ -48,7 +48,7 @@ export default function UpdateConfirmModal({ open, onClose, version }: Props) {
           {liveTask && <span>{liveTask.progress}%</span>}</div>
         <ProgressBar value={liveTask?.progress} label="安装包下载进度" />
       </div>}
-      {error && <p role="alert" className="text-xs text-red-400 break-words">{error}</p>}
+      {error && <p role="alert" className="text-xs text-error break-words">{error}</p>}
     </div>
   </Modal>;
 }

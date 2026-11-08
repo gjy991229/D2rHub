@@ -89,9 +89,10 @@ export function TopNav({
   useEffect(() => {
     if (!shareMenuOpen || !shareMenuPosition) return;
     const frame = window.requestAnimationFrame(() => {
+      if (shareMenuRef.current?.contains(document.activeElement)) return;
       shareMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
     });
-    const handleOutsidePointerDown = (event: PointerEvent) => {
+    const handleOutsidePointerDown = (event: PointerEvent | FocusEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (shareTriggerRef.current?.contains(target) || shareMenuRef.current?.contains(target)) return;
@@ -101,12 +102,14 @@ export function TopNav({
       if (event.key === "Escape") closeShareMenu(true);
     };
     document.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    document.addEventListener("focusin", handleOutsidePointerDown);
     document.addEventListener("keydown", handleEscape);
     window.addEventListener("resize", updateShareMenuPosition);
     window.addEventListener("scroll", updateShareMenuPosition, true);
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+      document.removeEventListener("focusin", handleOutsidePointerDown);
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("resize", updateShareMenuPosition);
       window.removeEventListener("scroll", updateShareMenuPosition, true);

@@ -153,6 +153,7 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
         .unwrap_or_default();
         if previous.is_none_or(|previous| {
             previous.shortcut_bindings_json != prepared.shortcut_bindings_json
+                || previous.launch_scheme_shortcuts != prepared.launch_scheme_shortcuts
                 || previous.show_main_window_shortcut != prepared.show_main_window_shortcut
                 || previous.hide_main_window_shortcut != prepared.hide_main_window_shortcut
         }) {
@@ -170,6 +171,12 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
                     .values()
                     .map(String::as_str)
                     .chain([prepared.main_window_shortcut()])
+                    .chain(
+                        prepared
+                            .launch_scheme_shortcuts
+                            .iter()
+                            .map(|binding| binding.shortcut.as_str()),
+                    )
                 {
                     if let Ok(key) =
                         crate::capabilities::room_automation::canonicalize_shortcut(key)
@@ -189,7 +196,13 @@ impl ConfigurationPolicy for GlobalConfigPolicy<'_> {
                 bindings
                     .values()
                     .map(String::as_str)
-                    .chain([prepared.main_window_shortcut()]),
+                    .chain([prepared.main_window_shortcut()])
+                    .chain(
+                        prepared
+                            .launch_scheme_shortcuts
+                            .iter()
+                            .map(|binding| binding.shortcut.as_str()),
+                    ),
                 &prepared.installed_optional_modules,
             )
             .map_err(AppError::ConfigWriteError)?;
@@ -232,6 +245,52 @@ impl ConfigurationObserver for RuntimeConfigurationObserver<'_> {
 
 fn saved_games_settings_exists(path: &Path) -> bool {
     path.join("Settings.json").is_file()
+}
+
+/// Only the selected leaf is fixed; installation prefixes are user controlled.
+#[tauri::command]
+pub fn validate_config_path_selection(field: String, path: String) -> Result<(), AppError> {
+    let (label, expected, executable) = match field.as_str() {
+        "cn_battle_net_path" => ("国服战网客户端", "Battle.net.exe", true),
+        "cn_game_path" => ("国服游戏安装目录", "Diablo II Resurrected", false),
+        "global_game_path" => ("国际服游戏安装目录", "Diablo II Resurrected", false),
+        "cn_saved_games_path" => ("国服配置目录", "Diablo II Resurrected (CN)", false),
+        "global_saved_games_path" => ("国际服配置目录", "Diablo II Resurrected", false),
+        _ => return Ok(()),
+    };
+    if path.trim().is_empty() {
+        return Ok(()); // Unused editions and optional configuration remain skippable.
+    }
+    let selected = Path::new(path.trim());
+    if !selected
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected))
+    {
+        return Err(AppError::ConfigWriteError(format!(
+            "{label}最终应选择 {expected}，前缀路径不限"
+        )));
+    }
+    if executable {
+        if !selected.is_file() {
+            return Err(AppError::ConfigWriteError(format!(
+                "{label}文件不存在或不可访问: {}",
+                selected.display()
+            )));
+        }
+    } else if !selected.is_dir() {
+        return Err(AppError::ConfigWriteError(format!(
+            "{label}不存在或不可访问: {}",
+            selected.display()
+        )));
+    }
+    if matches!(field.as_str(), "cn_game_path" | "global_game_path")
+        && !selected.join("D2R.exe").is_file()
+    {
+        return Err(AppError::ConfigWriteError(format!(
+            "{label}中必须存在 D2R.exe"
+        )));
+    }
+    Ok(())
 }
 
 fn validate_installation_paths(config: &GlobalConfig) -> Result<(), AppError> {
@@ -328,6 +387,41 @@ fn normalize_and_validate_main_window_shortcuts(config: &mut GlobalConfig) -> Re
             )));
         }
     }
+    if config.launch_scheme_shortcuts.len() > 3 {
+        return Err(AppError::ConfigWriteError(
+            "最多配置三个启动方案快捷键".into(),
+        ));
+    }
+    let mut assigned: std::collections::HashSet<String> = assigned.into_keys().collect();
+    assigned.insert(config.show_main_window_shortcut.to_ascii_lowercase());
+    let mut groups = std::collections::HashSet::new();
+    for binding in &mut config.launch_scheme_shortcuts {
+        if binding.group_id.is_empty() {
+            binding.shortcut.clear();
+            continue;
+        }
+        if !config
+            .launch_groups
+            .iter()
+            .any(|group| group.id == binding.group_id)
+        {
+            return Err(AppError::ConfigWriteError(
+                "快捷键关联的启动方案已删除，请重新选择".into(),
+            ));
+        }
+        if !groups.insert(binding.group_id.clone()) {
+            return Err(AppError::ConfigWriteError(
+                "请为快捷配置选择不同的启动方案".into(),
+            ));
+        }
+        binding.shortcut = normalize(&binding.shortcut, "启动方案")?;
+        if !binding.shortcut.is_empty() && !assigned.insert(binding.shortcut.to_ascii_lowercase()) {
+            return Err(AppError::ConfigWriteError(format!(
+                "启动方案快捷键 {} 与其他动作冲突",
+                binding.shortcut
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -342,6 +436,50 @@ mod validation_tests {
     };
     use crate::application::configuration::ConfigurationPolicy;
     use crate::commands::account::{AccountManager, AccountMeta};
+
+    #[test]
+    fn scheme_shortcuts_validate_limit_targets_and_collisions() {
+        use crate::domain::config::LaunchSchemeShortcut;
+        let mut config = GlobalConfig {
+            launch_groups: (0..4)
+                .map(|index| LaunchGroup {
+                    id: format!("scheme-{index}"),
+                    name: format!("Scheme {index}"),
+                    ..Default::default()
+                })
+                .collect(),
+            launch_scheme_shortcuts: (0..3)
+                .map(|index| LaunchSchemeShortcut {
+                    group_id: format!("scheme-{index}"),
+                    shortcut: format!("Ctrl+Alt+F{}", index + 1),
+                })
+                .collect(),
+            ..Default::default()
+        };
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_ok());
+        let valid = config.clone();
+        config.launch_scheme_shortcuts.push(LaunchSchemeShortcut {
+            group_id: "scheme-3".into(),
+            shortcut: "Ctrl+Alt+F4".into(),
+        });
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_err());
+        config = valid.clone();
+        config.launch_scheme_shortcuts[0].shortcut = "Ctrl+1".into();
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_err());
+        config = valid.clone();
+        config.show_main_window_shortcut = "Ctrl+Alt+F1".into();
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_err());
+        config = valid.clone();
+        config.launch_scheme_shortcuts[1].shortcut = "Ctrl+Alt+F1".into();
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_err());
+        config = valid.clone();
+        config.launch_scheme_shortcuts[0].group_id = "deleted".into();
+        assert!(super::normalize_and_validate_main_window_shortcuts(&mut config).is_err());
+        config = valid;
+        config.launch_scheme_shortcuts[0].group_id.clear();
+        super::normalize_and_validate_main_window_shortcuts(&mut config).unwrap();
+        assert!(config.launch_scheme_shortcuts[0].shortcut.is_empty());
+    }
 
     #[test]
     fn ordinary_full_save_cannot_replace_saved_schemes() {
@@ -470,6 +608,42 @@ mod validation_tests {
         };
 
         assert!(validate_installation_paths(&config).is_ok());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn selected_path_leaves_are_enforced_without_requiring_settings_json() {
+        let root = temp_dir("selected_path_rules");
+        let game = root.join("arbitrary-prefix").join("Diablo II Resurrected");
+        let cn_config = root
+            .join("custom-config-prefix")
+            .join("Diablo II Resurrected (CN)");
+        std::fs::create_dir_all(&game).unwrap();
+        std::fs::create_dir_all(&cn_config).unwrap();
+        let validate = |field: &str, path: &std::path::Path| {
+            super::validate_config_path_selection(
+                field.to_string(),
+                path.to_string_lossy().to_string(),
+            )
+        };
+        assert!(validate("cn_game_path", &game).is_err());
+        std::fs::write(game.join("D2R.exe"), b"").unwrap();
+        assert!(validate("cn_game_path", &game).is_ok());
+        assert!(validate("global_game_path", &game).is_ok());
+        assert!(validate("cn_saved_games_path", &cn_config).is_ok());
+        assert!(!cn_config.join("Settings.json").exists());
+        assert!(validate("global_saved_games_path", &cn_config).is_err());
+        assert!(validate("global_saved_games_path", &game).is_ok());
+        assert!(validate("cn_game_path", &cn_config).is_err());
+        let bnet = root.join("battle.NET.EXE");
+        std::fs::write(&bnet, b"").unwrap();
+        assert!(validate("cn_battle_net_path", &bnet).is_ok());
+        assert!(validate("cn_battle_net_path", &game.join("D2R.exe")).is_err());
+        assert!(validate(
+            "cn_battle_net_path",
+            &root.join("missing").join("Battle.net.exe")
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -3178,6 +3352,18 @@ pub fn update_shortcut_map(state: &SharedState, cfg: &GlobalConfig) {
             .entry(shortcut.to_ascii_lowercase())
             .or_insert(crate::state::CoreShortcutAction::ToggleMainWindow);
     }
+    for (slot, binding) in cfg.launch_scheme_shortcuts.iter().take(3).enumerate() {
+        if !binding.shortcut.is_empty()
+            && cfg
+                .launch_groups
+                .iter()
+                .any(|group| group.id == binding.group_id)
+        {
+            normalized
+                .entry(binding.shortcut.to_ascii_lowercase())
+                .or_insert(crate::state::CoreShortcutAction::LaunchScheme(slot));
+        }
+    }
     crate::input_listener::replace_core_shortcut_routes(
         normalized
             .iter()
@@ -3655,6 +3841,37 @@ fn prepare_global_config_with_retired_accounts(
     cfg.normalize_favorite_launch_group_ids();
 
     if should_validate_installation_paths(previous, &cfg) {
+        for (field, value, old_value) in [
+            (
+                "cn_battle_net_path",
+                &cfg.cn_battle_net_path,
+                previous.map(|c| &c.cn_battle_net_path),
+            ),
+            (
+                "cn_game_path",
+                &cfg.cn_game_path,
+                previous.map(|c| &c.cn_game_path),
+            ),
+            (
+                "global_game_path",
+                &cfg.global_game_path,
+                previous.map(|c| &c.global_game_path),
+            ),
+            (
+                "cn_saved_games_path",
+                &cfg.cn_saved_games_path,
+                previous.map(|c| &c.cn_saved_games_path),
+            ),
+            (
+                "global_saved_games_path",
+                &cfg.global_saved_games_path,
+                previous.map(|c| &c.global_saved_games_path),
+            ),
+        ] {
+            if old_value != Some(value) || previous.is_some_and(|c| !c.first_run_complete) {
+                validate_config_path_selection(field.to_string(), value.clone())?;
+            }
+        }
         validate_installation_paths(&cfg)?;
     }
     cfg.resolve_rune_audio_target_account()?;

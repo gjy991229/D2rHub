@@ -10,7 +10,9 @@
 .settings-center-shell {
   width: 100%;
   height: clamp(640px, 76vh, 900px);
-  max-height: calc(100vh - 96px);
+  /* Reserve the dialog header, body padding, and viewport margins so the
+     navigation and panel own scrolling instead of nesting a third scrollbar. */
+  max-height: calc(100dvh - 128px);
 }
 
 .settings-panel-scroll {
@@ -30,6 +32,7 @@
 .settings-panel-column > .settings-panel-scroll {
   flex: 1 1 auto;
 }
+
 
 .appearance-settings-grid {
   align-items: stretch;
@@ -216,7 +219,7 @@
 
 .task-runtime-operation-error {
   margin: 0 0 10px;
-  color: var(--danger);
+  color: var(--error);
 }
 
 .task-runtime-list,
@@ -247,7 +250,7 @@
 }
 
 .task-runtime-entry[data-state="succeeded"] > svg { color: var(--success); }
-.task-runtime-entry[data-state="failed"] > svg { color: var(--danger); }
+.task-runtime-entry[data-state="failed"] > svg { color: var(--error); }
 .task-runtime-entry[data-state="cancelled"] > svg { color: var(--text-muted); }
 .task-runtime-entry[data-state="running"] > svg { color: var(--accent); }
 
@@ -274,7 +277,7 @@
   font-weight: 700;
 }
 
-.task-runtime-title-line .task-runtime-state[data-state="failed"] { color: var(--danger); }
+.task-runtime-title-line .task-runtime-state[data-state="failed"] { color: var(--error); }
 .task-runtime-title-line .task-runtime-state[data-state="succeeded"] { color: var(--success); }
 .task-runtime-title-line .task-runtime-state[data-state="running"] { color: var(--accent); }
 

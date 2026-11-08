@@ -3,6 +3,7 @@ import { RangeSlider } from "../../../components/ui/RangeSlider";
 import type { AccountMeta, GlobalConfig } from "../../../store/types";
 import { sortAccountsByCardOrder } from "../../../utils/accountOrder";
 import { requiresTokenMigration } from "../../../utils/regionPaths";
+import "./corePanels.css";
 
 interface LaunchStrategyPanelProps {
   config: GlobalConfig;
@@ -10,6 +11,7 @@ interface LaunchStrategyPanelProps {
   updateConfig: (updater: (config: GlobalConfig) => void) => void;
 }
 export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchStrategyPanelProps) {
+  const en = config.app_language === "en-US";
   const battleNetAccounts = sortAccountsByCardOrder(accounts).filter(account => {
     const authMode = account.auth_mode?.trim() || "bnet";
     return account.initialized && authMode === "bnet"
@@ -67,19 +69,19 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
             onChange={v => updateConfig(c => { c.launch_trim_memory = v; })}
           />
         </div>
-        <div className="flex items-center justify-between py-1.5">
+        <div className="flex items-center justify-between gap-3 py-1.5">
           <div>
             <span className="text-sm font-semibold text-text-secondary">自动关闭隔离浏览器</span>
             <p className="text-2xs text-text-muted">在账号挂载或登录完自动关闭浏览器以释放内存</p>
           </div>
-          <Toggle checked={!!config.auto_close_browser} onChange={v => updateConfig(c => { c.auto_close_browser = v; })} />
+          <Toggle checked={!!config.auto_close_browser} ariaLabel="自动关闭隔离浏览器" onChange={v => updateConfig(c => { c.auto_close_browser = v; })} />
         </div>
-        <div className="flex items-center justify-between py-1.5 border-t border-border-default/50 pt-2">
+        <div className="flex items-center justify-between gap-3 py-1.5 border-t border-border-default/50 pt-2">
           <div>
             <span className="text-sm font-semibold text-text-secondary">每日检查更新</span>
             <p className="text-2xs text-text-muted">每天首次启动检查软件、加工器和已安装Mod；仅提示，不自动安装</p>
           </div>
-          <Toggle checked={!!config.enable_auto_update} onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
+          <Toggle checked={!!config.enable_auto_update} ariaLabel="每日检查更新" onChange={v => updateConfig(c => { c.enable_auto_update = v; })} />
         </div>
         <label className="flex items-center justify-between gap-3 py-1.5">
           <span className="text-sm font-semibold text-text-secondary">下载源</span>
@@ -97,32 +99,27 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
           <p className="text-2xs text-text-muted">防止启动多个战网客户端冲突的控制策略</p>
         </div>
 
-        <div className="flex gap-2" role="radiogroup" aria-label="Agent 限制行为">
+        <div className="launch-agent-options" role="radiogroup" aria-label="Agent 限制行为" data-i18n-skip>
           {[1, 2, 3].map(mode => {
-            const label = mode === 1 ? "模式1：延时杀" : mode === 2 ? "模式2：进程数杀" : "模式3：不处理";
+            const label = mode === 1 ? (en ? "End after a delay" : "延时结束 Agent") : mode === 2 ? (en ? "End at client limit" : "按客户端数量结束") : (en ? "Keep Agent running" : "保留 Agent");
             const active = (config.agent_mode ?? 1) === mode;
             return (
-              <button
-                type="button"
-                role="radio"
-                aria-checked={active}
+              <label
                 key={mode}
-                onClick={() => updateConfig(c => { c.agent_mode = mode; })}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-all duration-150 border ${
-                  active
-                    ? "border-accent bg-accent/10 text-accent font-bold"
-                    : "border-border-default text-text-secondary hover:text-text-primary"
-                }`}
+                className="launch-agent-choice"
+                data-selected={active}
               >
+                <input className="sr-only" type="radio" name="agent-mode" value={mode} checked={active}
+                  onChange={() => updateConfig(c => { c.agent_mode = mode; })} />
                 {label}
-              </button>
+              </label>
             );
           })}
         </div>
 
         {(config.agent_mode ?? 1) === 1 && (
           <div className="border-t border-border-default/50 pt-3 space-y-2">
-            <span className="text-xs text-text-muted font-medium block">检测到 Agent 后延迟杀死（秒）</span>
+            <span className="text-xs text-text-muted font-medium block" data-i18n-skip>{en ? "Delay before ending Agent (seconds)" : "检测到 Agent 后等待时间（秒）"}</span>
             <div className="flex items-center gap-3">
               <RangeSlider
                 aria-label="Agent 终止延迟"
@@ -144,24 +141,18 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
         {(config.agent_mode ?? 1) === 2 && (
           <div className="border-t border-border-default/50 pt-3 space-y-2">
             <span className="text-xs text-text-muted font-medium block">战网客户端运行数阈值</span>
-            <div className="flex gap-2" role="radiogroup" aria-label="战网客户端运行数阈值">
+            <div className="launch-agent-options launch-agent-threshold" role="radiogroup" aria-label="战网客户端运行数阈值">
               {[5, 7].map(n => {
                 const active = (config.agent_threshold ?? 5) === n;
                 return (
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={active}
+                  <label
                     key={n}
-                    onClick={() => updateConfig(c => { c.agent_threshold = n; })}
-                    className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border ${
-                      active
-                        ? "border-accent bg-accent/10 text-accent font-bold"
-                        : "border-border-default text-text-secondary hover:text-text-primary"
-                    }`}
+                    className="launch-agent-choice" data-selected={active}
                   >
+                    <input type="radio" name="agent-threshold" className="sr-only" value={n} checked={active}
+                      onChange={() => updateConfig(c => { c.agent_threshold = n; })} />
                     ≥ {n} 运行客户端
-                  </button>
+                  </label>
                 );
               })}
             </div>

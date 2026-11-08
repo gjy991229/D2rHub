@@ -175,6 +175,7 @@ pub(crate) fn validate_saved_capability_shortcuts<'a>(
         if let Some(action) = registry.core.get(&shortcut) {
             let label = match action {
                 CoreShortcutAction::FocusAccount(position) => format!("账号位置 #{position}"),
+                CoreShortcutAction::LaunchScheme(slot) => format!("启动方案快捷配置 #{}", slot + 1),
                 CoreShortcutAction::ToggleMainWindow => "切换主面板".to_string(),
             };
             return Err(format!("快捷键 {shortcut} 已用于{label}，配置未保存"));
@@ -299,6 +300,7 @@ fn install_capability_shortcuts_in_transaction(
                 CoreShortcutAction::FocusAccount(position) => {
                     format!("多开核心账号位置 {position}")
                 }
+                CoreShortcutAction::LaunchScheme(slot) => format!("启动方案快捷配置 #{}", slot + 1),
                 CoreShortcutAction::ToggleMainWindow => "D2RHub 主面板切换动作".to_string(),
             };
             return Err(format!("快捷键 {shortcut} 已由{owner}使用"));
@@ -543,6 +545,22 @@ fn dispatch_registered_shortcut(app: &AppHandle, shortcut: &str) {
             if let Some(state) = app.try_state::<SharedState>() {
                 if let Some(config) = state.configuration().snapshot() {
                     focus_account_at_position(app, &config.accounts_dir, position, shortcut);
+                }
+            }
+        }
+        Some(CoreShortcutAction::LaunchScheme(slot)) => {
+            if let Some(state) = app.try_state::<SharedState>() {
+                if let Some(config) = state.configuration().snapshot() {
+                    if let Some(binding) = config.launch_scheme_shortcuts.get(slot) {
+                        if config
+                            .launch_groups
+                            .iter()
+                            .any(|group| group.id == binding.group_id)
+                        {
+                            let _ =
+                                app.emit_to("main", "launch-scheme-shortcut", &binding.group_id);
+                        }
+                    }
                 }
             }
         }

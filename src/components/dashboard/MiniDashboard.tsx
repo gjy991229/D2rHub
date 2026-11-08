@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, Circle, ListChecks, LoaderCircle, Maximize2, Minus, MoreHorizontal, Pin, Play, Settings, Users } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invokeCommand } from "../../platform/tauri";
@@ -65,6 +65,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
   const actionLock = useRef(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const menuButton = useRef<HTMLButtonElement>(null);
+  const menuId = useId();
   const groups = config?.launch_groups ?? [];
   const group = groups.find(item => item.id === groupId);
   const availability = group ? inspectLaunchGroup(group, accounts, config) : null;
@@ -182,8 +183,8 @@ export function MiniDashboard(props: MiniDashboardProps) {
     <header className="mini-titlebar" data-tauri-drag-region>
       <div className="mini-brand" data-tauri-drag-region><img src="/logo.png" alt="" draggable={false} /><strong data-tauri-drag-region>D2RHub</strong><span data-tauri-drag-region>{copy("迷你", "Mini")}</span></div>
       <div className="mini-window-actions">
-        <button className="icon-btn" disabled={props.busy} aria-pressed={props.pinned} title={copy("窗口置顶", "Always on top")} aria-label={copy("窗口置顶", "Always on top")} onClick={() => void props.onPin()}><Pin size={15} /></button>
-        <button className="icon-btn" disabled={props.busy} title={copy("恢复完整模式", "Full mode")} aria-label={copy("恢复完整模式", "Full mode")} onClick={() => void props.onExpand()}><Maximize2 size={15} /></button>
+        <button className="icon-btn" disabled={props.busy} aria-pressed={props.pinned} title={copy("窗口置顶", "Always on top")} aria-label={copy("窗口置顶", "Always on top")} onClick={() => void run(props.onPin)}><Pin size={15} /></button>
+        <button className="icon-btn" disabled={props.busy} title={copy("恢复完整模式", "Full mode")} aria-label={copy("恢复完整模式", "Full mode")} onClick={() => void run(props.onExpand)}><Maximize2 size={15} /></button>
         <button className="icon-btn" title={copy("最小化到托盘", "Hide to tray")} aria-label={copy("最小化到托盘", "Hide to tray")} onClick={() => void run(() => invokeCommand("hide_main_window"))}><Minus size={16} /></button>
       </div>
     </header>
@@ -213,7 +214,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
           <span className="mini-index">{String(index + 1).padStart(2, "0")}</span>
           <div className="mini-account-copy"><strong title={account.display_name || account.id}>{account.display_name || account.id}</strong>
             <div className="mini-account-meta"><span className="hig-badge hig-badge-neutral">{english ? regionLabels[accountRegionLabel(account.region)] : accountRegionLabel(account.region)}</span>
-              <span className="mini-status" title={failure || status}>{active ? <LoaderCircle size={10} className="animate-spin" /> : <Circle size={6} fill="currentColor" />}{status}</span></div>
+              <span className="mini-status" title={failure || status}>{active ? <LoaderCircle size={10} className="animate-spin" aria-hidden="true" /> : <Circle size={6} fill="currentColor" aria-hidden="true" />}<span>{status}</span></span></div>
           </div>
           <button className="control-btn mini-account-action" disabled={props.busy || active || (!account.is_running && !needsConfig && (dispatching || launch.launching || saving || availability?.can_launch === false))}
             aria-label={`${label} ${account.display_name || account.id}`} onClick={() => {
@@ -226,14 +227,24 @@ export function MiniDashboard(props: MiniDashboardProps) {
     </div>
     <footer className="mini-footer">
       <button className="mini-task-status" title={footer} onClick={() => fullAction(roomOwnsFooter ? props.onRoomAutomation : props.onTasks)}><ListChecks size={15} /><span>{footer}</span></button>
-      <button ref={menuButton} className="icon-btn" aria-label={copy("更多操作", "More actions")} aria-expanded={menuOpen} aria-controls="mini-more-menu" onClick={() => setMenuOpen(value => !value)}><MoreHorizontal size={19} /></button>
-      {menuOpen && <div ref={menuRef} id="mini-more-menu" className="mini-more-menu" aria-label={copy("更多操作", "More actions")}>
-        <button onClick={() => fullAction(() => props.onConfigure())}><Settings size={14} />{copy("打开设置", "Settings")}</button>
-        <button onClick={() => fullAction(props.onManageGroups)}>{copy("管理启动方案", "Manage schemes")}</button>
-        <button onClick={() => fullAction(props.onAddAccount)}>{copy("添加账号", "Add account")}</button>
-        {roomInstalled && <button onClick={() => fullAction(props.onRoomAutomation)}>{copy("自动跟房", "Room automation")}</button>}
-        {statsInstalled && <button onClick={() => { setMenuOpen(false); void run(() => invokeCommand("open_stats_page")); }}>{copy("查看统计", "Statistics")}</button>}
-        <button className="mini-danger" onClick={() => fullAction(props.onKillAll)}>{copy("关闭全部…", "Close all…")}</button>
+      <button ref={menuButton} className="icon-btn" aria-label={copy("更多操作", "More actions")} aria-haspopup="menu" aria-expanded={menuOpen} aria-controls={menuOpen ? menuId : undefined} onClick={() => setMenuOpen(value => !value)} onKeyDown={event => {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") { event.preventDefault(); setMenuOpen(true); }
+      }}><MoreHorizontal size={19} /></button>
+      {menuOpen && <div ref={menuRef} id={menuId} role="menu" className="mini-more-menu" aria-label={copy("更多操作", "More actions")} onKeyDown={event => {
+        if (event.key === "Tab") { setMenuOpen(false); menuButton.current?.focus(); return; }
+        const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+        const current = items.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
+          : event.key === "ArrowDown" ? (current + 1) % items.length
+          : event.key === "ArrowUp" ? (current - 1 + items.length) % items.length : null;
+        if (next !== null && items.length) { event.preventDefault(); items[next].focus(); }
+      }}>
+        <button role="menuitem" onClick={() => fullAction(() => props.onConfigure())}><Settings size={14} />{copy("打开设置", "Settings")}</button>
+        <button role="menuitem" onClick={() => fullAction(props.onManageGroups)}>{copy("管理启动方案", "Manage schemes")}</button>
+        <button role="menuitem" onClick={() => fullAction(props.onAddAccount)}>{copy("添加账号", "Add account")}</button>
+        {roomInstalled && <button role="menuitem" onClick={() => fullAction(props.onRoomAutomation)}>{copy("自动跟房", "Room automation")}</button>}
+        {statsInstalled && <button role="menuitem" onClick={() => { setMenuOpen(false); void run(() => invokeCommand("open_stats_page")); }}>{copy("查看统计", "Statistics")}</button>}
+        <button role="menuitem" className="mini-danger" onClick={() => fullAction(props.onKillAll)}>{copy("关闭全部…", "Close all…")}</button>
       </div>}
     </footer>
   </section>;

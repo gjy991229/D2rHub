@@ -487,6 +487,19 @@ impl AccountRuntimePort for AccountManagerRuntime<'_> {
         account: &AccountMeta,
         pid: u32,
     ) -> bool {
+        // Battle.net may select another installation. The original process
+        // handle recorded at launch proves ownership even when its path differs
+        // from the configured installation; a discovered PID still needs the
+        // exact configured executable check below.
+        if self
+            .state
+            .multi_instance()
+            .instances()
+            .snapshot()
+            .owns_live_process(&account.id, pid)
+        {
+            return true;
+        }
         let Some(expected_game_path) =
             LaunchContext::for_account(config, account, ContextPurpose::Settings)
                 .ok()
@@ -1288,6 +1301,38 @@ mod settings_json_tests {
         let dir = std::env::temp_dir().join(unique);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn account_query_retains_owned_battle_net_process_from_another_installation() {
+        use crate::application::multi_instance::AccountRuntimePort;
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let state = Arc::new(crate::state::AppState::new());
+        let account = AccountMeta::new("acount1");
+        let alive = Arc::new(AtomicBool::new(true));
+        let process_alive = alive.clone();
+        state
+            .multi_instance()
+            .instances()
+            .record_launched_with_process(
+                &account.id,
+                42,
+                "",
+                Some(Arc::new(move || process_alive.load(Ordering::Acquire))),
+            );
+        let runtime = super::AccountManagerRuntime::new(&state);
+        // No configured game path: only the retained process handle can prove
+        // that this is the original Battle.net launch.
+        let config = GlobalConfig::default();
+        assert!(runtime.is_expected_game_process(&config, &account, 42));
+        assert!(!runtime.is_expected_game_process(&config, &account, 43));
+        assert!(!runtime.is_expected_game_process(&config, &AccountMeta::new("acount2"), 42));
+        alive.store(false, Ordering::Release);
+        assert!(!runtime.is_expected_game_process(&config, &account, 42));
     }
 
     #[test]

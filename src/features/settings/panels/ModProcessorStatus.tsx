@@ -17,5 +17,6 @@ export function ModProcessorStatus({ edition, en, onReady }: Props) {
     return () => { live = false; };
   }, [edition]);
   if (status?.ready) return null;
-  return <div className="processor-status" role="status"><span>{error ?? status?.blocking_reason ?? (en ? "Checking bundled processor…" : "正在检查内置加工器…")}</span></div>;
+  const failed = !!error || status?.ready === false;
+  return <div className="processor-status" data-state={failed ? "error" : "checking"} role={failed ? "alert" : "status"}><span>{error ?? status?.blocking_reason ?? (en ? "Checking bundled processor…" : "正在检查内置加工器…")}</span></div>;
 }

@@ -80,6 +80,35 @@ impl GameWindowPort for SystemGameWindowPort {
 
 // ── 进程管理 ──
 
+/// Resolve the live installation, never an account's configured default.
+pub(crate) fn running_game_directory(pid: u32) -> Result<std::path::PathBuf, String> {
+    let mut system = System::new();
+    let process_id = sysinfo::Pid::from_u32(pid);
+    system.refresh_processes(ProcessesToUpdate::Some(&[process_id]));
+    let executable = system
+        .process(process_id)
+        .and_then(|process| process.exe())
+        .ok_or_else(|| {
+            format!("无法读取游戏进程 PID {pid} 的实际安装目录，请确认游戏仍在运行后重试")
+        })?;
+    game_directory_from_executable(executable)
+}
+
+fn game_directory_from_executable(
+    executable: &std::path::Path,
+) -> Result<std::path::PathBuf, String> {
+    if !executable
+        .file_name()
+        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("D2R.exe"))
+    {
+        return Err("目标进程不是 D2R 游戏".into());
+    }
+    executable
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| "无法确定游戏的实际安装目录".into())
+}
+
 /// Keeps the original process object alive so a recycled PID cannot pass the
 /// launch readiness fallback. Failure to acquire/query it fails closed.
 pub(crate) struct LaunchProcessGuard {
@@ -1967,6 +1996,19 @@ pub fn get_visible_window_position(hwnd: isize) -> Option<(i32, i32)> {
 
 #[cfg(test)]
 mod region_process_tests {
+    #[test]
+    fn runtime_directory_comes_from_the_game_executable_and_rejects_other_processes() {
+        let actual = std::path::Path::new("actual-install/D2R.exe");
+        assert_eq!(
+            super::game_directory_from_executable(actual).unwrap(),
+            std::path::Path::new("actual-install")
+        );
+        assert!(
+            super::game_directory_from_executable(std::path::Path::new("other/Agent.exe")).is_err()
+        );
+        assert!(super::running_game_directory(u32::MAX).is_err());
+    }
+
     use super::{
         executable_paths_match, recover_running_assignments, AccountGameIdentity, RunningGameWindow,
     };

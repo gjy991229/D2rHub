@@ -27,6 +27,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
   const [layoutBusy, setLayoutBusy] = useState(false);
   const draft = controller.draft;
   if (!draft || !config || controller.pendingDelete || hidden) return null;
+  const en = config.app_language === "en-US";
   const env = draft.environment, room = env.room, settings = env.settings;
   const selected = accounts.filter(account => draft.members.some(member => member.account_id === account.id));
   const name = (id: string) => accounts.find(account => account.id === id)?.display_name || id;
@@ -80,7 +81,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     </>}>
     <div className="scheme-form">
       <label>方案名称<input autoFocus maxLength={32} value={draft.name} disabled={controller.busy} onChange={event => controller.renameDraft(event.target.value)} /></label>
-      <p className="scheme-note">方案保存账号组合、角色和启动差异；运行参数统一使用公共设置。保存仅影响以后按此方案启动。</p>
+      <p className="scheme-note" data-i18n-skip>{en ? "Save to use these values on future scheme launches. Running games and account defaults stay unchanged." : "保存后在下次按此方案启动时使用，当前游戏与账号默认配置保持不变。"}</p>
       <nav className="scheme-tabs" aria-label="方案设置">{[["accounts", "账号与启动"], ["room", "跟房"], ["recognition", "识别"], ["layout", "窗口布局"]].map(([id, label]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
       <fieldset disabled={controller.busy || layoutBusy} className="scheme-body">
         {tab === "accounts" && <>
@@ -89,27 +90,28 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
           {draft.members.map((member, index) => {
             const account = accounts.find(account => account.id === member.account_id), snapshot = member.snapshot;
             const update = (patch: Partial<typeof member>) => controller.updateMember(member.account_id, patch);
+            const layoutSlot = env.layout?.windows[index];
             const edition = modCapsulePool?.accounts.find(account => account.account_id === member.account_id)?.edition;
             const mods = modCapsulePool?.capsules.filter(capsule => capsule.edition === edition && capsule.ready) ?? [];
             return <section className="scheme-account" key={member.account_id}>
-              <div className="scheme-row"><strong>{index + 1}. {name(member.account_id)}</strong><span className="scheme-spacer" />
+              <div className="scheme-row"><strong>{index + 1}. {name(member.account_id)}</strong><span className="configuration-origin-tag" data-i18n-skip>{en ? "Scheme values" : "方案值"}</span><span className="scheme-spacer" />
                 <button className="icon-btn" aria-label={`上移 ${name(member.account_id)}`} disabled={index === 0} onClick={() => controller.moveMember(member.account_id, -1)}><ArrowUp size={14}/></button>
                 <button className="icon-btn" aria-label={`下移 ${name(member.account_id)}`} disabled={index === draft.members.length - 1} onClick={() => controller.moveMember(member.account_id, 1)}><ArrowDown size={14}/></button>
                 <button className="icon-btn" aria-label={`移除 ${name(member.account_id)}`} onClick={() => controller.toggleAccount(member.account_id)}><Trash2 size={14}/></button>
               </div>
               <div className="scheme-fields">
                 <label>Mod<select value={member.mod_args ?? ""} onChange={event => update({ mod_args: event.target.value })}><option value="">不使用 Mod</option>{member.mod_args && !mods.some(mod => mod.launch_arguments === member.mod_args) && <option value={member.mod_args}>{member.mod_args}</option>}{mods.map(mod => <option key={mod.id} value={mod.launch_arguments}>{mod.name}</option>)}</select></label>
-                <label>分辨率{env.layout ? <span className="scheme-note">由布局位置 {index + 1} 决定</span> : <input aria-label={`${name(member.account_id)} 分辨率`} value={member.resolution ?? ""} placeholder="1920x1080" disabled={!snapshot} onChange={event => update({ resolution: event.target.value, graphics_configured: true })}/>}</label>
+                <label>分辨率{layoutSlot ? <span className="scheme-note" data-i18n-skip>{en ? `Scheme layout · Slot ${index + 1}` : `方案布局 · 位置 ${index + 1}`}<br/>{layoutSlot.width} × {layoutSlot.height}</span> : <input aria-label={`${name(member.account_id)} 分辨率`} value={member.resolution ?? ""} placeholder="1920x1080" disabled={!snapshot} onChange={event => update({ resolution: event.target.value, graphics_configured: true })}/>}</label>
                 <label>FPS（0 为不限）<input type="number" min={0} max={500} disabled={!snapshot} value={member.fps ?? 30} onChange={event => update({ fps: Number(event.target.value), graphics_configured: true })}/></label>
               </div>
               {!snapshot ? <p className="scheme-note">正在读取账号默认设置…</p> : <details><summary>位置、语言与启动参数</summary><div className="scheme-fields">
-                <label>位置<select disabled={!!env.layout} value={snapshot.position ? member.position_preset_id ?? "snapshot" : ""} onChange={event => { const position = account?.position_presets?.find(position => position.id === event.target.value); update({ position_preset_id: position?.id ?? null, snapshot: { ...snapshot, position: position ? [position.x, position.y] : null } }); }}><option value="">不指定位置</option>{snapshot.position && <option value={member.position_preset_id ?? "snapshot"}>已保存位置（{snapshot.position.join(", ")}）</option>}{account?.position_presets?.filter(position => position.id !== member.position_preset_id).map(position => <option key={position.id} value={position.id}>{position.name}</option>)}</select></label>
-                {!env.layout && snapshot.position && <>{["X", "Y"].map((axis, coordinate) => <label key={axis}>{axis}<input type="number" value={snapshot.position![coordinate]} onChange={event => { const position: [number, number] = [...snapshot.position!]; position[coordinate] = Number(event.target.value); update({ snapshot: { ...snapshot, position } }); }}/></label>)}</>}
+                <label>位置<select disabled={!!layoutSlot} value={snapshot.position ? member.position_preset_id ?? "snapshot" : ""} onChange={event => { const position = account?.position_presets?.find(position => position.id === event.target.value); update({ position_preset_id: position?.id ?? null, snapshot: { ...snapshot, position: position ? [position.x, position.y] : null } }); }}><option value="">不指定位置</option>{snapshot.position && <option value={member.position_preset_id ?? "snapshot"}>已保存位置（{snapshot.position.join(", ")}）</option>}{account?.position_presets?.filter(position => position.id !== member.position_preset_id).map(position => <option key={position.id} value={position.id}>{position.name}</option>)}</select></label>
+                {!layoutSlot && snapshot.position && <>{["X", "Y"].map((axis, coordinate) => <label key={axis}>{axis}<input type="number" value={snapshot.position![coordinate]} onChange={event => { const position: [number, number] = [...snapshot.position!]; position[coordinate] = Number(event.target.value); update({ snapshot: { ...snapshot, position } }); }}/></label>)}</>}
                 <label>区服<select disabled={account?.auth_mode !== "token"} value={snapshot.region ?? ""} onChange={event => update({ snapshot: { ...snapshot, region: event.target.value } })}>{(snapshot.region === "CN" ? ["CN"] : ["KR", "NA", "EU"]).map(region => <option key={region} value={region}>{({ CN: "国服", KR: "亚洲", NA: "美洲", EU: "欧洲" } as Record<string, string>)[region]}</option>)}</select></label>
                 <label>文字语言<input value={snapshot.language ?? ""} placeholder="跟随游戏默认" onChange={event => update({ snapshot: { ...snapshot, language: event.target.value || null } })}/></label>
                 <label>语音语言<input value={snapshot.voicelanguage ?? ""} placeholder="跟随游戏默认" onChange={event => update({ snapshot: { ...snapshot, voicelanguage: event.target.value || null } })}/></label>
                 <label className="scheme-wide">启动参数<input value={member.mod_args ?? ""} onChange={event => update({ mod_args: event.target.value })}/></label>
-              </div><p className="scheme-note">其余游戏设置默认沿用账号配置，在每次启动时读取。</p></details>}
+              </div></details>}
               {snapshot && <><label className="scheme-toggle"><input type="checkbox" checked={Object.keys(snapshot.game_settings).length > 0} onChange={event => {
                 if (!event.target.checked) { update({ snapshot: { ...snapshot, game_settings: {} } }); return; }
                 setLayoutBusy(true);
@@ -124,17 +126,16 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
             </section>;
           })}
           <div className="scheme-fields"><label>保留战网<select value={settings.keep_battle_net_account_id ?? ""} onChange={event => setting("keep_battle_net_account_id", event.target.value || null)}><option value="">不保留</option>{selected.filter(account => account.auth_mode === "bnet").map(account => <option key={account.id} value={account.id}>{name(account.id)}</option>)}</select></label></div>
-          <p className="scheme-note">内存整理、浏览器清理和 Agent 策略使用公共启动设置。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("agent")}>前往公共启动设置</button>}</p>
         </>}
         {tab === "room" && <>
           <div className="scheme-fields"><label>主号<select value={room.primary_account_id} onChange={event => edit(env => { env.room = switchPrimary(env.room, event.target.value); })}>{options}</select></label></div>
           <p>跟随账号（按勾选顺序派发）</p><div className="scheme-account-picker">{selected.filter(account => account.id !== room.primary_account_id).map(account => <label key={account.id}><input type="checkbox" checked={room.follower_account_ids.includes(account.id)} onChange={event => edit(env => { env.room.follower_account_ids = event.target.checked ? [...env.room.follower_account_ids, account.id] : env.room.follower_account_ids.filter(id => id !== account.id); })}/>{name(account.id)}{room.follower_account_ids.includes(account.id) && ` · ${room.follower_account_ids.indexOf(account.id) + 1}`}</label>)}</div>
-          <p className="scheme-note">不指定任何账号时，本方案不使用跟房。快捷键、延时、跟随方式、协作模式及房间规则使用公共设置；序号持续递增。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("room-automation")}>前往公共跟房设置</button>}</p>
+          <p className="scheme-note">不指定任何账号时，本方案不使用跟房。参与账号随方案保存；快捷键、延时、跟随方式、协作模式及房间规则使用公共设置；序号持续递增。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("room-automation")}>前往公共跟房设置</button>}</p>
           <p className="scheme-note">公共模块关闭时不运行。启动方案只准备跟房账号，不会自动建房或进房。参与账号需要带房间工具的 Mod。</p>
         </>}
         {tab === "recognition" && <>
           <div className="scheme-fields"><label>识别账号<select value={settings.rune_audio_target_account} onChange={event => setting("rune_audio_target_account", event.target.value)}>{options}</select></label>{room.primary_account_id && <button type="button" className="control-btn" onClick={() => setting("rune_audio_target_account", room.primary_account_id)}>使用跟房主号</button>}</div>
-          <p className="scheme-note">不指定账号时，本方案不使用识别。识别开关、记录与过滤规则、识别参数及悬浮窗均使用公共设置。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("automation")}>前往公共识别设置</button>}</p>
+          <p className="scheme-note">不指定账号时，本方案不使用识别。监听账号随方案保存；识别开关、记录与过滤规则、识别参数及悬浮窗均使用公共设置。{onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("automation")}>前往公共识别设置</button>}</p>
           <p className="scheme-note">改变跟房主号不会自动改变已选的识别账号；公共模块关闭时不运行。</p>
         </>}
         {tab === "layout" && <>

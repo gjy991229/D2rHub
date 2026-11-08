@@ -1,0 +1,13 @@
+.game-setting-section { container-type: inline-size; }
+.game-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(120px, 200px); align-items: center; gap: 12px 20px; min-height: 48px; padding: 10px 0; }
+.game-setting-row + .game-setting-row { border-top: 1px solid var(--border-default); }
+.game-setting-row > span { min-width: 0; line-height: 1.55; }
+.game-setting-control { display: flex; justify-content: flex-end; min-width: 0; }
+.game-setting-control > select { width: 100%; min-width: 0; }
+.game-setting-slider { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; }
+.game-setting-slider > span { flex-shrink: 0; }
+@container (max-width: 360px) {
+  .game-setting-row { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .game-setting-control { justify-content: flex-start; }
+  .game-setting-control > select { max-width: 200px; }
+}

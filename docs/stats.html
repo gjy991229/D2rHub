@@ -27,24 +27,180 @@
     @media(max-width:760px){:root{--header:44px}.app-header{padding:0 12px}.product-area,.brand-divider,.sync-state{display:none}.layout{padding:12px}.intro{align-items:flex-start;flex-direction:column;gap:10px}.tabs{width:100%}.tab{flex:1;padding-inline:6px}.strategy-panel{grid-template-columns:1fr}.filters{top:calc(var(--header) + 6px);border-radius:var(--radius-md)}.filters-body{flex-wrap:nowrap;overflow-x:auto}.filter-field{min-width:132px}.outlier-settings{min-width:300px}.filter-summary{max-width:36vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.kpi-strip{grid-template-columns:repeat(2,1fr);gap:8px}.kpi{border-radius:var(--radius-md)}.rune-summary{grid-template-columns:repeat(2,1fr)}.rune-tier:nth-child(2){border-right:0}.rune-tier:nth-child(-n+2){border-bottom:1px solid var(--border-default)}.rune-matrix{grid-template-columns:repeat(4,minmax(58px,1fr))}.report-dialog{width:calc(100vw - 16px);max-height:calc(100vh - 16px)}.report-shell{display:flex;height:calc(100vh - 18px);flex-direction:column}.report-controls{flex:0 0 min(54vh,540px);padding:18px 18px 0;border-right:0;border-bottom:1px solid var(--border-default)}.report-copy,.report-facts,.report-privacy{display:none}.report-actions{margin-inline:-18px;padding-inline:18px}.report-preview{min-height:0;padding:18px 34px}}
     @media(prefers-reduced-motion:reduce){*,*::before,*::after{scroll-behavior:auto!important;transition-duration:.01ms!important}}
 
-    /* Shared editorial palette with the image battle report. */
+    /* Dark editorial palette; the default sand palette matches the app theme. */
     :root{--surface-base:#211e1b;--surface-glass:#292521;--surface-card:#2b2723;--surface-tile:#302b26;--surface-tile-soft:#292521;--surface-control:#342e28;--surface-hover:#3b332c;--surface-active:#45382f;--border-default:#51463d;--border-strong:#756458;--text-primary:#f4eee5;--text-secondary:#d5c7b7;--text-muted:#b4a596;--accent:#d79174;--accent-rgb:215 145 116;--info:#d79174;--warning:#d9b263;--shadow-card:none}
-    [data-theme="light"]{--surface-base:#f4f0e8;--surface-glass:#f4f0e8;--surface-card:#faf7f1;--surface-tile:#f5efe6;--surface-tile-soft:#f8f3eb;--surface-control:#fffaf3;--surface-hover:#eee4d8;--surface-active:#ead8ce;--border-default:#d8d0c7;--border-strong:#bcae9f;--text-primary:#2f2a26;--text-secondary:#665a50;--text-muted:#766e66;--accent:#ad5f49;--accent-rgb:173 95 73;--info:#ad5f49;--warning:#986a26;--shadow-card:none}
+    [data-theme="sand"]{color-scheme:light;--surface-base:#f1eeea;--surface-glass:#f7f4ef;--surface-card:#fcfaf6;--surface-tile:#fcfaf6;--surface-tile-soft:#f7f4ef;--surface-control:#f7f4ef;--surface-hover:#e9e3da;--surface-active:#e0d8cd;--border-default:#d6cfc5;--border-strong:#a3998b;--border-focus:#75634f;--text-primary:#34302b;--text-secondary:#625b52;--text-muted:#756c60;--accent:#75634f;--accent-rgb:117 99 79;--cta-text:#fcfaf6;--success:#34c759;--warning:#c87800;--danger:#ff3b30;--info:#1684b8;--violet:#7e22ce;--shadow-card:none}
     .intro h1{font-family:Georgia,"Songti SC",serif;font-size:32px;letter-spacing:-.8px}.layout{padding-top:28px}.panel{box-shadow:none}.kpi strong,.kpi-value{font-family:Georgia,serif}.editorial-insight{border-left:3px solid var(--accent);padding:10px 18px;margin:0 0 20px;color:var(--text-secondary);font-size:14px;line-height:1.8}.explorer-grid{display:grid;grid-template-columns:minmax(240px,1fr) minmax(300px,2fr);gap:18px;margin-bottom:18px}.scene-orbit{display:flex;align-items:center;gap:18px;flex-wrap:wrap}.scene-orbit svg{width:160px;flex:0 0 160px}.orbit-legend{display:grid;gap:6px;flex:1;min-width:120px}.orbit-legend button{text-align:left;white-space:normal;height:auto;padding:7px}.run-dot{cursor:pointer;stroke:var(--surface-card);stroke-width:1.5}.run-dot:hover,.run-dot:focus{stroke:var(--text-primary);stroke-width:3;outline:none}.run-detail{min-height:55px;padding:10px 14px;background:var(--surface-tile);border-radius:8px;color:var(--text-secondary)}.explorer-chart svg{width:100%;height:auto;display:block}.explorer-note{font-size:11px;color:var(--text-muted)}
     @media(max-width:900px){.explorer-grid{grid-template-columns:1fr}.intro h1{font-size:26px}}
-  </style>
+
+    /* Editorial layout: scope, conclusions, metrics, trend, then supporting detail. */
+    :root { --header: 54px; --radius-card: 8px; --radius-md: 6px; --radius-sm: 5px; --workspace-serif: Georgia, "STZhongsong", "Songti SC", SimSun, serif; --clay: #cc785c; --clay-deep: #ad5f49; }
+    [data-theme="sand"] { --info: #ad5f49; --violet: #7656a4; }
+    body { font-size: 13px; line-height: 1.75; }
+    .app-header { height: var(--header); padding: 0 max(24px, calc((100vw - 1160px) / 2)); background: var(--surface-base); border-bottom-color: var(--border-default); }
+    .brand { gap: 10px; }
+    .swiss-mark { width: 22px; height: 22px; border: 0; background: transparent; color: var(--clay-deep); border-radius: 0; }
+    .brand-name { font: 600 20px var(--workspace-serif); color: var(--text-primary); letter-spacing: -.5px; }
+    .product-area, .sync-state { font-size: 10px; font-weight: 400; }
+    .header-actions { gap: 8px; }
+    .button { height: 33px; padding: 0 12px; background: transparent; font-size: 12px; font-weight: 500; border-radius: 6px; }
+    .button:active, .tab:active { transform: none; }
+    .button-small { height: 29px; padding: 0 10px; font-size: 11px; }
+    .button-primary { color: var(--cta-text); background: var(--accent); border-color: var(--accent); }
+    .button-primary:hover { color: var(--cta-text); background: color-mix(in srgb, var(--accent) 88%, var(--text-primary)); }
+    .button-danger { color: var(--danger); background: color-mix(in srgb, var(--danger) 4%, var(--surface-base)); }
+    .layout { display: block; width: min(1160px, calc(100% - 96px)); padding: 28px 0 56px; margin: 0 auto; }
+    .intro { display: flex; flex-direction: column; align-items: stretch; gap: 22px; padding: 0; margin: 0; }
+    .intro h1 { font: 500 32px/1.4 var(--workspace-serif); letter-spacing: -.025em; }
+    .intro p { max-width: 80ch; margin: 9px 0 0; font-size: 12px; font-weight: 400; line-height: 1.9; }
+    .tabs { width: 100%; gap: 26px; border-bottom: 1px solid var(--border-default); }
+    .tab { height: 39px; padding: 0 1px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-muted); font-size: 12px; font-weight: 500; }
+    .tab:hover { background: transparent; border-color: var(--border-default); }
+    .tab[aria-selected="true"] { color: var(--text-primary); background: transparent; border-color: var(--accent); }
+    .filters { position: static; padding: 13px 0; margin: 0; border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; background: transparent; box-shadow: none; }
+    .filters-header > div:first-child { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+    .filters-heading { font-size: 12px; font-weight: 600; }
+    .filter-summary { font-size: 11px; font-weight: 400; line-height: 1.7; }
+    .filters-body { margin-top: 16px; padding: 16px 0 4px; gap: 12px; }
+    .filter-field { flex-basis: 145px; min-width: 122px; }
+    .filter-field label { margin-bottom: 6px; font-size: 11px; font-weight: 500; }
+    .control { height: 35px; padding: 0 10px; background: var(--surface-control); font-size: 12px; font-weight: 400; border-radius: 6px; }
+    .control:focus { border-color: var(--accent); box-shadow: 0 0 0 2px rgb(var(--accent-rgb)/.08); }
+    .outlier-settings { gap: 10px; flex-basis: 310px; }
+    .outlier-filter, .outlier-threshold { min-height: 40px; padding: 7px 10px; background: transparent; }
+    .outlier-filter-title { font-size: 11px; font-weight: 500; }
+    .outlier-filter-status, .outlier-threshold label { font-size: 10px; font-weight: 400; line-height: 1.5; }
+    .strategy-disclosure { border-bottom: 1px solid var(--border-default); }
+    .strategy-disclosure > summary { display: flex; align-items: baseline; gap: 14px; padding: 13px 0; cursor: pointer; list-style: none; }
+    .strategy-disclosure > summary::-webkit-details-marker { display: none; }
+    .strategy-disclosure-title { flex: none; font-size: 12px; font-weight: 600; }
+    .strategy-status { margin: 0; color: var(--text-muted); font-size: 11px; line-height: 1.7; font-weight: 400; }
+    .disclosure-chevron { align-self: center; flex: none; width: 7px; height: 7px; margin: 0 6px 3px auto; border-right: 1px solid var(--text-muted); border-bottom: 1px solid var(--text-muted); transform: rotate(45deg); }
+    .strategy-disclosure[open] .disclosure-chevron { transform: rotate(225deg); margin-bottom: -3px; }
+    .strategy-panel { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(260px, 1fr); gap: 36px; padding: 12px 0 26px; margin: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+    .strategy-heading { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+    .strategy-copy { font-size: 11px; font-weight: 400; line-height: 1.85; margin-bottom: 14px; }
+    .strategy-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; }
+    .strategy-options-heading { margin-top: 8px; margin-bottom: 3px; font-size: 10px; font-weight: 500; letter-spacing: .02em; }
+    .strategy-option { padding: 7px 2px; border: 0; border-radius: 4px; background: transparent; gap: 8px; }
+    .strategy-option:hover { background: var(--surface-hover); }
+    .strategy-option:has(input:checked) { background: transparent; color: var(--text-primary); }
+    .strategy-option input { margin-top: 4px; }
+    .strategy-option-name { font-size: 12px; font-weight: 500; }
+    .strategy-option-route { font-size: 10px; font-weight: 400; margin-top: 3px; }
+    .strategy-option-edit { align-self: center; height: 27px; min-height: 0; padding: 0 6px; border-color: transparent; }
+    .strategy-actions { gap: 6px; margin-top: 14px; }
+    .strategy-create { gap: 8px; }
+    .strategy-scene { font-size: 11px; font-weight: 400; padding: 5px 7px; background: transparent; border-radius: 4px; }
+    .strategy-scenes { margin-top: 12px; max-height: 190px; }
+    .view { min-width: 0; }
+    .editorial-insight { padding: 13px 17px; margin: 22px 0; border: 0; border-radius: 5px; background: color-mix(in srgb, var(--clay) 8%, var(--surface-base)); color: var(--text-primary); font-size: 13px; line-height: 1.9; }
+    .kpi-strip { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 0; padding: 0 0 26px; margin: 0; border-bottom: 1px solid var(--border-default); }
+    .kpi { padding: 0 22px; border: 0; border-right: 1px solid var(--border-default); border-radius: 0; background: transparent; box-shadow: none; }
+    .kpi:first-child { padding-left: 0; }
+    .kpi:last-child { border-right: 0; }
+    .kpi-label { font-size: 11px; font-weight: 400; }
+    .kpi-value { margin-top: 10px; font: 500 31px/1.2 var(--workspace-serif); letter-spacing: -.02em; }
+    .kpi-note { margin-top: 8px; font-size: 10px; font-weight: 400; }
+    .primary-trend { padding: 26px 0; border-bottom: 1px solid var(--border-default); }
+    .explorer-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); gap: 36px; margin: 28px 0 0; }
+    .scene-orbit { gap: 14px; flex-wrap: nowrap; min-width: 0; }
+    .scene-orbit svg { width: 150px; height: 150px; flex: 0 0 150px; }
+    .orbit-legend { min-width: 0; max-height: 280px; overflow-y: auto; align-content: start; scrollbar-width: thin; scrollbar-gutter: stable; overscroll-behavior-y: contain; padding-right: 8px; }
+    .orbit-legend button { overflow-wrap: anywhere; }
+    #scene-table { max-height: 360px; overflow: auto; scrollbar-width: thin; scrollbar-gutter: stable; overscroll-behavior-y: contain; }
+    :is(.orbit-legend, #scene-table):focus-visible { outline: 2px solid var(--border-focus); outline-offset: 3px; }
+    .orbit-legend button { font-size: 11px; padding: 5px 0; background: transparent; border: 0; }
+    .orbit-legend button:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+    .run-chart-summary { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 14px; margin-bottom: 12px; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+    .run-chart-summary strong { color: var(--text-primary); font-weight: 600; }
+    .run-chart-scroll { overflow-x: auto; scrollbar-width: thin; }
+    .run-chart-scroll svg { min-width: 480px; }
+    .run-grid-line { stroke: var(--border-default); stroke-width: 1; }
+    .run-axis-label { fill: var(--text-muted); font-size: 10px; }
+    .run-hit-area { fill: transparent; }
+    .run-duration-item { cursor: pointer; }
+    .run-duration-bar { opacity: .8; }
+    .run-duration-item:hover .run-duration-bar, .run-duration-item:focus .run-duration-bar { opacity: 1; stroke: var(--text-primary); stroke-width: 1.5; }
+    .run-duration-item:focus { outline: none; }
+    .run-drop-marker { fill: var(--text-primary); stroke: var(--surface-base); stroke-width: 1; pointer-events: none; }
+    .run-median-line { stroke: var(--accent); stroke-width: 1.5; stroke-dasharray: 5 4; pointer-events: none; }
+    .run-chart-legend { display: flex; flex-wrap: wrap; gap: 5px 18px; margin-top: 4px; color: var(--text-muted); font-size: 10px; }
+    .run-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    .run-key-median { width: 16px; border-top: 1.5px dashed var(--accent); }
+    .run-key-drop { width: 5px; height: 5px; border-radius: 50%; background: var(--text-primary); }
+    .run-key-high { width: 6px; height: 10px; background: var(--violet); }
+    .run-detail { min-height: 38px; padding: 10px 0 0; margin-top: 10px; border-top: 1px solid var(--border-default); border-radius: 0; background: transparent; color: var(--text-muted); font-size: 11px; line-height: 1.8; }
+    .explorer-note { font-size: 10px; }
+    .dashboard-grid { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 32px 36px; margin-top: 28px; }
+    .dashboard-grid > .panel { border-top: 1px solid var(--border-default); padding-top: 24px; }
+    .panel { background: transparent; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+    .panel-header { min-height: 0; padding: 0 0 16px; border: 0; align-items: baseline; }
+    .panel-title { font: 600 16px/1.5 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; }
+    .panel-description { margin-top: 4px; font-size: 11px; font-weight: 400; line-height: 1.7; }
+    .panel-body { padding: 0; }
+    .chart-frame { min-height: 230px; }
+    .chart-frame svg { height: 230px; }
+    .chart-label { font-size: 10px; }
+    .empty { min-height: 150px; padding: 20px; font-size: 12px; line-height: 1.85; }
+    table { font-size: 12px; }
+    th { padding: 10px 12px; font-size: 10px; font-weight: 500; background: var(--surface-base); border-bottom: 1px solid var(--border-default); }
+    td { padding: 12px; font-size: 12px; }
+    th:first-child, td:first-child { padding-left: 0; }
+    .comparison-row { grid-template-columns: 96px minmax(0, 1fr) 72px; padding: 8px 0; gap: 12px; }
+    .comparison-name, .comparison-value { font-size: 11px; font-weight: 400; }
+    .comparison-fill { background: var(--clay); }
+    .heatmap-label, .heatmap-hour { font-size: 10px; }
+    .rune-tier { padding: 0 20px 22px; }
+    .rune-tier:first-child { padding-left: 0; }
+    .rune-tier span { font-size: 11px; font-weight: 400; }
+    .rune-tier strong { font: 500 27px var(--workspace-serif); margin-top: 9px; }
+    .rune-summary + .panel-header { padding-top: 24px; }
+    .rune-matrix { gap: 9px; }
+    .rune-cell { padding: 11px 9px; background: transparent; border-radius: 5px; }
+    .rune-cell:hover { transform: none; }
+    .rune-number { font-size: 10px; font-weight: 400; }
+    .rune-name { margin-top: 3px; font-size: 12px; font-weight: 500; }
+    .rune-count { margin-top: 7px; font-size: 11px; }
+    .records-toolbar { padding: 22px 0 16px; gap: 9px; }
+    .drop-chip { height: 23px; font-size: 10px; font-weight: 500; padding: 0 7px; }
+    .strategy-badge, .tz-badge { font-size: 9px; }
+    .outlier-badge { font-size: 10px; font-weight: 400; }
+    .pagination { padding: 14px 0; }
+    .pagination-state, .batch-count { font-size: 11px; font-weight: 400; }
+    .gallery-caption { padding: 12px; }
+    .gallery-caption strong { font-size: 12px; font-weight: 500; }
+    .gallery-caption span { font-size: 11px; }
+    .methodology { margin-top: 28px; background: transparent; border: 0; border-top: 1px solid var(--border-default); border-radius: 0; box-shadow: none; }
+    .methodology summary { padding: 18px 0; font-size: 12px; font-weight: 500; }
+    .methodology-content { padding: 0 0 20px; font-size: 12px; line-height: 1.9; }
+    .toast { padding: 12px 16px; font-size: 12px; font-weight: 500; }
+    .report-dialog { border-radius: 12px; }
+    .report-dialog::backdrop { background: rgb(0 0 0 / .4); }
+    .report-controls h2 { font: 500 25px var(--workspace-serif); }
+    .report-copy, .report-range { font-size: 11px; }
+    .report-config-heading h3 { font-size: 12px; font-weight: 600; }
+    .report-config-heading span, .report-field label, .report-field-label, .report-field-note, .report-privacy { font-size: 10px; }
+    .report-field .control, .report-tab { font-size: 11px; font-weight: 500; }
+    .report-metric-option { font-size: 10px; font-weight: 400; }
+    .report-fact span { font-size: 10px; }
+    .report-fact strong { font-size: 13px; }
+    .report-preview { background: var(--surface-base); }
+    .report-preview canvas { box-shadow: 0 4px 24px rgb(0 0 0 / .12); }
+    @media (max-width: 1000px) { .layout { width: calc(100% - 64px); } .kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px 0; } .kpi:nth-child(3) { border-right: 0; } .kpi:nth-child(4) { padding-left: 0; } .explorer-grid { gap: 28px; } .strategy-panel { grid-template-columns: 1fr; gap: 24px; } .dashboard-grid { grid-template-columns: 1fr; } }
+    @media (max-width: 760px) { .app-header { padding-inline: 20px; } .brand-name { font-size: 19px; } .header-actions { gap: 5px; } .header-actions .button { padding-inline: 8px; font-size: 10px; } .layout { width: calc(100% - 40px); padding: 24px 0 44px; } .intro { gap: 18px; } .intro h1 { font-size: 29px; } .tabs { gap: 22px; } .tab { flex: none; font-size: 12px; padding-inline: 0; } .filters-header { align-items: flex-start; gap: 8px; } .filters-header > div:first-child { display: block; } .filter-summary { max-width: none; white-space: normal; font-size: 10px; } .filters-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; gap: 12px; } .filter-field { min-width: 0; } .outlier-settings { grid-column: 1 / -1; min-width: 0; grid-template-columns: 1fr; } .strategy-disclosure > summary { gap: 10px; } .strategy-status { font-size: 10px; } .strategy-options { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 10px; } .explorer-grid { grid-template-columns: minmax(0, 1fr); gap: 28px; } .scene-orbit { justify-content: center; } .panel-header { gap: 10px; flex-wrap: wrap; } .rune-matrix { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; } .rune-tier { padding: 14px 0; } .report-shell { height: calc(100vh - 18px); } }
+    @media (max-width: 560px) { .kpi-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } .kpi { padding: 0; border-right: 0; } .kpi:nth-child(odd) { border-right: 1px solid var(--border-default); padding-right: 14px; } .kpi:nth-child(even) { padding-left: 20px; } .kpi-value { font-size: 29px; } .kpi-note { font-size: 10px; } .rune-tier:nth-child(even) { padding-left: 18px; } .strategy-panel { gap: 22px; } }
+    @media (max-width: 400px) { .swiss-mark { display: none; } .tabs { gap: 16px; } .rune-matrix { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+</style>
 </head>
 <body>
   <header class="app-header"><div class="brand"><span class="swiss-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 16 4-5 4 3 5-7"/></svg></span><span class="brand-name">D2RHub</span><span class="brand-divider" aria-hidden="true"></span><span class="product-area">声纹数据中心</span></div><div class="header-actions"><span class="sync-state" id="sync-state">本地数据</span><button class="button button-primary button-small" id="open-report" type="button">生成图片战报</button><button class="button button-small" id="theme-toggle" type="button">浅色</button><button class="button button-small" id="refresh-data" type="button">刷新</button></div></header>
   <main class="layout">
     <div class="intro"><div><h1>刷图与掉落统计</h1><p>地点声纹自动驱动独立野外分段；所选掉落即时落库，多选策略组负责按行程合并展示。</p></div><nav class="tabs" role="tablist" aria-label="统计视图"><button class="tab" role="tab" aria-selected="true" data-view="overview">总览</button><button class="tab" role="tab" aria-selected="false" data-view="runes">符文</button><button class="tab" role="tab" aria-selected="false" data-view="observations">声纹观测</button><button class="tab" role="tab" aria-selected="false" data-view="records">场次记录</button></nav></div>
-    <section class="strategy-panel" aria-label="统计策略">
-      <div><h2 class="strategy-heading">常用 Farm 策略组 · 可多选</h2><p class="strategy-copy">同时开启多条常用路线；每个原始分段最多只会归入一个策略，不会重复计数。数据库原始记录保持不变。</p><div class="strategy-options" id="strategy-active" role="group" aria-label="选择要同时启用的统计策略"></div><div class="strategy-actions"><button class="button button-small" id="strategy-clear" type="button" disabled>清空选择</button><button class="button button-danger button-small" id="strategy-delete" type="button" disabled>删除所选自定义</button></div><div class="strategy-status" id="strategy-status" role="status" aria-live="polite">当前显示原始野外分段</div></div>
-      <div><h2 class="strategy-heading" id="strategy-editor-title">新建策略</h2><p class="strategy-copy" id="strategy-editor-copy">命名路线并勾选要视为同一场的连续区域。</p><div class="strategy-create"><input class="control" id="strategy-name" type="text" maxlength="40" aria-label="策略名称" placeholder="例如：钥匙路线"><button class="button button-primary" id="strategy-create" type="button">保存新策略</button><button class="button button-small" id="strategy-reset" type="button" hidden>恢复系统预设</button><button class="button button-small" id="strategy-cancel" type="button" hidden>取消</button></div><div class="strategy-scenes" id="strategy-scenes" aria-label="选择要合并展示的野外场景"></div></div>
-    </section>
     <section class="filters" aria-label="统计筛选">
-      <div class="filters-header"><div><div class="filters-heading">统计筛选</div><div class="filter-summary" id="filter-summary">正在读取记录…</div></div><div class="filters-header-actions"><button class="button button-small" type="button" id="reset-filters">重置</button><button class="button button-small" type="button" id="filters-toggle" aria-expanded="true" aria-controls="filters-body">收起筛选</button></div></div>
-      <div class="filters-body" id="filters-body">
+      <div class="filters-header"><div><div class="filters-heading">统计筛选</div><div class="filter-summary" id="filter-summary">正在读取记录…</div></div><div class="filters-header-actions"><button class="button button-small" type="button" id="reset-filters">重置</button><button class="button button-small" type="button" id="filters-toggle" aria-expanded="false" aria-controls="filters-body">展开筛选</button></div></div>
+      <div class="filters-body" id="filters-body" hidden>
         <div class="filter-field"><label for="filter-period">时间范围</label><select class="control" id="filter-period"><option value="all">全部时间</option><option value="today">今天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="90">最近 90 天</option></select></div>
         <div class="filter-field"><label for="filter-character">角色</label><select class="control" id="filter-character"><option value="">全部角色</option></select></div>
         <div class="filter-field"><label for="filter-scene">场景</label><select class="control" id="filter-scene"><option value="">全部场景</option></select></div>
@@ -54,17 +210,27 @@
         <div class="outlier-settings"><label class="outlier-filter" for="filter-outliers"><input id="filter-outliers" type="checkbox" checked><span class="outlier-filter-copy"><strong class="outlier-filter-title">优化离群场次</strong><span class="outlier-filter-status" id="outlier-filter-status">默认过滤 1 秒内无掉落场次</span></span></label><div class="outlier-threshold"><label for="filter-short-threshold"><span>短空场阈值</span><output id="filter-short-threshold-value" for="filter-short-threshold">1 秒</output></label><input id="filter-short-threshold" type="range" min="0" max="10" step="0.5" value="1"></div></div>
       </div>
     </section>
+    <details class="strategy-disclosure">
+      <summary><span class="strategy-disclosure-title">统计策略</span><span class="strategy-status" id="strategy-status" role="status" aria-live="polite">当前显示原始野外分段</span><span class="disclosure-chevron" aria-hidden="true"></span></summary>
+    <section class="strategy-panel" aria-label="统计策略">
+      <div><h2 class="strategy-heading">常用 Farm 策略组 · 可多选</h2><p class="strategy-copy">同时开启多条常用路线；每个原始分段最多只会归入一个策略，不会重复计数。数据库原始记录保持不变。</p><div class="strategy-options" id="strategy-active" role="group" aria-label="选择要同时启用的统计策略"></div><div class="strategy-actions"><button class="button button-small" id="strategy-clear" type="button" disabled>清空选择</button><button class="button button-danger button-small" id="strategy-delete" type="button" disabled>删除所选自定义</button></div></div>
+      <div><h2 class="strategy-heading" id="strategy-editor-title">新建策略</h2><p class="strategy-copy" id="strategy-editor-copy">命名路线并勾选要视为同一场的连续区域。</p><div class="strategy-create"><input class="control" id="strategy-name" type="text" maxlength="40" aria-label="策略名称" placeholder="例如：钥匙路线"><button class="button button-primary" id="strategy-create" type="button">保存新策略</button><button class="button button-small" id="strategy-reset" type="button" hidden>恢复系统预设</button><button class="button button-small" id="strategy-cancel" type="button" hidden>取消</button></div><div class="strategy-scenes" id="strategy-scenes" aria-label="选择要合并展示的野外场景"></div></div>
+    </section>
+    </details>
     <section class="view" id="view-overview" role="tabpanel">
       <p class="editorial-insight" id="editorial-insight" aria-live="polite"></p>
+      <div class="kpi-strip" id="kpi-strip"></div>
+      <div class="primary-trend">
+        <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">趋势</h2><div class="panel-description">按自然日聚合，随上方筛选同步</div></div><select class="control metric-select" id="trend-metric"><option value="runs">每日场次</option><option value="avg">平均耗时</option><option value="drops">全部掉落</option><option value="high">高级符文</option></select></div><div class="panel-body chart-frame" id="trend-chart"></div></section>
+      </div>
       <div class="explorer-grid">
         <section class="panel"><div class="panel-header"><div><h2 class="panel-title">时间花在哪里</h2><div class="panel-description">场景耗时占比 · 点击图例筛选</div></div><button type="button" class="button button-small" id="orbit-reset">全部场景</button></div><div class="panel-body scene-orbit" id="scene-orbit"></div></section>
-        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">每一场，都有节奏</h2><div class="panel-description">按时间排列的场次耗时 · 大圆点表示有掉落</div></div></div><div class="panel-body"><div class="explorer-chart" id="run-scatter"></div><div class="run-detail" id="run-detail" aria-live="polite">选择圆点查看这一场。</div></div></section>
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">最近场次耗时</h2><div class="panel-description">一根柱代表一场，越高表示用时越长</div></div></div><div class="panel-body"><div class="explorer-chart" id="run-scatter"></div><div class="run-detail" id="run-detail" aria-live="polite">点击柱子查看场景、角色、时间和掉落。</div></div></section>
       </div>
 
-      <div class="kpi-strip" id="kpi-strip"></div>
       <div class="dashboard-grid">
-        <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">趋势</h2><div class="panel-description">按自然日聚合，随上方筛选同步</div></div><select class="control metric-select" id="trend-metric"><option value="runs">每日场次</option><option value="avg">平均耗时</option><option value="drops">全部掉落</option><option value="high">高级符文</option></select></div><div class="panel-body chart-frame" id="trend-chart"></div></section>
-        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">场景效率</h2><div class="panel-description">平均、P90 与百场掉落</div></div></div><div class="panel-body panel-body-flush data-table-wrap" id="scene-table"></div></section>
+
+        <section class="panel"><div class="panel-header"><div><h2 class="panel-title">场景效率</h2><div class="panel-description">平均、P90 与百场掉落</div></div></div><div class="panel-body panel-body-flush data-table-wrap" id="scene-table" tabindex="0" role="region" aria-label="场景效率列表"></div></section>
         <section class="panel"><div class="panel-header"><div><h2 class="panel-title">角色对比</h2><div class="panel-description">场次数量与平均耗时</div></div></div><div class="panel-body" id="character-comparison"></div></section>
         <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">活跃时段</h2><div class="panel-description">星期 × 小时；颜色越实，记录越集中</div></div></div><div class="panel-body heatmap-wrap" id="activity-heatmap"></div></section>
       </div>
@@ -77,8 +243,8 @@
         <section class="panel panel-wide"><div class="panel-header"><div><h2 class="panel-title">高级符文截图</h2><div class="panel-description">仅展示数据库中仍有截图路径的掉落</div></div></div><div class="panel-body gallery" id="screenshot-gallery"></div></section>
       </div>
     </section>
-    <section class="view" id="view-records" role="tabpanel" hidden><section class="panel"><div class="records-toolbar"><input class="control records-search" id="records-search" type="search" placeholder="搜索时间、角色、场景或掉落…"><select class="control metric-select" id="records-sort"><option value="newest">时间：新到旧</option><option value="oldest">时间：旧到新</option><option value="duration-desc">耗时：长到短</option><option value="duration-asc">耗时：短到长</option><option value="drops-desc">掉落：多到少</option></select><button class="button" type="button" id="export-csv">导出筛选 CSV</button><button class="button" type="button" id="export-json">导出筛选 JSON</button><button class="button" type="button" id="batch-toggle">批量删除</button><div class="batch-actions" id="batch-actions" hidden><span class="batch-count" id="batch-count" role="status" aria-live="polite">已选 0 条</span><button class="button button-small" type="button" id="select-page">选择本页</button><button class="button button-small button-danger" type="button" id="delete-selected" disabled>删除所选</button><button class="button button-small" type="button" id="cancel-selection">取消</button></div></div><div class="data-table-wrap" id="records-table"></div><div class="pagination"><span class="pagination-state" id="pagination-state"></span><div><button class="button button-small" type="button" id="page-prev">上一页</button> <button class="button button-small" type="button" id="page-next">下一页</button></div></div></section></section>
-    <section class="view" id="view-observations" role="tabpanel" hidden><section class="panel"><div class="records-toolbar"><input class="control records-search" id="observations-search" type="search" placeholder="搜索时间、统计对象、代码或掉落名…"><button class="button" type="button" id="export-observations-csv">导出声纹 CSV</button><button class="button" type="button" id="export-observations-json">导出声纹 JSON</button></div><div class="data-table-wrap" id="observations-table"></div></section></section>
+    <section class="view" id="view-records" role="tabpanel" hidden><section class="panel"><div class="records-toolbar"><input class="control records-search" id="records-search" aria-label="搜索场次记录" type="search" placeholder="搜索时间、角色、场景或掉落…"><select class="control metric-select" id="records-sort" aria-label="场次排序"><option value="newest">时间：新到旧</option><option value="oldest">时间：旧到新</option><option value="duration-desc">耗时：长到短</option><option value="duration-asc">耗时：短到长</option><option value="drops-desc">掉落：多到少</option></select><button class="button" type="button" id="export-csv">导出筛选 CSV</button><button class="button" type="button" id="export-json">导出筛选 JSON</button><button class="button" type="button" id="batch-toggle">批量删除</button><div class="batch-actions" id="batch-actions" hidden><span class="batch-count" id="batch-count" role="status" aria-live="polite">已选 0 条</span><button class="button button-small" type="button" id="select-page">选择本页</button><button class="button button-small button-danger" type="button" id="delete-selected" disabled>删除所选</button><button class="button button-small" type="button" id="cancel-selection">取消</button></div></div><div class="data-table-wrap" id="records-table"></div><div class="pagination"><span class="pagination-state" id="pagination-state"></span><div><button class="button button-small" type="button" id="page-prev">上一页</button> <button class="button button-small" type="button" id="page-next">下一页</button></div></div></section></section>
+    <section class="view" id="view-observations" role="tabpanel" hidden><section class="panel"><div class="records-toolbar"><input class="control records-search" id="observations-search" aria-label="搜索声纹观测" type="search" placeholder="搜索时间、统计对象、代码或掉落名…"><button class="button" type="button" id="export-observations-csv">导出声纹 CSV</button><button class="button" type="button" id="export-observations-json">导出声纹 JSON</button></div><div class="data-table-wrap" id="observations-table"></div></section></section>
     <details class="methodology"><summary>统计口径与数据边界</summary><div class="methodology-content"><ul><li><strong>原始声纹观测：</strong>所选掉落识别后立即写入 <code>drop_observations</code>；地点尚未确认时仍保留原始观测。地面循环由六秒缺席门限合并为一次存在事件。</li><li><strong>底层计时：</strong>进入任一野外开始独立分段；切换到不同名称的野外立即保存上一段并开始新段；进入主城或主界面只结算上一段且停止计时。</li><li><strong>统计策略：</strong>仅按 <code>journey_id + segment_index</code> 合并同一次连续野外行程中的相邻选中分段。组内分段耗时先相加，整个策略组再计为一场并参与平均耗时计算。原始数据库记录和掉落归属不变，旧数据缺少行程标识时不会猜测合并。</li><li><strong>场景标签：</strong>Mod 在场景环境音中附加周期标签；软件第一次识别到不同地点时立即切换，同一地点的重复标签不会重复开始或结束计时。</li><li><strong>耗时：</strong>平均值、P90、最佳耗时只基于当前展示口径下已完成且耗时大于 0 的记录。</li><li><strong>离群优化：</strong>默认开启。先忽略短于或等于滑条阈值且没有掉落的场次，默认阈值为 1 秒；然后仅对当前范围内至少有 10 条正耗时记录的同组场次继续判断。耗时超过该组平均值 10 倍或低于其 0.1 倍时视为离群；无掉落场次从统计中忽略，有掉落场次保留全部掉落，仅以组平均耗时参与统计。数据库与原始耗时均不修改。</li><li><strong>掉落归属：</strong><code>scene_record_id</code> 始终绑定到原始野外分段；空值表示场外观测或当前分段尚未结束。</li><li><strong>识别边界：</strong>物品按基础代码区分，无法仅凭声音识别同代码的品质、词缀或鉴定结果；高级符文统一按编号 ≥24 统计。</li></ul></div></details>
   </main>
   <dialog class="report-dialog" id="report-dialog" aria-labelledby="report-title">
@@ -173,7 +339,7 @@
       {id:"preset-stony-tomb",name:"碎石古墓",route:"碎石荒野 → 古墓 1–2",scene_names:["碎石荒野","碎石古墓一层","碎石古墓二层"],preset:true},
       {id:"preset-burial-grounds",name:"墓园双陵",route:"埋骨之地 → 墓穴 / 寝陵",scene_names:["埋骨之地","墓穴","寝陵"],preset:true}
     ];
-    const state={rawRecords:Array.isArray(RAW_STATS_DATA.records)?RAW_STATS_DATA.records:[],records:[],observations:Array.isArray(RAW_STATS_DATA.observations)?RAW_STATS_DATA.observations:[],strategies:Array.isArray(RAW_STATS_DATA.strategies)?RAW_STATS_DATA.strategies:[],presetOverrides:{},activeStrategyIds:[],editingStrategyId:"",filtersCollapsed:false,shortThresholdSeconds:1,filtered:[],outlierSummary:{eligibleScenes:0,ignored:0,adjusted:0},activeView:"overview",page:1,selectionMode:false,selectedRecordIds:new Set};const $=s=>document.querySelector(s),$$=s=>Array.from(document.querySelectorAll(s)),number=v=>Number.isFinite(Number(v))?Number(v):0;
+    const state={rawRecords:Array.isArray(RAW_STATS_DATA.records)?RAW_STATS_DATA.records:[],records:[],observations:Array.isArray(RAW_STATS_DATA.observations)?RAW_STATS_DATA.observations:[],strategies:Array.isArray(RAW_STATS_DATA.strategies)?RAW_STATS_DATA.strategies:[],presetOverrides:{},activeStrategyIds:[],editingStrategyId:"",filtersCollapsed:true,shortThresholdSeconds:1,filtered:[],outlierSummary:{eligibleScenes:0,ignored:0,adjusted:0},activeView:"overview",page:1,selectionMode:false,selectedRecordIds:new Set};const $=s=>document.querySelector(s),$$=s=>Array.from(document.querySelectorAll(s)),number=v=>Number.isFinite(Number(v))?Number(v):0;
     function escapeHtml(v){return String(v??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
     function parseRecordDate(v){const t=String(v||""),m=t.match(/^(\d{4})\/(\d{2})\/(\d{2})\/(\d{2}):(\d{2}):(\d{2})$/);if(m){const[,y,mo,d,h,mi,s]=m.map(Number);return new Date(y,mo-1,d,h,mi,s)}const f=new Date(t);return Number.isNaN(f.getTime())?null:f}
     function formatDate(v,compact=false){const d=parseRecordDate(v);if(!d)return String(v||"—");const p=n=>String(n).padStart(2,"0"),date=`${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;return compact?date:`${date} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`}
@@ -349,7 +515,7 @@
       if(!page.length){c.innerHTML='<div class="empty">没有符合条件的记录</div>'}
       else{
         const selectHead=state.selectionMode?'<th class="record-select-column"><input class="record-select" type="checkbox" data-action="toggle-page-selection" aria-label="选择本页原始记录"></th>':"";
-        c.innerHTML=`<table><thead><tr>${selectHead}<th>时间</th><th>角色</th><th>场景</th><th class="number">耗时</th><th>掉落</th><th></th></tr></thead><tbody>${page.map(r=>{const id=number(r.id),selected=!r._merged&&state.selectedRecordIds.has(id),selectCell=state.selectionMode?`<td class="record-select-column">${r._merged?'':`<input class="record-select" type="checkbox" data-action="select-record" data-record-id="${id}" aria-label="选择 ${escapeHtml(r.scene_name||"未知场景")} ${formatDate(r.absolute_time)}" ${selected?"checked":""}>`}</td>`:"",rowActions=state.selectionMode?(r._merged?`<span class="subtle">合并 ${r._segment_count} 段 · 只读</span>`:""):(r._merged?`<span class="subtle">合并 ${r._segment_count} 段 · 只读</span>`:`<button class="button button-small" type="button" data-action="rename-record" data-record-id="${id}" data-scene="${escapeHtml(r.scene_name)}">改名</button> <button class="button button-small button-danger" type="button" data-action="delete-record" data-record-id="${id}">删除</button>`);return`<tr data-selected="${selected}">${selectCell}<td class="subtle">${formatDate(r.absolute_time)}</td><td>${escapeHtml(r.character_name||"未知角色")}</td><td class="scene-name">${escapeHtml(r.scene_name||"未知场景")}${r._merged?'<span class="strategy-badge">策略</span>':''}</td><td class="number">${formatDuration(r.timer_seconds)}${r._outlier_status==="adjusted"?`<span class="outlier-badge" title="原始耗时保留；统计按同场景平均 ${formatDuration(r._stats_timer_seconds)} 计算">统计用 ${formatDuration(r._stats_timer_seconds)}</span>`:""}</td><td><div class="record-drops">${getDrops(r).length?getDrops(r).map((d,i)=>`<span class="drop-chip ${isHighRune(d)?"high":""}">${escapeHtml(dropLabel(d))}${state.selectionMode||r._merged?'':`<button class="drop-delete" type="button" title="删除这次掉落" data-action="delete-drop" data-record-id="${id}" data-drop-index="${i}">×</button>`}</span>`).join(""):'<span class="subtle">无</span>'}</div></td><td>${rowActions}</td></tr>`}).join("")}</tbody></table>`;
+        c.innerHTML=`<table><thead><tr>${selectHead}<th>时间</th><th>角色</th><th>场景</th><th class="number">耗时</th><th>掉落</th><th></th></tr></thead><tbody>${page.map(r=>{const id=number(r.id),selected=!r._merged&&state.selectedRecordIds.has(id),selectCell=state.selectionMode?`<td class="record-select-column">${r._merged?'':`<input class="record-select" type="checkbox" data-action="select-record" data-record-id="${id}" aria-label="选择 ${escapeHtml(r.scene_name||"未知场景")} ${formatDate(r.absolute_time)}" ${selected?"checked":""}>`}</td>`:"",rowActions=state.selectionMode?(r._merged?`<span class="subtle">合并 ${r._segment_count} 段 · 只读</span>`:""):(r._merged?`<span class="subtle">合并 ${r._segment_count} 段 · 只读</span>`:`<button class="button button-small" type="button" data-action="rename-record" data-record-id="${id}" data-scene="${escapeHtml(r.scene_name)}">改名</button> <button class="button button-small button-danger" type="button" data-action="delete-record" data-record-id="${id}">删除</button>`);return`<tr data-selected="${selected}">${selectCell}<td class="subtle">${formatDate(r.absolute_time)}</td><td>${escapeHtml(r.character_name||"未知角色")}</td><td class="scene-name">${escapeHtml(r.scene_name||"未知场景")}${r._merged?'<span class="strategy-badge">策略</span>':''}</td><td class="number">${formatDuration(r.timer_seconds)}${r._outlier_status==="adjusted"?`<span class="outlier-badge" title="原始耗时保留；统计按同场景平均 ${formatDuration(r._stats_timer_seconds)} 计算">统计用 ${formatDuration(r._stats_timer_seconds)}</span>`:""}</td><td><div class="record-drops">${getDrops(r).length?getDrops(r).map((d,i)=>`<span class="drop-chip ${isHighRune(d)?"high":""}">${escapeHtml(dropLabel(d))}${state.selectionMode||r._merged?'':`<button class="drop-delete" type="button" title="删除这次掉落" aria-label="删除掉落 ${escapeHtml(dropLabel(d))}" data-action="delete-drop" data-record-id="${id}" data-drop-index="${i}">×</button>`}</span>`).join(""):'<span class="subtle">无</span>'}</div></td><td>${rowActions}</td></tr>`}).join("")}</tbody></table>`;
         c.querySelectorAll("tbody .scene-name").forEach((cell,index)=>cell.classList.toggle("tz",Boolean(page[index]?.tz)));
         const pageToggle=c.querySelector('[data-action="toggle-page-selection"]');if(pageToggle){pageToggle.checked=pageIds.length>0&&selectedOnPage===pageIds.length;pageToggle.indeterminate=selectedOnPage>0&&selectedOnPage<pageIds.length}
       }
@@ -358,6 +524,25 @@
     function observationSearchResults(){const q=$("#observations-search").value.trim().toLocaleLowerCase("zh-CN");return state.observations.filter(o=>!q||[o.observed_at,o.account_id,o.source_id,o.source_name,dropName(o),dropNameEn(o),dropCode(o),dropLabel(o),o.source].join(" ").toLocaleLowerCase("zh-CN").includes(q)).sort((a,b)=>(parseRecordDate(b.observed_at)?.getTime()||0)-(parseRecordDate(a.observed_at)?.getTime()||0))}
     function renderObservations(){const observations=observationSearchResults(),c=$("#observations-table");c.innerHTML=!observations.length?'<div class="empty">还没有掉落声纹观测</div>':`<table><thead><tr><th>时间</th><th>统计对象</th><th>掉落</th><th class="number">置信度</th><th>场次归属</th><th>来源</th><th></th></tr></thead><tbody>${observations.map(o=>`<tr><td class="subtle">${formatDate(o.observed_at)}</td><td>${escapeHtml(o.source_name||o.account_id||"本机游戏")}</td><td><span class="drop-chip ${isHighRune(o)?"high":""}">${escapeHtml(dropLabel(o))}${dropNameEn(o)?` / ${escapeHtml(dropNameEn(o))}`:""}</span></td><td class="number confidence">${(number(o.confidence)*100).toFixed(1)}%</td><td>${o.scene_record_id?`#${number(o.scene_record_id)}`:'<span class="subtle">待归属</span>'}</td><td class="subtle">${escapeHtml(o.source)}</td><td><button class="button button-small button-danger" type="button" data-action="delete-observation" data-observation-id="${o.id}">删除</button></td></tr>`).join("")}</tbody></table>`}
 
+    // RUN_DURATION_CHART_START
+    function buildRecentRunChart(records,total){
+      if(!records.length)return '<div class="empty">暂无有效耗时</div>';
+      const values=records.map(statDuration),max=Math.max(...values),median=quantile(values,.5);
+      const step=[15,30,60,120,300,600,1800,3600].find(value=>value>=max/4)||Math.ceil(max/14400)*3600,ceiling=step*4;
+      const left=52,right=708,top=24,bottom=202,width=right-left,slot=width/records.length,barWidth=Math.min(14,slot*.68),y=value=>bottom-value/ceiling*(bottom-top);
+      const tickLabel=value=>!value?'0':value%60===0?`${value/60}分`:`${value}秒`;
+      const grid=Array.from({length:5},(_,index)=>{const value=index*step,at=y(value);return `<line class="run-grid-line" x1="${left}" y1="${at}" x2="${right}" y2="${at}"/><text class="run-axis-label" x="${left-9}" y="${at+3}" text-anchor="end">${tickLabel(value)}</text>`}).join('');
+      const ticks=[...new Set([0,Math.round((records.length-1)/3),Math.round((records.length-1)*2/3),records.length-1])];
+      const labels=ticks.map(index=>{const first=index===0,last=index===records.length-1,at=records.length===1?left+width/2:first?left:last?right:left+(index+.5)*slot;return `<text class="run-axis-label" x="${at}" y="230" text-anchor="${records.length===1?'middle':first?'start':last?'end':'middle'}">第 ${index+1} 场${last?' · 最近':''}</text>`}).join('');
+      const bars=records.map((record,index)=>{
+        const duration=statDuration(record),drops=getDrops(record),high=drops.some(isHighRune),center=left+(index+.5)*slot,at=y(duration),color=high?'var(--violet)':'var(--clay)';
+        const label=`第 ${index+1} 场，${record.scene_name||'未知场景'}，耗时 ${formatDuration(duration)}，${drops.length} 次掉落`;
+        return `<g class="run-duration-item" tabindex="0" role="button" data-run-index="${index}" aria-label="${escapeHtml(label)}"><title>${escapeHtml(label)}</title><rect class="run-hit-area" x="${left+index*slot}" y="${top}" width="${slot}" height="${bottom-top}"/><rect class="run-duration-bar" x="${center-barWidth/2}" y="${at}" width="${barWidth}" height="${bottom-at}" rx="1" fill="${color}"/>${drops.length?`<circle class="run-drop-marker" cx="${center}" cy="${at-4}" r="2.5"/>`:''}</g>`;
+      }).join('');
+      return `<div class="run-chart-summary"><span><strong>中位耗时 ${formatDuration(median)}</strong> · 一半场次不超过此值</span><span>最慢 ${formatDuration(max)}</span></div><div class="run-chart-scroll"><svg viewBox="0 0 720 248" role="group" aria-label="最近 ${records.length} 场耗时柱状图，纵轴为耗时，横轴从较早到最近，可用 Tab 选择场次"><text class="run-axis-label" x="${left-9}" y="11" text-anchor="end">耗时</text>${grid}${bars}<line class="run-median-line" x1="${left}" y1="${y(median)}" x2="${right}" y2="${y(median)}"/>${labels}</svg></div><div class="run-chart-legend"><span><i class="run-key-median"></i>虚线：中位耗时</span><span><i class="run-key-drop"></i>圆点：有掉落</span><span><i class="run-key-high"></i>紫柱：高级符文</span></div><p class="explorer-note">显示最近 ${records.length} / ${total} 场有效耗时，按完成时间从左到右排列。沿用当前筛选及异常耗时处理。</p>`;
+    }
+    // RUN_DURATION_CHART_END
+
     function renderExplorers(){
       const summary=summarize(state.filtered);
       $("#editorial-insight").textContent=summary.runs?`这段旅程共 ${summary.runs.toLocaleString()} 场，投入 ${formatDuration(summary.totalSeconds)}，留下 ${summary.drops.length} 次掉落记录。${summary.median?`一半有效场次在 ${formatDuration(summary.median)} 内完成。`:"暂无有效耗时。"}`:"还没有符合筛选条件的旅程。调整筛选，或完成第一场声纹记录。";
@@ -365,13 +550,12 @@
       state.filtered.forEach(r=>groups.set(r.scene_name||"未知场景",(groups.get(r.scene_name||"未知场景")||0)+Math.max(0,statDuration(r))));
       const entries=[...groups].filter(([,v])=>v>0).sort((a,b)=>b[1]-a[1]),total=entries.reduce((sum,[,v])=>sum+v,0);
       let offset=0;const rings=entries.map(([name,value],i)=>{const share=value/total*100,start=offset;offset+=share;return `<circle cx="80" cy="80" r="58" fill="none" stroke="${colors[i%colors.length]}" stroke-width="20" pathLength="100" stroke-dasharray="${share} ${100-share}" stroke-dashoffset="${-start}" transform="rotate(-90 80 80)"><title>${escapeHtml(name)} · ${(share).toFixed(1)}% · ${formatDuration(value)}</title></circle>`}).join("");
-      $("#scene-orbit").innerHTML=total?`<svg viewBox="0 0 160 160" role="img" aria-label="各场景有效耗时占比">${rings}<text x="80" y="78" text-anchor="middle" fill="currentColor" font-size="23">${entries.length}</text><text x="80" y="100" text-anchor="middle" fill="currentColor" font-size="11">个场景</text></svg><div class="orbit-legend">${entries.map(([name,value],i)=>`<button type="button" class="button" data-orbit-scene="${escapeHtml(name)}"><span style="color:${colors[i%colors.length]}">●</span> ${escapeHtml(name)} · ${(value/total*100).toFixed(1)}%</button>`).join("")}</div>`:'<div class="empty">暂无有效耗时</div>';
+      $("#scene-orbit").innerHTML=total?`<svg viewBox="0 0 160 160" role="img" aria-label="各场景有效耗时占比">${rings}<text x="80" y="78" text-anchor="middle" fill="currentColor" font-size="23">${entries.length}</text><text x="80" y="100" text-anchor="middle" fill="currentColor" font-size="11">个场景</text></svg><div class="orbit-legend" tabindex="0" role="region" aria-label="场景耗时占比列表">${entries.map(([name,value],i)=>`<button type="button" class="button" data-orbit-scene="${escapeHtml(name)}"><span style="color:${colors[i%colors.length]}">●</span> ${escapeHtml(name)} · ${(value/total*100).toFixed(1)}%</button>`).join("")}</div>`:'<div class="empty">暂无有效耗时</div>';
       const ordered=state.filtered.filter(r=>statDuration(r)>0).slice().sort((a,b)=>(parseRecordDate(a.absolute_time)?.getTime()||0)-(parseRecordDate(b.absolute_time)?.getTime()||0)),records=ordered.slice(-120);
       window.explorerRecords=records;
-      $("#run-detail").textContent="选择圆点查看这一场。";
+      $("#run-detail").textContent="点击柱子查看场景、角色、时间和掉落。";
       if(!records.length){$("#run-scatter").innerHTML='<div class="empty">暂无有效耗时</div>';return}
-      const max=Math.max(1,...records.map(statDuration)),median=quantile(records.map(statDuration),.5),y=v=>174-v/max*150;
-      $("#run-scatter").innerHTML=`<svg viewBox="0 0 640 205" role="group" aria-label="最近120场耗时散点，可用Tab选择圆点"><line x1="45" y1="174" x2="625" y2="174" stroke="var(--border-default)"/><line x1="45" y1="${y(median)}" x2="625" y2="${y(median)}" stroke="var(--text-muted)" stroke-dasharray="4 5"/><text x="45" y="14" fill="currentColor" font-size="10">耗时 · 最高 ${formatDuration(max)} · 虚线为图中位数</text>${records.map((r,i)=>`<circle class="run-dot" tabindex="0" role="button" data-run-index="${i}" aria-label="${escapeHtml(r.scene_name)}，${formatDuration(statDuration(r))}，${getDrops(r).length}次掉落" cx="${55+i/Math.max(1,records.length-1)*560}" cy="${y(statDuration(r))}" r="${getDrops(r).length?6:4}" fill="${getDrops(r).some(isHighRune)?"var(--violet)":"var(--accent)"}"><title>${escapeHtml(r.scene_name)} · ${formatDuration(statDuration(r))}</title></circle>`).join("")}<text x="45" y="198" fill="currentColor" font-size="10">较早</text><text x="625" y="198" text-anchor="end" fill="currentColor" font-size="10">最近</text></svg><p class="explorer-note">显示最近 ${records.length} / ${ordered.length} 场有效耗时；紫色为高级符文场次。沿用当前筛选及异常耗时处理。</p>`;
+      $("#run-scatter").innerHTML=buildRecentRunChart(records,ordered.length);
     }
     $("#scene-orbit").addEventListener("click",event=>{const button=event.target.closest("[data-orbit-scene]");if(!button)return;$("#filter-scene").value=button.dataset.orbitScene;clearRecordSelection();applyFilters()});
     $("#orbit-reset").addEventListener("click",()=>{$("#filter-scene").value="";clearRecordSelection();applyFilters()});
@@ -380,12 +564,34 @@
     function renderAll(){renderExplorers();renderKpis();renderTrend();renderSceneTable();renderCharacterComparison();renderActivityHeatmap();renderRunes();renderRecords();renderObservations()}
     function apiFetch(url,options={}){const headers=new Headers(options.headers||{});headers.set("X-D2RHub-Stats-Token",API_TOKEN);return fetch(`${API_BASE}${url}`,{...options,headers})}
     async function fetchRecords(){const sync=$("#sync-state");sync.textContent="正在刷新…";try{const response=await apiFetch("/api/records");if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();state.rawRecords=Array.isArray(data.records)?data.records:[];state.observations=Array.isArray(data.observations)?data.observations:[];state.strategies=Array.isArray(data.strategies)?data.strategies:[];const existingIds=new Set(state.rawRecords.map(r=>number(r.id)).filter(Boolean));state.selectedRecordIds=new Set([...state.selectedRecordIds].filter(id=>existingIds.has(id)));renderStrategyControls();refreshMaterializedRecords();if($("#report-dialog").open){syncReportConfigControls();renderReport()}sync.textContent=`已同步 ${new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"})}`;showToast("统计数据已刷新")}catch(error){sync.textContent="刷新失败，显示打开时快照";showToast(`刷新失败：${error}`)}}
-    async function apiMutation(url,options,message){const response=await apiFetch(url,options),data=await response.json().catch(()=>({}));if(!response.ok||data.ok===false)throw new Error(data.error||`HTTP ${response.status}`);await fetchRecords();showToast(message)}function switchView(view){state.activeView=view;$$('.tab').forEach(t=>t.setAttribute("aria-selected",String(t.dataset.view===view)));$$('.view').forEach(p=>p.hidden=p.id!==`view-${view}`)}
+    async function apiMutation(url,options,message){const response=await apiFetch(url,options),data=await response.json().catch(()=>({}));if(!response.ok||data.ok===false)throw new Error(data.error||`HTTP ${response.status}`);await fetchRecords();showToast(message)}// VIEW_TABS_START
+    function switchView(view){
+      if(!$$('.tab').some(tab=>tab.dataset.view===view))return;
+      state.activeView=view;
+      $$('.tab').forEach(tab=>{const selected=tab.dataset.view===view;tab.setAttribute("aria-selected",String(selected));tab.tabIndex=selected?0:-1});
+      $$('.view').forEach(panel=>panel.hidden=panel.id!==`view-${view}`);
+    }
+    function bindViewTabs(){
+      const tabs=$$('.tab');
+      tabs.forEach((tab,index)=>{
+        tab.id=`tab-${tab.dataset.view}`;
+        tab.setAttribute("aria-controls",`view-${tab.dataset.view}`);
+        $(`#view-${tab.dataset.view}`).setAttribute("aria-labelledby",tab.id);
+        tab.addEventListener("click",()=>switchView(tab.dataset.view));
+        tab.addEventListener("keydown",event=>{
+          const next=event.key==="Home"?0:event.key==="End"?tabs.length-1:event.key==="ArrowRight"?(index+1)%tabs.length:event.key==="ArrowLeft"?(index-1+tabs.length)%tabs.length:null;
+          if(next===null)return;
+          event.preventDefault();switchView(tabs[next].dataset.view);tabs[next].focus();
+        });
+      });
+      switchView(state.activeView);
+    }
+    // VIEW_TABS_END
     function clearRecordSelection(exitMode=false){state.selectedRecordIds.clear();if(exitMode)state.selectionMode=false}
     function currentRecordPage(){const records=recordSearchResults();return records.slice((state.page-1)*PAGE_SIZE,state.page*PAGE_SIZE).filter(r=>!r._merged)}
     function toggleCurrentPageSelection(force){const ids=currentRecordPage().map(r=>number(r.id)).filter(Boolean),allSelected=ids.length>0&&ids.every(id=>state.selectedRecordIds.has(id)),shouldSelect=force??!allSelected;ids.forEach(id=>shouldSelect?state.selectedRecordIds.add(id):state.selectedRecordIds.delete(id));renderRecords()}
     async function deleteSelectedRecords(){const ids=[...state.selectedRecordIds];if(!ids.length)return;if(!confirm(`确定删除选中的 ${ids.length} 条场景记录？\n\n此操作不可恢复。`))return;const button=$("#delete-selected"),original=button.textContent;button.disabled=true;button.textContent="正在删除…";try{const response=await apiFetch("/api/records/batch",{method:"DELETE",headers:{"Content-Type":"application/json"},body:JSON.stringify({ids})}),payload=await response.json().catch(()=>({}));if(!response.ok||payload.ok===false)throw new Error(payload.error||`HTTP ${response.status}`);clearRecordSelection(true);await fetchRecords();showToast(`已删除 ${number(payload.deleted).toLocaleString()} 条记录`)}catch(error){showToast(`批量删除失败：${error}`);renderRecords()}finally{button.textContent=original}}
-    $$('.tab').forEach(t=>t.addEventListener("click",()=>switchView(t.dataset.view)));["#filter-period","#filter-character","#filter-scene","#filter-tz","#filter-drop","#filter-rune"].forEach(s=>$(s).addEventListener("change",()=>{clearRecordSelection();applyFilters()}));$("#filter-outliers").addEventListener("change",()=>{clearRecordSelection();saveStatsViewPreferences();applyFilters()});$("#filter-short-threshold").addEventListener("input",event=>{state.shortThresholdSeconds=Math.max(0,Math.min(10,number(event.target.value)));renderShortThreshold();saveStatsViewPreferences();clearRecordSelection();applyFilters();if($("#report-dialog").open){syncReportConfigControls();renderReport()}});$("#filters-toggle").addEventListener("click",()=>{state.filtersCollapsed=!state.filtersCollapsed;renderFilterCollapse();saveStatsViewPreferences()});$("#trend-metric").addEventListener("change",renderTrend);$("#records-search").addEventListener("input",()=>{clearRecordSelection();state.page=1;renderRecords()});$("#records-sort").addEventListener("change",()=>{clearRecordSelection();state.page=1;renderRecords()});$("#observations-search").addEventListener("input",renderObservations);$("#refresh-data").addEventListener("click",fetchRecords);$("#reset-filters").addEventListener("click",()=>{clearRecordSelection();$("#filter-period").value="all";$("#filter-character").value="";$("#filter-scene").value="";$("#filter-tz").value="all";$("#filter-drop").value="all";$("#filter-rune").value="";$("#filter-outliers").checked=true;state.shortThresholdSeconds=1;renderShortThreshold();saveStatsViewPreferences();applyFilters()});$("#page-prev").addEventListener("click",()=>{if(state.page>1){state.page--;renderRecords()}});$("#page-next").addEventListener("click",()=>{state.page++;renderRecords()});$("#batch-toggle").addEventListener("click",()=>{state.selectionMode=true;state.selectedRecordIds.clear();renderRecords()});$("#cancel-selection").addEventListener("click",()=>{clearRecordSelection(true);renderRecords()});$("#select-page").addEventListener("click",()=>toggleCurrentPageSelection());$("#delete-selected").addEventListener("click",deleteSelectedRecords);
+    bindViewTabs();["#filter-period","#filter-character","#filter-scene","#filter-tz","#filter-drop","#filter-rune"].forEach(s=>$(s).addEventListener("change",()=>{clearRecordSelection();applyFilters()}));$("#filter-outliers").addEventListener("change",()=>{clearRecordSelection();saveStatsViewPreferences();applyFilters()});$("#filter-short-threshold").addEventListener("input",event=>{state.shortThresholdSeconds=Math.max(0,Math.min(10,number(event.target.value)));renderShortThreshold();saveStatsViewPreferences();clearRecordSelection();applyFilters();if($("#report-dialog").open){syncReportConfigControls();renderReport()}});$("#filters-toggle").addEventListener("click",()=>{state.filtersCollapsed=!state.filtersCollapsed;renderFilterCollapse();saveStatsViewPreferences()});$("#trend-metric").addEventListener("change",renderTrend);$("#records-search").addEventListener("input",()=>{clearRecordSelection();state.page=1;renderRecords()});$("#records-sort").addEventListener("change",()=>{clearRecordSelection();state.page=1;renderRecords()});$("#observations-search").addEventListener("input",renderObservations);$("#refresh-data").addEventListener("click",fetchRecords);$("#reset-filters").addEventListener("click",()=>{clearRecordSelection();$("#filter-period").value="all";$("#filter-character").value="";$("#filter-scene").value="";$("#filter-tz").value="all";$("#filter-drop").value="all";$("#filter-rune").value="";$("#filter-outliers").checked=true;state.shortThresholdSeconds=1;renderShortThreshold();saveStatsViewPreferences();applyFilters()});$("#page-prev").addEventListener("click",()=>{if(state.page>1){state.page--;renderRecords()}});$("#page-next").addEventListener("click",()=>{state.page++;renderRecords()});$("#batch-toggle").addEventListener("click",()=>{state.selectionMode=true;state.selectedRecordIds.clear();renderRecords()});$("#cancel-selection").addEventListener("click",()=>{clearRecordSelection(true);renderRecords()});$("#select-page").addEventListener("click",()=>toggleCurrentPageSelection());$("#delete-selected").addEventListener("click",deleteSelectedRecords);
     $("#strategy-active").addEventListener("change",event=>{const input=event.target.closest("[data-strategy-id]");if(!input)return;clearRecordSelection();const id=String(input.dataset.strategyId);state.activeStrategyIds=input.checked?[...new Set([...state.activeStrategyIds,id])]:state.activeStrategyIds.filter(item=>item!==id);saveActiveStrategies();renderStrategyControls();refreshMaterializedRecords()});
     $("#strategy-active").addEventListener("click",event=>{const button=event.target.closest("[data-strategy-edit]");if(!button)return;const strategy=allStrategies().find(item=>String(item.id)===String(button.dataset.strategyEdit));if(strategy)beginStrategyEdit(strategy)});
     $("#strategy-clear").addEventListener("click",()=>{clearRecordSelection();state.activeStrategyIds=[];saveActiveStrategies();renderStrategyControls();refreshMaterializedRecords()});
@@ -400,10 +606,10 @@
     $("#export-csv").addEventListener("click",()=>{const rows=[["id","view_mode","segment_count","source_record_ids","journey_id","segment_index","time","character","scene","tz","seconds","kind","telemetry_id","item_code","category","display_name","display_name_en","rune_number","screenshot_path"]];state.filtered.forEach(r=>{const prefix=[r.id,r._merged?"strategy_merge":"raw",r._segment_count||1,(r._source_record_ids||[r.id]).join("|"),r.journey_id||"",r.segment_index??"",r.absolute_time,r.character_name,r.scene_name,Boolean(r.tz),r.timer_seconds],drops=getDrops(r);if(!drops.length)rows.push([...prefix,"","","","","","","",""]);drops.forEach(d=>rows.push([...prefix,dropKind(d),d.telemetry_id||"",dropCode(d),d.category||"",dropName(d),dropNameEn(d),d.rune_number||"",d.screenshot_path||""]))});const csv="\uFEFF"+rows.map(row=>row.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\r\n");downloadFile(`d2rhub-stats-${new Date().toISOString().slice(0,10)}.csv`,csv,"text/csv;charset=utf-8");showToast(`已导出 ${state.filtered.length} 场记录`)});$("#export-json").addEventListener("click",()=>{downloadFile(`d2rhub-stats-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({active_strategies:activeStrategies(),records:state.filtered},null,2),"application/json;charset=utf-8");showToast(`已导出 ${state.filtered.length} 场记录`)});
     $("#export-observations-csv").addEventListener("click",()=>{const observations=observationSearchResults(),rows=[["id","observed_at","account_id","kind","telemetry_id","item_code","category","display_name","display_name_en","rune_number","confidence","source","scene_record_id","source_id","source_name"],...observations.map(o=>[o.id,o.observed_at,o.account_id,dropKind(o),o.telemetry_id,dropCode(o),o.category,dropName(o),dropNameEn(o),o.rune_number||"",o.confidence,o.source,o.scene_record_id,o.source_id||o.account_id,o.source_name||o.account_id])],csv="\uFEFF"+rows.map(row=>row.map(v=>`"${String(v??"").replaceAll('"','""')}"`).join(",")).join("\r\n");downloadFile(`d2rhub-drop-observations-${new Date().toISOString().slice(0,10)}.csv`,csv,"text/csv;charset=utf-8");showToast(`已导出 ${observations.length} 条声纹观测`)});$("#export-observations-json").addEventListener("click",()=>{const observations=observationSearchResults();downloadFile(`d2rhub-drop-observations-${new Date().toISOString().slice(0,10)}.json`,JSON.stringify({observations},null,2),"application/json;charset=utf-8");showToast(`已导出 ${observations.length} 条声纹观测`)});
     $("#open-report").addEventListener("click",openReportDialog);$("#close-report").addEventListener("click",()=>$("#report-dialog").close());$("#report-dialog").addEventListener("click",event=>{if(event.target===$("#report-dialog"))$("#report-dialog").close()});$("#report-config").addEventListener("click",event=>{const button=event.target.closest("[data-report-range]");if(!button)return;reportOffset=0;commitReportConfig({range:button.dataset.reportRange})});$("#report-config").addEventListener("input",event=>{if(event.target.id==="report-custom-title")commitReportConfig({customTitle:event.target.value},{sync:false});if(event.target.id==="report-custom-headline")commitReportConfig({customHeadline:event.target.value},{sync:false})});$("#report-config").addEventListener("change",event=>{const target=event.target;if(target.closest("#report-metric-options")){const inputs=$$('#report-metric-options input'),selected=inputs.filter(input=>input.checked).map(input=>input.value);if(selected.length>4){target.checked=false;showToast("顶部指标最多选择 4 项");return}if(!selected.length){target.checked=true;showToast("至少保留 1 项顶部指标");return}commitReportConfig({metrics:selected});return}const keys={"report-date-start":"customStart","report-date-end":"customEnd","report-character":"character","report-area-type":"areaType","report-drop-scope":"dropScope","report-chart-metric":"chartMetric","report-left-ranking":"leftRanking","report-right-ranking":"rightRanking","report-data-source":"dataSource","report-outliers":"outliers","report-tz-grouping":"tzGrouping"},key=keys[target.id];if(key)commitReportConfig({[key]:target.value})});$("#report-prev").addEventListener("click",()=>{if(reportConfig.range!=="custom"){reportOffset--;renderReport()}});$("#report-next").addEventListener("click",()=>{if(reportConfig.range!=="custom"&&reportOffset<0){reportOffset++;renderReport()}});$("#download-report").addEventListener("click",downloadReport);$("#copy-report").addEventListener("click",copyReport);
-    function applyTheme(theme){const normalized=theme==="light"?"light":"onyx";document.documentElement.dataset.theme=normalized;document.documentElement.style.colorScheme=normalized==="onyx"?"dark":"light";$("#theme-toggle").textContent=normalized==="onyx"?"浅色":"深色";}$("#theme-toggle").addEventListener("click",()=>applyTheme(document.documentElement.dataset.theme==="onyx"?"light":"onyx"));applyTheme(document.documentElement.dataset.theme);
+    function applyTheme(theme){const normalized=theme==="onyx"?"onyx":"sand";document.documentElement.dataset.theme=normalized;document.documentElement.style.colorScheme=normalized==="onyx"?"dark":"light";$("#theme-toggle").textContent=normalized==="onyx"?"暖砂":"深色";}$("#theme-toggle").addEventListener("click",()=>applyTheme(document.documentElement.dataset.theme==="onyx"?"sand":"onyx"));applyTheme(document.documentElement.dataset.theme);
     try{const shared=INITIAL_STATS_PREFERENCES&&typeof INITIAL_STATS_PREFERENCES==="object"?INITIAL_STATS_PREFERENCES:null,stored=localStorage.getItem("d2rhub-active-strategies"),saved=shared&&Array.isArray(shared.activeStrategyIds)?shared.activeStrategyIds:stored!==null?JSON.parse(stored):null;state.activeStrategyIds=Array.isArray(saved)?saved.map(String):PRESET_STRATEGIES.map(strategy=>strategy.id);if(!Array.isArray(saved)){const legacy=localStorage.getItem("d2rhub-active-strategy");if(legacy)state.activeStrategyIds=[legacy]}}catch{state.activeStrategyIds=PRESET_STRATEGIES.map(strategy=>strategy.id)}
     try{const shared=INITIAL_STATS_PREFERENCES&&typeof INITIAL_STATS_PREFERENCES==="object"?INITIAL_STATS_PREFERENCES:null,saved=shared?.presetOverrides&&typeof shared.presetOverrides==="object"?shared.presetOverrides:JSON.parse(localStorage.getItem("d2rhub-preset-strategy-overrides")||"{}"),presetIds=new Set(PRESET_STRATEGIES.map(strategy=>strategy.id));if(saved&&typeof saved==="object"&&!Array.isArray(saved)){Object.entries(saved).forEach(([id,value])=>{if(presetIds.has(id)&&value&&typeof value.name==="string"&&Array.isArray(value.scene_names)&&value.scene_names.length)state.presetOverrides[id]={name:value.name.slice(0,40),scene_names:[...new Set(value.scene_names.map(String).filter(Boolean))].slice(0,64)}})}}catch{}
-    try{const shared=INITIAL_STATS_PREFERENCES&&typeof INITIAL_STATS_PREFERENCES==="object"?INITIAL_STATS_PREFERENCES:null,local=JSON.parse(localStorage.getItem("d2rhub-stats-view-preferences")||"{}"),preferences=shared||local;state.filtersCollapsed=Boolean(preferences.filtersCollapsed);state.shortThresholdSeconds=Math.max(0,Math.min(10,number(preferences.shortThresholdSeconds??1)));$("#filter-outliers").checked=preferences.outlierEnabled!==false}catch{}
+    try{const shared=INITIAL_STATS_PREFERENCES&&typeof INITIAL_STATS_PREFERENCES==="object"?INITIAL_STATS_PREFERENCES:null,local=JSON.parse(localStorage.getItem("d2rhub-stats-view-preferences")||"{}"),preferences=shared||local;state.filtersCollapsed=preferences.filtersCollapsed!==false;state.shortThresholdSeconds=Math.max(0,Math.min(10,number(preferences.shortThresholdSeconds??1)));$("#filter-outliers").checked=preferences.outlierEnabled!==false}catch{}
     renderFilterCollapse();renderShortThreshold();renderStrategyControls();refreshMaterializedRecords();scheduleSharedStatsPreferencesSave();
   </script>
 </body>

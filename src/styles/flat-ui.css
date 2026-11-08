@@ -141,7 +141,7 @@
 
 /* Notifications retain semantic border/icon colors; only lighting is removed. */
 :root[data-theme] .toast-item {
-  background: var(--surface-modal);
+  background: rgb(var(--surface-card-rgb));
   box-shadow: var(--shadow-elevated);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;

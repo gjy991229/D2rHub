@@ -1,0 +1,65 @@
+/* Shared form actions use the same theme tokens in every dialog and panel. */
+.ui-button {
+  border: 1px solid transparent;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.ui-button--primary {
+  border-color: var(--cta-bg);
+  background: var(--cta-bg);
+  color: var(--cta-text);
+  font-weight: 600;
+}
+.ui-button--primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--cta-bg) 88%, var(--surface-modal));
+  border-color: color-mix(in srgb, var(--cta-bg) 88%, var(--surface-modal));
+}
+.ui-button--secondary {
+  border-color: var(--border-default);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.ui-button--ghost { background: transparent; color: var(--text-secondary); }
+.ui-button--secondary:hover:not(:disabled),
+.ui-button--ghost:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+.ui-button--secondary:hover:not(:disabled) { border-color: var(--border-strong); }
+.ui-button--danger {
+  border-color: color-mix(in srgb, var(--error) 28%, transparent);
+  background: color-mix(in srgb, var(--error) 9%, transparent);
+  color: var(--error);
+}
+.ui-button--danger:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--error) 50%, transparent);
+  background: color-mix(in srgb, var(--error) 16%, transparent);
+}
+.ui-button:not(:disabled):active { opacity: .8; }
+.ui-input:focus {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.ui-input[aria-invalid="true"]:focus {
+  border-color: var(--error);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--error) 15%, transparent);
+}
+
+.modal-surface { display: flex; flex-direction: column; max-height: calc(100dvh - 32px); }
+.modal-header, .modal-footer { flex-shrink: 0; }
+.modal-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.modal-footer { flex-wrap: wrap; }
+.modal-footer > div { min-width: 0; flex: 1 1 auto; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-button, .ui-input { transition: none; }
+}
+.configuration-source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px; margin-top: 8px; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
+.configuration-source > span:first-child, .configuration-origin-tag { flex-shrink: 0; padding: 2px 6px; border-radius: 5px; background: var(--surface-hover); color: var(--text-secondary); font-size: var(--text-2xs); font-weight: 600; }
+
+.runtime-state { display:inline-flex; align-items:center; gap:6px; font-size:var(--text-xs); font-weight:500; color:var(--text-muted); line-height:1.5; }
+.runtime-state[data-state="running"], .runtime-state[data-state="succeeded"] { color:var(--success); }
+.runtime-state[data-state="waiting"] { color:var(--text-secondary); }
+.runtime-state[data-state="attention"] { color:var(--warning); }
+.task-runtime-next-step { color:var(--text-secondary); font-size:var(--text-xs); margin-top:4px; }
+.task-runtime-reason { overflow-wrap:anywhere; }

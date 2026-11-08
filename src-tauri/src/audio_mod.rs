@@ -47,6 +47,7 @@ pub struct InstalledMod {
     pub audio_reusable: bool,
     pub auto_exit_on_death_enabled: bool,
     pub room_tools_default_hell: bool,
+    pub scene_audio_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -301,7 +302,9 @@ pub(crate) fn validate_in_game_room_tools_for_account(
     state: &SharedState,
     account_id: &str,
 ) -> Result<(), String> {
-    let (_config, account, context) = configured_account(state, account_id)?;
+    let config = state.configuration().snapshot().ok_or("尚未完成首次配置")?;
+    let account = AccountManager::load_meta(&config.accounts_dir, account_id)
+        .map_err(|error| error.to_string())?;
     let account_name = if account.display_name.trim().is_empty() {
         account.id.as_str()
     } else {
@@ -310,9 +313,10 @@ pub(crate) fn validate_in_game_room_tools_for_account(
     // Only a snapshot whose PID matches the active registry entry is authoritative. Discovered
     // processes and AccountMeta.running_pid intentionally fail closed: persisted mod_args may have
     // changed after that game process started.
-    let (launch_arguments, _running_pid) =
+    let (launch_arguments, running_pid) =
         require_verified_running_session(account_name, session_arguments(state, &account))?;
-    validate_in_game_room_tools_for_arguments(account_name, &context, &launch_arguments)
+    let directory = crate::infrastructure::system::running_game_directory(running_pid)?;
+    validate_room_tools_in_directory(account_name, &directory, &launch_arguments)
 }
 
 fn validate_room_tool_capability(
@@ -341,12 +345,24 @@ pub(crate) fn validate_in_game_room_tools_for_arguments(
     context: &LaunchContext,
     launch_arguments: &str,
 ) -> Result<(), String> {
+    validate_room_tools_in_directory(
+        account_name,
+        &context.installation.game_directory,
+        launch_arguments,
+    )
+}
+
+fn validate_room_tools_in_directory(
+    account_name: &str,
+    directory: &Path,
+    launch_arguments: &str,
+) -> Result<(), String> {
     let mod_name = active_mod_name(launch_arguments)?
         .ok_or_else(|| format!("账号“{account_name}”没有启用经过 D2RHub 加工的 Mod"))?;
     if !has_txt_argument(launch_arguments)? {
         return Err(format!("账号“{account_name}”的 Mod 启动参数缺少 -txt"));
     }
-    let mods_directory = context.installation.game_directory.join("mods");
+    let mods_directory = directory.join("mods");
     let installed_name = find_existing_mod_name(&mods_directory, &mod_name)?
         .ok_or_else(|| format!("账号“{account_name}”配置的 Mod 不存在"))?;
     let validated = validate_audio_mod(&mods_directory, &installed_name)
@@ -440,8 +456,15 @@ fn setup_state(state: &SharedState, account_id: &str) -> Result<AudioModSetupSta
     let mods_directory = context.installation.game_directory.join("mods");
     let configured = credential_compatibility(&mods_directory, &account.mod_args);
     let (session_arguments, running_pid, session_verified) = session_arguments(state, &account);
-    let active_session = running_pid.and_then(|_| {
-        session_verified.then(|| credential_compatibility(&mods_directory, &session_arguments))
+    let active_session = running_pid.and_then(|pid| {
+        if !session_verified {
+            return None;
+        }
+        let directory = crate::infrastructure::system::running_game_directory(pid).ok()?;
+        Some(credential_compatibility(
+            &directory.join("mods"),
+            &session_arguments,
+        ))
     });
     let active_session_ready = active_session.as_ref().map(|result| result.ready);
     let active_session_update_required =
@@ -532,6 +555,7 @@ pub async fn prepare_audio_mod(
     source_mod_name: Option<String>,
     replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
+    include_scene_audio: Option<bool>,
     include_room_tools: Option<bool>,
     room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
@@ -550,6 +574,7 @@ pub async fn prepare_audio_mod(
             source_mod_name,
             replace_source,
             include_audio_telemetry,
+            include_scene_audio,
             include_room_tools,
             room_tools_default_hell,
             include_esc_next_game,
@@ -576,6 +601,7 @@ async fn prepare_audio_mod_task(
         source_mod_name,
         replace_source,
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -594,6 +620,7 @@ async fn prepare_audio_mod_task(
         source_mod_name: source_mod_name.clone(),
         replace_source,
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -625,6 +652,7 @@ async fn prepare_audio_mod_task(
             source_mod_name,
             replace_source,
             include_audio_telemetry,
+            include_scene_audio,
             include_room_tools,
             room_tools_default_hell,
             include_esc_next_game,
@@ -657,6 +685,7 @@ struct PrepareAudioModRequest {
     source_mod_name: Option<String>,
     replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
+    include_scene_audio: Option<bool>,
     include_room_tools: Option<bool>,
     room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
@@ -679,6 +708,7 @@ async fn prepare_audio_mod_impl(
         source_mod_name,
         replace_source,
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -762,7 +792,15 @@ async fn prepare_audio_mod_impl(
             source_directory: source_directory.as_deref(),
             requested_features,
             progress_ceiling: 100,
-            audio_options: None,
+            audio_options: Some(&rebuild::AudioOptions {
+                areas: if include_scene_audio == Some(false) {
+                    "none"
+                } else {
+                    "all"
+                }
+                .into(),
+                ..Default::default()
+            }),
         },
     )
     .await?;
@@ -846,6 +884,7 @@ pub async fn upgrade_audio_mod(
     mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
+    include_scene_audio: Option<bool>,
     include_room_tools: Option<bool>,
     room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
@@ -865,6 +904,7 @@ pub async fn upgrade_audio_mod(
             mod_name,
             source_mod_name,
             include_audio_telemetry,
+            include_scene_audio,
             include_room_tools,
             room_tools_default_hell,
             include_esc_next_game,
@@ -891,6 +931,7 @@ async fn upgrade_audio_mod_task(
         mod_name,
         source_mod_name,
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -909,6 +950,7 @@ async fn upgrade_audio_mod_task(
         mod_name: mod_name.clone(),
         source_mod_name: source_mod_name.clone(),
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -940,6 +982,7 @@ async fn upgrade_audio_mod_task(
             requested_mod_name: mod_name,
             source_mod_name,
             include_audio_telemetry,
+            include_scene_audio,
             include_room_tools,
             room_tools_default_hell,
             include_esc_next_game,
@@ -978,6 +1021,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         #[serde(default)]
         replace_source: Option<bool>,
         include_audio_telemetry: Option<bool>,
+        include_scene_audio: Option<bool>,
         include_room_tools: Option<bool>,
         room_tools_default_hell: Option<bool>,
         include_esc_next_game: Option<bool>,
@@ -993,6 +1037,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         mod_name: Option<String>,
         source_mod_name: Option<String>,
         include_audio_telemetry: Option<bool>,
+        include_scene_audio: Option<bool>,
         include_room_tools: Option<bool>,
         room_tools_default_hell: Option<bool>,
         include_esc_next_game: Option<bool>,
@@ -1031,6 +1076,7 @@ struct UpgradeAudioModRequest {
     requested_mod_name: Option<String>,
     source_mod_name: Option<String>,
     include_audio_telemetry: Option<bool>,
+    include_scene_audio: Option<bool>,
     include_room_tools: Option<bool>,
     room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
@@ -1053,6 +1099,7 @@ async fn upgrade_audio_mod_impl(
         requested_mod_name,
         source_mod_name,
         include_audio_telemetry,
+        include_scene_audio,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -1092,7 +1139,10 @@ async fn upgrade_audio_mod_impl(
         include_auto_exit_on_death,
     )?;
     let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
-    let rebuilding = force_rebuild || current.update_required || current_validated.is_none();
+    let rebuilding = include_scene_audio.is_some()
+        || force_rebuild
+        || current.update_required
+        || current_validated.is_none();
     let old_directory = mods_directory.join(mod_name);
     validation::validate_recoverable_audio_mod_directory(
         &mods_directory,
@@ -1115,7 +1165,7 @@ async fn upgrade_audio_mod_impl(
     {
         explicitly_requested.audio_telemetry = true;
     }
-    let (requested_features, audio_options) = if rebuilding {
+    let (requested_features, mut audio_options) = if rebuilding {
         rebuild::recipe(&document, explicitly_requested)?
     } else {
         (
@@ -1124,6 +1174,9 @@ async fn upgrade_audio_mod_impl(
             rebuild::audio_options(&document)?,
         )
     };
+    if let Some(enabled) = include_scene_audio {
+        audio_options.areas = if enabled { "all" } else { "none" }.into();
+    }
     let required_existing_groups = if rebuilding {
         Vec::new()
     } else {
@@ -1342,7 +1395,12 @@ pub(crate) fn validate_runtime_feature_directory(
     let name = active_mod_name(arguments)?.ok_or("目标游戏未加载 Mod")?;
     let validated = validate_audio_mod(&game.join("mods"), &name)?;
     if !validated.feature_groups.iter().any(|g| g.id == feature) {
-        return Err(format!("目标 Mod 未安装 {feature}"));
+        let label = match feature {
+            "hostile_auto_restart" => "敌对自动重开",
+            "esc_next_game" => "双击 Esc 下一局",
+            _ => feature,
+        };
+        return Err(format!("目标 Mod 未安装“{label}”功能"));
     }
     if feature == "hostile_auto_restart"
         && !validated
@@ -1356,14 +1414,12 @@ pub(crate) fn validate_runtime_feature_directory(
 }
 
 pub(crate) fn validate_runtime_feature(
-    config: &GlobalConfig,
-    account: &AccountMeta,
+    pid: u32,
     arguments: &str,
     feature: &str,
 ) -> Result<PathBuf, String> {
-    let context = LaunchContext::for_account(config, account, ContextPurpose::Settings)
-        .map_err(|e| e.to_string())?;
-    validate_runtime_feature_directory(&context.installation.game_directory, arguments, feature)
+    let directory = crate::infrastructure::system::running_game_directory(pid)?;
+    validate_runtime_feature_directory(&directory, arguments, feature)
 }
 
 pub(crate) fn emit_runtime_compatibility_warning(
@@ -1381,14 +1437,11 @@ pub(crate) fn emit_runtime_compatibility_warning(
     {
         return;
     }
-    let context = match LaunchContext::for_account(config, account, ContextPurpose::Settings) {
-        Ok(context) => context,
+    let directory = match crate::infrastructure::system::running_game_directory(pid) {
+        Ok(directory) => directory,
         Err(_) => return,
     };
-    let result = compatibility(
-        &context.installation.game_directory.join("mods"),
-        launch_arguments,
-    );
+    let result = compatibility(&directory.join("mods"), launch_arguments);
     let account_name = if account.display_name.trim().is_empty() {
         account.id.clone()
     } else {

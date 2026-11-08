@@ -1,4 +1,5 @@
 import { ArrowRight, Check } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/Button";
 import { RangeSlider } from "../../../components/ui/RangeSlider";
 import { Toggle } from "../../../components/ui/Toggle";
@@ -42,14 +43,45 @@ export function AppearancePanel({
   onOpenOverlaySettings,
   navigationSaving,
 }: AppearancePanelProps) {
+  const en = draft.app_language === "en-US";
+  const copy = en ? {
+    pending: "Appearance changes not saved yet", applied: "Appearance saved and applied",
+    pendingDescription: "Apply saves your changes and updates the appearance now. Leaving this page or closing Settings does the same.",
+    appliedDescription: "The theme, opacity, and text size use your saved settings.", apply: "Apply appearance",
+    language: "Interface language", languageDescription: "Changes the D2RHub interface. Game content and rune names stay the same.", languageLabel: "Interface display language",
+    theme: "Main window theme", themeDescription: "Choose the colors and contrast that suit your surroundings.",
+    opacity: "Main window background opacity", opacityDescription: "Adjusts the background while keeping text and controls clear.", opacityPercent: "Main window background opacity percentage",
+    font: "Text size", fontDescription: "Navigation, forms, and status text scale together.",
+    overlays: "Overlay appearance and visibility", overlayDescription: "Set overlay themes, background opacity, visibility, and positions independently.", overlaySettings: "Overlay settings",
+    taskbar: "Separate game taskbar icons", taskbarDescription: "Give each account its own taskbar identity. Applies to windows launched or detected afterwards.", taskbarLabel: "Use a separate taskbar icon for each game account",
+  } : {
+    pending: "外观修改尚未保存", applied: "外观已保存并应用",
+    pendingDescription: "点击应用会保存并立即更新外观；离开本页或关闭设置时也会保存并应用。", appliedDescription: "主题、透明度和字号使用当前已保存方案。", apply: "应用外观",
+    language: "界面语言", languageDescription: "只影响 D2RHub 界面，不改变游戏内容和符文名称。", languageLabel: "软件界面显示语言",
+    theme: "主程序窗口主题", themeDescription: "选择适合当前使用环境的明暗层级。",
+    opacity: "主界面背景不透明度", opacityDescription: "仅调整背景层，文字和控件保持清晰。", opacityPercent: "主界面背景不透明度百分比",
+    font: "字体大小", fontDescription: "导航、表单和状态文字会按同一比例调整。",
+    overlays: "悬浮窗外观与显示", overlayDescription: "独立设置悬浮窗主题、背景不透明度、显示开关和窗口位置。", overlaySettings: "悬浮窗设置",
+    taskbar: "游戏实例任务栏独立", taskbarDescription: "为每个账号使用独立任务栏标识；对之后启动或重新识别的窗口生效。", taskbarLabel: "让每个游戏账号使用独立任务栏图标",
+  };
+  const themeEnglish: Record<ThemeKey, { label: string; desc: string }> = {
+    onyx: { label: "Dark", desc: "Black surfaces, high contrast" }, light: { label: "Light", desc: "Bright, clear, and quiet" },
+    midnight: { label: "Midnight blue", desc: "Blue-gray with soft blue accents" }, forest: { label: "Forest green", desc: "Muted green with sage accents" },
+    sand: { label: "Warm sand", desc: "Warm gray with soft brown accents" }, pink: { label: "Misty pink", desc: "Soft pink with muted rose accents" },
+  };
   const sliderValue = percentToSlider(draft.main_opacity);
+  const [opacityInput, setOpacityInput] = useState(String(draft.main_opacity));
+  const opacityFocused = useRef(false);
+  useEffect(() => {
+    if (!opacityFocused.current) setOpacityInput(String(draft.main_opacity));
+  }, [draft.main_opacity]);
 
   return (
-    <div className="settings-content-grid appearance-settings-grid">
+    <div className="settings-content-grid appearance-settings-grid" data-i18n-skip>
       <div className="appearance-apply-strip" data-dirty={dirty ? "true" : undefined}>
         <div>
-          <strong>{dirty ? "外观修改等待应用" : "外观设置已应用"}</strong>
-          <p>{dirty ? "点击应用可立即查看效果；离开本页或关闭设置时也会自动应用。" : "主题、透明度和字号使用当前已保存方案。"}</p>
+          <strong role="status">{applying ? (en ? "Saving and applying…" : "正在保存并应用…") : dirty ? copy.pending : copy.applied}</strong>
+          <p>{dirty ? copy.pendingDescription : copy.appliedDescription}</p>
         </div>
         <Button
           variant="primary"
@@ -59,17 +91,17 @@ export function AppearancePanel({
           onClick={() => void onApply()}
         >
           <Check size={14} aria-hidden="true" />
-          应用外观
+          {copy.apply}
         </Button>
       </div>
 
       <section className="spatial-panel appearance-section appearance-language-section">
         <div className="appearance-section-heading">
-          <h3>界面语言</h3>
-          <p>只影响 D2RHub 界面，不改变游戏内容和符文名称。</p>
+          <h3>{copy.language}</h3>
+          <p>{copy.languageDescription}</p>
         </div>
         <select
-          aria-label="软件界面显示语言"
+          aria-label={copy.languageLabel}
           value={draft.app_language || "zh-CN"}
           onChange={(event) => onChange({ app_language: event.target.value })}
           className="settings-input appearance-compact-control"
@@ -81,8 +113,8 @@ export function AppearancePanel({
 
       <section className="spatial-panel appearance-section appearance-theme-section">
         <div className="appearance-section-heading">
-          <h3>主程序窗口主题</h3>
-          <p>选择适合当前使用环境的明暗层级。</p>
+          <h3>{copy.theme}</h3>
+          <p>{copy.themeDescription}</p>
         </div>
         <div className="appearance-theme-options">
           {THEME_OPTIONS.map((option) => {
@@ -97,7 +129,7 @@ export function AppearancePanel({
                 onClick={() => onChange({ theme: option.id })}
               >
                 <span className="appearance-theme-swatch" data-theme-preview={option.id} aria-hidden="true" />
-                <span><strong>{option.label}</strong><small>{option.desc}</small></span>
+                <span><strong>{en ? themeEnglish[option.id].label : option.label}</strong><small>{en ? themeEnglish[option.id].desc : option.desc}</small></span>
                 {active && <Check size={14} aria-hidden="true" />}
               </button>
             );
@@ -108,25 +140,37 @@ export function AppearancePanel({
       <section className="spatial-panel appearance-section appearance-opacity-section">
         <div className="appearance-section-heading appearance-section-heading-inline">
           <div>
-            <h3>主界面背景不透明度</h3>
-            <p>仅调整背景层，文字和控件保持清晰。</p>
+            <h3>{copy.opacity}</h3>
+            <p>{copy.opacityDescription}</p>
           </div>
           <label className="appearance-percent-input">
             <input
               type="number"
-              aria-label="主界面背景不透明度百分比"
+              aria-label={copy.opacityPercent}
               min={10}
               max={100}
-              value={draft.main_opacity}
-              onChange={(event) => onChange({
-                main_opacity: Math.max(10, Math.min(100, Number.parseInt(event.target.value, 10) || 10)),
-              })}
+              value={opacityInput}
+              onFocus={() => { opacityFocused.current = true; }}
+              onChange={event => setOpacityInput(event.target.value)}
+              onBlur={() => {
+                opacityFocused.current = false;
+                const number = opacityInput.trim() ? Number(opacityInput) : NaN;
+                const next = Number.isFinite(number) ? Math.max(10, Math.min(100, Math.round(number))) : draft.main_opacity;
+                setOpacityInput(String(next));
+                if (next !== draft.main_opacity) onChange({ main_opacity: next });
+              }}
+              onKeyDown={event => {
+                if (event.key === "Enter") { event.preventDefault(); event.currentTarget.blur(); }
+                if (event.key === "Escape" && opacityInput !== String(draft.main_opacity)) {
+                  event.stopPropagation(); setOpacityInput(String(draft.main_opacity));
+                }
+              }}
             />
             <span>%</span>
           </label>
         </div>
         <RangeSlider
-          aria-label="主界面背景不透明度"
+          aria-label={copy.opacity}
           min={0}
           max={100}
           value={sliderValue}
@@ -137,14 +181,14 @@ export function AppearancePanel({
 
       <section className="spatial-panel appearance-section appearance-font-section">
         <div className="appearance-section-heading">
-          <h3>字体大小</h3>
-          <p>导航、表单和状态文字会按同一比例调整。</p>
+          <h3>{copy.font}</h3>
+          <p>{copy.fontDescription}</p>
         </div>
         <div className="appearance-font-options">
           {([
-            { id: "small", label: "较小", sample: "Aa" },
-            { id: "default", label: "默认", sample: "Aa" },
-            { id: "large", label: "较大", sample: "Aa" },
+            { id: "small", label: en ? "Small" : "较小", sample: "Aa" },
+            { id: "default", label: en ? "Default" : "默认", sample: "Aa" },
+            { id: "large", label: en ? "Large" : "较大", sample: "Aa" },
           ] as const).map((option) => (
             <button
               key={option.id}
@@ -164,11 +208,11 @@ export function AppearancePanel({
       {onOpenOverlaySettings && (
         <section className="spatial-panel appearance-section appearance-overlay-section">
           <div className="appearance-section-heading">
-            <h3>悬浮窗外观与显示</h3>
-            <p>独立设置悬浮窗主题、背景不透明度、显示开关和窗口位置。</p>
+            <h3>{copy.overlays}</h3>
+            <p>{copy.overlayDescription}</p>
           </div>
           <Button variant="secondary" size="md" disabled={applying || navigationSaving} onClick={onOpenOverlaySettings}>
-            悬浮窗设置
+            {copy.overlaySettings}
             <ArrowRight size={14} aria-hidden="true" />
           </Button>
         </section>
@@ -176,12 +220,12 @@ export function AppearancePanel({
 
       <section className="spatial-panel appearance-section appearance-taskbar-section">
         <div className="appearance-section-heading">
-          <h3>游戏实例任务栏独立</h3>
-          <p>为每个账号使用独立任务栏标识；对之后启动或重新识别的窗口生效。</p>
+          <h3>{copy.taskbar}</h3>
+          <p>{copy.taskbarDescription}</p>
         </div>
         <Toggle
           checked={draft.separate_game_taskbar_icons}
-          ariaLabel="让每个游戏账号使用独立任务栏图标"
+          ariaLabel={copy.taskbarLabel}
           onChange={(value) => onChange({ separate_game_taskbar_icons: value })}
         />
       </section>

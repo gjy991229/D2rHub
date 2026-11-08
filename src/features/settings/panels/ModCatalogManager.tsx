@@ -184,7 +184,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
             onChange={(event) => setAddDraft(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Escape") { event.stopPropagation(); if (!busy) setAddOpen(false); }
-              if (event.key === "Enter" && addDraft.trim() && !busy) {
+              if (event.key === "Enter" && !event.nativeEvent.isComposing && addDraft.trim() && !busy) {
                 void run(() => catalog.add(edition, addDraft.trim()), copy.addSuccess).then((saved) => {
                   if (saved) { setAddOpen(false); setAddDraft(""); }
                 });

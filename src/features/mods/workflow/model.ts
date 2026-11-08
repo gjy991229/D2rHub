@@ -14,9 +14,17 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   const selectedName = draft.recipe.kind === "augment" ? draft.recipe.modName : draft.recipe.source;
   const selected = state?.installed_mods.find(mod => mod.name.toLocaleLowerCase() === selectedName?.toLocaleLowerCase());
   const inherited = selected?.feature_groups ?? [];
+  const augment = draft.recipe.kind === "augment";
+  const includeAudioTelemetry = draft.features.includeAudioTelemetry || draft.origin === "recognition" || inherited.includes(AUDIO_TELEMETRY_FEATURE_ID) || (!!selected?.update_required && !inherited.length);
+  const requestedSceneAudio = includeAudioTelemetry ? draft.features.includeSceneAudio : undefined;
+  const sceneAudioChanged = requestedSceneAudio !== undefined
+    && requestedSceneAudio !== (selected?.scene_audio_enabled ?? true);
   const selection = {
+    includeSceneAudio: augment
+      ? (sceneAudioChanged ? requestedSceneAudio : undefined)
+      : includeAudioTelemetry ? requestedSceneAudio ?? selected?.scene_audio_enabled ?? true : undefined,
     roomToolsDefaultHell: draft.features.roomToolsDefaultHell ?? selected?.room_tools_default_hell ?? true,
-    includeAudioTelemetry: draft.features.includeAudioTelemetry || draft.origin === "recognition" || inherited.includes(AUDIO_TELEMETRY_FEATURE_ID) || (!!selected?.update_required && !inherited.length),
+    includeAudioTelemetry,
     includeRoomTools: draft.features.includeRoomTools || draft.origin === "room-automation" || inherited.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
     includeSceneShortcuts: draft.features.includeSceneShortcuts || inherited.includes("scene_shortcuts"),
     includePartyLoot: draft.features.includePartyLoot || inherited.includes("party_loot"),
@@ -26,8 +34,7 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
   };
   const roomOptionsChanged = selection.includeRoomTools
     && selection.roomToolsDefaultHell !== (selected?.room_tools_default_hell ?? true);
-  const augment = draft.recipe.kind === "augment";
-  const updating = draft.recipe.kind === "augment" && (!!selected?.update_required || !!draft.recipe.rebuild);
+  const updating = draft.recipe.kind === "augment" && (!!selected?.update_required || !!draft.recipe.rebuild || sceneAudioChanged);
   const originalName = draft.recipe.kind === "augment"
     ? draft.recipe.sourceOverride ?? selected?.source_mod_name : null;
   const original = originalName ? state?.installed_mods.find(mod => mod.name.toLowerCase() === originalName.toLowerCase()) : null;

@@ -2,6 +2,7 @@
    as the rest of Settings. Keep its composition here, away from global overrides. */
 .mod-workspace { display: flex; flex-direction: column; gap: 20px; width: 100%; min-width: 0; }
 .mod-draft-notice { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--border-default); margin-bottom: 12px; }
+.mod-draft-notice p { flex: 1 1 220px; margin: 0; font-size: var(--text-xs); line-height: 1.6; color: var(--text-secondary); }
 .mod-page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px 24px; flex-wrap: wrap; }
 .mod-page-header > div:first-child { flex: 1 1 300px; min-width: 0; }
 .mod-page-header h2 { margin: 0; color: var(--text-primary); font-size: var(--text-lg); font-weight: 650; line-height: 1.4; }
@@ -46,7 +47,7 @@
 .mod-source-choice strong { font-size: var(--text-xs); font-weight: 600; color: var(--text-primary); }
 .mod-source-choice span { font-size: var(--text-2xs); line-height: 1.5; color: var(--text-muted); }
 .mod-source-choice:hover:not(:disabled) { background: var(--surface-hover); }
-.mod-source-choice[aria-checked="true"] { background: var(--surface-hover); border-color: var(--border-strong); }
+.mod-source-choice[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 6%, var(--surface-card)); border-color: var(--accent); }
 .mod-source-choice:disabled { opacity: .5; cursor: not-allowed; }
 .mod-processing-features, .mod-feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .mod-feature-choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px; min-width: 0; border: 1px solid var(--border-default); border-radius: 7px; cursor: pointer; }
@@ -197,3 +198,7 @@
 .mod-feature-options { padding: 10px 12px 12px 34px; border: 1px solid var(--border-strong); border-top: 0; border-radius: 0 0 7px 7px; background: var(--surface-hover); }
 .mod-feature-options label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); font-size: var(--text-xs); cursor: pointer; }
 .mod-feature-options p { margin: 5px 0 0 21px; color: var(--text-muted); font-size: var(--text-2xs); line-height: 1.55; }
+.mod-feature-options:has(input:disabled) label { cursor: not-allowed; }
+.mod-feature-options input:disabled { opacity: .55; }
+
+.mod-entry-actions { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }

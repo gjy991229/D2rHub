@@ -16,41 +16,22 @@ const sizeMap: Record<Size, string> = {
   lg: "min-h-[40px] px-5 text-sm gap-2 rounded-[10px]",
 };
 
-const variantMap: Record<Variant, { base: string; style: React.CSSProperties }> = {
-  primary: {
-    base: "font-semibold hover:bg-surface-hover",
-    style: { border: "1px solid var(--border-strong)", background: "transparent", color: "var(--text-primary)" },
-  },
-  secondary: {
-    base: "font-medium hover:bg-surface-hover",
-    style: { border: "1px solid var(--border-default)", color: "var(--text-secondary)", background: "transparent" },
-  },
-  ghost: {
-    base: "font-medium hover:bg-surface-hover",
-    style: { border: "1px solid transparent", color: "var(--text-secondary)" },
-  },
-  danger: {
-    base: "font-medium hover:brightness-105",
-    style: { border: "1px solid rgba(255,59,48,0.12)", color: "var(--error)", background: "rgba(255,59,48,0.10)" },
-  },
-};
-
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = "secondary", size = "md", loading, children, className = "", disabled, style, ...props }, ref) => {
-    const v = variantMap[variant];
+  ({ variant = "secondary", size = "md", loading, children, className = "", disabled, type = "button", ...props }, ref) => {
     const s = sizeMap[size];
 
     return (
       <button
         ref={ref}
+        type={type}
         disabled={disabled || loading}
-        className={`inline-flex items-center justify-center whitespace-nowrap transition-[background-color,border-color,color,filter] duration-150 ease-out
+        aria-busy={loading || undefined}
+        className={`ui-button ui-button--${variant} inline-flex items-center justify-center whitespace-nowrap transition-[background-color,border-color,color,opacity] duration-150 ease-out
           focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2
-          disabled:opacity-50 disabled:cursor-not-allowed disabled:brightness-100 ${s} ${v.base} ${className}`}
-        style={{ ...v.style, ...style }}
+          disabled:opacity-50 disabled:cursor-not-allowed ${s} ${className}`}
         {...props}
       >
-        {loading && <Loader2 size={13} className="animate-spin" />}
+        {loading && <Loader2 size={14} className="animate-spin shrink-0" aria-hidden="true" />}
         {children}
       </button>
     );

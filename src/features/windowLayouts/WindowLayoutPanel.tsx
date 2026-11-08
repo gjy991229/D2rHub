@@ -262,7 +262,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
     {!editor ? <>
       <div className="layout-panel-heading">
         <div><h3>{english ? "Your window layouts" : "我的窗口布局"}</h3>
-          <p>{english ? "Choose a saved capsule to edit. Select layouts from the dashboard." : "点击已保存的胶囊进行编辑，在主界面快捷面板中选择要使用的布局。"}</p></div>
+          <p>{english ? "Edit a saved layout here, then select it from the dashboard." : "选择已保存的布局进行编辑，在主界面快捷面板中切换使用。"}</p></div>
         <Toggle checked={config.window_layout_enabled ?? false} label={english ? "Enable layouts" : "启用布局"}
           onChange={value => void run(async () => { await commit(current => { current.window_layout_enabled = value; }); })} />
       </div>
@@ -274,6 +274,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             <Button type="button" size="sm" onClick={create} disabled={!capable || monitorLoading || layouts.length >= 64}><Plus size={14} />{english ? "New layout" : "新建布局"}</Button>
           </div></div>
         <p className="layout-helper">{english ? "Arrange your game windows, then capture their positions and resolutions. Restore minimized or maximized windows first." : "摆好游戏窗口后，可捕获实际位置和分辨率；请先将最小化、最大化或全屏窗口还原为普通窗口。"}</p>
+        {layouts.length >= 64 && <p className="layout-helper" role="status">{english ? "You have reached the limit of 64 layouts. Delete one before adding another." : "已达到 64 个布局上限，删除不需要的布局后即可继续添加。"}</p>}
         {layouts.length ? <div className="layout-capsules layout-library-capsules">
           {layouts.map(saved => <button key={saved.id} type="button" className="layout-capsule" data-saved={saved.id === savedId}
             aria-label={english ? `Edit layout: ${saved.name}` : `编辑布局：${saved.name}`} data-applied={!!config.window_layout_enabled && saved.id === active?.id}
@@ -291,7 +292,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
       {displayStatus}
     </> : <>
       <header className="layout-editor-heading">
-        <Button type="button" size="sm" variant="ghost" onClick={() => { setEditor(null); setFeedback(null); }}><ArrowLeft size={14} />{english ? "Back to layouts" : "返回布局列表"}</Button>
+        <Button type="button" size="sm" variant="ghost" title={dirty ? (english ? "Return without saving this draft" : "返回并放弃未保存的草稿") : undefined} onClick={() => { setEditor(null); setFeedback(null); }}><ArrowLeft size={14} />{english ? "Back to layouts" : "返回布局列表"}</Button>
         <div><h3>{editor.baseline ? (english ? "Edit layout" : "编辑布局") : (english ? "New layout" : "新建布局")}</h3>
           <span className="layout-draft-state">{dirty ? (english ? "Unsaved draft" : "草稿未保存") : (english ? "Saved" : "已保存")}</span></div>
         <Button type="button" variant="primary" loading={busy} onClick={() => save()} disabled={!layout || !capable}>
@@ -375,7 +376,8 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           </div>
         </div>}
         <div className="layout-panel-footer"><p>{english ? "Resolution has the same meaning as account resolution and takes effect on the next launch. Restoring a layout moves existing windows without resizing them. Coordinates align the visible window edge. The preview includes the title bar and visible borders; measurements are calibrated after launch." : "分辨率与账号分辨率含义相同，下次启动时生效。恢复布局仅移动运行中的窗口，不改变其大小。坐标对齐窗口可见边缘，画布包含标题栏和可见边框，启动后自动校准。"}</p>
-          <div>{editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}
+          <div>{confirmDelete && <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>{english ? "Keep layout" : "保留布局"}</Button>}
+            {editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}
             <Button type="button" size="sm" onClick={() => save(true)}><Check size={14} />{english ? "Save & use layout" : "保存并使用布局"}</Button></div>
         </div>
       </>}

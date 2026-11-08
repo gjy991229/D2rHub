@@ -6,6 +6,11 @@ import type { AccountMeta } from "../../store/types";
 
 afterEach(cleanup);
 describe("account batch selection", () => {
+  it("names runtime and batch selection states in English without a DOM translation pass", () => {
+    render(<AccountStatusLight name="A" running issue={null} selected mode="close" english />);
+    expect(screen.getByText("To close")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "A：Selected to close. Click to deselect." })).toBeTruthy();
+  });
   it("allows multiple same-action accounts, rejects mixed actions and leaves mode after last deselection", () => {
     const first = toggleBatchSelection(emptySelection, "a", false);
     const second = toggleBatchSelection(first, "b", false);

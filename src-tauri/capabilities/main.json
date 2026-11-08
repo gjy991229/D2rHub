@@ -4,6 +4,7 @@
   "windows": ["main"],
   "permissions": [
     "main-window-commands",
+    "core:window:allow-unminimize",
     "shell:allow-open",
     "dialog:default",
     "dialog:allow-open",

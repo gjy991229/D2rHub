@@ -121,6 +121,12 @@ pub(crate) fn delete_launch_scheme(
             return Err(AppError::ConfigWriteError("方案已修改，请重新打开".into()));
         }
         config.launch_groups.remove(index);
+        for binding in &mut config.launch_scheme_shortcuts {
+            if binding.group_id == id {
+                binding.group_id.clear();
+                binding.shortcut.clear();
+            }
+        }
         config
             .favorite_launch_group_ids
             .retain(|candidate| candidate != &id);
@@ -163,6 +169,7 @@ pub(crate) fn prepare_scheme_launch(
     state: &tauri::State<'_, SharedState>,
     id: &str,
     revision: u64,
+    accepted: Option<&str>,
 ) -> Result<Vec<crate::application::multi_instance::LaunchAccountEntry>, AppError> {
     let _activation = state
         .runtime_activation_lock
@@ -256,16 +263,16 @@ pub(crate) fn prepare_scheme_launch(
             })
         })
         .collect::<Result<Vec<_>, AppError>>()?;
-    crate::commands::launch::preflight_scheme_entries(
+    crate::commands::launch::preflight_scheme_entries(&projected, state.inner(), &entries)?;
+    let plan = crate::application::multi_instance::LaunchBatchPlan::from_request(
+        None,
+        Some(entries.clone()),
+    )?;
+    crate::commands::launch::check_launch_mod_support(
         &projected,
-        state.inner(),
-        &entries,
-        resolved_room
-            .as_ref()
-            .is_some_and(|room| room.runtime_enabled())
-            && config.optional_module_runtime_allowed(
-                crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
-            ),
+        &plan,
+        resolved_room.as_ref(),
+        accepted,
     )?;
     crate::commands::launch_scheme_recovery::write(
         state.inner(),

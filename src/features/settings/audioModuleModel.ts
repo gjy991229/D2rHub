@@ -4,6 +4,7 @@ export interface RuneAudioStatus {
   account_id: string | null;
   target_pid: number | null;
   last_error: string | null;
+  hostile_error?: string | null;
   captured_frames: number;
   audio_peak: number;
   decoded_packets: number;

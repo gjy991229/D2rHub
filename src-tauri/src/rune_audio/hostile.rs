@@ -64,20 +64,12 @@ fn dispatch(
         if instance.pid != pid {
             return Err("监听进程已变化".into());
         }
-        let account =
-            crate::commands::account::AccountManager::load_meta(&config.accounts_dir, account_id)
-                .map_err(|e| e.to_string())?;
         let args = instance
             .launch
             .as_ref()
             .map(|s| s.mod_args.as_str())
             .ok_or("无法确认监听窗口实际加载的 Mod，请通过 Hub 启动")?;
-        crate::audio_mod::validate_runtime_feature(
-            &config,
-            &account,
-            args,
-            "hostile_auto_restart",
-        )?;
+        crate::audio_mod::validate_runtime_feature(pid, args, "hostile_auto_restart")?;
         targets.push((account_id.to_string(), pid));
     }
     let targets = execution_targets(
@@ -105,19 +97,13 @@ fn dispatch(
                         if instance.pid != target_pid {
                             return Err("目标进程已变化".to_string());
                         }
-                        let account = crate::commands::account::AccountManager::load_meta(
-                            &config.accounts_dir,
-                            &id,
-                        )
-                        .map_err(|e| e.to_string())?;
                         let args = instance
                             .launch
                             .as_ref()
                             .map(|s| s.mod_args.as_str())
                             .ok_or("无法确认目标窗口实际加载的 Mod，请通过 Hub 启动")?;
                         crate::audio_mod::validate_runtime_feature(
-                            config,
-                            &account,
+                            target_pid,
                             args,
                             "esc_next_game",
                         )?;

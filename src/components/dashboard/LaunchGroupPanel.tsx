@@ -103,6 +103,7 @@ export function LaunchGroupPanel({
                     type="button"
                     className="launch-group-panel-favorite"
                     data-active={isFavorite ? "true" : undefined}
+                    aria-pressed={isFavorite}
                     aria-label={t(isFavorite ? "launch.favorite.removeLabel" : "launch.favorite.addLabel", { name: group.name })}
                     title={t(isFavorite
                       ? "launch.favorite.removeTitle"

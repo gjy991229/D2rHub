@@ -9,7 +9,7 @@
   padding: 5px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  background: var(--surface-elevated, var(--surface-card));
+  background: rgb(var(--surface-card-rgb));
   box-shadow: var(--shadow-elevated);
 }
 .account-selection-menu > button {
@@ -23,7 +23,7 @@
   border-radius: 5px;
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-align: left;
   cursor: pointer;
 }
@@ -33,5 +33,5 @@
   color: var(--text-primary);
 }
 .account-selection-menu > button:disabled { opacity: .4; cursor: default; }
-.account-selection-menu small { margin-left: auto; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.account-selection-menu small { margin-left: auto; font-size: var(--text-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 .account-selection-menu-check { display: grid; place-items: center; width: 13px; color: var(--accent); }

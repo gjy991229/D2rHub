@@ -2,10 +2,12 @@ import { X } from "lucide-react";
 import { useEffect } from "react";
 import type { Dispatch, KeyboardEvent, SetStateAction } from "react";
 import type { AccountMeta, GlobalConfig } from "../../../store/types";
+import "./corePanels.css";
 
 interface ShortcutsPanelProps {
   config: GlobalConfig;
   accounts: AccountMeta[];
+  onSchemeChange: (slot: number, groupId: string) => void;
   recordingPosition: string | null;
   setRecordingPosition: Dispatch<SetStateAction<string | null>>;
   onKeyDown: (event: KeyboardEvent<HTMLInputElement>, target: string) => void;
@@ -17,6 +19,7 @@ interface ShortcutsPanelProps {
 export function ShortcutsPanel({
   config,
   accounts,
+  onSchemeChange,
   recordingPosition,
   setRecordingPosition,
   onKeyDown,
@@ -50,8 +53,8 @@ export function ShortcutsPanel({
     const error = errors[target];
     const errorId = `shortcut-error-${target.replace(":", "-")}`;
     return (
-      <div className="flex w-[180px] max-w-[45%] shrink-0 flex-col items-end gap-1">
-      <div className="flex max-w-full items-center gap-2">
+      <div className="shortcut-control">
+      <div className="shortcut-control-entry">
         <input
           aria-label={`${label}${isEnglish ? " shortcut" : "快捷键"}`}
           type="text"
@@ -63,14 +66,15 @@ export function ShortcutsPanel({
           data-shortcut-recording={isRecording ? "true" : "false"}
           value={checkingTarget === target ? (isEnglish ? "Checking..." : "正在检查占用...") : isRecording
             ? isEnglish ? "Press a key combo..." : "请按键输入组合..."
-            : shortcut || (isEnglish ? "None" : "无")}
+            : shortcut || (isEnglish ? "Click to record" : "点击录入")}
+          title={shortcut || (isEnglish ? "Click, then press a shortcut. Escape cancels recording." : "点击后按下组合键，Esc 取消录入。")}
           onKeyDown={event => {
             if (isRecording) onKeyDown(event, target);
           }}
           onFocus={() => setRecordingPosition(target)}
           onClick={() => setRecordingPosition(target)}
           onBlur={() => setRecordingPosition(current => current === target ? null : current)}
-          className={`h-[28px] w-[140px] min-w-0 px-3 rounded-lg text-sm font-mono text-center select-none border focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 transition-all duration-150 max-[520px]:w-[112px] ${
+          className={`px-3 rounded-lg text-xs font-mono text-center select-none border focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 transition-all duration-150 ${
             isRecording
               ? "border-accent bg-accent/10 text-accent font-bold"
               : error ? "border-error bg-error/5 text-error cursor-pointer" : "border-border-default bg-surface-hover text-text-primary cursor-pointer hover:border-border-strong"
@@ -95,7 +99,7 @@ export function ShortcutsPanel({
   };
 
   return (
-    <div className="settings-content-grid">
+    <div className="settings-content-grid shortcut-settings-panel">
       <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="application-shortcut-settings-title">
         <h2 id="application-shortcut-settings-title" className="text-xs font-bold text-text-primary">
           {isEnglish ? "D2RHub main window" : "D2RHub 主面板"}
@@ -108,7 +112,7 @@ export function ShortcutsPanel({
 
         <div className="space-y-2.5 pt-1">
           {applicationShortcuts.map((item) => (
-            <div key={item.target} className="flex items-center justify-between gap-3 py-1 max-[640px]:items-start">
+            <div key={item.target} className="shortcut-setting-row">
               <div className="min-w-0">
                 <span className="text-sm font-semibold text-text-secondary">{item.label}</span>
                 <p className="text-2xs text-text-muted">{item.detail}</p>
@@ -117,6 +121,34 @@ export function ShortcutsPanel({
             </div>
           ))}
         </div>
+      </section>
+
+      <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="scheme-shortcut-settings-title">
+        <h2 id="scheme-shortcut-settings-title" className="text-xs font-bold text-text-primary">
+          {isEnglish ? "Launch scheme shortcuts" : "启动方案快捷键"}
+        </h2>
+        <p className="text-2xs text-text-muted">
+          {isEnglish ? "Assign global shortcuts to up to three saved schemes. Save settings to apply." : "最多为三个已保存的启动方案配置全局快捷键，按下即可启动。保存设置后生效。"}
+        </p>
+        {[0, 1, 2].map(slot => {
+          const binding = config.launch_scheme_shortcuts?.[slot];
+          const label = isEnglish ? `Scheme ${slot + 1}` : `方案 ${slot + 1}`;
+          return <div key={slot} className="shortcut-setting-row shortcut-scheme-row">
+            <div className="shortcut-scheme-details">
+              <label className="text-sm font-semibold text-text-secondary" htmlFor={`scheme-shortcut-${slot}`}>{label}</label>
+              <select id={`scheme-shortcut-${slot}`} value={binding?.group_id ?? ""}
+                disabled={checkingTarget !== null || config.launch_groups.length === 0}
+                onChange={event => onSchemeChange(slot, event.target.value)}
+                className="settings-input shortcut-scheme-select">
+                <option value="">{isEnglish ? "Select a scheme" : "请选择启动方案"}</option>
+                {config.launch_groups.map(group => <option key={group.id} value={group.id}
+                  disabled={(config.launch_scheme_shortcuts ?? []).some((item, index) => index !== slot && item.group_id === group.id)}>{group.name}</option>)}
+              </select>
+            </div>
+            {binding?.group_id && shortcutControl(`scheme:${slot}`, binding.shortcut, label)}
+          </div>;
+        })}
+        {config.launch_groups.length === 0 && <p className="text-2xs text-text-muted">{isEnglish ? "Create a launch scheme on the dashboard first." : "请先在主界面创建启动方案。"}</p>}
       </section>
 
       <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="shortcut-settings-title">
@@ -135,7 +167,7 @@ export function ShortcutsPanel({
             const shortcut = bindings[position] || "";
             const target = `account:${position}`;
             return (
-              <div key={account.id} className="flex items-center justify-between gap-3 py-1 max-[640px]:items-start">
+              <div key={account.id} className="shortcut-setting-row">
                 <div className="min-w-0">
                   <span className="text-sm font-semibold text-text-secondary">
                     {isEnglish ? `Position #${position}` : `位置 #${position}`}: {account.display_name || account.id}

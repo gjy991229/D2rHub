@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountMeta, GlobalConfig } from "../../../store/types";
 import { LaunchStrategyPanel } from "./LaunchStrategyPanel";
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const initialConfig = { cn_game_path: "D:\\D2R", global_game_path: "", agent_mode: 3 } as GlobalConfig;
 const account = (id: string, overrides: Partial<AccountMeta> = {}): AccountMeta => ({
@@ -26,6 +26,19 @@ function Harness({ accounts, config = initialConfig }: { accounts: AccountMeta[]
 }
 
 describe("Battle.net retention after multi-account launch", () => {
+  it("lets keyboard users change Agent compatibility strategies with the arrow keys", async () => {
+    // jsdom lacks CSS.escape; the radio name used here has no escapable characters.
+    vi.stubGlobal("CSS", { escape: (value: string) => value });
+    const user = userEvent.setup();
+    render(<Harness accounts={[]} />);
+    await user.click(screen.getByText(/^高级启动兼容设置/));
+    const delay = screen.getByRole("radio", { name: "延时结束 Agent" });
+    await user.click(delay);
+    await user.keyboard("{ArrowRight}");
+    expect((screen.getByRole("radio", { name: "按客户端数量结束" }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByRole("radiogroup", { name: "战网客户端运行数阈值" })).toBeTruthy();
+  });
+
   it("offers initialized Battle.net accounts in card order and defaults to off", () => {
     render(<Harness accounts={[
       account("later", { order: 3, display_name: "我的战网" }),

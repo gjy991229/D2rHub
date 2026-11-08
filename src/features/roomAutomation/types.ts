@@ -1,4 +1,4 @@
-export type CollaborationMode = "default" | "host" | "follower";
+export type CollaborationMode = "default" | "host" | "follower" | "uber_diablo";
 export interface RoomFlowStrategy {
   step_delay_ms: number;
   character_delay_ms: number;

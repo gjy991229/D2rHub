@@ -188,7 +188,7 @@ it("appearance failures leave the selected draft available without publishing an
   expect(useGlobalConfig.getState().config?.theme).toBe("light");
 });
 
-it("keeps recognition enabled after its target check temporarily disables the local draft", async () => {
+it("keeps recognition enabled while changing its listening target", async () => {
   useGlobalConfig.setState({ config: { ...initial, rune_audio_enabled: true, rune_audio_target_account: "main" } });
   const scan = deferred<AudioModSetupState>();
   vi.mocked(invokeCommand).mockReturnValue(scan.promise as never);
@@ -214,7 +214,7 @@ it("keeps recognition enabled after its target check temporarily disables the lo
   });
   let changing!: Promise<void>;
   act(() => { changing = result.current.audio.handleAudioTargetChange("other"); });
-  expect(result.current.session.config?.rune_audio_enabled).toBe(false);
+  expect(result.current.session.config?.rune_audio_enabled).toBe(true);
   expect(useGlobalConfig.getState().config?.rune_audio_enabled).toBe(true);
   await act(async () => {
     scan.resolve({ account_id: "other", ready: true, installed_mods: [], feature_groups: ["audio_telemetry"] } as unknown as AudioModSetupState);

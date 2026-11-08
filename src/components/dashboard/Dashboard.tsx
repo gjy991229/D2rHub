@@ -1,6 +1,7 @@
 import React from "react";
 import { TopNav } from "./TopNav";
 import type { BattleReportQuickRange } from "../../utils/battleReport";
+import "./dashboard.css";
 
 interface DashboardProps {
   onAbout: () => void;

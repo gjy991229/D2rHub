@@ -8,6 +8,12 @@ import {
 } from "./featureContract";
 
 describe("audio feature group truth", () => {
+  it("only sends scene-audio preferences when audio recognition is selected", () => {
+    const selection = { includeAudioTelemetry: true, includeSceneAudio: false, includeRoomTools: true, includeAutoExitOnDeath: false };
+    expect(audioModFeatureInvokeOptions(selection).includeSceneAudio).toBe(false);
+    expect(audioModFeatureInvokeOptions({ ...selection, includeAudioTelemetry: false })).not.toHaveProperty("includeSceneAudio");
+  });
+
   it("only sends default-Hell preferences when processing room tools", () => {
     const selection = { includeAudioTelemetry: false, includeRoomTools: true, includeAutoExitOnDeath: false, roomToolsDefaultHell: false };
     expect(audioModFeatureInvokeOptions(selection).roomToolsDefaultHell).toBe(false);

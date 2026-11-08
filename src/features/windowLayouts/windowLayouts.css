@@ -1,6 +1,6 @@
 .window-layout-panel { display: grid; gap: 18px; padding: 0; border: 0; min-inline-size: 0; margin: 0; animation: layout-panel-in 180ms ease-out; }
 .layout-panel-heading { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
-.layout-panel-heading h3, .layout-editor-heading h3 { margin: 0; color: var(--text-primary); font-size: var(--text-sm); font-weight: 750; line-height: 1.35; }
+.layout-panel-heading h3, .layout-editor-heading h3 { margin: 0; color: var(--text-primary); font-size: var(--text-sm); font-weight: 650; line-height: 1.45; }
 .layout-panel-heading p { margin: 3px 0 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.45; }
 .layout-draft-toolbar { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 10px; }
 .layout-draft-actions { display: flex; align-items: center; min-height: 36px; }
@@ -97,7 +97,7 @@
 .layout-preset-disclosure > svg { transition: transform 140ms ease; }
 .layout-preset-shelf { display: grid; gap: 12px; padding: 18px 0; border-block: 1px solid var(--border-default); animation: layout-panel-in 140ms ease-out; }
 .layout-inspector-heading { grid-column: 1 / -1; display: flex; gap: 10px; align-items: baseline; }
-.layout-inspector-heading strong { font-size: var(--text-sm); font-weight: 750; color: var(--text-primary); }
+.layout-inspector-heading strong { font-size: var(--text-sm); font-weight: 600; color: var(--text-primary); }
 .layout-inspector-heading span { color: var(--text-muted); font-size: var(--text-xs); }
 .layout-panel-footer > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .layout-save-feedback { min-height: 24px; }
@@ -127,6 +127,10 @@
 @container (max-width: 620px) {
   .layout-inspector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .layout-inspector .layout-monitor-field { grid-column: 1 / -1; }
+}
+@container (max-width: 420px) {
+  .layout-panel-heading { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .layout-stage-toolbar { flex-wrap: wrap; }
 }
 @media (max-width: 800px) {
   .layout-editor-heading { flex-wrap: wrap; }

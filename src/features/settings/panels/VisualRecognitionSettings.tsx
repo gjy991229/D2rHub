@@ -107,17 +107,21 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
           <div className="feature-setting-row feature-account"><div><strong>{en ? "Listening account" : "接收信号的账号"}</strong><p>{en ? "Shared follower listens to the primary account. The primary and followers join using the local room rule." : "拼房跟随监听本机主号聊天框，主号与小号按本机规则一起加入。"}</p></div>
             <span className="feature-listening-account">{accounts.find(account => account.id === primaryAccountId)?.display_name || primaryAccountId || (en ? "Choose a primary account" : "请先配置主号")}</span>
           </div>
-          <p className="feature-note">{en ? "Signal: *********** 077 ***********, sent three times. Detect repeated symbols on both sides, then OCR only the numeric center for deduplication. Successful reads pause OCR for 5 seconds; unchanged masks are cached. Update both computers and synchronize room rules yourself." : "信号示例：*********** 077 ***********，主机连发三条。宽松检测两侧连续符号，再仅 OCR 中间数字用于持久去重，仍按本机规则跟房。读取成功后冷却 5 秒，已识别且掩膜未变化时跳过 OCR。两端需更新并自行同步规则。"}</p>
+          <div className="feature-note"><strong>{en ? "Before following another computer" : "跨电脑跟房前"}</strong><ol className="feature-instructions">
+            <li>{en ? "Use Shared host on the computer creating rooms, and Shared follower on the joining computer." : "建房电脑选择“拼房主机”，跟房电脑选择“拼房跟随”。"}</li>
+            <li>{en ? "Copy and paste the same room rule on both computers, including the sequence and password." : "两端复制、粘贴相同房间规则，确认序号与密码一致。"}</li>
+            <li>{en ? "Keep the primary account’s chat visible. Signals such as *********** 077 *********** must fit inside the capture region." : "保持本机主号聊天框可见，将 *********** 077 *********** 这类完整信号包含在截图范围内。"}</li>
+          </ol></div>
         </> : <>
-          {toggle("area_enabled", en ? "Recognize scenes and time runs" : "场景识别与计时", en ? "OCR alone identifies scenes and starts, splits or stops run timers. Red entry text and purple Terror Zone text are read separately every second." : "仅通过 OCR 识别场景并开始、切换或停止计时；每秒检查红字地区名和下方紫色 TZ 文字，分行用原图识别。")}
-          <p className="feature-help">{en ? "Turning scene OCR off disables automatic scene timing and drop attribution." : "关闭场景 OCR 后，不再自动识别地点、切换计时或确定掉落归属。"}</p>
-          <p className="feature-note">{en ? "Confirmed rune drops #24–#33 automatically save a full game-window PNG. Images do not verify or block drops; capture failures leave audio records intact. Files are grouped by date, and the database stores only the linked path." : "声纹确认 #24–#33 符文后，自动保存游戏窗口 PNG 截图，按日期归档。截图不识别、不核验、不拦截掉落；保存失败不影响声纹记录。数据库只保存关联路径。"}</p>
+          {toggle("area_enabled", en ? "Recognize scenes and time runs" : "场景识别与计时", en ? "Audio or OCR confirms scenes. Terror Zone text is read after a scene is confirmed." : "声纹或 OCR 确认场景并计时；确认场景后检测下方 TZ 文字区域，通过 OCR 匹配恐怖区域。")}
+          <p className="feature-help">{en ? "Turning scene recognition off disables both audio and OCR scene timing and location attribution for drops." : "关闭场景识别后，地区声纹与 OCR 均不再自动切换地点、计时或确定掉落地点。"}</p>
+          <p className="feature-note">{en ? "Confirmed rune drops #24–#33 automatically save a full game-window PNG, grouped by date. Screenshot failures leave drop records intact." : "声纹确认 #24–#33 符文掉落后，自动保存完整游戏窗口 PNG，按日期归档。截图保存失败不影响掉落记录。"}</p>
           <Button size="sm" onClick={() => { void invokeCommand("open_drop_screenshots_dir").catch(e => setError(String(e))); }}><FolderOpen size={14} aria-hidden="true" />{en ? "Open drop screenshots" : "打开掉落截图目录"}</Button>
           <p className="feature-help">{en ? "Images are processed locally. OCR resources are prepared only when needed." : "截图仅在本机处理，识别资源按需准备。"}</p>
         </>}
         <details className="feature-disclosure"><summary><Settings2 size={14} aria-hidden="true" />{en ? "Capture and timing" : "截图与识别参数"}<ChevronDown size={14} className="feature-chevron" aria-hidden="true" /></summary><div className="feature-disclosure-body">
           {mode === "chat" && <div className="feature-field-row"><label htmlFor="vision-poll">{en ? "Check interval" : "检查间隔"}</label><div className="feature-unit-input"><input id="vision-poll" className="settings-input" type="number" min="1000" max="10000" step="500" value={draft.poll_ms} disabled={busy} onChange={e => { if (Number.isFinite(e.target.valueAsNumber)) update({ poll_ms: e.target.valueAsNumber }); }} onBlur={() => { if (dirty) void save(draft); }} /><span>ms</span></div></div>}
-          <p className="feature-help">{mode === "chat" ? (en ? "Include both star groups and the numeric center on the same line." : "范围应覆盖同一行的左右星号串和中间数字。") : (en ? "Include the red entry title and purple Terror Zone line below it; a 9% height is recommended. Drops use a separate capture." : "范围应覆盖红字地区名及下方紫色恐怖／恐惧区域文字，高度建议 9%；掉落使用独立截图。")}</p>
+          <p className="feature-help">{mode === "chat" ? (en ? "Include both star groups and the numeric center on the same line." : "范围应覆盖同一行的左右星号串和中间数字。") : (en ? "Include the red entry title and Terror Zone text below it; a 9% height is recommended. Drops use a separate capture." : "范围应覆盖红字地区名及下方恐怖／恐惧区域提示，高度建议 9%；掉落使用独立截图。")}</p>
           {roi(mode === "chat" ? "chat_roi" : "area_roi")}
           <Button size="sm" disabled={busy || (mode === "chat" && !primaryAccountId)} onClick={async () => {
             setBusy(true); setPreviewing(true); setError("");

@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { ChevronDown, PackageOpen, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronDown, Layers, PackageOpen, SlidersHorizontal, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { Toggle } from "../../../components/ui/Toggle";
 import { HubModSettings } from "./HubModSettings";
@@ -31,6 +31,7 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
     .join(en ? ", " : "、");
   const detailsId = useId();
   const scanned = capsule.origin === "scanned";
+  const EntryIcon = !scanned ? SlidersHorizontal : capsule.processed ? Layers : PackageOpen;
   const supportsDeathExit = scanned && capsule.feature_groups.includes("auto_exit_on_death");
   const save = async () => {
     if (draft.trim() && !busy && await onUpdate(draft.trim())) setEditing(false);
@@ -38,21 +39,22 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
 
   return <article className="mod-library-entry" data-expanded={expanded || undefined} aria-label={capsule.name}>
     <div className="mod-library-entry-summary">
-      <PackageOpen size={18} aria-hidden="true" />
+      <EntryIcon size={18} aria-hidden="true" />
       <div className="mod-library-entry-copy">
         <h3>{capsule.name}</h3>
-        <p>{scanned ? (capsule.requires_unpack ? (en ? "MPQ archive" : "MPQ 压缩包") : (en ? "Installed Mod" : "已安装 Mod")) : (en ? "Custom launch preset" : "自定义启动预设")}
-          {capsule.processed && ` · ${capsuleBaseModLabel(capsule, en)}`}</p>
+        <p>{scanned ? (capsule.requires_unpack ? (en ? "MPQ archive" : "MPQ 压缩包") : (capsule.processed ? (en ? "Processed Mod" : "加工成品") : (en ? "Source Mod" : "源 Mod"))) : (en ? "Custom launch preset" : "自定义启动预设")}
+          {capsule.processed && ` · ${en ? "Source" : "来源"}：${capsuleBaseModLabel(capsule, en)}`}</p>
         {featureLabels.length > 0 && <p className="mod-library-feature-list">{featureLabels.join(" · ")}</p>}
         <small>{assignedNames ? `${en ? "Used by" : "使用账号"}：${assignedNames}` : (en ? "No accounts assigned" : "尚未分配给账号")}</small>
         {capsule.issue && <p className="mod-catalog-error" role="status">{capsule.issue}</p>}
         {capsule.update_required && <small className="mod-library-update">{en ? "Feature update available" : "功能需要更新"}</small>}
       </div>
+      <div className="mod-entry-actions">{capsule.update_required && <Button size="sm" disabled={busy} onClick={onProcess}>{en ? "Update" : "更新"}</Button>}
       <Button size="sm" variant="ghost" aria-expanded={expanded} aria-controls={detailsId}
         aria-label={`${en ? "Configure" : "设置"} ${capsule.name}`}
         onClick={() => setExpanded(value => !value)}>
         {en ? "Configure" : "设置"}<ChevronDown size={13} className={expanded ? "is-expanded" : undefined} />
-      </Button>
+      </Button></div>
     </div>
     {expanded && <div id={detailsId} className="mod-library-entry-details">
       {scanned && !capsule.requires_unpack && (capsule.lightweight_profile || ["LiteHub", "BoHub", "NullHub"].includes(capsule.name) || ["LiteHub", "BoHub", "NullHub"].includes(capsule.source_mod_name ?? "")) &&
@@ -72,7 +74,7 @@ export function ModCatalogEntry({ capsule, accounts, en, minimalMode, busy, onUp
         <input id={`${detailsId}-args`} className="settings-input" autoFocus value={draft} disabled={busy}
           onChange={event => setDraft(event.target.value)} onKeyDown={event => {
             if (event.key === "Escape") { event.stopPropagation(); setEditing(false); }
-            if (event.key === "Enter") void save();
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) void save();
           }} />
         <Button size="sm" variant="primary" disabled={busy || !draft.trim()} onClick={() => void save()}>{en ? "Save" : "保存"}</Button>
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>{en ? "Cancel" : "取消"}</Button>

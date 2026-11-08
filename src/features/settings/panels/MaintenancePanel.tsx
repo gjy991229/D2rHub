@@ -4,6 +4,7 @@ import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
 import type { FeatureProfile } from "../../profile/featureProfile";
 import type { AccountMeta } from "../../../store/types";
+import "./corePanels.css";
 
 interface MaintenancePanelProps {
   featureProfile: FeatureProfile;
@@ -52,7 +53,7 @@ export function MaintenancePanel({
 
   return (
     <>
-    <div className="settings-content-grid">
+    <div className="settings-content-grid maintenance-settings-panel">
       <section className="spatial-panel p-3 space-y-3 settings-span-full" aria-labelledby="feature-profile-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-[68ch]">
@@ -100,35 +101,35 @@ export function MaintenancePanel({
 
       <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="maintenance-title">
         <h2 id="maintenance-title" className="text-xs font-bold text-text-primary">应用维护</h2>
-        <div className="flex items-center justify-between gap-3 py-1">
+        <div className="maintenance-action-row">
           <div>
             <span className="text-sm font-semibold text-text-secondary">打开系统运行日志</span>
             <p className="text-2xs text-text-muted">查看当前多开工具的底层系统日志以供排查故障</p>
           </div>
           <Button size="sm" onClick={onOpenLogs}>
-            <FolderOpen size={11} className="mr-1" />
+            <FolderOpen size={14} aria-hidden="true" />
             打开日志
           </Button>
         </div>
 
-        <div className="flex items-center justify-between gap-3 py-1 border-t border-border-default/50 pt-3">
+        <div className="maintenance-action-row border-t border-border-default/50">
           <div>
             <span className="text-sm font-semibold text-text-secondary">导出隐私脱敏诊断包</span>
             <p className="text-2xs text-text-muted">包含模块健康、任务时间线、配置摘要与脱敏日志，不导出 Token、账号名或用户目录</p>
           </div>
           <Button size="sm" loading={diagnosticBusy} onClick={onExportDiagnostics}>
-            <FileArchive size={11} className="mr-1" />
+            <FileArchive size={14} aria-hidden="true" />
             {diagnosticBusy ? "正在导出" : "导出诊断包"}
           </Button>
         </div>
 
-        <div className="flex items-center justify-between gap-3 py-1 border-t border-border-default/50 pt-3">
+        <div className="maintenance-action-row border-t border-border-default/50">
           <div>
             <span className="text-sm font-semibold text-text-secondary">重新配置游戏路径</span>
             <p className="text-2xs text-text-muted">重新运行首次引导向导以修改基础路径配置</p>
           </div>
           <Button size="sm" onClick={onRunSetup}>
-            <Settings size={11} className="mr-1" />
+            <Settings size={14} aria-hidden="true" />
             运行向导
           </Button>
         </div>
@@ -152,18 +153,19 @@ export function MaintenancePanel({
                 setExportPickerOpen(current => !current);
               }}
             >
-              <Download size={11} className="mr-1" />
+              <Download size={14} aria-hidden="true" />
               导出账号
             </Button>
-            <Button size="sm" disabled={transferBusy !== null} onClick={onImport}>
-              <Upload size={11} className="mr-1" />
+            <Button size="sm" loading={transferBusy === "import"} disabled={transferBusy !== null} onClick={onImport}>
+              <Upload size={14} aria-hidden="true" />
               {transferBusy === "import" ? "导入中" : "导入账号"}
             </Button>
           </div>
         </div>
+        {accounts.length === 0 && <p className="maintenance-export-status">添加账号后即可导出；已有迁移文件可直接导入。</p>}
 
         {exportPickerOpen && (
-          <div className="border-t border-border-default/50 pt-3 space-y-3">
+          <fieldset disabled={transferBusy !== null} className="min-w-0 border-t border-border-default/50 pt-3 space-y-3">
             <div
               role="alert"
               className="flex items-start gap-2 rounded-lg px-3 py-2.5"
@@ -226,7 +228,7 @@ export function MaintenancePanel({
                 我已理解导出文件包含可直接使用的登录凭据，并会妥善保管
               </span>
             </label>
-            <div className="flex justify-end gap-2">
+            <div className="maintenance-export-actions">
               <Button
                 size="sm"
                 onClick={() => {
@@ -239,13 +241,14 @@ export function MaintenancePanel({
               <Button
                 variant="primary"
                 size="sm"
+                loading={transferBusy === "export"}
                 disabled={exportAccountIds.length === 0 || !plaintextRiskAcknowledged || transferBusy !== null}
                 onClick={onExport}
               >
                 {transferBusy === "export" ? "导出中" : `导出 ${exportAccountIds.length} 个账号（含明文）`}
               </Button>
             </div>
-          </div>
+          </fieldset>
         )}
       </section>
     </div>

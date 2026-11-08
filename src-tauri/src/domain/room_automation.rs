@@ -182,6 +182,7 @@ pub enum CollaborationMode {
     Default,
     Host,
     Follower,
+    UberDiablo,
 }
 
 /// Persisted configuration for room automation.

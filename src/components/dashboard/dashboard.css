@@ -1,0 +1,19 @@
+/* Dashboard objects and their actions share one readable type scale. */
+:root[data-theme] .dashboard-surface .account-tile .tile-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:root[data-theme] .dashboard-surface .account-tile .title-mod-row > input {
+  width: calc(100% - 114px);
+  min-width: 0;
+  max-width: 100%;
+}
+.dashboard-empty { min-height: 0; overflow: auto; padding-block: 24px; }
+.dashboard-empty h2 { font-size: var(--text-lg); font-weight: 600; }
+.dashboard-empty .micro-meta { font-size: var(--text-xs); line-height: 1.6; }
+.dashboard-empty .primary-cta { min-height: 36px; padding-inline: 16px; }
+.account-quick-popover .scheme-settings-error { white-space: normal; line-height: 1.6; }
+.account-quick-popover .position-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--text-primary); }
+.launch-group-panel-favorite[aria-pressed="true"] { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { .dashboard-surface .animate-card-in { animation: none; } }

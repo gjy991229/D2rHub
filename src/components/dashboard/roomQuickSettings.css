@@ -1,19 +1,23 @@
 .room-quick-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; }
-.room-quick-toolbar > span { font-size: 12px; color: var(--text-secondary); font-weight: 500; }
+.room-quick-toolbar > span { font-size: var(--text-2xs); color: var(--text-secondary); font-weight: 500; }
 .room-quick-toolbar > div { display: flex; gap: 2px; }
 .anchored-panel.room-naming-panel { background: rgb(var(--surface-glass-rgb)); }
 
-.room-quick-edit-fields > label { display: grid; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.room-quick-edit-fields > label { display: grid; gap: 6px; font-size: var(--text-2xs); color: var(--text-secondary); }
 .room-quick-edit-fields > label select { width: 100%; min-height: 34px; border: 1px solid var(--border-default); border-radius: 6px; background: var(--surface-hover); color: var(--text-primary); padding: 4px 8px; }
 .room-quick-edit-fields > .scheme-account-picker { max-height: 144px; overflow-y: auto; margin-top: 10px; }
 
-.room-quick-edit-fields > .feature-help { font-size: 11px; line-height: 1.6; color: var(--text-muted); margin: 8px 0 12px; }
-.room-quick-role-label { margin: 10px 0 4px; font-size: 12px; color: var(--text-secondary); }
+.room-quick-edit-fields > .feature-help { font-size: var(--text-2xs); line-height: 1.6; color: var(--text-muted); margin: 8px 0 12px; }
+.room-quick-role-label { margin: 10px 0 4px; font-size: var(--text-2xs); color: var(--text-secondary); }
 .room-quick-edit-fields > .scheme-account-picker { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.room-quick-edit-fields > .scheme-account-picker label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 12px; cursor: pointer; }
+.room-quick-edit-fields > .scheme-account-picker label { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--border-default); border-radius: 6px; font-size: var(--text-2xs); cursor: pointer; }
 .room-quick-edit-fields > .scheme-account-picker label:has(input:checked) { background: var(--surface-hover); border-color: var(--accent); }
 
-.recognition-quick-content .feature-help { font-size: 12px; line-height: 1.6; color: var(--text-secondary); }
+.recognition-quick-content .feature-help { font-size: var(--text-2xs); line-height: 1.6; color: var(--text-secondary); }
 .recognition-quick-content .scheme-account-picker { display: grid; gap: 6px; max-height: 260px; overflow-y: auto; }
-.recognition-quick-content .scheme-account-picker label { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 6px; font-size: 13px; cursor: pointer; }
+.recognition-quick-content .scheme-account-picker label { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-default); border-radius: 6px; font-size: var(--text-xs); cursor: pointer; }
 .recognition-quick-content label:has(input:checked) { border-color: var(--accent); background: var(--surface-hover); }
+
+.room-quick-edit-fields .scheme-account-picker label, .recognition-quick-content .scheme-account-picker label { overflow-wrap: anywhere; }
+.room-quick-edit-fields .scheme-account-picker input, .recognition-quick-content .scheme-account-picker input { flex-shrink: 0; accent-color: var(--accent); }
+.room-quick-edit-fields .scheme-account-picker label:has(input:focus-visible), .recognition-quick-content .scheme-account-picker label:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }

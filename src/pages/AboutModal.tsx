@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
-import { Heart, HeartHandshake, Copy, Check, ZoomIn, X, ChevronRight, ChevronDown, Github } from "lucide-react";
+import { Heart, HeartHandshake, Copy, Check, ZoomIn, ChevronRight, ChevronDown, Github } from "lucide-react";
 import { Modal } from "../components/ui/Modal";
 import UpdateConfirmModal from "../components/ui/UpdateConfirmModal";
 import { invokeCommand } from "../platform/tauri";
 import { showToast } from "../components/ui/Toast";
+import { useI18n } from "../i18n";
 
 interface Props {
   open: boolean;
@@ -11,6 +12,7 @@ interface Props {
 }
 
 export function AboutModal({ open, onClose }: Props) {
+  const { language } = useI18n();
   const [copied, setCopied] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [sponsors, setSponsors] = useState<string[]>([]);
@@ -154,7 +156,7 @@ export function AboutModal({ open, onClose }: Props) {
   return (
     <>
       <Modal open={open} onClose={onClose} title="关于" width="max-w-sm">
-        <div className="space-y-5 max-h-[calc(100vh-7rem)] overflow-y-auto overscroll-contain pr-1 -mr-1">
+        <div className="space-y-5">
           {/* App info */}
           <div className="text-center">
             <img src="/logo.png" alt="D2RHub"
@@ -165,7 +167,7 @@ export function AboutModal({ open, onClose }: Props) {
               Diablo II Resurrected 多账号管理
             </p>
             <div className="flex items-center justify-center gap-2 mt-1">
-              <p className="text-xs text-text-muted/60">
+              <p className="text-xs text-text-muted">
                 版本 v{version}
               </p>
               <span className="text-xs text-text-muted/30">•</span>
@@ -179,7 +181,7 @@ export function AboutModal({ open, onClose }: Props) {
               <span className="text-xs text-text-muted/30">•</span>
               <button
                 onClick={openGithub}
-                className="text-xs text-text-muted/60 hover:text-text-primary flex items-center gap-0.5 font-medium cursor-pointer"
+                className="text-xs text-text-muted hover:text-text-primary flex items-center gap-0.5 font-medium cursor-pointer"
                 title="打开 GitHub 仓库"
               >
                 <Github size={11} />
@@ -189,7 +191,7 @@ export function AboutModal({ open, onClose }: Props) {
           </div>
 
           {/* QQ */}
-          <div className="rounded-xl px-3.5 py-2.5 flex items-center justify-between"
+          <div className="rounded-xl px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2"
             style={{ background: "var(--surface-hover)" }}>
             <span className="text-md text-text-secondary">交流反馈QQ群 {qq}</span>
             <button onClick={copyQQ}
@@ -356,22 +358,13 @@ export function AboutModal({ open, onClose }: Props) {
 
       {/* Full-screen preview */}
       {previewImage && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center"
-          style={{ background: "rgba(0,0,0,0.85)" }}
-          onClick={() => setPreviewImage(null)}>
-          <button onClick={() => setPreviewImage(null)}
-            className="absolute top-4 right-4 p-2 rounded-lg text-white/70 hover:text-white
-              hover:bg-white/10 transition-colors z-10">
-            <X size={22} />
-          </button>
-          <div className="bg-white rounded-2xl p-6 max-w-[360px] max-h-[80vh]"
-            style={{ boxShadow: "var(--shadow-elevated)" }}
-            onClick={e => e.stopPropagation()}>
+        <Modal open onClose={() => setPreviewImage(null)} title={language === "en-US" ? "Payment code preview" : "收款码预览"} width="max-w-sm">
+          <div className="rounded-xl bg-white p-3">
             <img src={previewImage} alt="收款码"
-              className="w-full h-full object-contain max-h-[65vh] rounded-lg" />
-            <p className="text-center text-gray-500 text-xs mt-3">请使用对应 App 扫描</p>
+              className="w-full object-contain max-h-[60vh] rounded-lg" />
           </div>
-        </div>
+          <p className="text-center text-text-secondary text-xs mt-3">{language === "en-US" ? "Scan with the corresponding app" : "请使用对应 App 扫描"}</p>
+        </Modal>
       )}
 
       <UpdateConfirmModal

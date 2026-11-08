@@ -62,7 +62,11 @@ export function AnchoredPanel({ open, anchor, title, onClose, children, classNam
     if (!open) return;
     const content = panel.current;
     const trigger = anchor.current;
-    const frame = requestAnimationFrame(() => content?.focus({ preventScroll: true }));
+    const frame = requestAnimationFrame(() => {
+      if (content && !content.contains(document.activeElement)) {
+        content.focus({ preventScroll: true });
+      }
+    });
     const outside = (event: PointerEvent) => {
       if (event.target instanceof Node && !content?.contains(event.target) && !trigger?.contains(event.target)) closeRef.current();
     };

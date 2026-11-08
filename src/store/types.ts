@@ -138,6 +138,7 @@ export interface GlobalConfig {
   rune_audio_min_gem_level?: number;
   rune_audio_tracked_charm_codes?: string[];
   shortcut_bindings_json: string;
+  launch_scheme_shortcuts?: { group_id: string; shortcut: string }[];
   /** Main-window toggle; retain the stored name for older configurations. */
   show_main_window_shortcut?: string;
   /** Legacy fallback, cleared when migrated to the single toggle shortcut. */
@@ -382,6 +383,7 @@ export interface InstalledAudioMod {
   audio_reusable: boolean;
   auto_exit_on_death_enabled: boolean;
   room_tools_default_hell?: boolean;
+  scene_audio_enabled?: boolean;
 }
 
 export interface AudioModFeatureGroup {

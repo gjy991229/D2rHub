@@ -20,7 +20,7 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
         title: "Choose how you use D2RHub",
         description: "This only changes which features are visible and running. Your settings and data are never deleted.",
         minimal: "Pure mode",
-        minimalDetail: "Multi-instance launching and Mod management. Optional runtimes stay unloaded; input services start only when needed.",
+        minimalDetail: "Launch multiple accounts and manage Mods. Overlays, recognition, and room automation stay off.",
         normal: "Normal mode",
         normalDetail: "Keep the current complete experience and resume previously enabled modules.",
         affected: `${installedCount} configured module${installedCount === 1 ? "" : "s"} will be kept for normal mode.`,
@@ -32,7 +32,7 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
         title: "选择 D2RHub 使用模式",
         description: "模式只改变可见功能和实际运行范围，不会删除任何设置或数据。",
         minimal: "纯净模式",
-        minimalDetail: "保留多开与 Mod 管理；不创建扩展运行实例，输入服务按需启动。",
+        minimalDetail: "保留多账号启动与 Mod 管理，关闭悬浮窗、识别统计和自动跟房。",
         normal: "正常模式",
         normalDetail: "保留当前完整功能，并按原配置恢复已启用模块。",
         affected: `现有 ${installedCount} 个模块配置会为正常模式完整保留。`,
@@ -60,7 +60,7 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
         </div>
 
         <div className="grid grid-cols-2 gap-3 max-[620px]:grid-cols-1" role="radiogroup" aria-label={copy.title}>
-          {options.map((option) => {
+          {options.map((option, index) => {
             const Icon = option.icon;
             const active = selected === option.id;
             return (
@@ -69,8 +69,16 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
                 type="button"
                 role="radio"
                 aria-checked={active}
+                tabIndex={active || (!selected && index === 0) ? 0 : -1}
                 disabled={saving}
                 onClick={() => setSelected(option.id)}
+                onKeyDown={event => {
+                  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+                  event.preventDefault();
+                  const next = event.key === "Home" ? 0 : event.key === "End" ? options.length - 1 : (index + 1) % options.length;
+                  setSelected(options[next].id);
+                  event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
+                }}
                 className="relative min-h-[144px] rounded-card p-4 text-left transition-all duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2 disabled:opacity-60"
                 style={{
                   background: active ? "rgb(var(--accent-rgb) / 0.08)" : "var(--surface-tile-soft, var(--surface-card))",
@@ -83,7 +91,7 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
                 <strong className="block text-sm font-semibold text-text-primary">{option.title}</strong>
                 <span className="mt-1.5 block text-xs leading-relaxed text-text-secondary">{option.detail}</span>
                 {active && (
-                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-white" aria-hidden="true">
+                  <span className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full" style={{ background: "var(--cta-bg)", color: "var(--cta-text)" }} aria-hidden="true">
                     <Check size={12} strokeWidth={2.4} />
                   </span>
                 )}

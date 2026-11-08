@@ -36,7 +36,7 @@ describe("Recognition inspection and Mod workflow isolation", () => {
     await act(() => result.current.handleAudioToggle(true));
     expect(persistConfig).toHaveBeenCalledWith(expect.objectContaining({ rune_audio_enabled: true, rune_audio_target_account: "main" }), true);
     expect(requestProcessing).not.toHaveBeenCalled();
-    expect(vi.mocked(invokeCommand).mock.calls.filter(([command]) => command === "get_audio_mod_setup_state")).toHaveLength(2);
+    expect(vi.mocked(invokeCommand).mock.calls.filter(([command]) => command === "get_audio_mod_setup_state")).toHaveLength(1);
   });
 
   it("invalidates only a changed account's Mod and runtime inspection", async () => {
@@ -85,7 +85,7 @@ describe("Recognition inspection and Mod workflow isolation", () => {
     expect(result.current.hasReadyAudioMod).toBe(false);
     expect(requestProcessing).not.toHaveBeenCalled();
     await act(() => result.current.handleAudioToggle(true));
-    expect(requestProcessing).toHaveBeenCalledWith({ origin: "recognition", accountId: "main" });
+    expect(requestProcessing).not.toHaveBeenCalled();
   });
 
   it("reuses a completed inspection when returning to recognition", async () => {
@@ -155,7 +155,7 @@ describe("external recognition preserves account preferences", () => {
     await act(() => result.current.handleAudioTargetChange("main"));
     expect(result.current.config.rune_audio_external_target).toBeNull();
     expect(result.current.config.rune_audio_target_account).toBe("main");
-    expect(invokeCommand).toHaveBeenCalledWith("get_audio_mod_setup_state", { accountId: "main" });
+    expect(invokeCommand).not.toHaveBeenCalledWith("get_audio_mod_setup_state", { accountId: "main" });
     expect(vi.mocked(invokeCommand).mock.calls.some(([command]) => command === "apply_audio_mod_to_account" || command === "assign_mod_capsule_to_account")).toBe(false);
   });
   it("only binds a discovered process after the user explicitly selects it", async () => {

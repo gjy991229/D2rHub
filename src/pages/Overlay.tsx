@@ -874,8 +874,7 @@ export function Overlay() {
     if (!supportsCompactMode) return;
     const target = event.target;
     if (
-      isStatsOverlay
-      && target instanceof Element
+      target instanceof Element
       && target.closest('[data-overlay-interactive="true"]')
     ) {
       return;
@@ -897,8 +896,7 @@ export function Overlay() {
       if (event.key !== "Enter" || event.repeat) return;
       const target = event.target;
       if (
-        isStatsOverlay
-        && target instanceof Element
+        target instanceof Element
         && target.closest('[data-overlay-interactive="true"]')
       ) {
         return;
@@ -2045,10 +2043,10 @@ export function Overlay() {
                       className="overlay-drop-pill relative inline-flex items-center overflow-hidden pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
                         transition-all duration-200 hover:brightness-110 group"
                       style={{
-                        background: high ? "rgba(255,119,0,0.18)" : "var(--accent-glow)",
-                        color: high ? "#ffaa00" : "var(--accent)",
+                        background: high ? "color-mix(in srgb, var(--warning) 12%, transparent)" : "var(--accent-glow)",
+                        color: high ? "var(--warning)" : "var(--accent)",
                         border: high
-                          ? "1px solid rgba(255,119,0,0.5)"
+                          ? "1px solid color-mix(in srgb, var(--warning) 50%, transparent)"
                           : "1px solid var(--border-strong)",
                         WebkitAppRegion: "no-drag",
                       } as React.CSSProperties}
@@ -2058,7 +2056,8 @@ export function Overlay() {
                       )}
                       <span className="relative z-[1]">{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
                       {dropScope === "overview" && <button
-                        className="absolute right-0.5 top-0 bottom-0 z-[1] flex items-center justify-center w-3 text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                        className="absolute right-0.5 top-0 bottom-0 z-[1] flex items-center justify-center w-3 text-text-muted hover:text-error opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+                        aria-label={`${deleteDropTitle}: ${getOverlayDropLabel(drop, useEnglish)}`}
                         onClick={(e) => {
                           e.stopPropagation();
                           stats.removeCurrentDrop(latestIndex);

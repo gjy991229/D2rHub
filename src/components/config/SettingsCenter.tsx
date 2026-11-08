@@ -8,6 +8,7 @@ import { flushWindowGeometrySaves } from "../../hooks/windowGeometryFlush";
 import type { GlobalConfig } from "../../store/types";
 import { validateTrackingTarget } from "../../utils/trackingTarget";
 import { installationPathEditsAreInvalid } from "../../utils/installationPathChanges";
+import { validatePathSelection } from "../../utils/pathSelection";
 import { useGlobalSettingsDraft } from "../../features/settings/useGlobalSettingsDraft";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
 import { PathsPanel } from "../../features/settings/panels/PathsPanel";
@@ -380,6 +381,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         filters: extensions ? [{ name: title, extensions }] : undefined,
       });
       if (sel) {
+        await validatePathSelection(field, sel as string);
         updateConfig(c => {
           (c as any)[field] = sel;
         });
@@ -397,6 +399,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
         title,
       });
       if (sel) {
+        await validatePathSelection(field, sel as string);
         updateConfig(c => {
           (c as any)[field] = sel;
         });
@@ -406,8 +409,14 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     }
   };
 
-  const applyDetectedPath = (field: keyof GlobalConfig, value: string | null) => {
+  const applyDetectedPath = async (field: keyof GlobalConfig, value: string | null) => {
     if (value) {
+      try {
+        await validatePathSelection(field, value);
+      } catch (error) {
+        showToast("error", String(error));
+        return;
+      }
       updateConfig(c => {
         (c as any)[field] = value;
       });
@@ -618,7 +627,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onExternalTargetChange={audio.handleExternalTargetChange}
                 onSelectExternalInstance={audio.selectExternalInstance}
                 onAudioTargetChange={audio.handleAudioTargetChange}
-                onAudioToggle={config.rune_audio_external_target ? audio.handleAudioToggle : modFeatures.toggleRecognition}
+                onAudioToggle={audio.handleAudioToggle}
                 onPrepareModCapsule={(accountId, capsuleId) => {
                   void modFeatures.prepareFeature(accountId, capsuleId, "recognition");
                 }}
@@ -670,6 +679,12 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 setRecordingPosition={setRecordingPos}
                 onKeyDown={handleShortcutKeyDown}
                 onClear={handleClearShortcut}
+                onSchemeChange={(slot, groupId) => updateConfig(c => {
+                  const bindings = c.launch_scheme_shortcuts ?? [];
+                  while (bindings.length <= slot) bindings.push({ group_id: "", shortcut: "" });
+                  bindings[slot] = { group_id: groupId, shortcut: groupId ? bindings[slot].shortcut : "" };
+                  c.launch_scheme_shortcuts = bindings;
+                })}
               />
             )}
 

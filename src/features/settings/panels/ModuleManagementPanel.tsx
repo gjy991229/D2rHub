@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ArrowRight, Cat, Monitor, Plus, Route, ScanEye, type LucideIcon } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { showToast } from "../../../components/ui/Toast";
@@ -23,12 +23,14 @@ const MODULES: readonly { id: OptionalModuleTabId; icon: LucideIcon; benefit: st
 
 export function ModuleManagementPanel({ config, installedModules, onInstall, onUninstall, onOpen }: ModuleManagementPanelProps) {
   const [busyModule, setBusyModule] = useState<OptionalModuleTabId | null>(null);
+  const changing = useRef(false);
   const [confirmModule, setConfirmModule] = useState<OptionalModuleTabId | null>(null);
   const language = normalizeSettingsLanguage(config.app_language);
   const en = language === "en-US";
 
   const changeInstallation = async (module: OptionalModuleTabId, install: boolean) => {
-    if (busyModule) return;
+    if (changing.current) return;
+    changing.current = true;
     setBusyModule(module);
     try {
       if (install) await onInstall(module);
@@ -37,6 +39,7 @@ export function ModuleManagementPanel({ config, installedModules, onInstall, onU
     } catch (error) {
       showToast("error", en ? `Unable to change this extension: ${error}` : `无法更新扩展功能：${error}`);
     } finally {
+      changing.current = false;
       setBusyModule(null);
     }
   };
@@ -67,7 +70,7 @@ export function ModuleManagementPanel({ config, installedModules, onInstall, onU
           const name = SETTINGS_COPY[language][id].label;
           const confirming = confirmModule === id;
           return (
-            <article key={id} className="extension-row" aria-label={name} data-added={installed}>
+            <article key={id} className="extension-row" aria-label={name} data-added={installed} aria-busy={busyModule === id || undefined}>
               <Icon className="extension-icon" size={21} aria-hidden="true" />
               <div className="extension-copy">
                 <div className="extension-title"><h3>{name}</h3><span>{installed ? (en ? "Added" : "已添加") : (en ? "Not added" : "未添加")}</span></div>
@@ -90,14 +93,14 @@ export function ModuleManagementPanel({ config, installedModules, onInstall, onU
                   </button>
                 </> : <Button size="sm" variant="secondary" loading={busyModule === id} disabled={busyModule !== null}
                     aria-label={en ? `Add ${name}` : `添加${name}`} onClick={() => void changeInstallation(id, true)}>
-                  <Plus size={13} aria-hidden="true" />{en ? "Add" : "添加"}
+                  {busyModule !== id && <Plus size={13} aria-hidden="true" />}{busyModule === id ? (en ? "Adding…" : "正在添加…") : (en ? "Add" : "添加")}
                 </Button>}
               </div>
               {confirming && <div className="extension-confirm" role="alert">
                 <p>{removalDescription(id)}</p>
                 <div>
                   <Button size="sm" variant="ghost" disabled={busyModule !== null} onClick={() => setConfirmModule(null)}>{en ? "Cancel" : "取消"}</Button>
-                  <Button size="sm" variant="danger" loading={busyModule === id} disabled={busyModule !== null} onClick={() => void changeInstallation(id, false)}>{en ? "Confirm removal" : "确认移除"}</Button>
+                  <Button size="sm" variant="danger" loading={busyModule === id} disabled={busyModule !== null} onClick={() => void changeInstallation(id, false)}>{busyModule === id ? (en ? "Removing…" : "正在移除…") : (en ? "Confirm removal" : "确认移除")}</Button>
                 </div>
               </div>}
             </article>

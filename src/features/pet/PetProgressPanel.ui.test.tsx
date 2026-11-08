@@ -101,7 +101,7 @@ describe("pet achievement journal", () => {
     expect(screen.getByText("累计键鼠敲击")).toBeTruthy();
     expect(screen.queryByRole("region", { name: "装扮衣柜" })).toBeNull();
     fireEvent.click(within(nav).getByRole("button", { name: "行为设置" }));
-    expect(screen.getByText("猫咪显示缩放")).toBeTruthy();
+    expect(screen.getByRole("slider", { name: "桌宠大小" })).toBeTruthy();
     expect(screen.queryByText("累计键鼠敲击")).toBeNull();
   });
 

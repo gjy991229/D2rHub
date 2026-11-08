@@ -41,7 +41,25 @@ pub(in crate::audio_mod) fn validate_party_loot(
     }
     let x = fields["rect"]["x"].as_f64().ok_or_else(invalid)?;
     let y = fields["rect"]["y"].as_f64().ok_or_else(invalid)?;
-    if name == "JcyPartyExtra" {
+    if recipe >= 3 {
+        let portraits = read_room_tool_layout(&layouts, "hireablespanelhd.json")?;
+        let pf = &portraits["fields"];
+        let number = |v: &serde_json::Value| v.as_f64().ok_or_else(invalid);
+        let expected_x = number(&pf["rect"]["x"])?;
+        let expected_y = number(&pf["rect"]["y"])?;
+        let pitch =
+            number(&pf["nextIconOffset"]["y"])? * pf["rect"]["scale"].as_f64().unwrap_or(1.0);
+        if x != 0.0
+            || y != 0.0
+            || (number(&list["fields"]["rect"]["x"])? - expected_x).abs() > 0.01
+            || (number(&row["fields"]["rect"]["y"])? - expected_y).abs() > 0.01
+            || (number(&row["fields"]["rect"]["height"])? - pitch).abs() > 0.01
+            || fields["rect"].get("width").is_some()
+            || fields["rect"].get("height").is_some()
+        {
+            return Err(invalid());
+        }
+    } else if name == "JcyPartyExtra" {
         let row_x = row["fields"]["rect"]["x"].as_f64().ok_or_else(invalid)?;
         let row_y = row["fields"]["rect"]["y"].as_f64().ok_or_else(invalid)?;
         if (x + row_x - 161.0).abs() > 0.01

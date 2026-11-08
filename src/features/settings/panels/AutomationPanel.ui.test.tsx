@@ -1,13 +1,11 @@
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ComponentProps } from "react";
+import { type ComponentProps } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AccountMeta, GlobalConfig } from "../../../store/types";
 import { AutomationPanel } from "./AutomationPanel";
-import { ModProcessingPanel } from "./ModProcessingPanel";
-import { useModWorkflow } from "../../mods/workflow/useModWorkflow";
 import { invokeCommand } from "../../../platform/tauri";
-import { modState, testCatalog } from "../../mods/workflow/testFixtures";
+import { modState } from "../../mods/workflow/testFixtures";
 
 vi.mock("../../../platform/tauri", () => ({
   invokeCommand: vi.fn(async command => command === "get_audio_mod_setup_state" ? { ...modState, account_id: "leader", installed_mods: [] } : ({ processor: { ready: true, update_available: false } })),
@@ -31,24 +29,27 @@ function panelProps(overrides: Partial<ComponentProps<typeof AutomationPanel>> =
   };
 }
 
-function RecognitionFlow({ pendingEnable = false }: { pendingEnable?: boolean }) {
-  const [processing, setProcessing] = useState(false);
-  const workflow = useModWorkflow({ open: true, active: processing, accounts: [account],
-    catalog: testCatalog({ generation: 1, scanned_at: "", capsules: [], accounts: [{ account_id: "leader", account_name: "Leader", edition: "CN", selected_capsule_id: null, legacy_mod_arguments: "", issue: null }] }),
-    language: "zh-CN", optionalFeaturesAvailable: true, onApplied: vi.fn(async () => {}),
-    onNavigate: origin => setProcessing(origin === "library"),
-  });
-  return processing ? <ModProcessingPanel workflow={workflow} /> : <AutomationPanel {...panelProps({
-    config: { ...config, rune_audio_enabled: pendingEnable }, isAudioEnableRequested: pendingEnable,
-    initializedTrackingAccounts: [account], trackingTarget: { valid: true, account },
-    hasInitializedAudioAccount: true, hasAudioTarget: true,
-    onOpenModProcessing: () => workflow.actions.requestProcessing({ origin: "recognition", accountId: account.id }),
-  })} />;
-}
 afterEach(cleanup);
 
 describe("Recognition onboarding", () => {
-  it("renders the new overview, filter summary and Mod picker in English", () => {
+  it("shows actionable session errors and hostile degradation without hiding active recognition", () => {
+    const props = panelProps({ config: { ...config, rune_audio_enabled: true, hostile_auto_restart_enabled: true },
+      isAudioEnableRequested: true, isAudioRecognitionActive: true,
+      audioStatus: { running: true, hostile_error: "目标 Mod 未安装敌对自动重开", last_error: null, account_id: "leader", target_pid: 42,
+        captured_frames: 0, audio_peak: 0, decoded_packets: 0, rune_events: 0, item_events: 0, scene_ocr_events: 0,
+        last_marker: null, last_confidence: null, last_detected_at: null, diagnostic_recording: false, diagnostic_recording_path: null },
+    });
+    const view = render(<AutomationPanel {...props} />);
+    expect(screen.getByText("正在监听")).toBeTruthy();
+    expect(screen.getByText("敌对自动重开不可用：目标 Mod 未安装敌对自动重开")).toBeTruthy();
+    view.rerender(<AutomationPanel {...props} isAudioRecognitionActive={false}
+      audioStatus={{ ...props.audioStatus!, running: false, hostile_error: null, last_error: "请重新启动游戏或指定游戏进程" }} />);
+    expect(screen.getByText("已启用，需要处理")).toBeTruthy();
+    expect(screen.queryByText("已启用，等待游戏运行")).toBeNull();
+    expect(screen.getAllByText("请重新启动游戏或指定游戏进程").some(node => !node.closest('[hidden]'))).toBe(true);
+  });
+
+  it("renders the new overview, filter summary and launch-time Mod guidance in English", () => {
     render(<AutomationPanel {...panelProps({ config: { ...config, app_language: "en-US", rune_audio_min_rune_number: 20 },
       initializedTrackingAccounts: [account], trackingTarget: { valid: true, account },
       hasInitializedAudioAccount: true, hasAudioTarget: true,
@@ -56,9 +57,9 @@ describe("Recognition onboarding", () => {
     expect(screen.getByText("Track drops and run times for the selected account.")).toBeTruthy();
     expect(screen.getByRole("button", { name: /Drops to record/ })).toBeTruthy();
     expect(screen.getAllByText("7 drop categories · Runes #20+").length).toBeGreaterThan(0);
-    expect(screen.getByRole("combobox", { name: "Choose a Mod" })).toBeTruthy();
-    expect(screen.getByRole("option", { name: "Choose a Mod to prepare" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Prepare Mod" })).toBeTruthy();
+    expect(screen.queryByRole("combobox", { name: "Choose a Mod" })).toBeNull();
+    expect(screen.getByText(/actual launch arguments/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Prepare Mod" })).toBeNull();
     expect(screen.queryByText("记录哪些掉落")).toBeNull();
     expect(screen.getByRole("option", { name: "Leader" })).toBeTruthy();
     expect(screen.queryByRole("option", { name: /Follow account/ })).toBeNull();
@@ -77,13 +78,9 @@ describe("Recognition onboarding", () => {
     expect(screen.getByRole("button", { name: "记录内容" }).getAttribute("aria-current")).toBeNull();
     expect(screen.getAllByText(/记录 7 类掉落/).length).toBeGreaterThan(0);
   });
-  it("shows every prerequisite and opens account initialization when no account exists", async () => {
+  it("opens account initialization when no account exists", async () => {
     const props = panelProps();
     render(<AutomationPanel {...props} />);
-    const steps = screen.getByRole("list", { name: "声纹识别启用步骤" });
-    expect(within(steps).getAllByRole("listitem").map(step => step.textContent)).toEqual([
-      "1初始化账号", "2选择监听账号", "3准备识别 Mod",
-    ]);
     await userEvent.click(screen.getByRole("button", { name: "初始化账号" }));
     expect(props.onClose).toHaveBeenCalledTimes(1);
     expect(props.onInitializeAccount).toHaveBeenCalledTimes(1);
@@ -95,7 +92,7 @@ describe("Recognition onboarding", () => {
     render(<AutomationPanel {...panelProps({ onAudioToggle })} />);
     const toggle = screen.getByRole("switch", { name: "启用音频声纹自动识别" }) as HTMLButtonElement;
     expect(toggle.disabled).toBe(false);
-    expect(screen.getByText("先初始化一个游戏账号")).toBeTruthy();
+    expect(screen.getByText(/先初始化一个游戏账号/)).toBeTruthy();
     await userEvent.click(toggle);
     expect(onAudioToggle).toHaveBeenCalledWith(true);
     expect(toggle.getAttribute("aria-checked")).toBe("false");
@@ -109,28 +106,6 @@ describe("Recognition onboarding", () => {
     expect(onAudioTargetChange).toHaveBeenCalledWith("leader");
   });
 
-  it("opens the dedicated processing form and returns to recognition settings", async () => {
-    render(<RecognitionFlow />);
-    expect(screen.queryByRole("textbox", { name: "新 Mod 名称" })).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "前往加工" }));
-    expect(screen.getByRole("heading", { name: "Mod 加工" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "新 Mod 名称" })).toBeTruthy();
-    const requiredAudio = screen.getByRole("checkbox", { name: /声纹识别/ }) as HTMLInputElement;
-    expect(requiredAudio.checked).toBe(true);
-    expect(requiredAudio.disabled).toBe(true);
-    await userEvent.click(screen.getByRole("button", { name: "返回识别设置" }));
-    expect(screen.getByRole("switch", { name: "启用音频声纹自动识别" })).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "新 Mod 名称" })).toBeNull();
-  });
-
-  it("opens preparation from the readiness action even when enable was already requested", async () => {
-    render(<RecognitionFlow pendingEnable />);
-    expect(screen.getByText("开启尚未完成：准备识别 Mod")).toBeTruthy();
-    expect(screen.getByRole("switch", { name: "启用音频声纹自动识别" }).getAttribute("aria-checked")).toBe("true");
-    await userEvent.click(screen.getByRole("button", { name: "前往加工" }));
-    expect(screen.getByRole("heading", { name: "Mod 加工" })).toBeTruthy();
-    expect(screen.getByRole("textbox", { name: "新 Mod 名称" })).toBeTruthy();
-  });
 });
 
 it("keeps daily settings concise and lets filters apply without opening diagnostics", async () => {

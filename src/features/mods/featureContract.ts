@@ -18,6 +18,7 @@ export interface AudioModPrepareResult {
 
 export interface AudioModFeatureSelection {
   includeAudioTelemetry: boolean;
+  includeSceneAudio?: boolean;
   includeRoomTools: boolean;
   roomToolsDefaultHell?: boolean;
   includeEscNextGame?: boolean;
@@ -55,6 +56,7 @@ export function audioModFeatureInvokeOptions(
 ): AudioModFeatureSelection {
   return {
     includeAudioTelemetry: selection.includeAudioTelemetry,
+    ...(selection.includeAudioTelemetry && selection.includeSceneAudio !== undefined ? { includeSceneAudio: selection.includeSceneAudio } : {}),
     includeRoomTools: selection.includeRoomTools,
     ...(selection.includeRoomTools && selection.roomToolsDefaultHell !== undefined
       ? { roomToolsDefaultHell: selection.roomToolsDefaultHell } : {}),

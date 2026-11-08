@@ -15,8 +15,8 @@ html[data-visual-audit-frame="mini-stats-overlay"] body {
 }
 
 html[data-visual-audit-frame="mini-overlay"] [data-overlay-mode] {
-  width: 18vw;
-  height: 8vh;
+  width: 260px;
+  height: 28px;
 }
 
 html[data-visual-audit-frame="mini-stats-overlay"] [data-overlay-mode] {

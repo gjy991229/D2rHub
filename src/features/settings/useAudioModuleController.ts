@@ -118,14 +118,10 @@ export function useAudioModuleController(options: AudioModuleControllerOptions) 
   const handleAudioTargetChange = async (accountId: string) => {
     const revision = ++requestRevision.current;
     const wasEnabled = !!latest.current.config?.rune_audio_enabled;
-    latest.current.updateConfig(next => { next.rune_audio_target_account = accountId; next.rune_audio_external_target = null; next.rune_audio_enabled = false; });
     setChanging(true);
     try {
-      const state = await inspection.inspect(accountId, true);
+      await persistAudioEnabledState(accountId, wasEnabled);
       if (revision !== requestRevision.current) return;
-      inspection.accept(state);
-      if (wasEnabled && state.ready) await persistAudioEnabledState(accountId, true);
-      else if (wasEnabled) latest.current.requestProcessing({ origin: "recognition", accountId });
     } catch (error) {
       if (revision === requestRevision.current) showToast("error", `无法检查账号的识别 Mod：${error}`);
     } finally { if (revision === requestRevision.current) setChanging(false); }
@@ -161,18 +157,9 @@ export function useAudioModuleController(options: AudioModuleControllerOptions) 
     if (!accountId) { showToast("warning", latest.current.initializedAccounts.length ? "请先选择监听账号" : "请先初始化一个账号"); return; }
     setChanging(true);
     try {
-      const state = await inspection.inspect(accountId, true);
+      await persistAudioEnabledState(accountId, true);
       if (revision !== requestRevision.current) return;
-      inspection.accept(state);
-      if (state.ready) {
-        await persistAudioEnabledState(accountId, true);
-        if (state.update_required) showToast("warning", "当前 Mod 有新版功能模块可用，请在 Mod 管理中更新");
-        if (state.running_pid && state.active_session_ready === true) await invokeCommand("start_rune_audio_monitor").catch(() => undefined);
-        else if (state.restart_required) showToast("warning", "设置已生效，请重启该账号的游戏后开始识别");
-      } else {
-        latest.current.updateConfig(next => { next.rune_audio_target_account = accountId; next.rune_audio_external_target = null; next.rune_audio_enabled = false; });
-        latest.current.requestProcessing({ origin: "recognition", accountId });
-      }
+      await invokeCommand("start_rune_audio_monitor").catch(() => undefined);
     } catch (error) {
       if (revision === requestRevision.current) showToast("error", `无法开启声纹识别：${error}`);
     } finally { if (revision === requestRevision.current) setChanging(false); }

@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 fn normalize_stats_theme(theme: &str) -> &'static str {
-    if theme == "light" {
+    if theme == "sand" {
+        "sand"
+    } else if theme == "light" {
         "light"
     } else {
         "onyx"
@@ -44,7 +46,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn light_app_theme_is_injected_without_a_stale_local_override() {
+    fn sand_page_theme_is_injected_without_a_stale_local_override() {
         let template = include_str!("../../docs/stats.html");
         let rendered = render_stats_template(
             template,
@@ -52,10 +54,10 @@ mod tests {
             r#"{"activeStrategyIds":["preset-countess"]}"#,
             43123,
             "test-token",
-            "light",
+            "sand",
         );
 
-        assert!(rendered.contains("<html lang=\"zh-CN\" data-theme=\"light\">"));
+        assert!(rendered.contains("<html lang=\"zh-CN\" data-theme=\"sand\">"));
         assert!(rendered.contains("const API_PORT=43123"));
         assert!(rendered.contains("const API_TOKEN=\"test-token\""));
         assert!(!rendered.contains("{{STATS_API_PORT}}"));

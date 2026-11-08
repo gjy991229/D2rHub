@@ -49,6 +49,17 @@ const pool: ModCapsulePool = {
 afterEach(cleanup);
 
 describe("AccountModEditor", () => {
+  it("prevents another selection while a Mod assignment is pending", async () => {
+    const user = userEvent.setup();
+    const onAssign = vi.fn();
+    const { rerender } = render(<AccountModEditor account={account} modCapsulePool={pool} onAssign={onAssign} />);
+    await user.click(screen.getByTitle(/当前 Mod：原版/));
+    rerender(<AccountModEditor account={account} modCapsulePool={pool} onAssign={onAssign} assigning />);
+    expect(screen.getByRole("menu").getAttribute("aria-busy")).toBe("true");
+    await user.click(screen.getByRole("menuitemradio", { name: /Shared/ }));
+    expect(onAssign).not.toHaveBeenCalled();
+    expect(screen.getByRole("menuitemradio", { name: /Shared/ })).toHaveProperty("disabled", true);
+  });
   it("selects a shared capsule while keeping original game as a menu option", async () => {
     const user = userEvent.setup();
     const onAssign = vi.fn(async () => pool);

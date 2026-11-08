@@ -103,10 +103,11 @@ export function AccountRegionSwitcher({
       ? INTERNATIONAL_ACCOUNT_REGIONS.indexOf(currentCanonicalRegion)
       : 0;
     const frame = window.requestAnimationFrame(() => {
+      if (menuRef.current?.contains(document.activeElement)) return;
       optionRefs.current[Math.max(0, selectedIndex)]?.focus();
     });
 
-    const handleOutsidePointerDown = (event: PointerEvent) => {
+    const handleOutsidePointerDown = (event: PointerEvent | FocusEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
@@ -117,12 +118,14 @@ export function AccountRegionSwitcher({
     };
 
     document.addEventListener("pointerdown", handleOutsidePointerDown, true);
+    document.addEventListener("focusin", handleOutsidePointerDown);
     document.addEventListener("keydown", handleEscape);
     window.addEventListener("resize", updateMenuPosition);
     window.addEventListener("scroll", updateMenuPosition, true);
     return () => {
       window.cancelAnimationFrame(frame);
       document.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+      document.removeEventListener("focusin", handleOutsidePointerDown);
       document.removeEventListener("keydown", handleEscape);
       window.removeEventListener("resize", updateMenuPosition);
       window.removeEventListener("scroll", updateMenuPosition, true);

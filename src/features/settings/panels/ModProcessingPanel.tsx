@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type KeyboardEvent } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
@@ -11,6 +11,18 @@ import { AUDIO_MOD_NAME_MAX_LENGTH } from "../../../utils/audioModName";
 import { validateTrackingTarget } from "../../../utils/trackingTarget";
 import { AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ESC_NEXT_GAME_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID } from "../../mods/featureContract";
 import type { ModWorkflowController } from "../../mods/workflow/useModWorkflow";
+
+function navigateChoices(event: KeyboardEvent<HTMLDivElement>) {
+  if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) return;
+  const choices = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role="radio"]:not(:disabled)'));
+  const current = choices.indexOf(event.target as HTMLButtonElement);
+  if (current < 0 || !choices.length) return;
+  event.preventDefault();
+  const index = event.key === "Home" ? 0 : event.key === "End" ? choices.length - 1
+    : (current + (["ArrowLeft", "ArrowUp"].includes(event.key) ? -1 : 1) + choices.length) % choices.length;
+  choices[index].focus();
+  choices[index].click();
+}
 
 /** The form renders one explicit workflow draft; it does not own navigation or scanning. */
 export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowController }) {
@@ -197,11 +209,12 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 </div>
               </div>
               <div className="mod-section-body">
-                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Mod source" : "Mod 来源"}>
+                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Mod source" : "Mod 来源"} onKeyDown={navigateChoices}>
                   <button
                     type="button"
                     role="radio"
                     aria-checked={sourceMode === "original"}
+                    tabIndex={sourceMode === "original" || sourceMods.length === 0 ? 0 : -1}
                     className="mod-source-choice"
                     disabled={preparing}
                     onClick={() => actions.changeRecipe({ kind: "create", source: null, name: outputName })}
@@ -213,6 +226,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                     type="button"
                     role="radio"
                     aria-checked={sourceMode === "existing"}
+                    tabIndex={sourceMode === "existing" ? 0 : -1}
                     className="mod-source-choice"
                     disabled={preparing || sourceMods.length === 0}
                     onClick={() => selectSourceMod("")}
@@ -253,19 +267,20 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               </div>
             </div>
             <div className="mod-processing-features">
-              {!minimalMode && <FeatureChoice
+              {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "Audio recognition" : "声纹识别"}
                 detail={isEnglish ? "Scenes, drops, Terror Zones, and run statistics" : "场景、掉落、恐怖区域与刷图统计"}
                 checked={audioSelected}
                 locked={audioRequired || audioInherited}
-                lockLabel={audioInherited
-                  ? operationKind === "augment"
-                    ? (isEnglish ? "Already installed" : "目标 Mod 已有")
-                    : (isEnglish ? "Included in source" : "源 Mod 已有")
-                  : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
+                lockLabel={audioInherited ? (operationKind === "augment" ? (isEnglish ? "Already installed" : "目标 Mod 已有") : (isEnglish ? "Included in source" : "源 Mod 已有")) : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
                 disabled={preparing}
-                onChange={value => actions.changeFeatures({ includeAudioTelemetry: value })}
-              />}
+                onChange={value => actions.changeFeatures({ includeAudioTelemetry: value })} />
+              {audioSelected && <div className="mod-feature-options"><label><input type="checkbox"
+                checked={analysis.selection.includeSceneAudio ?? analysis.selected?.scene_audio_enabled ?? true} disabled={preparing}
+                onChange={event => actions.changeFeatures({ includeSceneAudio: event.target.checked })} />
+                <span>{isEnglish ? "Scene audio markers" : "场景声纹"}</span></label>
+                <p>{isEnglish ? "Adds scene audio files and increases Mod size. Turn off to use OCR for scenes; drop recognition stays enabled." : "场景声纹文件占用空间较大。关闭后场景改用 OCR 识别，掉落声纹仍然有效。"}</p></div>}
+              </div>}
               {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}
                 detail={isEnglish ? "Create/join shortcuts and automation with hidden buttons" : "创建、加入与自动跟房，局内按钮始终隐藏"}
@@ -294,7 +309,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Player loot buttons" : "左侧玩家尸体拾取按钮"}
-                detail={isEnglish ? "Click native per-player corpse-loot buttons beside the left roster. No image recognition; HD keyboard/mouse interface." : "点击左侧玩家头像旁的原生按钮切换尸体拾取权限。无需图像识别，适用于高清键鼠界面。"}
+                detail={isEnglish ? "Show corpse-loot buttons beside player portraits." : "在左侧玩家头像旁显示尸体拾取按钮。"}
                 checked={!!analysis.selection.includePartyLoot}
                 locked={inheritedFeatureGroups.includes("party_loot")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
@@ -303,7 +318,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Scene restart" : "场景重开"}
-                detail={isEnglish ? "Restart or create a game at an A3, Travincal, or A4 waypoint. Uses native game logic; no image recognition. Backs up the replaced HD Help page." : "需在 A3、崔凡克或 A4 小站处重开或创房；使用游戏原生流程，无需图像识别。替换高清帮助页并备份。"}
+                detail={isEnglish ? "Restart or create a game at an A3, Travincal, or A4 waypoint." : "需在 A3、崔凡克或 A4 小站处重开或创房。"}
                 checked={!!analysis.selection.includeSceneShortcuts}
                 locked={inheritedFeatureGroups.includes("scene_shortcuts")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
@@ -312,10 +327,12 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Double Esc: next Hell game" : "双击 Esc 下一局地狱"}
-                detail={isEnglish ? "Press Esc twice within 0.5 seconds; available independently of room tools" : "0.5 秒内双击 Esc 退出并进入下一局地狱，可独立启用"}
+                detail={isEnglish ? "Press Esc twice within 0.5 seconds" : "0.5 秒内双击 Esc 退出并进入下一局地狱"}
                 checked={!!analysis.selection.includeHostileAutoRestart || includeEscNextGame || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
                 locked={!!analysis.selection.includeHostileAutoRestart || inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)}
-                lockLabel={isEnglish ? "Installed" : "已安装"}
+                lockLabel={inheritedFeatureGroups.includes(ESC_NEXT_GAME_FEATURE_ID)
+                  ? (isEnglish ? "Installed" : "已安装")
+                  : (isEnglish ? "Required by hostile auto-restart" : "敌对自动重开必选")}
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includeEscNextGame: value })}
               />
@@ -348,8 +365,8 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             </div>
             <div className="mod-section-body">
               {operationKind === "create" && sourceMode === "existing" && <>
-                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Output method" : "输出方式"}>
-                  {[false, true].map(replace => <button key={String(replace)} type="button" role="radio" aria-checked={replaceSource === replace} className="mod-source-choice" disabled={preparing}
+                <div className="mod-processing-source-options" role="radiogroup" aria-label={isEnglish ? "Output method" : "输出方式"} onKeyDown={navigateChoices}>
+                  {[false, true].map(replace => <button key={String(replace)} type="button" role="radio" aria-checked={replaceSource === replace} tabIndex={replaceSource === replace ? 0 : -1} className="mod-source-choice" disabled={preparing}
                     onClick={() => { if (draft.recipe.kind === "create") actions.changeRecipe({ ...draft.recipe, replaceSource: replace }); }}>
                     <strong>{replace ? (isEnglish ? "Keep source name" : "沿用源名称") : (isEnglish ? "Create a new copy" : "生成新副本")}</strong>
                     <span>{replace ? (isEnglish ? "Keep the original folder as a backup" : "原文件夹改名备份") : (isEnglish ? "Choose a new name; keep the source" : "自定义名称，保留源 Mod")}</span>

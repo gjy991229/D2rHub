@@ -1,0 +1,37 @@
+.accounts-settings-panel .account-option-custom { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-default); min-height: 32px; color: var(--text-secondary); font-size: var(--text-xs); }
+.accounts-settings-panel .account-option-custom:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 3px; border-radius: 4px; }
+.accounts-settings-panel .account-option-name { padding-right: 14px; }
+.accounts-settings-panel fieldset:disabled :is(input, select) { opacity: .55; cursor: wait; }
+.shortcut-settings-panel .shortcut-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 218px; align-items: center; gap: 14px 24px; min-height: 62px; padding: 12px 0; }
+.shortcut-setting-row + .shortcut-setting-row { border-top: 1px solid var(--border-default); }
+.shortcut-settings-panel .shortcut-control { display: grid; min-width: 0; gap: 5px; justify-items: stretch; }
+.shortcut-control-entry { display: flex; gap: 8px; align-items: center; }
+.shortcut-control-entry input { flex: 1; width: 0; min-width: 0; min-height: 36px; }
+.shortcut-control-entry > button { width: 32px; height: 32px; }
+.shortcut-setting-row p { line-height: 1.6; }
+.shortcut-settings-panel .shortcut-scheme-row { min-height: 54px; padding-block: 9px; }
+.shortcut-scheme-details { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 12px; min-width: 0; }
+.shortcut-scheme-details > label { min-width: 54px; }
+.shortcut-settings-panel .shortcut-scheme-select { width: 100%; max-width: 320px; }
+.maintenance-settings-panel .maintenance-action-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px 24px; padding-block: 16px; }
+.maintenance-action-row p { max-width: 68ch; line-height: 1.65; }
+.maintenance-action-row .ui-button { flex-shrink: 0; }
+.maintenance-export-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.maintenance-export-status { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.6; }
+.maintenance-settings-panel .option-line:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.launch-agent-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; padding-block: 4px; }
+.launch-agent-choice { display: flex; align-items: center; justify-content: center; min-height: 42px; padding: 9px 12px; border: 1px solid var(--border-default); border-radius: 8px; color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500; line-height: 1.5; text-align: center; cursor: pointer; }
+.launch-agent-choice:hover { background: var(--surface-hover); border-color: var(--border-strong); }
+.launch-agent-choice[data-selected="true"] { background: var(--surface-active); color: var(--text-primary); border-color: var(--border-strong); }
+.launch-agent-choice:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.launch-agent-threshold { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@container (max-width: 600px) {
+  .shortcut-settings-panel .shortcut-setting-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .shortcut-settings-panel .shortcut-control { width: min(100%, 250px); }
+  .maintenance-settings-panel .maintenance-action-row { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  .maintenance-action-row > .ui-button { justify-self: start; }
+}
+@container (max-width: 420px) {
+  .launch-agent-options { grid-template-columns: minmax(0, 1fr); }
+  .launch-agent-choice { justify-content: flex-start; }
+}

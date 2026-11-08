@@ -1,3 +1,5 @@
+import { LaunchModConfirmation } from "./components/LaunchModConfirmation";
+import { useLaunchModConfirmation } from "./store/launchModConfirmation";
 import { LaunchGroupEditor } from "./components/dashboard/LaunchGroupEditor";
 import { useEffect, useRef, useState } from "react";
 import { useAccountBatch, refreshBatchRunning } from "./hooks/useAccountBatch";
@@ -55,6 +57,7 @@ import {
   type StatsPagePreferences,
 } from "./utils/battleReport";
 import { useLaunchGroupController } from "./hooks/useLaunchGroupController";
+import { useLaunchSchemeShortcut } from "./hooks/useLaunchSchemeShortcut";
 import { useModCapsulePool } from "./features/modCapsules/useModCapsulePool";
 import { DisclosureDialog } from "./features/disclosures/DisclosureDialog";
 import { useApplicationDisclosure } from "./features/disclosures/useApplicationDisclosure";
@@ -215,15 +218,41 @@ function App() {
   const [autoUpdateUrl, setAutoUpdateUrl] = useState("");
   const [autoUpdateVersion, setAutoUpdateVersion] = useState("");
 
+  const launchConfirmationOpen = useLaunchModConfirmation(state => state.warning !== null);
   const miniMode = useMiniMode(
     view.type === "main" && !startupServicesBlocked,
-    showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
+    launchConfirmationOpen || showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
       || showAbout || showAutoUpdateConfirm || !!launchGroupDraft || startupServicesBlocked || view.type !== "main",
   );
   const batch = useAccountBatch(
     view.type === "main" && !startupServicesBlocked && !miniMode.mini && accounts.length > 0,
     !!launchGroupDraft || showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount,
     config, launching || killing || dispatchingBatch,
+  );
+  const schemeShortcutEnabled = useRef(false);
+  schemeShortcutEnabled.current = view.type === "main" && !startupServicesBlocked && !showSettings && !showInit
+    && !tokenUpdateAccount && !reinitializeAccount && !launchGroupDraft && !launchGroups.busy && !showKillConfirm;
+  useLaunchSchemeShortcut(
+    schemeShortcutEnabled.current,
+    async group => {
+      if (batchLock.current) return;
+      batchLock.current = true;
+      setDispatchingBatch(true);
+      try {
+        await flushAccountQuickSettings(group.account_ids);
+        const settings = useGlobalConfig.getState();
+        if (!schemeShortcutEnabled.current || settings.initialLoading || settings.saving || settings.restarting
+          || useLaunch.getState().launching) return;
+        const current = settings.config?.launch_groups.find(saved => saved.id === group.id);
+        if (!current) return;
+        batch.clear();
+        await useLaunch.getState().startSavedScheme(current.id, current.revision ?? 0);
+      } finally {
+        setDispatchingBatch(false);
+        batchLock.current = false;
+        await batch.refresh();
+      }
+    },
   );
   const startDashboardLaunch = async (requestedIds: string[]) => {
     if (batchLock.current || launching || configSaving) return;
@@ -478,6 +507,7 @@ function App() {
       </AppShell>
       <ToastContainer />
       {applicationDisclosureDialog}
+      <LaunchModConfirmation />
     </>
   );
 
@@ -493,6 +523,7 @@ function App() {
         <ToastContainer />
       </AppShell>
       {applicationDisclosureDialog}
+      <LaunchModConfirmation />
     </>
   );
 
@@ -514,6 +545,7 @@ function App() {
         <ToastContainer />
       </AppShell>
       {applicationDisclosureDialog}
+      <LaunchModConfirmation />
     </>
   );
 
@@ -836,6 +868,7 @@ function App() {
 
       <ToastContainer />
       {applicationDisclosureDialog}
+      <LaunchModConfirmation />
     </>
   );
 }

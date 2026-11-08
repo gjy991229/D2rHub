@@ -59,6 +59,8 @@ pub struct RuneAudioStatus {
     pub source_id: Option<String>,
     pub target_pid: Option<u32>,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub hostile_error: Option<String>,
     pub captured_frames: u64,
     pub audio_peak: f32,
     pub decoded_packets: u64,
@@ -110,6 +112,8 @@ struct DiagnosticRecording {
 struct MonitorConfig {
     tracking_enabled: bool,
     hostile_enabled: bool,
+    hostile_requested: bool,
+    hostile_error: Option<String>,
     account_id: String,
     source_id: String,
     process_started_at: Option<u64>,
@@ -190,6 +194,7 @@ fn status() -> &'static Mutex<RuneAudioStatus> {
             source_id: None,
             target_pid: None,
             last_error: None,
+            hostile_error: None,
             captured_frames: 0,
             audio_peak: 0.0,
             decoded_packets: 0,
@@ -327,6 +332,14 @@ fn finish_diagnostic_recording() -> Result<Option<String>, String> {
     Ok(Some(path_text))
 }
 
+fn verified_launch_arguments(
+    instance: &crate::application::multi_instance::RunningInstance,
+) -> Result<String, String> {
+    instance.launch.as_ref().filter(|launch| launch.pid == instance.pid)
+        .map(|launch| launch.mod_args.clone())
+        .ok_or_else(|| format!("已检测到游戏（PID {}），但无法确认本次启动的 Mod。请关闭该游戏后通过 D2RHub 重新启动，或在监听目标中选择“指定游戏进程”进行验证连接。", instance.pid))
+}
+
 fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, String> {
     let state = app.state::<crate::state::SharedState>();
     let config = state.configuration().snapshot().ok_or("尚未完成首次配置")?;
@@ -339,17 +352,19 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
     if !config.rune_audio_enabled && !config.hostile_auto_restart_enabled {
         return Err("符文声纹识别尚未启用".into());
     }
+    let mut hostile_error = None;
     let (account_id, source_id, character_name, target_pid, process_started_at, catalog_directory) =
         if let Some(target) = config.rune_audio_external_target.as_ref() {
             super::external::validate_target(&config, target)?;
             let directory = super::external::installation_directory(&config, &target.edition)?;
             let arguments = crate::audio_mod::arguments_with_audio_mod("", &target.mod_name)?;
             if config.hostile_auto_restart_enabled {
-                crate::audio_mod::validate_runtime_feature_directory(
+                hostile_error = crate::audio_mod::validate_runtime_feature_directory(
                     &directory,
                     &arguments,
                     "hostile_auto_restart",
-                )?;
+                )
+                .err();
             }
             let catalog = if config.rune_audio_enabled {
                 crate::audio_mod::validate_runtime_audio_mod_directory(&directory, &arguments)?
@@ -374,30 +389,29 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
                 .resolve_rune_audio_target_account()
                 .map_err(|error| error.to_string())?
                 .ok_or("符文声纹识别尚未启用")?;
-            let instance = state.multi_instance().instances().get(&account.id);
-            let pid = instance
-                .as_ref()
-                .map(|instance| instance.pid)
-                .or(account.running_pid)
+            // Account defaults can differ from the scheme currently starting. Wait
+            // for the registered session instead of validating stale saved arguments.
+            let instance = state
+                .multi_instance()
+                .instances()
+                .get(&account.id)
                 .ok_or_else(|| format!("目标账号“{}”的 D2R 尚未运行", account.display_name))?;
-            let arguments = instance
-                .and_then(|instance| instance.launch)
-                .map(|snapshot| snapshot.mod_args)
-                .unwrap_or_else(|| account.mod_args.clone());
+            let pid = instance.pid;
+            let arguments = verified_launch_arguments(&instance)?;
+            let directory = crate::infrastructure::system::running_game_directory(pid)?;
             if config.hostile_auto_restart_enabled {
-                crate::audio_mod::validate_runtime_feature(
-                    &config,
-                    &account,
+                hostile_error = crate::audio_mod::validate_runtime_feature_directory(
+                    &directory,
                     &arguments,
                     "hostile_auto_restart",
-                )?;
+                )
+                .err();
             }
             let catalog = if config.rune_audio_enabled {
-                crate::audio_mod::validate_runtime_audio_mod(&config, &account, &arguments)?
+                crate::audio_mod::validate_runtime_audio_mod_directory(&directory, &arguments)?
             } else {
-                crate::audio_mod::validate_runtime_feature(
-                    &config,
-                    &account,
+                crate::audio_mod::validate_runtime_feature_directory(
+                    &directory,
                     &arguments,
                     "hostile_auto_restart",
                 )?
@@ -411,7 +425,9 @@ fn resolve_monitor_config(app: &tauri::AppHandle) -> Result<MonitorConfig, Strin
         };
     Ok(MonitorConfig {
         tracking_enabled: config.rune_audio_enabled,
-        hostile_enabled: config.hostile_auto_restart_enabled,
+        hostile_enabled: config.hostile_auto_restart_enabled && hostile_error.is_none(),
+        hostile_error,
+        hostile_requested: config.hostile_auto_restart_enabled,
         account_id,
         source_id,
         character_name,
@@ -950,7 +966,7 @@ fn capture_loop(
                 break;
             };
             if runtime.rune_audio_enabled != config.tracking_enabled
-                || runtime.hostile_auto_restart_enabled != config.hostile_enabled
+                || runtime.hostile_auto_restart_enabled != config.hostile_requested
             {
                 break;
             }
@@ -972,7 +988,8 @@ fn capture_loop(
                         &item_catalog,
                         false,
                     );
-                    if runtime.hostile_auto_restart_enabled
+                    if config.hostile_enabled
+                        && runtime.hostile_auto_restart_enabled
                         && hostile_gate.accept(std::time::Instant::now())
                     {
                         super::hostile::trigger(
@@ -1095,7 +1112,12 @@ fn capture_loop(
 }
 
 pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
-    let config = resolve_monitor_config(&app)?;
+    let config = resolve_monitor_config(&app).inspect_err(|error| {
+        status()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_error = Some(error.clone());
+    })?;
     if RUNNING.swap(true, Ordering::SeqCst) {
         return Ok(());
     }
@@ -1122,6 +1144,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
         source_id: Some(config.source_id.clone()),
         target_pid: Some(config.target_pid),
         last_error: None,
+        hostile_error: config.hostile_error.clone(),
         captured_frames: 0,
         audio_peak: 0.0,
         decoded_packets: 0,
@@ -1151,6 +1174,7 @@ pub(crate) fn start_blocking(app: tauri::AppHandle) -> Result<(), String> {
                     source_id: Some(config.source_id),
                     target_pid: Some(config.target_pid),
                     last_error: result.as_ref().err().cloned(),
+                    hostile_error: config.hostile_error.clone(),
                     captured_frames: previous.captured_frames,
                     audio_peak: previous.audio_peak,
                     decoded_packets: previous.decoded_packets,
@@ -1221,6 +1245,10 @@ fn request_stop() {
     RUNNING.store(false, Ordering::SeqCst);
     let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
     current.running = false;
+    current.last_error = None;
+    current.hostile_error = None;
+    current.target_pid = None;
+    current.audio_peak = 0.0;
 }
 
 pub(crate) fn stop_blocking() -> Result<(), String> {
@@ -1269,7 +1297,10 @@ pub(crate) fn start_capability(app: tauri::AppHandle) -> Result<(), String> {
     }
     match start_blocking(app) {
         Ok(()) => Ok(()),
-        Err(error) if is_expected_capability_idle(&error) => Ok(()),
+        Err(error) if is_expected_capability_idle(&error) => {
+            request_stop();
+            Ok(())
+        }
         Err(error) => Err(error),
     }
 }
@@ -1333,8 +1364,17 @@ pub(crate) fn capability_health(app: &tauri::AppHandle) -> Result<(), String> {
     }
     if !RUNNING.load(Ordering::SeqCst) && !WORKER_ACTIVE.load(Ordering::SeqCst) {
         match resolve_monitor_config(app) {
-            Err(error) if is_expected_capability_idle(&error) => return Ok(()),
-            Err(error) => return Err(error),
+            Err(error) if is_expected_capability_idle(&error) => {
+                request_stop();
+                return Ok(());
+            }
+            Err(error) => {
+                status()
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .last_error = Some(error.clone());
+                return Err(error);
+            }
             Ok(_) => return start_blocking(app.clone()),
         }
     }
@@ -1373,7 +1413,12 @@ pub fn start_rune_audio_diagnostic_recording(app: tauri::AppHandle) -> Result<St
     if !RUNNING.load(Ordering::SeqCst) {
         return Err("请先启动音频声纹监控".to_string());
     }
-    let config = resolve_monitor_config(&app)?;
+    let config = resolve_monitor_config(&app).inspect_err(|error| {
+        status()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .last_error = Some(error.clone());
+    })?;
     let mut guard = diagnostic_recording()
         .lock()
         .unwrap_or_else(|error| error.into_inner());
@@ -1436,6 +1481,22 @@ pub fn get_rune_audio_status() -> RuneAudioStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn discovered_or_mismatched_session_requires_action_instead_of_waiting() {
+        let state = crate::state::AppState::new();
+        let instances = state.multi_instance().instances();
+        instances.record_discovered("one", 42);
+        let error = super::verified_launch_arguments(&instances.get("one").unwrap()).unwrap_err();
+        assert!(!super::is_expected_capability_idle(&error));
+        assert!(error.contains("指定游戏进程"));
+        instances.record_launch_snapshot("one", 43, "-mod wrong -txt");
+        assert!(super::verified_launch_arguments(&instances.get("one").unwrap()).is_err());
+        instances.record_launched("one", 42, "-mod actual -txt");
+        assert_eq!(
+            super::verified_launch_arguments(&instances.get("one").unwrap()).unwrap(),
+            "-mod actual -txt"
+        );
+    }
 
     #[test]
     fn an_enabled_module_waiting_for_its_game_process_is_not_a_failure() {
@@ -1447,6 +1508,8 @@ mod tests {
         MonitorConfig {
             tracking_enabled: true,
             hostile_enabled: false,
+            hostile_requested: false,
+            hostile_error: None,
             account_id: "account-1".to_string(),
             source_id: "account-1".to_string(),
             process_started_at: None,

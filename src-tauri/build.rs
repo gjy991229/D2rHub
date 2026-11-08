@@ -50,6 +50,7 @@ const APP_COMMANDS: &[&str] = &[
     "detect_saved_games_path",
     "detect_global_saved_games_path",
     "check_saved_games_settings",
+    "validate_config_path_selection",
     "detect_program_data_agent_path",
     "detect_app_data_roaming_bnet_path",
     "detect_browser_path",

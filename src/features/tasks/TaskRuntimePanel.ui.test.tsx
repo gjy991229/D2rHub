@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -56,6 +56,22 @@ function gateway(tasks: TaskSnapshot[]): TaskGateway {
 }
 
 describe("TaskRuntimePanel", () => {
+  it("keeps pending cancellation scoped to its task while another task remains usable", async () => {
+    let finish!: (value: TaskSnapshot) => void;
+    const source = gateway([snapshot(), snapshot({ task_id: 8 })]);
+    vi.mocked(source.cancel).mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    render(<TaskRuntimePanel language="en-US" gateway={source} />);
+    const buttons = await screen.findAllByRole("button", { name: "Cancel" });
+    fireEvent.click(buttons[0]);
+    expect(screen.getByRole("button", { name: "Cancelling" }).getAttribute("aria-busy")).toBe("true");
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(false);
+    await act(async () => fireEvent.click(buttons[1]));
+    expect(source.cancel).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("button", { name: "Cancelling" }).getAttribute("aria-busy")).toBe("true");
+    await act(async () => finish(snapshot({ cancel_requested: true })));
+    expect(screen.queryByRole("button", { name: "Cancelling" })).toBeNull();
+  });
+
   it("teaches the empty state without presenting inactive controls", async () => {
     render(<TaskRuntimePanel language="en-US" gateway={gateway([])} />);
 

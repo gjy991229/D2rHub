@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="sand">
 <head>
   <meta name="d2rhub-version" content="0.9.119">
 <meta charset="UTF-8">
@@ -9,39 +9,41 @@
 <link rel="stylesheet" href="guide-images/guide-figures.css">
 <style>
   :root {
-    --bg: #090a0c;
-    --surface: #101216;
-    --surface-raised: #171a20;
-    --surface-soft: #1d2129;
-    --border: rgba(255,255,255,.09);
-    --border-strong: rgba(255,255,255,.16);
-    --text: #f4f3ef;
-    --muted: #aaaeb8;
-    --faint: #757b88;
-    --accent: #d5a85a;
-    --accent-soft: rgba(213,168,90,.12);
-    --blue: #77a8ff;
-    --green: #65c494;
-    --red: #ef7f7f;
-    --shadow: 0 22px 70px rgba(0,0,0,.28);
+    color-scheme: dark;
+    --bg: #000;
+    --surface: #0d0d0d;
+    --surface-raised: #121212;
+    --surface-soft: #171717;
+    --border: #2e2e2e;
+    --border-strong: #505050;
+    --text: #f5f5f5;
+    --muted: #d0d0d0;
+    --faint: #a3a3a3;
+    --accent: #f5f5f5;
+    --accent-soft: rgba(245,245,245,.08);
+    --blue: #9fb5cf;
+    --green: #98b5a0;
+    --red: #ce9da4;
+    --shadow: 0 6px 20px rgba(0,0,0,.14);
   }
 
-  [data-theme="light"] {
-    --bg: #f2f0eb;
-    --surface: #fbfaf7;
-    --surface-raised: #fff;
-    --surface-soft: #efede7;
-    --border: rgba(28,31,36,.10);
-    --border-strong: rgba(28,31,36,.18);
-    --text: #202226;
-    --muted: #5d626c;
-    --faint: #80858e;
-    --accent: #94661c;
-    --accent-soft: rgba(148,102,28,.10);
-    --blue: #356fc8;
-    --green: #247a50;
-    --red: #b33f3f;
-    --shadow: 0 20px 55px rgba(53,45,33,.10);
+  [data-theme="sand"] {
+    color-scheme: light;
+    --bg: #f1eeea;
+    --surface: #f7f4ef;
+    --surface-raised: #fcfaf6;
+    --surface-soft: #e9e3da;
+    --border: #d6cfc5;
+    --border-strong: #a3998b;
+    --text: #34302b;
+    --muted: #625b52;
+    --faint: #756c60;
+    --accent: #75634f;
+    --accent-soft: rgb(117 99 79 / .10);
+    --blue: #1665a8;
+    --green: #18743b;
+    --red: #b42318;
+    --shadow: 0 6px 20px rgba(0,0,0,.14);
   }
 
   * { box-sizing: border-box; }
@@ -49,9 +51,7 @@
   body {
     margin: 0;
     min-height: 100vh;
-    background:
-      radial-gradient(circle at 80% -10%, var(--accent-soft), transparent 30rem),
-      var(--bg);
+    background: var(--bg);
     color: var(--text);
     font: 15px/1.75 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif;
   }
@@ -203,10 +203,11 @@
 
   @media (max-width: 820px) {
     .shell { display: block; }
-    .sidebar { position: sticky; z-index: 10; width: 100%; height: auto; padding: 10px 14px; border-right: 0; border-bottom: 1px solid var(--border); }
+    .sidebar { display: flex; align-items: center; gap: 8px; position: sticky; z-index: 10; width: 100%; height: auto; padding: 10px 14px; border-right: 0; border-bottom: 1px solid var(--border); }
     .brand { display: none; }
-    .nav-title, .theme-button { display: none; }
-    nav { display: flex; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+    .nav-title { display: none; }
+    .theme-button { flex: 0 0 auto; width: auto; margin: 0; padding: 7px 9px; font-size: 12px; }
+    .sidebar nav { display: flex; flex: 1; min-width: 0; gap: 3px; overflow-x: auto; scrollbar-width: none; }
     .nav-link { flex: 0 0 auto; white-space: nowrap; }
     .nav-link::before { display: none; }
     main { padding: 38px 22px 70px; }
@@ -226,6 +227,7 @@
   [hidden] { display: none !important; }
   button, a, input, summary { -webkit-tap-highlight-color: transparent; }
   :is(button, a, input, summary):focus-visible { outline: 2px solid var(--blue); outline-offset: 4px; }
+  main [tabindex="-1"]:focus { outline: none; }
   .help-modes { display: flex; gap: 8px; margin-bottom: 24px; }
   .help-modes a, .guide-button { display: inline-flex; justify-content: center; align-items: center; padding: 10px 16px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--surface); color: var(--text); cursor: pointer; text-decoration: none; }
   .help-modes a[aria-current="page"], .guide-button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
@@ -286,6 +288,112 @@
   @media (max-width: 820px) { .guide-sidebar { display: none; } .help-modes { position: sticky; top: 0; z-index: 12; padding: 12px 0; background: var(--bg); } }
   @media (max-width: 560px) { .goal-grid { grid-template-columns: 1fr; } .step-panel header, .step-body { padding: 18px; } .step-footer .guide-button { flex: 1; } main { padding: 20px 16px 50px; } }
   @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+  /* Editorial layout follows the battle report's hierarchy and shared alignment. */
+  :root { --reading-serif: Georgia, "STZhongsong", "Songti SC", SimSun, serif; --clay: #ad5f49; --shadow: none; }
+  [data-theme="dark"] { --bg: #262624; --surface: #21211f; --surface-raised: #30302d; --surface-soft: #383834; --border: #42423d; --border-strong: #68675f; --text: #e8e6dc; --muted: #c1bfb5; --faint: #a5a398; --accent: #d4bda2; --accent-soft: rgb(212 189 162 / .09); --clay: #d79174; }
+  body { font-size: 14px; line-height: 1.9; -webkit-font-smoothing: antialiased; }
+  .shell { grid-template-columns: 216px minmax(0, 1fr); }
+  .sidebar { display: flex; flex-direction: column; padding: 26px 14px 16px; background: var(--surface); border-right-color: color-mix(in srgb, var(--border) 65%, transparent); backdrop-filter: none; }
+  .brand { margin: 0 10px 28px; gap: 10px; }
+  .brand-mark { width: 28px; height: 28px; border: 0; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font: 600 13px var(--reading-serif); }
+  .brand strong { font: 600 20px var(--reading-serif); letter-spacing: -.5px; }
+  .brand span { margin-top: 3px; font-size: 9px; letter-spacing: .04em; }
+  .nav-title { margin: 24px 11px 6px; font-size: 10px; font-weight: 500; letter-spacing: .04em; }
+  .nav-link { padding: 7px 11px; margin: 2px 0; font-size: 12px; line-height: 1.7; border-radius: 5px; }
+  .nav-link::before { display: none; }
+  .nav-link.active { color: var(--text); background: var(--accent-soft); font-weight: 600; }
+  .theme-button { margin-top: auto; padding: 12px 11px 4px; text-align: left; border: 0; border-top: 1px solid var(--border); border-radius: 0; font-size: 11px; }
+  main { width: min(100%, 960px); margin: 0 auto; padding: 26px 48px 72px; min-width: 0; }
+  .help-modes { gap: 24px; margin-bottom: 36px; padding: 0; border-bottom: 1px solid var(--border); }
+  .help-modes a { padding: 9px 0; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; font-size: 12px; color: var(--muted); }
+  .help-modes a[aria-current="page"] { background: transparent; color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
+  h1, .guide-heading h1 { font-family: var(--reading-serif); font-weight: 500; letter-spacing: -.025em; font-size: clamp(30px, 3vw, 38px); line-height: 1.4; text-wrap: balance; }
+  h2 { font: 600 23px/1.5 "Segoe UI", "Microsoft YaHei UI", system-ui, sans-serif; letter-spacing: -.02em; margin-bottom: 16px; text-wrap: balance; }
+  h3 { margin-top: 28px; font-size: 16px; font-weight: 600; }
+  .eyebrow { margin-bottom: 10px; color: var(--faint); font-size: 10px; font-weight: 500; letter-spacing: .1em; }
+  .guide-heading { padding: 0 0 10px; }
+  .guide-heading p { margin: 14px 0 16px; max-width: 56ch; font-size: 14px; }
+  .hero { padding: 0 0 32px; }
+  .lede { font-size: 14px; line-height: 1.9; margin-top: 18px; }
+  section { padding-top: 40px; }
+  p { margin: 10px 0 16px; }
+  li { margin: 8px 0; }
+  strong { font-weight: 600; }
+  a { text-underline-offset: 4px; }
+  .meta-row { gap: 8px 16px; margin-top: 20px; }
+  .badge, .badge.accent { border: 0; padding: 0; border-radius: 0; background: transparent; color: var(--faint); font-size: 11px; }
+  .goal-grid { gap: 0 28px; }
+  .goal-card { grid-template-columns: 26px minmax(0, 1fr) 16px; padding: 22px 6px; gap: 10px; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; transition: background 140ms; }
+  .goal-card:hover { background: var(--accent-soft); }
+  .goal-card[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+  .goal-number { width: 24px; height: 26px; border-radius: 0; background: transparent; color: var(--clay); font: 500 16px var(--reading-serif); }
+  .goal-card strong { font-size: 15px; font-weight: 600; }
+  .goal-card small { font-size: 12px; line-height: 1.85; margin-top: 8px; }
+  .goal-arrow { font-size: 16px; color: var(--faint); }
+  .guide-workspace { padding-top: 24px; }
+  .route-intro { padding: 0 0 20px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; }
+  .route-intro p { font-size: 13px; margin-top: 7px; }
+  .flow-label { margin: 20px 0 8px; font-size: 11px; }
+  .route-flow { gap: 10px; padding: 3px 1px 14px; scrollbar-width: thin; }
+  .route-flow li { flex-basis: 96px; }
+  .route-flow li:not(:last-child)::after { display: none; }
+  .route-node { background: transparent; border: 0; border-bottom: 2px solid var(--border); border-radius: 0; padding: 9px 6px; color: var(--muted); font-size: 12px; line-height: 1.85; }
+  .route-node span { font-size: 11px; color: var(--faint); font-weight: 500; }
+  .route-node[aria-current="step"] { box-shadow: none; background: transparent; color: var(--text); border-color: var(--clay); font-weight: 600; }
+  .route-node[aria-current="step"] span { color: var(--clay); }
+  .step-panel { margin-top: 12px; border: 0; border-radius: 0; background: transparent; overflow: visible; }
+  .step-panel header { padding: 12px 0 18px; border-bottom: 1px solid var(--border); }
+  .step-panel h2 { font-size: 25px; line-height: 1.5; margin: 10px 0; }
+  .step-panel header p { font-size: 14px; line-height: 1.85; }
+  .step-label { color: var(--faint); font-size: 11px; font-weight: 500; }
+  .step-body { padding: 22px 0 0; }
+  .entry-path { padding: 6px 14px; background: transparent; border-left: 2px solid var(--clay); border-radius: 0; font-size: 13px; margin-bottom: 24px; }
+  .step-actions { padding-left: 20px; }
+  .step-actions li { padding-block: 3px; line-height: 1.9; }
+  .guide-button { padding: 8px 14px; border-color: var(--border); background: transparent; border-radius: 6px; font-size: 12px; line-height: 1.65; }
+  .guide-button:hover { background: var(--surface-soft); }
+  .guide-button.primary { background: var(--accent); color: var(--surface-raised); border-color: var(--accent); font-weight: 500; }
+  .success-check { border: 0; border-left: 2px solid var(--green); border-radius: 0; padding: 13px 17px; background: color-mix(in srgb, var(--green) 4%, var(--bg)); font-size: 13px; }
+  .success-check strong { font-weight: 600; }
+  .step-help { font-size: 13px; }
+  .step-help summary { color: var(--accent); }
+  .step-footer { padding-top: 20px; margin-top: 24px; border-top: 1px solid var(--border); }
+  .callout { padding: 13px 18px; border: 0; border-left: 2px solid var(--border-strong); background: transparent; border-radius: 0; font-size: 13px; }
+  .callout strong { color: var(--text); }
+  .callout.danger { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 3%, var(--bg)); }
+  .grid { gap: 22px 28px; }
+  .card { border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; padding: 16px 0; }
+  .card .label { color: var(--faint); font-size: 10px; font-weight: 500; }
+  .card h3 { font-size: 15px; }
+  .metric-list { gap: 0 28px; }
+  .metric { border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; padding: 15px 0; }
+  .metric strong { margin-bottom: 5px; font-size: 13px; font-weight: 600; }
+  .metric span { font-size: 12px; line-height: 1.8; }
+  .table-wrap { border-inline: 0; border-radius: 0; }
+  table { background: transparent; font-size: 13px; line-height: 1.8; }
+  th { font-size: 11px; font-weight: 500; letter-spacing: .01em; }
+  th, td { padding: 12px 14px; }
+  th:first-child, td:first-child { padding-left: 0; }
+  .reference-search { padding: 0 0 24px; border: 0; border-bottom: 1px solid var(--border); border-radius: 0; background: transparent; margin-bottom: 32px; }
+  .reference-search label { font-size: 12px; font-weight: 500; }
+  .reference-search input { padding: 12px 14px; border-color: var(--border); background: var(--surface-raised); border-radius: 7px; font-size: 14px; }
+  .reference-topics { gap: 4px 18px; margin-top: 16px; }
+  .reference-topics a { border: 0; padding: 3px 0; border-radius: 0; color: var(--muted); font-size: 12px; }
+  .guide-figure { border-color: var(--border); border-radius: 7px; background: var(--surface-raised); }
+  .guide-figure figcaption strong { font-size: 13px; }
+  .guide-legend button, .guide-gallery-picker button { border-color: var(--border); font-size: 12px; border-radius: 5px; }
+  .guide-legend button[aria-pressed="true"], .guide-gallery-picker button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+  .guide-legend b, .guide-mark circle { background: var(--accent); fill: var(--accent); }
+  .guide-mark rect { stroke: var(--accent); }
+  .guide-finish { border: 0; border-top: 2px solid var(--green); border-radius: 0; padding: 24px 0; background: transparent; }
+  .progress-note { font-size: 11px; }
+  .footer { margin-top: 48px; line-height: 1.8; font-size: 11px; }
+  @media (max-width: 1100px) { .shell { grid-template-columns: 200px minmax(0, 1fr); } main { padding-inline: 32px; } }
+  @media (max-width: 820px) { .shell { display: block; } .guide-sidebar { display: none; } main { padding: 12px 24px 56px; } .help-modes { gap: 24px; margin-bottom: 28px; padding: 8px 0 0; background: var(--bg); } .help-modes a { flex: none; } section { padding-top: 32px; } }
+  @media (max-width: 560px) { main { padding-inline: 20px; } .goal-grid { grid-template-columns: 1fr; } .goal-card { padding: 19px 2px; } .guide-heading h1 { font-size: 30px; } h2 { font-size: 21px; } .step-panel h2 { font-size: 23px; } .step-footer { gap: 8px; } .step-panel header { padding-inline: 0; } .step-body { padding-inline: 0; } .reference-search { padding-inline: 0; } }
+  @media print { .shell { display: block; } .sidebar, .help-modes { display: none; } main { width: 100%; padding: 0; } }
+
 </style>
 </head>
 <body>
@@ -370,9 +478,9 @@
       <noscript><p class="callout">快速上手交互与搜索需要启用 JavaScript；下方完整手册仍可直接阅读，也可使用浏览器查找。</p></noscript>
 
     <header class="hero" id="overview">
-      <p class="eyebrow">CURRENT MANUAL · 2026-09</p>
+      <p class="eyebrow">CURRENT MANUAL · 2026-11-08</p>
       <h1>D2RHub v0.9.119<br>使用手册</h1>
-      <p class="lede">面向 v0.9.119 桌面版本的操作说明，覆盖正常 / 纯净模式、国服 / 国际服双客户端、多账号认证、Mod 加工、自动跟房、音频声纹、悬浮窗与本地统计。</p>
+      <p class="lede">依据当前工作区（版本号 v0.9.119）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
       <div class="meta-row">
         <span class="badge accent">适用版本 v0.9.119</span>
         <span class="badge">Windows 11</span>
@@ -461,25 +569,26 @@
       </div>
       <h3>每套档案需要什么</h3>
       <ul>
-        <li><strong>游戏安装目录：</strong>包含 <code>D2R.exe</code>，任何认证方式都需要。</li>
-        <li><strong>存档目录：</strong>包含或将包含 <code>Settings.json</code>，任何认证方式都需要。</li>
-        <li><strong>Battle.net.exe：</strong>仅国服战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
+        <li><strong>游戏安装目录：</strong>选择名为 <code>Diablo II Resurrected</code> 的现有文件夹，目录内必须有 <code>D2R.exe</code>；不要选上一级目录或 EXE 文件。</li>
+        <li><strong>存档／配置目录：</strong>国服选择 <code>Diablo II Resurrected (CN)</code>，国际服选择 <code>Diablo II Resurrected</code> 文件夹。它用于画质与配置快照；缺少 <code>Settings.json</code> 不阻止账号认证和多开。</li>
+        <li><strong>Battle.net.exe：</strong>选择这个名称的现有文件，仅国服战网客户端认证需要；全部账号都用网页 Token 时可以留空。</li>
       </ul>
       <p>如果存档目录暂时没有 <code>Settings.json</code>，账号创建、登录和多开仍可用，但画质编辑、账号独立游戏配置和系统配置快照不可用。先用对应客户端正常进入一次游戏，通常会生成该文件。</p>
+      <p>以上名称只限制最后一级文件夹或文件，前缀路径不限。选择路径和保存修改时会检查名称及是否可访问；不使用的客户端档案可以留空。战网认证启动后若实际游戏目录与 Hub 配置不一致，程序会提示并继续管理本次新游戏进程；请核对战网安装位置与 Hub 路径，识别和跟房会按实际运行目录校验 Mod。</p>
       <h3>辅助路径</h3>
-      <p>Agent 目录和 <code>%APPDATA%\Battle.net</code> 用于战网运行环境切换；Edge / Chrome 用于网页 Token 的独立浏览器档案。浏览器不是游戏启动的必需项，但使用内置 Token 获取流程时应配置。</p>
+      <p>Agent 目录和 <code>%APPDATA%\Battle.net</code> 用于战网运行环境切换。配置 Edge / Chrome 后，网页 Token 登录会使用隔离浏览器档案；未配置时，向导会通过系统默认浏览器打开登录页，仍可复制链接完成认证。</p>
     </section>
 
     <section id="accounts">
       <p class="eyebrow">03 · ACCOUNTS</p>
       <h2>账号与认证</h2>
-      <p>添加账号向导顺序为：<strong>昵称 → 区服/语言/配音 → 认证模式 → 获取 Token → 粘贴 Token</strong>。选择战网认证后，流程会改为客户端登录、采集本地认证快照并清理临时状态。</p>
+      <p>添加账号向导分为三步：<strong>账号信息 → 认证方式 → 连接账号</strong>。第一步集中填写本地昵称、游戏区服、界面语言和配音；在认证方式页可返回修改。网页 Token 方式会打开对应区服的登录页，登录后粘贴完整跳转链接，软件自动提取 Token；复制图示可在页面内展开。选择战网认证后，流程会改为客户端登录、采集本地认证快照并清理临时状态。</p>
       <p>战网账号初始化成功后，以账号目录内带客户端版本清单的 <code>runtime/</code> 快照作为权威认证来源。若该新版快照缺失、损坏或版区不匹配，程序会要求重新初始化，不会静默改用可能过期的顶层旧文件；只有从未迁移、仍标记为已初始化且能由唯一产品键证明版区的纯旧账号，才允许兼容恢复。</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>方式</th><th>网页 Token（推荐）</th><th>战网客户端认证</th></tr></thead>
           <tbody>
-            <tr><td>所需路径</td><td>国服或国际服游戏 + 存档；获取时需 Edge/Chrome</td><td>国服游戏 + 存档 + 国服 Battle.net.exe</td></tr>
+            <tr><td>所需路径</td><td>对应客户端游戏目录；浏览器可用系统默认值，存档目录用于可选游戏设置</td><td>国服游戏目录 + 国服 Battle.net.exe；存档目录用于可选游戏设置</td></tr>
             <tr><td>启动路径</td><td>使用本机 DPAPI 加密保存的 Token 直启</td><td>恢复账号的 Battle.net / UnifiedAuth 本地快照后启动</td></tr>
             <tr><td>特点</td><td>启动快，不依赖战网客户端常驻</td><td>适合无法使用网页 Token 的账号，流程更长</td></tr>
             <tr><td>失效处理</td><td>服务端判定失效时，在账号操作中更新 Token</td><td>界面按 30 天提示有效状态；过期或登录失败时重新初始化</td></tr>
@@ -506,7 +615,7 @@
         <li><strong>常用方案：</strong>在“启动方案”菜单中点击方案右侧的星标，可将其固定在“启动方案”和“关闭全部”之间；点击固定按钮即可直接启动，再次点击星标可移除。</li>
         <li><strong>批量选择：</strong>在主操作栏打开“选择账号”，可全选可启动或运行中的账号，也可点击卡片上的复选框单独选择。选中后操作栏显示“启动选中”或“关闭选中”；在“已选”菜单中可补齐全选或切换选择范围，切换会替换原选择。点击旁边的 × 或按 Esc 可取消选择；菜单打开时 Esc 只关闭菜单。未初始化、配置异常或待确认的账号不能加入启动选择，执行前会再次检查状态。</li>
         <li><strong>编辑启动方案：</strong>新建或编辑时在同一窗口配置账号与启动差异、跟房角色、识别账号、窗口布局，再明确保存；跟房规则、识别过滤、悬浮窗和启动行为在公共设置中修改。取消不会改变原方案或当前运行；只有编辑方案才能保存方案。旧方案需先补全配置并保存。</li>
-        <li><strong>启动前检查：</strong>完整方案按其保存的账号顺序启动；账号、Mod、跟房、识别与布局统一预检。启动失败后可以补启动本次方案内的账号，固定布局位置不会重新分配。</li>
+        <li><strong>启动前检查：</strong>完整方案按其保存的账号顺序启动；账号、Mod、跟房、识别与布局统一预检。独立启动按账号参数检查，方案启动按成员实际参数检查。缺少声纹识别、敌对自动重开或局内房间工具时，“启动前检查”列出账号和缺少的功能；可“返回调整”，或“跳过并启动”。跳过后不支持的功能不可用，账号与方案的 Mod 配置保持不变。启动失败后可以补启动本次方案内的账号，固定布局位置不会重新分配。</li>
         <li><strong>取消：</strong>启动队列运行时可以取消；程序会尽量收束本轮产生的战网/认证临时状态。</li>
         <li><strong>窗口聚焦：</strong>使用已绑定快捷键，或在展开悬浮窗双击账号名称。</li>
       </ul>
@@ -523,7 +632,7 @@
         <div class="metric"><strong>账号与实例</strong><span>昵称、启动方式、Mod、窗口位置、分辨率、帧率与完整游戏设置</span></div>
         <div class="metric"><strong>窗口布局</strong><span>按启动顺序设置窗口坐标与游戏分辨率，支持拖动预览、边缘吸附和多显示器</span></div>
         <div class="metric"><strong>启动策略</strong><span>Agent 延时杀、进程数阈值或不处理；多开后保留战网、隔离浏览器、下载源与每日更新</span></div>
-        <div class="metric"><strong>窗口快捷键</strong><span>按账号当前位置绑定全局聚焦组合键</span></div>
+        <div class="metric"><strong>窗口快捷键</strong><span>主面板呼出／收起、最多三个启动方案热键、按账号当前位置聚焦游戏</span></div>
         <div class="metric"><strong>外观与界面</strong><span>界面语言、主题、主窗口透明度和字体</span></div>
         <div class="metric"><strong>后台任务</strong><span>查看进度、取消、重试与诊断时间线</span></div>
         <div class="metric"><strong>Mod 管理</strong><span>扫描、选择、编辑共享 Mod，并加工功能模块</span></div>
@@ -537,7 +646,7 @@
       <p>选中已初始化账号后，可编辑启动、显示、图形、音频、玩法和地图设置。切换账号、离开设置页或关闭设置中心时会保存待提交的修改；保存失败时停留在当前页面。刷新账号列表或切换其他账号的“覆盖游戏配置”开关，不会清空当前账号的编辑草稿。</p>
       <p>未开启“覆盖游戏配置”时跟随当前存档目录的 <code>Settings.json</code>；开启后，该账号保留自己的快照。需要以当前系统设置为基准时，使用“快照系统配置”。此操作会用系统值替换当前游戏设置草稿。</p>
       <h3>主题、透明度与字号</h3>
-      <p>“外观与界面 → 主程序窗口主题”提供深色、浅色、午夜蓝、森林绿、暖砂五套配色。选中后点击“应用外观”；离开页面或关闭设置也会自动应用。午夜蓝和森林绿使用深底色，暖砂使用暖白底色。主界面透明度与字号可单独调整；“桌面悬浮窗 → 信息悬浮窗主题”也可选择这五套主题，并独立保存。</p>
+      <p>“外观与界面 → 主程序窗口主题”提供深色、浅色、午夜蓝、森林绿、暖砂、雾粉六套配色。点击“应用外观”保存并立即生效；离开页面或关闭设置也会保存并应用。主界面背景不透明度支持 10%–100%，可拖动滑块或输入百分比，文字与控件保持清晰；字号有较小、默认、较大三档。通过“悬浮窗设置”可独立调整悬浮窗主题、不透明度、显示和位置。“游戏实例任务栏独立”对之后启动或重新识别的游戏窗口生效。</p>
       <h3>窗口与快捷键</h3>
       <p>账号快捷配置和“账号与实例 → 启动”中的“存储当前位置”，会按 PID 或唯一窗口昵称找到此账号的游戏窗口，将当前坐标新增为一个账号位置配置。最小化窗口需要先还原。各处分辨率均可选择建议值或输入自定义宽高，最小为 <code>800×600</code>。</p>
       <p>“窗口布局”首页展示开关、已保存布局胶囊和新建入口。点击胶囊进入编辑，点击“新建布局”打开独立草稿；保存后返回列表并显示保存结果，当前选用的胶囊带有应用标记。在编辑页设置 1–32 个窗口后，可拖动预览、拖动八个手柄，或输入 X、Y 和游戏分辨率。分辨率与账号设置中的分辨率含义相同，写入 <code>Settings.json</code> 的 <code>Screen Resolution (Windowed)</code>，不包含标题栏与窗口边框。画布与窗口列表显示对应账号昵称：运行账号按启动顺序排列，未运行账号按主界面顺序预览。画布按显示器的真实位置展示，支持负坐标、重叠和边缘吸附；按住 Shift 拖动可暂时关闭吸附。选中窗口或昵称后，方向键移动 10 像素，Ctrl＋方向键移动 1 像素，Shift＋方向键调整游戏分辨率。坐标对齐窗口可见边缘；画布包含标题栏和可见边框，游戏启动后会自动校准。允许窗口向工作区左侧或上方移出，但至少保留 64 像素可见区域。</p>
@@ -546,6 +655,7 @@
       <p>首次运行或升级后，主面板按屏幕宽度约 70%、高宽比约 0.58 居中显示，并适配工作区和 Windows 缩放。同版本后续启动优先恢复你调整过的尺寸和位置。关闭按钮将主面板收起到托盘；再次双击程序快捷方式、使用托盘菜单或主面板快捷键，都可唤回原窗口。</p>
       <p>在“窗口快捷键”中点击录制框并按下组合键。主面板使用同一个快捷键：位于前台时收起，否则恢复并聚焦。账号快捷键按账号卡片顺序对应，拖动排序后位置随之变化。小键盘数字显示为 <code>Num0</code>–<code>Num9</code>，与上方数字行独立；如果旧版本已录制成普通数字，请重新录制。小键盘数字建议保持 NumLock 开启。F12 和 Win 组合键不可用。</p>
       <p>录制期间 Hub 暂停自身热键，录制结束或窗口失焦后恢复。系统占用或模块冲突会在保存时提示，失败时保留原绑定。快捷键由 Windows 原生热键服务处理；桌宠的键鼠响应仅在对应功能开启且可见时运行。</p>
+      <p>在“窗口快捷键 → 启动方案快捷键”先选择已保存的方案，再录制组合键，保存设置后生效。最多绑定三个不同方案；未创建方案时先回主界面创建。组合键不能与主面板、账号聚焦或模块动作冲突。按下后走与主界面相同的启动检查；正在启动、保存设置或重启程序时不会重复派发，也不能绕过已有游戏运行时的方案限制。清除组合键可解除绑定。</p>
     </section>
 
     <section id="overlay">
@@ -573,7 +683,7 @@
     <section id="mod-processing">
       <p class="eyebrow">MOD PROCESSING · PREPARATION</p>
       <h2>Mod 加工：把游戏能力准备好，再交给账号使用</h2>
-      <p>入口是“设置中心 → Mod 管理”。在识别或跟房页面遇到“开始准备”“前往加工”，也会进入对应的准备流程。Mod 可通过“下载与更新”进入同级下载页，直接下载并自动安装；进度显示在对应资源按钮附近。加工器已随 Hub 内置；缺失或损坏时修复 Hub 安装。下载页按 NullHub、BoHub、LiteHub 排列，以内存参考标签辅助选择；实际占用随场景和设置变化，文件可通过“打开目录”查看。自动更新检查沿用每日检查设置，也可在下载页手动检查。浏览器下载的文件也可通过“导入已下载文件”校验后自动安装。下载会按“设置 → 启动策略 → 下载源”的选择优先使用 Gitee 或 GitHub，失败自动切源。未修改的Mod 可以校验后原位更新并保留备份；已加工或手动修改的 Mod 不会被纯净包覆盖。</p>
+      <p>入口是“设置中心 → Mod 管理”。已有成品显示“更新”时，可从卡片直接进入加工页面。Mod 可通过“下载与更新”进入同级下载页，直接下载并自动安装；进度显示在对应资源按钮附近。加工器已随 Hub 内置；缺失或损坏时修复 Hub 安装。下载页按 NullHub、BoHub、LiteHub 排列，以内存参考标签辅助选择；实际占用随场景和设置变化，文件可通过“打开目录”查看。自动更新检查沿用每日检查设置，也可在下载页手动检查。浏览器下载的文件也可通过“导入已下载文件”校验后自动安装。下载会按“设置 → 启动策略 → 下载源”的选择优先使用 Gitee 或 GitHub，失败自动切源。未修改的Mod 可以校验后原位更新并保留备份；已加工或手动修改的 Mod 不会被纯净包覆盖。</p>
       <p>“已安装”显示游戏目录中的 Mod；点击条目“设置”查看详细选项，需要添加能力时使用“加工功能”。“下载与更新”负责获取 Mod 成品。</p>
       <p>从识别或跟房进入加工时，页面会保留目标账号，并提供返回原页面的入口；返回 Mod 库也不会丢失已编辑配方。目标账号已删除或不可用时，需要重新选择，不会自动改用其他账号。“检查更新”会验证受管 Mod 的本地文件，检测到手动修改时先保留现有内容。</p>
       <h3>内置加工器与同名重做</h3>
@@ -591,12 +701,12 @@
       </table></div>
       <h3>首次加工的明确流程</h3>
       <ol>
-        <li><strong>选加工目标。</strong>选择一个已初始化账号，软件据此确定国服 / 国际服和 Mod 目录；完成后自动更新的是这个账号的启动参数。</li>
+        <li><strong>选加工目标。</strong>账号模式选择一个已初始化账号，据此确定国服 / 国际服和 Mod 目录，完成后更新该账号参数。指定游戏进程的无账号模式按安装目录加工，完成后需自行把参数配置到游戏启动器。</li>
         <li><strong>选来源。</strong>首次选“加工新 Mod”，再选“原版游戏”或“已有 Mod”。已有 Mod 不在列表时，先在 Mod 管理添加 / 检查对应客户端目录，再重新扫描。</li>
-        <li><strong>选功能。</strong>识别入口默认只选“声纹识别”，跟房入口默认只选“局内房间工具”；两项都用就一起勾选。敌对自动重开会同时包含“双击 Esc 下一局”；尸体拾取按钮和场景重开可单独选用。已有功能会继承并锁定，不因本次默认选择改变而移除。“死亡后自动退出”是独立可选项，不是识别或跟房的前置条件，也不能防止死亡。</li>
+        <li><strong>选功能。</strong>按需要勾选“声纹识别”“局内房间工具”等模块。声纹识别下的“场景声纹”默认开启；关闭可减少成品体积，场景改用 OCR，掉落声纹与地区名称目录仍保留。更改已有成品的场景声纹选项会从原始来源重做；改回当前值则无需为此重做。敌对自动重开会同时包含“双击 Esc 下一局”；尸体拾取按钮和场景重开可单独选用。已有功能会继承并锁定。“死亡后自动退出”是独立可选项，不是识别或跟房的前置条件，也不能防止死亡。</li>
         <li><strong>给新成品命名。</strong>例如 <code>HubMain</code>；使用英文字母、数字、短横线、下划线，避免重名和 Windows 保留名称，最长 128 字符。</li>
         <li><strong>关闭使用待修改成品的游戏，再执行加工。</strong>点击“开始加工并应用”，等待生成、校验和应用完成。加工过程中可以取消，也可以进入后台任务查看进度；取消完成后才能重新执行。失败时页面保留配方。若成品已生成但应用账号失败，重试只应用已有结果，不重复加工。</li>
-        <li><strong>让账号加载成品。</strong>加工目标会自动写入 <code>-mod HubMain -txt -assettestmode 1</code>，其他无关参数保留。其他账号需在账号 Mod 选择处自行选用成品；自动跟房也可在“参与账号 Mod”逐个选择。</li>
+        <li><strong>加载成品。</strong>账号模式会自动写入 <code>-mod HubMain -txt -assettestmode 1</code>，其他无关参数保留。独立启动使用账号参数，启动方案使用方案成员参数；无账号模式请复制生成参数到战网或游戏快捷方式。</li>
         <li><strong>重启有关游戏。</strong>已经运行的进程不会随配置切换 Mod。关闭后重新从 D2RHub 启动，再回识别或跟房面板继续。</li>
       </ol>
       <div class="callout"><strong>共享的是什么？</strong>同一客户端下多个账号可以选同一个成品，修改这个 Mod 会影响所有使用者；“加工目标账号”不等于所有账号自动改用它。国服与国际服按各自安装档案准备。一个账号使用包含所需功能的单一成品，不要同时写源 Mod 和成品两套 <code>-mod</code> 参数。</div>
@@ -611,19 +721,20 @@
       <ol>
         <li><strong>添加扩展。</strong>打开“设置中心 → 扩展功能”，添加“识别与统计”并阅读模块说明；软件会同时补齐桌面悬浮窗依赖。</li>
         <li><strong>选监听账号。</strong>进入“识别与统计”，在“监听目标”选择实际刷图的账号；与自动跟房一起用时通常选主号。</li>
-        <li><strong>准备 Mod。</strong>点击“开始准备”，按<a href="#mod-processing">加工流程</a>创建或增补声纹功能，完成后确认该账号选用成品，并重启其游戏。</li>
-        <li><strong>开启监控。</strong>回到“识别与统计”，先在“记录内容 → 场景计时与掉落截图”启用地区识别并等待资源就绪，再打开“音频声纹自动识别”（就绪卡可显示“立即开启”）。游戏运行时应显示“正在捕获 · PID …”；保留游戏声音和音效输出。</li>
+        <li><strong>准备 Mod。</strong>在 Mod 管理中按<a href="#mod-processing">加工流程</a>创建或增补声纹功能，完成后确认该账号选用成品，并重启其游戏。</li>
+        <li><strong>开启监控。</strong>回到“识别与统计”，在“记录内容 → 场景计时与掉落截图”启用地区识别并等待资源就绪，再打开“音频声纹自动识别”。游戏运行时应显示“正在捕获 · PID …”；保留游戏声音和音效输出。账号模式在账号或方案成员参数中选用成品；“指定游戏进程”模式保留识别 Mod 选择、准备入口和启动参数复制。</li>
         <li><strong>进入野外正常刷图。</strong>确认截图能覆盖进入地区时的红字播报，再看地点识别与场景计时是否更新。已识别的主城和尚未识别的地点不会记录掉落；没有物品掉落时掉落数为零是正常的。</li>
         <li><strong>查看记录。</strong>识别到另一个野外、回城播报或结束监控后，已完成分段会保存。点击“打开掉落统计图表”查看；正在进行的段先看悬浮窗实时计时。历史为空时先检查时间、角色、路线等筛选。</li>
       </ol>
       <div class="callout"><strong>完成标志：</strong>状态显示正在捕获正确游戏进程，地点信号更新，进入野外开始计时，离开后统计页出现已完成记录。掉落识别依赖实际支持的物品信号，不要求每场都有掉落。</div>
       <h3>视觉地区识别与高号符文截图</h3>
-      <p>在“识别与统计 → 记录内容 → 场景计时与掉落截图”启用地区识别，截图目标沿用监听账号或指定游戏进程。软件每秒检查地区红字，再读取地区及恐怖地带信息；首次使用会下载并校验 OCR 模型与推理运行库；两者在“Mod 管理 → 下载与更新”中统一显示为“视觉识别资源包”，可提前下载、校验或打开目录。支持 Gitee 国内镜像，并遵循软件的下载源设置。资源完成后，用“截图预览”核对区域，调整比例时以游戏客户区为准。最小化、黑帧或截图失败均不能作为识别成功。</p>
-      <p>主界面识别暂未提供。直接退到选人或大厅不会立即结算，计时会持续到下一次识别到地区或结束监控，可能包含菜单停留时间；需要准确结束当前分段时，请先回城并确认识别，或结束监控。</p>
+      <p>地区声纹和每秒检查一次的截图 OCR 可各自确认场景，结果统一协调；关闭场景声纹的成品依靠 OCR。截图目标沿用监听账号或指定游戏进程。在“识别与统计 → 记录内容 → 场景计时与掉落截图”启用地区识别；首次使用会下载并校验 OCR 模型与推理运行库，在“Mod 管理 → 下载与更新”统一显示为“视觉识别资源包”，可提前下载、校验或打开目录。支持 Gitee 镜像，并遵循下载源设置。用“截图预览”核对区域，比例以游戏客户区为准；最小化、黑帧或截图失败不能作为识别成功。</p>
+      <p>恐怖地带（TZ）由地区提示下方文字的 OCR 结果确认，不再只看紫色；识别结果命中“邪恶区域恐怖地带”中的任意一个字，或英文 Terrorized / Terror Zone，即标记当前场景。截图范围须覆盖该提示。标记晚出现时只补充当前场景，不重置计时与掉落；状态保留至下一次场景切换。</p>
+      <p>选人或大厅识别暂未提供。直接退出局内不会立即结算，计时会持续到下一次确认场景或结束监控，可能包含菜单停留时间；需要准确结束当前分段时，请先回城并确认识别，或结束监控。</p>
       <p>掉落只由声纹确认，不再使用截图 OCR 核验或拦截。确认 #24–#33 符文后自动保存游戏窗口 PNG，截图失败不影响掉落记录。在“场景计时与掉落截图”中可打开截图目录；图片按日期归档，名称包含掉落时间、场景、符文及记录 ID。数据库仅保存相对路径，图片存放于应用数据目录的 stateData/drop-screenshots。场景 OCR 资源失败可在“诊断与资源”重试；诊断日志默认关闭。</p>
       <h3>敌对提示音自动重开</h3>
-      <p>先给监听 Mod 加工“敌对自动重开”，重启游戏，再在识别页选择监听目标并开启该功能。它共用音频采集目标，可在场景及掉落记录关闭时独立使用。检测到提示音后向目标连续发送四次 Esc，间隔 150 毫秒；所有执行目标都需要加载“双击 Esc 下一局”。敌对自动重开固定在识别页分页上方，默认范围为“所有游戏窗口”，包括监听窗口及 Hub 管理的游戏窗口；也可切换为“仅监听窗口”。折叠时保留开关与范围下拉框，点击标题展开说明。已有保存的范围选择会保留。</p>
-      <p>每次触发后冷却 15 秒，重复提示不会连续派发。结果显示的是按键已发送，仍需确认游戏内状态；提示音本身不能区分是谁向谁宣战。关闭功能或更换监听目标、触发范围，会停止后续按键。</p>
+      <p>先给监听 Mod 加工“敌对自动重开”，重启游戏，再在识别页选择监听目标并开启该功能。它共用音频采集目标，可在场景及掉落记录关闭时独立使用。检测到提示音后向目标连续发送四次 Esc，间隔 150 毫秒；所有执行目标都需要加载“双击 Esc 下一局”。敌对自动重开固定在识别页分页上方，默认范围为“监听及已管理窗口”，包括监听窗口及 Hub 管理的游戏窗口；也可切换为“仅监听窗口”。折叠时保留开关与范围下拉框，点击标题展开说明。已有保存的范围选择会保留。</p>
+      <p>每次触发后冷却 15 秒，重复提示不会连续派发。结果显示的是按键已发送，仍需确认游戏内状态；提示音本身不能区分是谁向谁宣战。关闭功能或更换监听目标、触发范围，会停止后续按键。监听成品缺少敌对模块时会单独提示不可用；若声纹识别成品有效，场景及掉落记录仍可继续。</p>
       <h3>过滤器与统计筛选不是同一件事</h3>
       <p>设置页按“监听设置、记录内容、诊断与高级”分区：日常先选监听账号与 Mod；场景计时、掉落截图和过滤在“记录内容”；敌对重开位于分页上方；录音、阈值与故障排查在“诊断与高级”。切换分区保留当前配置。</p>
       <p><strong>识别过滤器</strong>决定今后哪些已识别事件写入数据库，例如仅记录 #20–#33 符文；在“识别与统计 → 记录内容”调整后点击“应用掉落过滤”，无需重新加工 Mod。被过滤掉、没有保存的事件以后不能靠放宽筛选补回来。<strong>统计页筛选</strong>只决定怎样展示已保存记录，不改变原始数据。</p>
@@ -633,8 +744,8 @@
       <ul>
         <li><strong>首次新建的两种来源：</strong>选择“我玩原版”时从本机游戏资源创建识别 Mod；选择“我使用 Mod”时复制并加工所选现有 Mod，保留其功能且不修改源目录。从已有 Mod 加工时，还可选择同名加工；会先保留带 <code>_backup_</code> 标记的原始目录，校验成功后才替换。</li>
         <li><strong>兼容处理：</strong>每个所选掉落克隆自己的世界实体与 <code>Flippy ↔ Ground</code> 状态机；原动画、模型、VFX、依赖和原声音均保留，背包/仓库 <code>usesound</code> 与表格 <code>dropsound</code> 不改。</li>
-        <li><strong>覆盖范围：</strong>当前声纹模块生成掉落信号及供视觉匹配的地区目录；地点、恐怖地带与场景计时由视觉识别驱动。掉落可选 33 个符文、宝石与骷髅、护身符、珠宝、钥匙、器官、精华与赦免徽章。</li>
-        <li><strong>协议：</strong>v7 掉落签名和敌对控制信号继续使用；当前声纹配方不再生成地点、恐怖地带或主界面标记。场景开始、切换和回城结算依赖截图中的地区播报，无法截图或播报未被识别时请检查视觉设置。</li>
+        <li><strong>覆盖范围：</strong>当前声纹模块生成掉落信号、可选的地区环境声纹，以及供 OCR 匹配的地区目录。地区声纹或 OCR 可确认地点并驱动场景计时；TZ 使用文字 OCR。掉落可选 33 个符文、宝石与骷髅、护身符、珠宝、钥匙、器官、精华与赦免徽章。</li>
+        <li><strong>协议：</strong>继续使用 v7 掉落签名和敌对控制信号；不生成 TZ 或主界面声音。旧成品可能没有地区声纹，可继续使用 OCR；需要更新时从原始未加工来源重做。</li>
         <li><strong>生命周期：</strong>世界物品在地面持续发送时，软件用缺席门限合并成一次掉落；捡起并在门限后再次落地可成为新事件。完全同步的多个同名物品无法从同一混合信号推断数量。</li>
         <li><strong>落库：</strong>所选掉落先写入通用原始观测表；识别到地区切换、回城或结束监控时，独立分段和观测归属在同一数据库事务内保存。</li>
         <li><strong>运行诊断：</strong>状态卡实时显示音频峰值、数据包、符文、扩展物品、地点信号和最近置信度；先看峰值即可区分“没有捕获到声音”和“有声音但没有标记”。</li>
@@ -660,7 +771,7 @@
       <p><strong>需要：</strong>正常模式、至少两个已初始化账号；主号和每个小号都必须加载包含“局内房间工具”的成品。它按你在 D2RHub 中配置的房名创建 / 加入，不会自动读取任意手动创建房间的房号；也不会代替登录、选角色或自动刷图。</p>
       <ol>
         <li><strong>添加扩展。</strong>“设置中心 → 扩展功能”添加“自动跟房”，阅读模块说明后打开该面板。</li>
-        <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；在“参与账号 Mod”逐个选用带局内房间工具的成品。缺少时点击“前往加工”，完成后返回。主号也需要房间工具。</li>
+        <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；启动前会检查本次启动的主号和小号是否加载局内房间工具。遇到提示，可返回调整账号或方案，也可跳过不支持的功能继续启动。</li>
         <li><strong>准备后台跟房。</strong>创建快捷键可在任意 D2R 窗口触发，程序自动切到配置主号，所有参与账号处于局内；主号和小号同步预填表单，小号跟随时只提交回车。</li>
         <li><strong>填写房名与快捷键。</strong>例如“房名开头”填 <code>hub-</code>、“下一个序号”填 <code>1</code>、“序号位数”选 <code>3</code>，以下次房名预览 <code>hub-001</code> 为准。填写可选密码，并分别录制不冲突的“创建房间快捷键”“跟随账号快捷键”。</li>
         <li><strong>首次先选“手动跟随”。</strong>等待有效配置自动保存，启用模块。用所选 Mod 启动 / 重启所有参与账号，选好角色并分别进入局内；参与者使用可互相加入房间的区服与角色模式。</li>
@@ -669,16 +780,23 @@
       </ol>
       <div class="callout"><strong>完成标志：</strong>在游戏内确认主号与所选小号进入同一个房间。任务完成表示输入流程执行完毕，不能代替游戏服务端的入房结果；如果房间未建立或小号未加入，先看游戏提示和“后台任务”，处理后再触发跟随。</div>
       <h3>导入朋友的规则，只跟房不创建</h3>
-      <p>自动跟房设置按“房间与操作、参与账号、高级时序”分区。首页配置模式和房间规则；账号选择、顺序与 Mod 绑定集中在“参与账号”；快捷键与进房方式按需展开，高级按键时序留在独立分区。修改仍自动保存。</p>
+      <p>自动跟房设置按“房间与操作、参与账号、高级时序”分区。首页配置模式和房间规则；账号选择与顺序集中在“参与账号”；Mod 在账号或方案成员的启动参数中选用。快捷键与进房方式按需展开，高级按键时序留在独立分区。修改仍自动保存。</p>
       <p>主界面“跟房配置”快速设置提供“复制”和“粘贴”。复制内容包含密码；粘贴仅填入房名、密码与序号，不更改账号和快捷键，关闭面板、点击外部、按 Esc 或进入完整设置时自动保存，无需点击应用。无效输入或保存失败时提示并保留当前草稿；进入完整设置会等待保存完成。没有待跟进的建房任务时，直接按跟房快捷键加入当前规则的房间，全部加入指令送达后序号递增；手动或自动跟随配置均可使用。主号仅创建房间时需要。</p>
       <ol><li>创建者在建房前点击房间规则旁的“复制”，把内容发给朋友。内容含密码，请只发给参与者。</li>
       <li>默认模式下手动跟房：粘贴并导入，选择本机跟随账号，直接按跟房快捷键；只需一个本机账号，无需建房主号。使用“拼房跟随”接收聊天信号时，则需配置本机主号，主号与小号一起加入。所有参与账号仍需加载局内房间工具。</li>
       <li>核对双方预览房名、区服和角色模式。默认模式按原版流程创建或跟房；跨电脑协作时，创建方选择“拼房主机”，加入方选择“拼房跟随”。</li>
       <li>全部加入指令送达后，本机下一序号递增。输入失败或取消不递增；间隔模式有指令未送达时也不递增。游戏拒绝入房不能自动识别，需手动核对、调整序号。</li></ol>
       <p>规则只复制前缀、密码、下一序号和补零位数，不导入他人的账号、快捷键或 Mod。它不是跨电脑实时同步：创建者跳房、重试或朋友中途加入时，要重新同步序号。建房后分享时应把跟随者序号设为当前已建房间的序号。</p>
-      <p>自动跟房设置和主页“跟房配置”均提供默认、拼房主机、拼房跟随三个互斥模式，初始选择“默认”。默认不发送或监听聊天；主机在创建前发送；跟随监听本机主号聊天框，主号与小号一起加入，两个房间快捷键均执行加入。仅跟房无需切换前台。设置页自动保存，快捷面板离开时自动保存。模式切换会取消旧流程和待执行信号。拼房跟随不要求开启声纹或地区识别，但需要 OCR 资源就绪、主号聊天窗口可捕获且参与游戏未最小化。诊断日志默认关闭。</p>
+      <p>自动跟房设置和主页“跟房配置”均提供默认、拼房主机、拼房跟随、超级迪亚波罗四个互斥模式，初始选择“默认”。默认不发送或监听聊天；主机在创建前发送；跟随监听本机主号聊天框，主号与小号一起加入，两个房间快捷键均执行加入。仅跟房无需切换前台。设置页自动保存，快捷面板离开时自动保存。模式切换会取消旧流程和待执行信号。拼房跟随不要求开启声纹或地区识别，但需要 OCR 资源就绪、主号聊天窗口可捕获且参与游戏未最小化。诊断日志默认关闭。</p>
+      <h3>超级迪亚波罗：每个账号创建独立房间</h3>
+      <ol>
+        <li>在“拼房模式”选择“超级迪亚波罗”，选好主号和小号并调整顺序。所有参与账号都须运行、处于局内，并加载局内房间工具。</li>
+        <li>设置房名前缀、下一序号、位数和共用密码，等待保存并启用模块。例如前缀 <code>hub-</code>、序号 <code>1</code>、三位数字，配置一主两小。</li>
+        <li>在任意 D2R 窗口按“创建房间快捷键”。主号创建 <code>hub-001</code>，小号按配置顺序分别创建 <code>hub-002</code>、<code>hub-003</code>，密码相同；本模式不执行小号跟房，也不接收聊天跟房信号。“跟随账号快捷键”会提示改用创建快捷键。</li>
+        <li>在每个游戏窗口核对实际房间。任务会在执行创建前一次预留所有参与账号的序号，上例下一序号变为 <code>4</code>；创建失败或取消后也不会退回已预留的序号。参与账号不可用时先修复该账号，再重新触发。</li>
+      </ol>
       <h3>聊天信号如何防止重复跟房</h3>
-      <p>拼房主机在创建前连发三条相同信号，例如 <code>*********** 077 ***********</code>。拼房跟随先宽松检查两侧连续符号的布局，再裁切中间数字送入 OCR；它只用于去重，不会覆盖本机房号。首次有效画面只记录旧消息基线，随后比已消费最大序号更大的信号才会安排跟房。等待时间为 1 秒加跟房延迟，执行期间不继续认领其他消息。</p>
+      <p>拼房主机在创建前连发三条相同信号，例如 <code>*********** 077 ***********</code>。拼房跟随先宽松检查两侧连续符号的布局，再裁切中间数字送入 OCR；它只用于去重，不会覆盖本机房号。首次有效画面只记录旧消息基线，随后比已消费最大序号更大的信号才会安排跟房。识别成功后等待配置的跟房延迟，不额外固定增加 1 秒；执行期间不继续认领其他消息。</p>
       <p>修改房名前缀、密码、起始序号或位数并成功保存，会重新建立去重会话；粘贴相同规则后保存也能重置。设置页自动保存，快捷面板关闭或离开时自动保存。重置会取消旧等待任务、清空 OCR 缓存，并保留首次画面保护；保存失败时不会重置。普通重启、开关监听和系统自动递增序号会保留记录。</p>
       <p>从小序号重新开始前，先让旧的大序号聊天离开识别区域，避免它重新成为基线。信号在执行前即被持久记录，跟房失败后不会反复重放同一号码；处理游戏提示并核对双方规则后，可手动跟房或重新同步。</p>
       <h3>建房与跟随的输入方式</h3>
@@ -705,7 +823,7 @@
       <h2>新版统计页与统计口径</h2>
       <p>从主界面顶部的统计按钮，或“设置中心 → 扩展 → 识别与统计 → 查看统计图表”进入。统计按钮旁的“分享战报”可直接生成当前战报并复制为 PNG 图片，随后可粘贴到聊天、文档或图片编辑器。页面读取本地数据库，并通过仅监听本机回环地址的临时 API 完成刷新、重命名和删除。</p>
       <h3>交互式总览</h3>
-      <p>统计页采用与图片战报一致的暖纸色和陶土色，保留深浅主题。“时间花在哪里”环图显示有效耗时占比，点击场景图例可筛选，点击“全部场景”恢复。“每一场，都有节奏”展示最近 120 场有效耗时，圆点可点击或用 Tab 选择查看角色、时间和掉落数；大圆点表示有掉落，紫色表示高级符文，虚线为图中样本中位数。所有图表沿用当前策略、筛选与异常耗时口径。</p>
+      <p>统计页默认使用软件的暖砂主题，可切换深色；图片战报保留自己的配色。“时间花在哪里”环图显示有效耗时占比，点击场景图例可筛选，点击“全部场景”恢复。“最近场次耗时”用柱状图展示最近 120 场有效耗时，一柱一场，越高表示用时越长；纵轴标出耗时刻度，横轴按完成时间从较早到最近排列。虚线和文字标明样本中位耗时，柱顶圆点表示有掉落，紫柱表示高级符文。点击柱子或用 Tab 选择可查看角色、时间和掉落数。所有图表沿用当前策略、筛选与异常耗时口径。</p>
       <h3>底层分段与多选策略组</h3>
       <p>不同名称的野外各自开始、结束并保存独立分段；识别到主城播报后停止计时；当前不识别主界面。统计页内置女伯爵、地穴、安达利尔、墨菲斯托、Chaos、巴尔等常用 Farm 策略组，首次使用时全部默认开启，也可同时勾选或关闭多条路线；每个预设旁都能直接编辑，修改后的预设保存在本机并可恢复系统默认。自定义策略同样支持新建、编辑和删除。每个原始分段最多归入一个策略，重叠路线不会重复计数。策略只对展示、筛选、导出和战报生效，不修改数据库中的原始分段与掉落归属；没有行程标识的旧记录不会被猜测合并。主界面快捷战报与统计 HTML 共用所选策略、预设修改、战报周期、展示字段和异常场次口径；没有保存过偏好时才使用系统默认值。</p>
       <h3>统一筛选</h3>
@@ -767,23 +885,23 @@
       <p>从旧版便携格式升级时，程序会自动把程序同级 <code>config</code> 搬迁到用户数据目录；迁移失败会继续使用旧目录并在下次启动重试。如果新旧两处都已有配置、账号或统计数据，程序会保留两边而不会静默合并或覆盖，并在日志中报告冲突。</p>
       <p>应用级说明的接受状态按应用版本保存在当前 Windows 用户的本地存储中，升级版本后会重新显示。确认前不会启动全局输入监听、声纹监控、可选能力监督器或 Mod 启动扫描；可选模块说明则按模块单独记录。</p>
       <p>迁移或重装前，退出 D2RHub 并备份整个 <code>%APPDATA%\D2RHub</code> 目录；如果旧 <code>config</code> 仍存在或日志报告迁移冲突，请在核对完成前同时备份它。排障需要时也可一并备份程序同级 <code>logs</code>。不要在程序运行时手工编辑或覆盖数据库和账号快照。</p>
-      <p>程序不会在应用内替换正在运行的可执行文件。“每日检查更新”每天首次启动时检查新版本；发现更新后会打开项目 Release / 安装包页面，由你下载 MSI 或 NSIS 安装包完成升级。</p>
-      <p>D2RHub 不会主动上传账号配置、Token 或声纹统计。联网范围包括 Battle.net Token 登录页面、GitHub Releases 更新接口和邪恶区域信息接口；统计数据留在本机。</p>
+      <p>“每日检查更新”每天首次启动时检查新版本，也可手动检查。在“软件更新”窗口点击“下载安装包”，程序按下载源设置获取安装包，首选源失败时自动切换；下载可转入后台或取消。校验通过后点击“安装更新”，Hub 会退出并启动完整安装器。仍有后台任务运行时，需先等待任务结束。也可从项目发布页手动下载安装包。</p>
+      <p>D2RHub 不会主动上传账号配置、Token 或声纹统计。按功能需要访问 Battle.net 登录页、GitHub / Gitee 分发接口与附件、视觉模型和运行库来源、自动选源的国家码查询及邪恶区域公开信息接口。统计 API 仅监听本机回环地址，统计数据留在本机；完整范围见项目安全政策。</p>
     </section>
 
     <section id="troubleshooting">
       <p class="eyebrow">11 · TROUBLESHOOTING</p>
       <h2>疑难解答</h2>
       <h3>账号无法创建或对应区服不可选</h3>
-      <p>检查该客户端的游戏目录和存档目录是否成组配置。国服战网认证还需国服 Battle.net.exe；亚 / 美 / 欧服统一检查国际服档案并使用网页 Token。</p>
+      <p>检查对应客户端的游戏目录是否已配置且有效；存档目录不是创建账号的前置条件。国服战网认证还需国服 Battle.net.exe；亚 / 美 / 欧服统一检查国际服游戏目录并使用网页 Token。</p>
       <h3>战网初始化超时或快照失效</h3>
       <p>确认 Battle.net 已实际登录完成、路径对应正确客户端，并避免同时执行另一个战网认证操作。账号卡片显示过期、<code>runtime/</code> 快照缺失/损坏或启动失败时，执行重新初始化；不要手工复制顶层旧认证文件来绕过快照校验。</p>
       <h3>网页 Token 获取页打不开</h3>
-      <p>在“运行环境”中重新探测或手动选择 Edge / Chrome，关闭同类型浏览器后重试独立浏览器流程。也可以手动取得 Token 后回到向导粘贴。</p>
+      <p>已配置隔离浏览器时，在“运行环境”重新探测或选择 Edge / Chrome，再重试。未配置浏览器时会调用系统默认浏览器，可检查默认浏览器关联；也可手动打开登录页取得完整跳转链接或 Token，再回向导粘贴。</p>
       <h3>画质设置无法读取</h3>
       <p>确认存档路径正确且包含 <code>Settings.json</code>。先用对应国服/国际服客户端正常进入游戏一次，再回到设置中心加载。</p>
       <h3>窗口默认大小没有变化</h3>
-      <p>新比例只用于没有有效窗口记录的首次布局，升级会保留旧尺寸。可直接拖动窗口边缘调整，之后会记住你的选择。</p>
+      <p>首次运行或升级版本后会按默认比例重新居中；同版本后续启动恢复保存的尺寸和位置。可直接拖动窗口边缘调整，等待位置保存后再重启核对。</p>
       <h3>小键盘快捷键没有反应</h3>
       <p>保持 NumLock 开启，在“窗口快捷键”中重新录制，确认显示 <code>Num1</code> 等小键盘名称，而非普通 <code>1</code>。若出现占用提示，换用其他组合键；录制期间和自动输入期间 Hub 热键会暂时停用。</p>
       <h3>悬浮窗吸附后找不到</h3>
@@ -791,13 +909,13 @@
       <h3>迷你窗无法变成单行</h3>
       <p>继续从底边向上压缩；到 36 逻辑像素附近会切换为单行，并可降至 18。Windows 缩放比例会影响物理像素，不影响逻辑阈值。</p>
       <h3>声纹无数据或识别不稳定</h3>
-      <p>确认账号使用的是独立工具最新输出的组合 Mod、启动参数包含完整的 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>、游戏音效未静音、目标账号和运行中的 D2R 一致。Mod 实际发出的类别由工具的 <code>--track</code> 决定；D2RHub 设置只过滤接收后要记录的类别。先看“音频峰值”，再看“地点信号”和掉落计数；日志会提示当前 Mod 清单缺失或协议版本不兼容。</p>
+      <p>确认本次游戏实际加载含声纹的成品，启动参数包含完整的 <code>-mod &lt;名称&gt; -txt -assettestmode 1</code>，游戏音效未静音，监听目标正确。方案成员参数可能与账号默认值不同，应核对本次方案。先看“音频峰值”，再看地点与掉落计数；日志会提示 Mod 清单缺失或协议不兼容。若提示无法确认本次启动的 Mod，请关闭游戏并从 Hub 重新启动，或在监听目标中选择“指定游戏进程”验证连接。</p>
       <h3>Mod 已加工，功能还是不可用</h3>
       <p>按顺序查看：对应Hub 扩展是否已添加且处于正常模式 → 成品标签是否包含所需功能 → 实际账号是否选用了这个成品 → 游戏是否已重启。加工只自动应用到目标账号；小号没有选用或仍是旧进程，是跟房准备未完成的常见原因。</p>
       <h3>正在捕获，但没有场次或掉落</h3>
-      <p>音频峰值一直为零：检查监听账号是否运行、游戏声音是否有输出。峰值变化但地点信号为零：检查成品、协议和启动参数，并重启游戏。地点正常但无掉落：确认处于野外、物品在支持范围且未被识别过滤器排除。实时有计时但历史为空：先离开当前野外完成分段，再放宽统计页时间和角色筛选。</p>
+      <p>音频峰值一直为零：检查监听目标是否运行、游戏声音是否有输出。没有场景：检查是否启用了成品的场景声纹，或地区 OCR 已开启、资源就绪且截图覆盖播报；关闭场景声纹时没有地区声音信号属正常。地点正常但无掉落：确认处于野外、物品在支持范围且未被识别过滤器排除。实时有计时但历史为空：先回城、切换野外或结束监控完成分段，再放宽统计页时间和角色筛选。TZ 未标记时核对截图是否覆盖地区提示下方文字，单有紫色不会确认 TZ。</p>
       <h3>主号建房成功，小号没跟上</h3>
-      <p>先查看跟随触发是否仍为“手动跟随”，小号是否勾选、已运行并处于局内。确认各账号的房间工具就绪、区服与角色模式可互相加入。自动跟随过早时增加“建房后等待（秒）”；后台方案检查创建时主号是否在前台、参与账号是否处于局内。查看后台任务的具体失败步骤，主号房间仍有效时可重新触发“让跟随账号加入”。</p>
+      <p>先检查拼房模式：超级迪亚波罗会分别创建房间，不执行跟随；普通跟房再查看是否仍为“手动跟随”、小号是否勾选、已运行并处于局内。确认本次游戏实际加载局内房间工具，区服与角色模式可互相加入。自动跟随过早时增加“建房后等待（秒）”；创建快捷键可在任意 D2R 窗口触发，程序会自动切到主号。查看后台任务的具体失败步骤，主号房间仍有效时可重新触发跟随。</p>
       <h3>想取消跟房或停止识别</h3>
       <p>跟房进行中从“后台任务”取消；关闭自动跟房模块可停止后续快捷键和任务运行。停止识别请关闭“音频声纹自动识别”；仅关闭统计悬浮窗不会停止后台记录。设置会保留，之后可继续使用。</p>
       <h3>进一步排查</h3>
@@ -815,10 +933,11 @@
   const root = document.documentElement;
   try {
     const savedTheme = localStorage.getItem("d2rhub-guide-theme");
-    if (savedTheme === "light" || savedTheme === "dark") root.dataset.theme = savedTheme;
+    if (savedTheme === "dark") root.dataset.theme = "dark";
+    else root.dataset.theme = "sand";
   } catch {}
   document.getElementById("themeToggle").addEventListener("click", () => {
-    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    root.dataset.theme = root.dataset.theme === "dark" ? "sand" : "dark";
     try { localStorage.setItem("d2rhub-guide-theme", root.dataset.theme); } catch {}
   });
 </script>
@@ -830,26 +949,26 @@
     ({ id, short, title, why, entry, actions, done, help, ref });
   const setup = [
     step('paths', '配置路径', '先告诉软件：游戏装在哪里', '配置你实际使用的客户端即可；国服和国际服各用自己的路径。', '首次设置向导，或 设置中心 → 运行环境',
-      ['安装后阅读首次说明；后面要用识别或跟房，请选择“正常模式”。', '选择含 D2R.exe 的游戏目录，再选择该客户端的存档目录。', '仅使用国服战网客户端认证时，额外填写 Battle.net.exe；网页 Token 方式无需填写它。'],
+      ['安装后阅读首次说明；后面要用识别或跟房，请选择“正常模式”。', '游戏目录选择名为 Diablo II Resurrected、含 D2R.exe 的文件夹；配置目录国服选 Diablo II Resurrected (CN)，国际服选 Diablo II Resurrected。前缀路径不限。', '仅使用国服战网客户端认证时，额外选择 Battle.net.exe 文件；网页 Token 方式无需填写它。'],
       '对应客户端的游戏目录与存档目录已保存，可以继续添加账号。', '不知道存档位置时先用对应客户端正常进入一次游戏，再回向导选择存档目录。不要把国服和国际服目录混用。', 'connections'),
     step('first', '初始化主号', '添加第一个账号，并让它进入游戏', '初始化就是完成账号认证；此时还不需要 Mod。', '主界面 → 添加账号',
-      ['填写昵称，选择区服、语言与认证方式。', '按向导登录这个游戏账号；网页 Token 方式取得 Token 后粘贴回向导，完成初始化。', '点击该账号卡片的启动按钮，选角色并进入游戏。'],
+      ['按“账号信息 → 认证方式 → 连接账号”三步操作，先填写昵称、区服、界面语言和配音。', '登录这个游戏账号；网页 Token 方式将完整跳转链接或 Token 粘贴回向导，识别后完成添加。国服也可选战网客户端认证。', '点击该账号卡片的启动按钮，选角色并进入游戏。'],
       '第一个账号已进入游戏，卡片对应到正确窗口。', '登录失败时在这个账号的操作中重新初始化；Token 必须属于当前账号。', 'accounts'),
     step('second', '启动小号', '再添加一个不同账号，完成多开', '每个账号保留自己的认证和窗口。', '主界面 → 添加账号 → 账号卡片启动',
       ['使用另一个游戏账号完成相同的初始化流程，勿重复粘贴主号的 Token。', '保持主号运行，启动第二个账号并进入角色。', '需要更多小号时，按同样方式添加。'],
       '至少两个不同账号已同时进入游戏，并能分别切换到它们的窗口。', '先确保每个账号都能单独启动；失败的账号先处理认证或路径，再继续配置扩展。', 'launch'),
     step('group', '保存启动组', '把常用账号存成一组，下次一键启动', '做到这里，多开已经可用。', '主界面 → 启动方案',
-      ['创建命名启动方案，选入主号和需要的小号。', '保存方案；按需点星标固定到主界面。'],
+      ['创建命名启动方案，选入主号和需要的小号。', '保存方案；按需点星标固定到主界面，或在“窗口快捷键”中为方案录制全局快捷键（最多三个不同方案）。'],
       '主界面可以找到刚保存的启动方案。下次用它启动这一组账号。', '启动方案保存账号选择、角色、布局和启动差异，运行参数使用公共设置；仍需你选角色并进入游戏，跟房按公共规则和触发方式运行。', 'launch'),
   ];
   const audioInstall = step('audio-install', '添加识别', '添加“识别与统计”，选好监听账号', 'Hub 扩展负责接收记录；下一步的 Mod 负责让游戏发出识别信号。', '设置中心 → 扩展功能 → 识别与统计',
     ['添加“识别与统计”并阅读模块说明；软件会补齐桌面悬浮窗依赖。', '打开识别与统计，在“监听目标”选择实际刷图的已初始化账号。'],
     '页面显示了你要监听的账号。', '看不到扩展功能时检查是否为正常模式；没有账号可选时先完成账号初始化。', 'audio-telemetry');
-  const audioMod = step('audio-mod', '准备声纹 Mod', '给监听账号准备声纹识别能力', '只添加Hub 扩展还不够，游戏也要加载加工成品。', '识别与统计 → 开始准备 / 准备识别 Mod',
-    ['首次选择原版游戏，或选择想保留功能的已有 Mod。', '确认包含“声纹识别”，为新成品命名，例如 HubMain，然后执行加工并应用。', '已有 D2RHub 成品时，可在 Mod 管理选择它并增补声纹识别；修改前关闭使用它的游戏。'],
+  const audioMod = step('audio-mod', '准备声纹 Mod', '给监听账号准备声纹识别能力', '只添加Hub 扩展还不够，游戏也要加载加工成品。', '设置中心 → Mod 管理 → 加工新 Mod',
+    ['首次选择原版游戏，或选择想保留功能的已有 Mod。', '勾选“声纹识别”；“场景声纹”默认开启，关闭可减小体积并改用 OCR 识别场景。为新成品命名，例如 HubMain，然后加工并应用。', '已有成品时可增补功能；改动场景声纹选项会从原始来源重做，修改前关闭使用它的游戏。'],
     '加工成功，监听账号选用的成品带有“声纹识别”功能。', '源 Mod 不会在新建流程中被改写。生成新副本时填写新名称；同名加工会保留原目录备份。已有成品增补无需另起名。', 'mod-processing');
   const audioRestart = step('audio-restart', '重启并开启', '重启监听账号，再打开识别开关', '正在运行的游戏不会自动换成新 Mod。', '账号卡片 → 重启游戏；识别与统计 → 音频声纹自动识别',
-    ['关闭监听账号的游戏，从 D2RHub 重新启动，进入角色；如果上一阶段已用这个成品重启，直接继续即可。', '回到识别与统计，确认目标账号正确，点击“立即开启”或打开识别开关。', '保留游戏声音与音效输出，在“记录内容 → 场景计时与掉落截图”启用地区识别，并等待模型及运行库准备完成。'],
+    ['关闭监听账号的游戏，从 D2RHub 重新启动，进入角色；如果上一阶段已用这个成品重启，直接继续即可。启动前提示缺少功能时，返回调整账号或方案的实际 Mod。', '回到识别与统计，确认目标账号正确，打开识别开关。', '保留游戏声音与音效输出，在“记录内容 → 场景计时与掉落截图”启用地区识别，并等待模型及运行库准备完成；截图需覆盖地区提示及下方 TZ 文字。'],
     '识别状态显示“正在捕获 · PID …”，目标是刚启动的游戏账号。', '显示未运行时先检查账号进程和识别开关；只关闭悬浮窗不会停止后台识别。', 'audio-telemetry');
   const audioRecord = step('audio-record', '得到首条记录', '进入野外，让第一段刷图记录保存下来', '先确认地点和计时，不必等到稀有物品掉落。', '游戏内 → 野外；识别与统计 → 查看统计图表',
     ['进入野外或地下城，查看地点信号、最近识别和场景计时是否更新。', '正常刷图后回城、切换到另一野外并等到地区播报被识别，或结束监控，完成当前分段。', '打开掉落统计图表查看已完成记录；没有掉落的场次也可以有计时。'],
@@ -857,8 +976,8 @@
   const roomInstall = step('room-install', '添加跟房', '选出谁建房、谁跟随', '主号负责创建新房，小号加入最近由该流程创建的房间。', '设置中心 → 扩展功能 → 自动跟房',
     ['添加自动跟房并阅读模块说明。', '进入自动跟房的“参与账号”分页，选择一个“主账号”，勾选需要的“跟随账号”。'],
     '主号与小号各自选定，使用可互相加入房间的区服与角色模式。', '没有可选账号时先完成初始化。自动跟房无需开启识别统计，但主号和小号都需要局内房间工具。', 'room-automation');
-  const roomMod = step('room-mod', '准备房间工具', '每个参与账号都要选用房间工具 Mod', '只给主号加工，不会自动让小号也用上。', '自动跟房 → 参与账号 → 参与账号 Mod → 选择 Mod / 前往加工',
-    ['缺少成品时点击“前往加工”：从原版或已有 Mod 新建，勾选“局内房间工具”，命名后加工并应用。', '已有加工成品时可增补房间工具；关闭使用该成品的游戏后再修改。', '回到“参与账号 Mod”，给主号和每个小号分别选用带房间工具的成品。同客户端可以共用一个成品。'],
+  const roomMod = step('room-mod', '准备房间工具', '每个参与账号都要选用房间工具 Mod', '只给主号加工，不会自动让小号也用上。', '设置中心 → Mod 管理；账号或方案成员 → 启动参数',
+    ['缺少成品时点击“加工新 Mod”：从原版或已有 Mod 新建，勾选“局内房间工具”，命名后加工并应用。', '已有加工成品时可增补房间工具；关闭使用该成品的游戏后再修改。', '在账号启动参数或方案成员设置中，给主号和每个小号分别选用带房间工具的成品。同客户端可以共用一个成品；启动前提示缺少功能时返回调整。'],
     '所有参与账号都选用了包含“局内房间工具”的成品。', '识别 Mod 不一定带房间工具，要看功能标签；成品按国服 / 国际服分别准备，修改共享成品会影响它的所有使用者。', 'mod-processing');
   const roomMethod = step('room-method', '准备后台跟房', '准备后台同步预填', '主号与小号先预填表单，小号跟随时只提交回车。', '自动跟房', ['确认各账号已加载局内房间工具，并处于局内。', '创建和加入快捷键可在任意 D2R 窗口触发；创建时自动切到配置主号。'], '参与账号已就绪，任意 D2R 窗口处于前台。', '无需选择操作方案，旧配置自动迁移。', 'room-automation');
   const roomRules = step('room-rules', '设置房名', '设置下一间房叫什么，先手动跟一次', '先完成一次清楚可见的建房与入房，再开启自动派发。', '自动跟房 → 房间与操作 → 房间命名 / 快捷键与进房方式',
@@ -871,7 +990,7 @@
     ['改为“自动跟随”，设置“建房后等待（秒）”，覆盖主号实际载入所需时间。', '选择小号进房方式与间隔。间隔派发不等待前一个小号入房。', '日常启动账号组并进入局内后，触发主号创建房间即可。'],
     '自动跟随设置已保存；下一次通过 D2RHub 建房后，小号会按配置派发。', '跟随过早就增加建房后等待时间。它不会读取任意手动创建房间的房号，也不会自动刷图。进行中的任务可在“后台任务”取消。', 'room-automation');
   const combinedMod = step('combined-mod', '一次加工两项', '一次准备声纹识别和房间工具', '主号负责被监听，所有跟房账号都需要房间工具。', '设置中心 → Mod 管理 → 加工',
-    ['加工目标选主号，从原版或想保留的 Mod 新建成品，同时勾选“声纹识别”和“局内房间工具”。', '命名后点击“开始加工并应用”。已有加工成品时可增补缺少的功能，修改前先关闭所有使用者的游戏。', '在自动跟房的“参与账号 Mod”中，给同客户端小号也选用这个成品，或选用各自带房间工具的成品。', '回识别与统计确认监听主号。国服和国际服的成品需要分别准备。'],
+    ['加工目标选主号，从原版或想保留的 Mod 新建成品，同时勾选“声纹识别”和“局内房间工具”。', '命名后点击“开始加工并应用”。已有加工成品时可增补缺少的功能，修改前先关闭所有使用者的游戏。', '在账号或方案成员的启动参数中，给同客户端小号也选用这个成品，或选用各自带房间工具的成品。', '回识别与统计确认监听主号。国服和国际服的成品需要分别准备。'],
     '主号成品包含两项功能；所有小号成品至少包含房间工具。', '一个成品可以同时包含两种能力，不要叠加两个 -mod 参数。加工只自动应用给目标账号，小号需要另选。', 'mod-processing');
   const routes = {
     multi: { title: '我要多开', prerequisite: '从零开始。准备两个不同游戏账号，跟着下面四步完成。', steps: setup, daily: '打开 D2RHub → 启动常用账号组 → 分别进入角色。多开无需开启识别或跟房。' },

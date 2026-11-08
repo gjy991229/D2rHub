@@ -56,11 +56,11 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
       <strong>{en ? "~" : "约 "}{MEMORY_REFERENCE[asset.id]} MB</strong>
     </div>}
     <small>{`${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
-    {status && <p className="resource-note">{status}</p>}
-    {incompatible && <p className="resource-note">{en
+    {status && <p className="resource-install-state" data-state={local?.protected ? "attention" : current ? "ready" : "update"}>{status}</p>}
+    {incompatible && <p className="resource-note resource-attention">{en
       ? `Current game: ${state.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.`
       : `当前游戏版本：${state.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
-    {!location && <p className="resource-note">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
+    {!location && <p className="resource-note resource-attention">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
     </div>
     <div className="resource-actions">
       <Button size="sm" variant="primary" disabled={!!blocked} onClick={() => void controller.install(asset, false)}>

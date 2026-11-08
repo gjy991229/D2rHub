@@ -40,7 +40,7 @@
   padding: 6px;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
-  background: var(--surface-modal);
+  background: rgb(var(--surface-card-rgb));
   box-shadow: 0 4px 8px rgb(0 0 0 / 0.18);
   animation: favorite-picker-in 160ms var(--ease-out-expo);
 }

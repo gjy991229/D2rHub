@@ -54,7 +54,7 @@ export function FavoriteLaunchGroups({
       && rect.top > height + gap + padding;
     setPosition({
       left: Math.min(window.innerWidth - width - padding, Math.max(padding, rect.left)),
-      top: opensUpward ? Math.max(padding, rect.top - height - gap) : rect.bottom + gap,
+      top: Math.max(padding, Math.min(opensUpward ? rect.top - height - gap : rect.bottom + gap, window.innerHeight - height - padding)),
       opensUpward,
     });
   }, [availableChoices.length]);
@@ -76,6 +76,7 @@ export function FavoriteLaunchGroups({
   useEffect(() => {
     if (!pickerOpen || !position) return;
     const frame = window.requestAnimationFrame(() => {
+      if (pickerRef.current?.contains(document.activeElement)) return;
       pickerRef.current?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
@@ -102,7 +103,7 @@ export function FavoriteLaunchGroups({
 
   useEffect(() => {
     if (!pickerOpen || !position) return;
-    const outside = (event: PointerEvent) => {
+    const outside = (event: PointerEvent | FocusEvent) => {
       const target = event.target;
       if (!(target instanceof Node)) return;
       if (triggerRef.current?.contains(target) || pickerRef.current?.contains(target)) return;
@@ -112,10 +113,12 @@ export function FavoriteLaunchGroups({
       if (event.key === "Escape") closePicker(true);
     };
     document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("focusin", outside);
     document.addEventListener("keydown", escape);
     window.addEventListener("resize", updatePosition);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
+      document.removeEventListener("focusin", outside);
       document.removeEventListener("keydown", escape);
       window.removeEventListener("resize", updatePosition);
     };

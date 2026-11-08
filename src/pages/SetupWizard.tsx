@@ -5,6 +5,7 @@ import { invokeCommand } from "../platform/tauri";
 import { useGlobalConfig } from "../store/globalConfig";
 import { showToast } from "../components/ui/Toast";
 import type { GlobalConfig } from "../store/types";
+import { installationPathFields, validatePathSelection } from "../utils/pathSelection";
 import { resolveLegacyPathMigration, type LegacyPathResolution } from "../utils/legacyConfigMigration";
 
 interface Props { onComplete: () => void; initialConfig?: GlobalConfig; }
@@ -45,6 +46,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   const [currentStep, setCurrentStep] = useState(0);
   const [showError, setShowError] = useState(false);
   const [isCurrentStepValid, setIsCurrentStepValid] = useState(false);
+  const [pathError, setPathError] = useState<string | null>(null);
   const [settingsJsonAvailable, setSettingsJsonAvailable] = useState<Record<"CN" | "Global", boolean | null>>({ CN: null, Global: null });
   const pendingLegacyPaths = config.legacy_path_migration;
 
@@ -117,6 +119,15 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     }
     setSaving(true);
     try {
+      for (const field of installationPathFields) {
+        await validatePathSelection(field, config[field]);
+      }
+      for (const path of [config.cn_game_path, config.global_game_path].filter(path => path.trim())) {
+        if (!await invokeCommand<boolean>("check_path_exists", { path, isFile: false })) {
+          showToast("error", `游戏目录不存在或不可访问：${path}`);
+          return;
+        }
+      }
       await save({ ...config, first_run_complete: true, first_launch: false,
         program_data_agent_path: config.program_data_agent_path || "C:\\ProgramData\\Battle.net\\Agent" });
       onComplete();
@@ -128,25 +139,25 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   };
 
   const steps = [
-    { key: "cn_battle_net_path" as const, title: "国服战网客户端", desc: "国服战网认证使用；仅使用 Token 时可留空",
+    { key: "cn_battle_net_path" as const, title: "国服战网客户端", desc: "最终选择 Battle.net.exe；前缀路径不限，Token 模式可留空",
       icon: <HardDrive size={20} />,
       placeholder: "浏览选择国服 Battle.net.exe", isFile: true, required: false,
       value: config.cn_battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,cn_battle_net_path:v})), detected: null },
-    { key: "cn_game_path" as const, title: "国服游戏安装目录", desc: "仅供国服账号启动使用（可跳过此版本）",
+    { key: "cn_game_path" as const, title: "国服游戏安装目录", desc: "最终选择 Diablo II Resurrected 文件夹，内含 D2R.exe；前缀路径不限",
       icon: <FolderOpen size={20} />,
       placeholder: "浏览选择国服游戏安装目录", isFile: false, required: false,
       value: config.cn_game_path, setValue: (v:string)=>setConfig(c=>({...c,cn_game_path:v})), detected: null },
-    { key: "cn_saved_games_path" as const, title: "国服存档目录（可选）", desc: "仅用于独立画质配置，通常为 Diablo II Resurrected (CN)",
+    { key: "cn_saved_games_path" as const, title: "国服配置目录（可选）", desc: "最终选择 Diablo II Resurrected (CN) 文件夹；前缀路径不限，不要求 Settings.json",
       icon: <Save size={20} />,
-      placeholder: "浏览选择国服存档目录", isFile: false, required: false,
+      placeholder: "浏览选择国服配置目录", isFile: false, required: false,
       value: config.cn_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,cn_saved_games_path:v})), detected: detected.cnSavedGames },
-    { key: "global_game_path" as const, title: "国际服游戏安装目录", desc: "亚服、美服、欧服账号共用（可跳过此版本）",
+    { key: "global_game_path" as const, title: "国际服游戏安装目录", desc: "最终选择 Diablo II Resurrected 文件夹，内含 D2R.exe；前缀路径不限",
       icon: <FolderOpen size={20} />,
       placeholder: "浏览选择国际服游戏安装目录", isFile: false, required: false,
       value: config.global_game_path, setValue: (v:string)=>setConfig(c=>({...c,global_game_path:v})), detected: null },
-    { key: "global_saved_games_path" as const, title: "国际服存档目录（可选）", desc: "仅用于独立画质配置，通常不带 (CN) 后缀",
+    { key: "global_saved_games_path" as const, title: "国际服配置目录（可选）", desc: "最终选择 Diablo II Resurrected 文件夹；前缀路径不限，不要求 Settings.json",
       icon: <Save size={20} />,
-      placeholder: "浏览选择国际服存档目录", isFile: false, required: false,
+      placeholder: "浏览选择国际服配置目录", isFile: false, required: false,
       value: config.global_saved_games_path, setValue: (v:string)=>setConfig(c=>({...c,global_saved_games_path:v})), detected: detected.globalSavedGames },
     { key: "browser_path" as const, title: "浏览器", desc: "用于多账号浏览器隔离（可选，仅支持 Chrome/Edge）",
       icon: <Globe size={20} />,
@@ -191,6 +202,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     const checkStepValidity = async () => {
       const step = steps[currentStep];
       if (!step) return;
+      if (active) setPathError(null);
 
       if (!step.required && !step.value) {
         if (active) setIsCurrentStepValid(true);
@@ -202,19 +214,18 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         return;
       }
 
-      if (step.key === "cn_saved_games_path" || step.key === "global_saved_games_path") {
-        if (active) setIsCurrentStepValid(true);
-        return;
-      }
-
       try {
+        await validatePathSelection(step.key, step.value);
         const exists = await invokeCommand<boolean>("check_path_exists", {
           path: step.value,
           isFile: step.isFile,
         });
         if (active) setIsCurrentStepValid(exists);
       } catch (e) {
-        if (active) setIsCurrentStepValid(false);
+        if (active) {
+          setIsCurrentStepValid(false);
+          setPathError(String(e));
+        }
       }
     };
 
@@ -229,7 +240,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   if (pendingLegacyPaths) {
     const candidates = [
       ["游戏目录", pendingLegacyPaths.game_path],
-      ["存档目录", pendingLegacyPaths.saved_games_path],
+      ["配置目录", pendingLegacyPaths.saved_games_path],
       ["Battle.net", pendingLegacyPaths.battle_net_path],
     ].filter((entry): entry is [string, string] => Boolean(entry[1]));
 
@@ -405,7 +416,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
               style={{ background: "var(--toast-warning-bg)", border: "1px solid var(--toast-warning-border)" }}>
               <AlertTriangle size={14} className="text-warning shrink-0 mt-0.5" />
               <p className="text-xs text-text-secondary leading-relaxed">
-                当前目录中未找到 Settings.json。账号创建、登录和多开不受影响，但画质配置相关功能暂不可用。请先启动一次游戏生成该文件，或稍后在设置中修正存档目录。
+                当前目录中未找到 Settings.json。账号创建、登录和多开不受影响，但画质配置相关功能暂不可用。请先启动一次游戏生成该文件，或稍后在设置中修正配置目录。
               </p>
             </div>
           )}
@@ -425,6 +436,8 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
             </p>
           )}
         </div>
+
+        {pathError && <p role="alert" className="text-xs text-error mb-4">{pathError}</p>}
 
         {/* Validation error */}
         {showError && !allStepsFilled() && (

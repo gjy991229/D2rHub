@@ -1,7 +1,8 @@
-import { ChevronDown, Trash2 } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
+import { AlertCircle, ChevronDown, Trash2 } from "lucide-react";
+import { useState, useEffect, useId, useRef } from "react";
 import type { LaunchLog } from "../../store/launch";
 import type { AccountMeta } from "../../store/types";
+import "./launchProgress.css";
 
 interface Props {
   accounts: AccountMeta[];
@@ -15,6 +16,7 @@ export function LaunchProgressView({ accounts, logs, onClear, revealRevision = 0
   const english = language === "en-US";
   const [expanded, setExpanded] = useState(false);
   const userCollapsed = useRef(false);
+  const logId = useId();
 
   useEffect(() => {
     if (revealRevision > 0) { userCollapsed.current = false; setExpanded(true); }
@@ -45,11 +47,12 @@ export function LaunchProgressView({ accounts, logs, onClear, revealRevision = 0
   };
 
   return (
-    <div className="mx-5 mb-4 account-line overflow-hidden transition-all duration-300">
+    <section className="launch-activity account-line overflow-hidden" aria-label={english ? "Activity log" : "运行日志"}>
       <div className="flex items-center pr-3">
       <button
         type="button"
         aria-expanded={expanded}
+        aria-controls={logId}
         onClick={() => setExpanded(prev => { userCollapsed.current = prev; return !prev; })}
         className="w-full flex items-center gap-2 px-3.5 py-2 text-left hover:bg-surface-hover transition-colors"
       >
@@ -58,16 +61,19 @@ export function LaunchProgressView({ accounts, logs, onClear, revealRevision = 0
         <span className="text-xs font-semibold text-text-secondary flex-1">
           {english ? "Activity log" : "运行日志"}
           <span className="text-text-muted font-normal ml-1.5">({logs.length})</span>
-          {logs.some(log => log.status === "error") && <span className="text-error font-normal ml-2">{english ? "Errors recorded" : "有失败记录"}</span>}
+          {logs.some(log => log.status === "error") && <span className="launch-activity-error"><AlertCircle size={12} aria-hidden="true" />{english ? "Errors recorded" : "有失败记录"}</span>}
         </span>
       </button>
         <button type="button" onClick={onClear}
-          className="icon-btn w-6 h-6" title={english ? "Clear log" : "清除日志"}>
-          <Trash2 size={10} />
+          className="icon-btn w-8 h-8 shrink-0" title={english ? "Clear log" : "清除日志"} aria-label={english ? "Clear log" : "清除日志"}>
+          <Trash2 size={13} aria-hidden="true" />
         </button>
       </div>
 
       <div
+        id={logId}
+        aria-hidden={!expanded}
+        inert={!expanded}
         className="transition-all duration-300 ease-in-out grid"
         style={{
           gridTemplateRows: expanded ? "1fr" : "0fr",
@@ -75,23 +81,22 @@ export function LaunchProgressView({ accounts, logs, onClear, revealRevision = 0
         }}
       >
         <div className="overflow-hidden">
-          <div className="max-h-44 overflow-auto px-3.5 pb-2.5 space-y-px">
+          <div className="launch-activity-list" tabIndex={expanded ? 0 : -1} role="region" aria-label={english ? "Log entries" : "日志条目"}>
             {[...logs].reverse().map((log, i) => (
-              <div key={i} className="flex items-start gap-2 py-1 text-[10px] font-mono leading-relaxed">
-                <span className="text-text-muted shrink-0 w-12">
-                  {new Date(log.timestamp).toLocaleTimeString("zh-CN", { hour12: false })}
-                </span>
-                <span className="shrink-0 w-1 h-1 rounded-full mt-[5px]"
-                  style={{ background: statusColor(log.status) }} />
-                <span className="text-text-muted shrink-0 min-w-[48px]">
+              <div key={i} className="launch-activity-entry">
+                <time className="launch-activity-time" dateTime={log.timestamp}>
+                  {new Date(log.timestamp).toLocaleTimeString(english ? "en-GB" : "zh-CN", { hour12: false })}
+                </time>
+                <span className="launch-activity-dot" aria-hidden="true" style={{ background: statusColor(log.status) }} />
+                <span className="launch-activity-account" title={getAccountName(log.account_id)}>
                   {getAccountName(log.account_id)}
                 </span>
-                <span className="text-text-secondary flex-1 break-all">{log.message}</span>
+                <span className="launch-activity-message" style={log.status === "error" ? { color: "var(--error)" } : undefined}>{log.message}</span>
               </div>
             ))}
           </div>
         </div>
       </div>
-    </div>
+    </section>
   );
 }

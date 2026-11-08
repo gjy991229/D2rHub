@@ -43,10 +43,19 @@ fn scene_key(candidate: &Candidate) -> Option<String> {
 impl SceneFusion {
     fn accept(&mut self, candidate: Candidate, observed: Instant) -> Option<Candidate> {
         let key = scene_key(&candidate)?;
+        if self.current.as_ref().is_some_and(|(_, at)| observed < *at) {
+            return None;
+        }
         if candidate.audio_mapped {
             if let Some((current, at)) = &self.current {
                 if scene_key(current).as_ref() == Some(&key) {
                     self.pending_audio = None;
+                    if candidate.tz && !current.tz {
+                        let mut refined = current.clone();
+                        refined.tz = true;
+                        self.current = Some((refined.clone(), *at));
+                        return Some(refined);
+                    }
                     return None;
                 }
                 if !current.audio_mapped {
@@ -154,7 +163,14 @@ impl AudioVision {
             .area_candidates
             .get_or_insert_with(|| area_candidates(catalog))
             .clone();
-        self.submit(app, pid, Kind::Area(candidates));
+        self.submit(
+            app,
+            pid,
+            Kind::Area(
+                candidates,
+                self.fusion.current.as_ref().map(|(v, _)| v.clone()),
+            ),
+        );
     }
     fn submit(&mut self, app: &tauri::AppHandle, pid: u32, kind: Kind) {
         let diagnostic = super::configuration().diagnostic_enabled;
@@ -239,6 +255,21 @@ mod tests {
             confidence: 0.95,
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn audio_scene_accepts_tz_once_and_rejects_old_tz_after_transition() {
+        let mut fusion = SceneFusion::default();
+        let now = Instant::now();
+        let mut first = evidence("洞穴", true, 0);
+        assert!(fusion.accept(first.clone(), now).is_some());
+        first.tz = true;
+        assert!(fusion.accept(first.clone(), now).unwrap().tz);
+        assert!(fusion.accept(first.clone(), now).is_none());
+        assert!(fusion
+            .accept(evidence("石块旷野", false, 2), now + Duration::from_secs(1))
+            .is_some());
+        assert!(fusion.accept(first, now).is_none());
     }
 
     #[test]

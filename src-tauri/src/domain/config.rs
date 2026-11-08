@@ -101,6 +101,12 @@ pub struct LaunchGroup {
 
 /// Stable global configuration schema.
 ///
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaunchSchemeShortcut {
+    pub group_id: String,
+    pub shortcut: String,
+}
+
 /// Fields intentionally remain flat for on-disk compatibility. Optional
 /// features may interpret their own fields, but the core can deserialize an old
 /// configuration without loading those feature implementations.
@@ -225,6 +231,8 @@ pub struct GlobalConfig {
     /// 空字符串表示从未配置过（首次启动时自动迁移为默认值）
     #[serde(default)]
     pub shortcut_bindings_json: String,
+    #[serde(default)]
+    pub launch_scheme_shortcuts: Vec<LaunchSchemeShortcut>,
     /// Main-window toggle shortcut. Keep the persisted name for compatibility.
     #[serde(default)]
     pub show_main_window_shortcut: String,
@@ -539,6 +547,7 @@ impl Default for GlobalConfig {
             rune_audio_min_gem_level: default_rune_audio_min_gem_level(),
             rune_audio_tracked_charm_codes: default_rune_audio_tracked_charm_codes(),
             shortcut_bindings_json: r#"{"1":"Ctrl+1","2":"Ctrl+2","3":"Ctrl+3"}"#.to_string(),
+            launch_scheme_shortcuts: Vec::new(),
             show_main_window_shortcut: String::new(),
             hide_main_window_shortcut: String::new(),
             overlay_opacity: 95,

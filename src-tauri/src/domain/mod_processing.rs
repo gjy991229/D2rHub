@@ -13,7 +13,8 @@ pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 33;
 pub(crate) const PARTY_LOOT_FEATURE_ID: &str = "party_loot";
 pub(crate) const PARTY_LOOT_FINGERPRINT: &str =
-    "party-loot-v2;native-party-row;jcy=1;launch=immediate";
+    "party-loot-v3;native-party-row;portrait-position;launch=immediate";
+const V2_PARTY_LOOT_FINGERPRINT: &str = "party-loot-v2;native-party-row;jcy=1;launch=immediate";
 const LEGACY_PARTY_LOOT_FINGERPRINT: &str = "party-loot-v1;native-party-row;x=80;y=20";
 pub(crate) const SCENE_SHORTCUTS_FEATURE_ID: &str = "scene_shortcuts";
 const LEGACY_SCENE_SHORTCUTS_FINGERPRINT: &str =
@@ -303,8 +304,14 @@ pub(crate) fn validate_upgrade_source_feature_group_entries(
             {
                 return Err("旧版场景重开指纹无效".into());
             }
-        } else if group.id == PARTY_LOOT_FEATURE_ID && group.recipe_version == 1 {
-            if group.fingerprint != LEGACY_PARTY_LOOT_FINGERPRINT {
+        } else if group.id == PARTY_LOOT_FEATURE_ID && matches!(group.recipe_version, 1 | 2) {
+            if group.fingerprint
+                != if group.recipe_version == 1 {
+                    LEGACY_PARTY_LOOT_FINGERPRINT
+                } else {
+                    V2_PARTY_LOOT_FINGERPRINT
+                }
+            {
                 return Err("旧版拾取按钮指纹无效".into());
             }
         } else if group.id == ESC_NEXT_GAME_FEATURE_ID && matches!(group.recipe_version, 2 | 3) {
@@ -353,10 +360,15 @@ pub(crate) fn validate_preserved_feature_groups(
             }
 
             if required.id == PARTY_LOOT_FEATURE_ID
-                && required.recipe_version == 1
-                && required.fingerprint == LEGACY_PARTY_LOOT_FINGERPRINT
+                && matches!(required.recipe_version, 1 | 2)
+                && required.fingerprint
+                    == if required.recipe_version == 1 {
+                        LEGACY_PARTY_LOOT_FINGERPRINT
+                    } else {
+                        V2_PARTY_LOOT_FINGERPRINT
+                    }
                 && actual.id == PARTY_LOOT_FEATURE_ID
-                && actual.recipe_version == 2
+                && actual.recipe_version == 3
                 && actual.fingerprint == PARTY_LOOT_FINGERPRINT
             {
                 return true;
@@ -429,7 +441,7 @@ fn validate_supported_feature_group(
             Ok(())
         }
         PARTY_LOOT_FEATURE_ID => {
-            if group.recipe_version != 2 || group.fingerprint != PARTY_LOOT_FINGERPRINT {
+            if group.recipe_version != 3 || group.fingerprint != PARTY_LOOT_FINGERPRINT {
                 return Err("左侧拾取按钮功能组无效，请重新加工".into());
             }
             Ok(())
@@ -477,7 +489,10 @@ fn validate_audio_feature_fingerprint(
     if parts.len() != 5
         || !matches!(parts[0], "audio-v4" | "audio-v5")
         || parts[1] != expected_protocol
-        || !matches!(parts[2], "areas=countess_route" | "areas=all_areas")
+        || !matches!(
+            parts[2],
+            "areas=countess_route" | "areas=all_areas" | "areas=none"
+        )
         || !parts[3].starts_with("track=")
         || !parts[4].starts_with("gain_mdb=")
     {
@@ -522,7 +537,7 @@ mod tests {
             reused_from_source: true,
         };
         let new = GeneratorFeatureGroup {
-            recipe_version: 2,
+            recipe_version: 3,
             fingerprint: PARTY_LOOT_FINGERPRINT.into(),
             ..old.clone()
         };

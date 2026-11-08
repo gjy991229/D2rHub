@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, type ReactNode } from "react";
 import { CheckCircle, AlertCircle, XCircle, Info, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { useI18n } from "../../i18n";
 
 type ToastType = "success" | "warning" | "error" | "info";
 
@@ -26,6 +28,7 @@ const iconMap: Record<ToastType, ReactNode> = {
 };
 
 export function ToastContainer() {
+  const { language } = useI18n();
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
   const addToast = useCallback((toast: ToastItem) => {
@@ -44,11 +47,12 @@ export function ToastContainer() {
 
   if (toasts.length === 0) return null;
 
-  return (
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-xs">
+  return createPortal(
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-xs" style={{ maxWidth: "min(320px, calc(100vw - 32px))" }}>
       {toasts.map((toast) => (
         <div
           key={toast.id}
+          role={toast.type === "error" ? "alert" : "status"}
           className={`toast-enter toast-item toast-${toast.type}`}
         >
           <span className="shrink-0 toast-icon">{iconMap[toast.type]}</span>
@@ -56,6 +60,8 @@ export function ToastContainer() {
             {toast.message}
           </p>
           <button
+            type="button"
+            aria-label={language === "en-US" ? "Dismiss notification" : "关闭提示"}
             onClick={() =>
               setToasts((prev) => prev.filter((t) => t.id !== toast.id))
             }
@@ -65,6 +71,6 @@ export function ToastContainer() {
           </button>
         </div>
       ))}
-    </div>
+    </div>, document.body
   );
 }

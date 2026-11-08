@@ -41,12 +41,13 @@ export function HostileRestartSettings({ config, persist, error }: {
         <Toggle checked={!!config.hostile_auto_restart_enabled} disabled={saving}
           ariaLabel={en ? "Enable hostile auto-restart" : "启用敌对自动重开"}
           onChange={enabled => { void save({ hostile_auto_restart_enabled: enabled }); }} />
-        <select className="settings-input" aria-label={en ? "Action scope" : "触发范围"} disabled={saving}
+        <label className="hostile-restart-scope"><span>{en ? "Action scope" : "触发范围"}</span>
+        <select className="settings-input" disabled={saving}
           value={(config.hostile_auto_restart_all_windows ?? true) ? "all" : "listening"}
           onChange={event => { void save({ hostile_auto_restart_all_windows: event.target.value === "all" }); }}>
-          <option value="all">{en ? "All managed game windows" : "所有游戏窗口"}</option>
+          <option value="all">{en ? "Listening and managed windows" : "监听及已管理窗口"}</option>
           <option value="listening">{en ? "Listening window only" : "仅监听窗口"}</option>
-        </select>
+        </select></label>
       </div>
     </div>
     <div id={descriptionId} className="hostile-restart-description" hidden={!expanded}>

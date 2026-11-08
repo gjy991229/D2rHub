@@ -1,0 +1,22 @@
+.recognition-settings { container-type: inline-size; min-width: 0; }
+.recognition-target-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px 20px; flex-wrap: wrap; }
+.recognition-target-heading > div { flex: 1 1 180px; min-width: 0; }
+.recognition-target-select { flex: 1 1 220px; width: min(100%, 300px); max-width: 100%; min-width: 0; }
+.recognition-settings .recognition-capsule-select { width: 100%; }
+.recognition-launch-arguments { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; color: var(--text-secondary); font-size: var(--text-xs); }
+.recognition-launch-arguments > span { flex: 1 1 240px; min-width: 0; line-height: 1.65; overflow-wrap: anywhere; }
+.recognition-launch-arguments > button { flex-shrink: 0; }
+.recognition-threshold { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.recognition-threshold input { width: 96px; font-variant-numeric: tabular-nums; }
+.recognition-charm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.recognition-settings :is(summary, button, select, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.recognition-settings .hostile-restart-controls { flex-wrap: wrap; max-width: 100%; gap: 12px; }
+.hostile-restart-scope { display: flex; align-items: center; gap: 8px; max-width: 100%; color: var(--text-muted); font-size: var(--text-xs); }
+.hostile-restart-scope > select { min-width: 0; max-width: 100%; }
+@container (max-width: 420px) {
+  .recognition-target-select { width: 100%; flex-basis: 100%; }
+  .recognition-capsule-selector { grid-template-columns: minmax(0, 1fr); }
+  .recognition-capsule-selector > button { justify-self: start; }
+  .recognition-charm-grid { grid-template-columns: minmax(0, 1fr); }
+  .hostile-restart-scope { flex-wrap: wrap; }
+}

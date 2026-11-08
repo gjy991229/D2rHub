@@ -42,6 +42,17 @@ const create = async () => {
   fireEvent.click(screen.getByRole("button", { name: "新建布局" }));
 };
 describe("window layout library and editor", () => {
+  it("lets the user leave delete confirmation while keeping the saved layout", async () => {
+    render(<Harness layouts={[saved]} />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑布局：日常三开" }));
+    fireEvent.click(await screen.findByRole("button", { name: "删除布局" }));
+    expect(screen.getByRole("button", { name: "确认删除" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "保留布局" }));
+    expect(screen.queryByRole("button", { name: "确认删除" })).toBeNull();
+    expect(mocks.persist).not.toHaveBeenCalled();
+    expect(latest.window_layouts).toEqual([saved]);
+  });
+
   it("captures physical positions into a named draft and persists them without moving windows", async () => {
     const captured: WindowLayout = { ...saved, id: "capture", windows: [
       { monitor_id: "left", x: 120, y: 90, width: 1280, height: 720 },

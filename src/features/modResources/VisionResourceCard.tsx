@@ -63,7 +63,7 @@ export function VisionResourceCard({ en }: { en: boolean }) {
     </div>
     <div className="resource-metadata">
       <small>{en ? "Gitee mirror available; follows your download source setting." : "支持 Gitee 国内镜像，遵循软件的下载源设置。"}</small>
-      <p className="resource-note" role="status">{data?.message || (en ? "Checking local resources…" : "正在检查本地资源…")}</p>
+      <p className="resource-install-state" data-state={data?.ready ? "ready" : active ? "update" : "neutral"} role="status">{data?.message || (en ? "Checking local resources…" : "正在检查本地资源…")}</p>
       <small>{en ? "Recognition still prepares missing resources automatically when needed." : "未提前下载时，启用识别仍会自动准备所需资源。"}</small>
     </div>
     <div className="resource-actions">

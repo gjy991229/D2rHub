@@ -15,6 +15,7 @@ use crate::error::AppError;
 pub(crate) enum CoreShortcutAction {
     FocusAccount(usize),
     ToggleMainWindow,
+    LaunchScheme(usize),
 }
 
 /// 应用全局运行时状态

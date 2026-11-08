@@ -143,7 +143,7 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByRole("switch", { name: "只跟房（不创建）" })).toBeNull();
   });
 
-  it("redirects the first participant missing a room-tools capsule without a confirmation modal", async () => {
+  it("allows enabling with missing room tools and defers compatibility to launch", async () => {
     const { gateway } = makeGateway();
     const disabledSnapshot = { ...snapshot, config: { ...config, enabled: false } };
     gateway.startSync = vi.fn(async (handlers) => {
@@ -166,7 +166,7 @@ describe("RoomAutomationPanel", () => {
     expect(screen.queryByText("局内房间工具是必要条件")).toBeNull();
     await user.click(screen.getByRole("switch", { name: "启用自动跟房模块" }));
     expect(screen.queryByRole("heading", { name: "启用自动跟房" })).toBeNull();
-    expect(onRequireRoomTools).toHaveBeenCalledWith("two", undefined, false);
+    expect(onRequireRoomTools).not.toHaveBeenCalled();
   });
 
   it("keeps the room primary independent from the recognition target", async () => {

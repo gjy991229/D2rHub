@@ -1708,18 +1708,13 @@ pub fn open_stats_page(
         .map_err(|error| format!("序列化统计页偏好失败: {error}"))?
         .unwrap_or_else(|| "null".to_string());
     let preferences_json = escape_json_for_html_script(&preferences_json);
-    let stats_theme = state
-        .configuration()
-        .snapshot()
-        .map(|config| config.theme)
-        .unwrap_or_else(|| "light".to_string());
     let html = render_stats_template(
         &template,
         &stats_json,
         &preferences_json,
         api_port,
         &api_token,
-        &stats_theme,
+        "sand",
     );
 
     // 4. 写入 stateData/stats.html（使相对路径 img/ 可用）

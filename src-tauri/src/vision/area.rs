@@ -77,14 +77,6 @@ fn feature_color(image: &RgbImage, color: impl Fn([u8; 3]) -> bool, min_density:
         bounds,
     }
 }
-fn purple([r, g, b]: [u8; 3]) -> bool {
-    r >= 95
-        && b >= 150
-        && g <= 90
-        && b as u32 * 10 >= r as u32 * 11
-        && b as u32 >= g as u32 * 2
-        && r as u32 >= g as u32 * 3 / 2
-}
 pub fn tz_crop(image: &RgbImage, entry: &Feature) -> Option<RgbImage> {
     let bottom = entry
         .bounds
@@ -96,14 +88,14 @@ pub fn tz_crop(image: &RgbImage, entry: &Feature) -> Option<RgbImage> {
     }
     let below =
         imageops::crop_imm(image, 0, bottom, image.width(), image.height() - bottom).to_image();
-    let feature = feature_color(&below, purple, 0.09);
-    if feature.pixels < 45
-        || feature.pixels as f32 / ((below.width() * below.height()).max(1) as f32) < 0.008
-    {
-        return None;
-    }
-    crop(&below, &feature)
+    processing::chat_lines(&below).into_iter().next()
 }
+pub fn terror_text(text: &str) -> bool {
+    text.chars().any(|c| "邪恶区域恐怖地带".contains(c))
+        || text.to_ascii_lowercase().contains("terrorized")
+        || text.to_ascii_lowercase().contains("terror zone")
+}
+
 pub fn crop(image: &RgbImage, feature: &Feature) -> Option<RgbImage> {
     let (x0, y0, x1, y1) = feature.bounds.filter(|_| feature.present)?;
     let pad = ((y1 - y0) / 10).clamp(2, 8);
@@ -193,12 +185,13 @@ impl Gate {
             hash.update(tz.width().to_le_bytes());
             hash.update(tz.height().to_le_bytes());
             for p in tz.pixels() {
-                hash.update([u8::from(purple(p.0))]);
+                hash.update(p.0);
             }
         }
         let signature = hash.finalize().into();
         if self.signature == Some(signature)
-            && (self.result.is_some() || self.retry.is_some_and(|until| until > now))
+            && (self.result.as_ref().is_some_and(|v| v.tz || tz.is_none())
+                || self.retry.is_some_and(|until| until > now))
         {
             self.last_skip = Some(if self.result.is_some() {
                 "unchanged_red_mask"
@@ -229,9 +222,12 @@ impl Gate {
                 }
                 result.announcement = self.entry_id;
                 result.tz = self.tz_seen;
-                if tz.is_some() {
-                    self.tz_seen = true;
-                    result.tz = true;
+                if let Some(tz) = tz {
+                    let (text, _) = recognize(tz)?;
+                    if terror_text(&text) {
+                        self.tz_seen = true;
+                        result.tz = true;
+                    }
                 }
             }
         } else {
@@ -244,6 +240,36 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tz_matches_any_requested_character_but_not_color_or_unrelated_text() {
+        for c in "邪恶区域恐怖地带".chars() {
+            assert!(terror_text(&format!("x{c}x")));
+        }
+        for text in ["Terrorized", "TERROR ZONE"] {
+            assert!(terror_text(text));
+        }
+        for text in ["", "进入洞穴", "普通场景"] {
+            assert!(!terror_text(text));
+        }
+        let entry = Feature {
+            present: false,
+            pixels: 0,
+            strokes: 0,
+            bounds: None,
+        };
+        for rgb in [[220, 220, 220], [200, 140, 50], [140, 40, 200]] {
+            let mut image = RgbImage::new(160, 80);
+            for y in 48..65 {
+                for x in 20..130 {
+                    if x % 20 < 7 {
+                        image.put_pixel(x, y, image::Rgb(rgb));
+                    }
+                }
+            }
+            assert!(tz_crop(&image, &entry).is_some());
+        }
+    }
 
     #[test]
     fn rejection_reasons_distinguish_unknown_names_from_conflicting_aliases() {
@@ -415,7 +441,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(terror.tz);
-        assert_eq!(calls, 1, "purple detection must not invoke OCR");
+        assert_eq!(calls, 2, "TZ requires its own OCR result");
         assert_eq!(normal.announcement, terror.announcement);
         let fading = gate
             .read(&red, now, &candidates, None, |_| {

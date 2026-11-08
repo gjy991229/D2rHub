@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef } from "react";
-import { createPortal } from "react-dom";
-import { Check, Loader2, Circle } from "lucide-react";
+import { useCallback, useEffect, useState, useRef } from "react";
+import { ArrowLeft, ArrowRight, Check, Circle, ExternalLink, Globe2, KeyRound, Link2, Loader2, MonitorPlay, ShieldCheck, UserRound } from "lucide-react";
 import { Modal } from "../ui/Modal";
 import { Button } from "../ui/Button";
 import { Input } from "../ui/Input";
@@ -22,6 +21,8 @@ import {
   shouldStartBnetInitialization,
 } from "../../utils/accountInitLifecycle";
 import { extractBattleNetToken } from "../../utils/battleNetToken";
+import { accountInitCopy } from "./accountInitCopy";
+import "./accountInit.css";
 
 interface Props {
   open: boolean;
@@ -53,7 +54,7 @@ const bnetSteps = [
 ];
 
 // ---------- Token wizard steps ----------
-type TokenWizardStep = "token_nick" | "token_auth" | "token_guide" | "token_paste" | "token_settings";
+type TokenWizardStep = "token_nick" | "token_auth" | "token_guide" | "token_paste";
 const CANCEL_RETRY_INTERVAL_MS = 500;
 const CANCEL_TIMEOUT_MS = 5_000;
 
@@ -66,17 +67,10 @@ const getTokenUrl = (region: string): string => {
   }
 };
 
-const getTokenPrefix = (region: string): string => {
-  switch (region) {
-    case "NA": return "US";
-    case "KR": return "KR";
-    case "EU": return "EU";
-    default: return "CN";
-  }
-};
-
 export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinitializeAccount }: Props) {
   const { config } = useGlobalConfig();
+  const en = config?.app_language === "en-US";
+  const copy = accountInitCopy[en ? "en-US" : "zh-CN"];
   const migratingToToken = Boolean(updateAccount
     && requiresTokenMigration(updateAccount.auth_mode, updateAccount.region, config));
   const [currentStep, setCurrentStep] = useState<InitStep>("input_nickname");
@@ -90,7 +84,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   const [language, setLanguage] = useState("zhCN");
   const [voicelanguage, setVoicelanguage] = useState("zhCN");
   const [nicknameLocked, setNicknameLocked] = useState(false);
-  const [showGuide, setShowGuide] = useState(false);
+  const [loginOpened, setLoginOpened] = useState(false);
 
   // Token wizard state
   const [tokenWizard, setTokenWizard] = useState<TokenWizardStep>("token_nick");
@@ -103,12 +97,18 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   const createdAccountIdRef = useRef("");
   const activeInitializationRef = useRef<Promise<void> | null>(null);
   const cancellingRef = useRef(false);
+  const configuredBrowserOpenedRef = useRef(false);
   // 待完成账号的创建与提交都是异步的：ref 守卫保证同一帧内的重复点击不会创建第二个账号。
   const tokenAccountCreatingRef = useRef(false);
   const tokenSubmittingRef = useRef(false);
   // 向导会话号：取消或重新打开都会作废旧会话，迟到的创建结果必须由创建方回收。
   const wizardSessionRef = useRef(0);
+  const finishedSessionRef = useRef<number | null>(null);
   const wizardOpenRef = useRef(false);
+  const wizardTargetRef = useRef("");
+  const nicknameRef = useRef<HTMLInputElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const tokenInputRef = useRef<HTMLInputElement>(null);
 
   const {
     createAccount,
@@ -120,9 +120,22 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   const cnBattleNetModeAvailable = hasConfiguredPathsForRegion(config, "CN", "bnet");
 
   const markDone = (step: InitStep) => setCompletedSteps(prev => new Set([...prev, step]));
+  const finishInitialization = useCallback((session: number, id: string) => {
+    if (!wizardOpenRef.current || session !== wizardSessionRef.current || finishedSessionRef.current === session) return;
+    finishedSessionRef.current = session;
+    onDone(id);
+    onClose();
+  }, [onDone, onClose]);
 
   useEffect(() => {
-    if (open) {
+    const target = updateAccount?.id || reinitializeAccount?.id || "new";
+    if (open && (!wizardOpenRef.current || wizardTargetRef.current !== target)) {
+      wizardSessionRef.current += 1;
+      finishedSessionRef.current = null;
+      wizardTargetRef.current = target;
+      tokenAccountCreatingRef.current = false;
+      tokenSubmittingRef.current = false;
+      setError(null);
       setCurrentStep("input_nickname");
       setCompletedSteps(new Set());
       if (updateAccount) {
@@ -153,6 +166,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
         accountIdRef.current = reinitializeAccount.id;
         setNickname(reinitializeAccount.display_name || reinitializeAccount.id);
         setAuthMode(reinitializeIsToken ? "token" : "bnet");
+        setToken("");
         setRegion(reinitializeAccount.region === "Global" ? "KR" : (reinitializeAccount.region as AccountRegion) || "CN");
         setLanguage(reinitializeAccount.language || "zhCN");
         setVoicelanguage(reinitializeAccount.voicelanguage || "zhCN");
@@ -172,7 +186,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
         setNicknameLocked(false);
         setTokenWizard("token_nick");
       }
-      setShowGuide(false);
+      setLoginOpened(false);
       setTokenGuideLoading(false);
       setTokenAccountCreating(false);
       setTokenSubmitting(false);
@@ -180,9 +194,10 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       createdAccountIdRef.current = "";
       activeInitializationRef.current = null;
       cancellingRef.current = false;
+      configuredBrowserOpenedRef.current = false;
     }
-    // 只在“打开向导”这一刻开启新会话：后续配置变化导致的本体重置不应作废在途创建。
-    if (open && !wizardOpenRef.current) wizardSessionRef.current += 1;
+    // Refreshes of the config or account list must not erase an in-progress form.
+    if (!open && wizardOpenRef.current) wizardSessionRef.current += 1;
     wizardOpenRef.current = open;
   }, [open, updateAccount, reinitializeAccount, config?.cn_battle_net_path, config?.cn_game_path, config?.cn_saved_games_path, config?.global_game_path, config?.global_saved_games_path]);
 
@@ -244,20 +259,26 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
     };
   }, []);
 
-  // Auto-trigger browser launch when entering token guide step
+  // Keep browser guidance inside the wizard; closed sessions must never open a page.
   useEffect(() => {
-    if (tokenWizard !== "token_guide" || showGuide) return;
-    tokenOpenGuide();
-  }, [tokenWizard]);
+    if (!open || tokenWizard !== "token_guide") return;
+    void tokenOpenGuide();
+  }, [open, tokenWizard]);
 
   useEffect(() => {
-    if (currentStep !== "done") return;
+    if (!open) return;
+    if (tokenWizard === "token_nick") nicknameRef.current?.focus();
+    else headingRef.current?.focus();
+  }, [open, tokenWizard, nicknameLocked]);
+
+  useEffect(() => {
+    if (!open || currentStep !== "done") return;
+    const session = wizardSessionRef.current;
     const timer = setTimeout(() => {
-      onDone(accountId);
-      onClose();
+      finishInitialization(session, accountId);
     }, 1500);
     return () => clearTimeout(timer);
-  }, [currentStep]);
+  }, [open, currentStep, accountId, finishInitialization]);
 
   const handleCancel = async () => {
     if (cancellingRef.current) return;
@@ -265,7 +286,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
     cancelledRef.current = true;
     // 先作废会话，再等待清理：期间返回的创建结果必须自行回收。
     wizardSessionRef.current += 1;
-    setError("已取消初始化流程");
+    setError(copy.cancelled);
 
     try {
       const activeInitialization = activeInitializationRef.current;
@@ -273,8 +294,9 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
         isUpdating: Boolean(updateAccount || reinitializeAccount),
         createdAccountId: createdAccountIdRef.current,
       });
+      const browserWasOpened = configuredBrowserOpenedRef.current;
       const cleanupAfterInitialization = async () => {
-        if (config?.auto_close_browser && config.browser_type) {
+        if (browserWasOpened && config?.auto_close_browser && config.browser_type) {
           await invokeCommand("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
         }
         if (id) {
@@ -285,7 +307,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       const settled = authMode !== "bnet"
         || await requestInitializationCancellation(activeInitialization);
       if (!settled && activeInitialization) {
-        showToast("warning", "取消请求已发送，后台仍在安全清理；完成后会自动删除未完成账号");
+        showToast("warning", copy.cleanupPending);
         void activeInitialization
           .catch(() => {})
           .then(cleanupAfterInitialization)
@@ -307,13 +329,14 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       cancellingRef.current = false;
       // 回到向导首步：既避免取消后仍触发 Token 登录页自动打开，也让下次打开重新初始化。
       setTokenWizard("token_nick");
-      setShowGuide(false);
+      setLoginOpened(false);
       setTokenAccountCreating(false);
       setTokenSubmitting(false);
     }
   };
 
   const handleClose = () => {
+    if (tokenSubmittingRef.current || currentStep === "done") return;
     if (shouldCancelInitializationOnClose({
       authMode,
       tokenWizard,
@@ -327,8 +350,10 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   };
 
   const runInit = async (): Promise<void> => {
+    const session = wizardSessionRef.current;
+    const isCurrentSession = () => session === wizardSessionRef.current && wizardOpenRef.current && !cancelledRef.current;
+    if (!isCurrentSession()) return;
     setError(null);
-    if (cancelledRef.current) return;
 
     setCurrentStep("creating");
     let id = reinitializeAccount?.id || "";
@@ -342,9 +367,15 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
           language || undefined,
           voicelanguage || undefined,
         );
+        if (!isCurrentSession()) {
+          // Cancellation may precede the create response and therefore cannot
+          // capture this ID. The creating session must reclaim it itself.
+          await deleteAccount(id);
+          return;
+        }
       } catch (accountCreationError) {
-        if (!cancelledRef.current) {
-          setError(`创建账号失败: ${String(accountCreationError)}`);
+        if (isCurrentSession()) {
+          setError(`${copy.createError}: ${String(accountCreationError)}`);
         }
         return;
       }
@@ -355,7 +386,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
     }
     markDone("creating");
 
-    if (cancelledRef.current) return;
+    if (!isCurrentSession()) return;
     setCurrentStep("browser_setup");
 
     try {
@@ -365,7 +396,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       } else {
         await initializeBnetAccount(id);
       }
-      if (cancelledRef.current) return;
+      if (!isCurrentSession()) return;
 
       // 事件监听负责实时推进；这里补齐完成态，兼容事件监听初始化失败。
       markDone("browser_setup");
@@ -374,23 +405,18 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       markDone("waiting_login");
       markDone("collecting");
       setCurrentStep("done");
-      showToast("success", "账号 " + nickname.trim() + " 初始化完成！");
+      showToast("success", copy.created);
     } catch (initializationError) {
-      if (cancelledRef.current) return;
-      setError("账号初始化失败: " + String(initializationError));
+      if (!isCurrentSession()) return;
+      setError(`${copy.initError}: ${String(initializationError)}`);
     }
   };
   // ── Token wizard handlers ──
 
   const tokenStepNickNext = () => {
-    if (!nickname.trim()) { setError("请输入昵称"); return; }
-    setError(null);
-    setTokenWizard("token_settings");
-  };
-
-  const tokenStepSettingsNext = () => {
+    if (!nickname.trim()) { setError(copy.requiredNickname); nicknameRef.current?.focus(); return; }
     if (!hasConfiguredPathsForRegion(config, region, "token")) {
-      setError(`${region === "CN" ? "国服" : "国际服"}游戏安装目录尚未配置，请先前往设置补全`);
+      setError(copy.pathError);
       return;
     }
     if (region !== "CN") setAuthMode("token");
@@ -401,11 +427,11 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   const tokenStepAuthNext = async () => {
     if (authMode === "bnet") {
       if (region !== "CN") {
-        setError("国际服仅支持 Token 直启");
+        setError(copy.cnOnly);
         return;
       }
       if (!hasConfiguredPathsForRegion(config, region, "bnet")) {
-        setError("国服 Battle.net.exe 尚未配置，战网认证无法继续");
+        setError(copy.bnetPathError);
         return;
       }
       // Bnet mode: lock and proceed to old flow
@@ -450,17 +476,19 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       setTokenWizard("token_guide");
     } catch (accountCreationError) {
       if (session === wizardSessionRef.current) {
-        setError(`创建 Token 账号失败: ${String(accountCreationError)}`);
+        setError(`${copy.createError}: ${String(accountCreationError)}`);
       }
     } finally {
-      tokenAccountCreatingRef.current = false;
-      setTokenAccountCreating(false);
+      if (session === wizardSessionRef.current) {
+        tokenAccountCreatingRef.current = false;
+        setTokenAccountCreating(false);
+      }
     }
   };
 
   const handleConfirmNickname = () => {
     const trimmed = nickname.trim();
-    if (!trimmed) { setError("请输入昵称"); return; }
+    if (!trimmed) { setError(copy.requiredNickname); return; }
     setError(null);
     setNickname(trimmed);
     markDone("input_nickname");
@@ -468,48 +496,40 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
   };
 
   const tokenOpenGuide = async () => {
+    if (tokenGuideLoading) return;
+    const session = wizardSessionRef.current;
     setTokenGuideLoading(true);
     setError(null);
     try {
       if (config?.browser_path && config?.browser_type) {
         const accountId = accountIdRef.current;
-        if (!accountId) throw new Error("Token 账号尚未创建");
+        if (!accountId) throw new Error(copy.missingAccount);
         await invokeCommand("open_token_login_url", { accountId, url: getTokenUrl(region) });
+        if (session !== wizardSessionRef.current || !wizardOpenRef.current) {
+          // A browser opened after cancellation belongs to the old session;
+          // reclaim it here because cancellation could not observe it yet.
+          if (config.auto_close_browser) {
+            await invokeCommand("kill_browser_processes", { browserType: config.browser_type }).catch(() => {});
+          }
+          return;
+        }
+        configuredBrowserOpenedRef.current = true;
         await sleep(1200);
+        if (session !== wizardSessionRef.current || !wizardOpenRef.current) return;
         await invokeCommand("bring_self_to_foreground").catch(() => {});
       } else {
         const { open: openUrl } = await import("@tauri-apps/plugin-shell");
         await openUrl(getTokenUrl(region));
       }
-      setShowGuide(true);
+      if (session === wizardSessionRef.current && wizardOpenRef.current) setLoginOpened(true);
     } catch (e) {
-      if (cancelledRef.current) return;
-      setError(`打开 Token 登录页面失败: ${String(e)}`);
+      if (session !== wizardSessionRef.current || cancelledRef.current) return;
+      setError(`${copy.loginError}: ${String(e)}`);
     } finally {
-      setTokenGuideLoading(false);
-    }
-  };
-
-  const handleGuideClose = () => {
-    setShowGuide(false);
-    setTokenWizard("token_paste");
-  };
-
-  const handleOpenTokenWeb = async (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    const tokenUrl = getTokenUrl(region);
-    try {
-      if (config?.browser_path && config?.browser_type) {
-        const accountId = accountIdRef.current;
-        if (!accountId) throw new Error("Token 账号尚未创建");
-        await invokeCommand("open_token_login_url", { accountId, url: tokenUrl });
-      } else {
-        const { open: openUrl } = await import("@tauri-apps/plugin-shell");
-        await openUrl(tokenUrl);
+      if (session === wizardSessionRef.current && wizardOpenRef.current) {
+        setTokenGuideLoading(false);
+        setTokenWizard("token_paste");
       }
-    } catch (err) {
-      console.error("无法打开网页:", err);
-      showToast("error", "打开外部浏览器失败，请手动网页打开。");
     }
   };
 
@@ -517,7 +537,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
     if (tokenSubmittingRef.current) return;
     const extractedToken = extractBattleNetToken(token);
     if (!extractedToken) {
-      setError("未找到完整 Token，请粘贴包含 ST=...& 的完整链接");
+      setError(copy.invalidToken);
       return;
     }
     tokenSubmittingRef.current = true;
@@ -561,328 +581,150 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
       onDone(id);
       onClose();
       if (updateAccount) {
-        showToast("success", migratingToToken ? "已迁移为 Token 直启！" : "Token 已更新！");
+        showToast("success", migratingToToken ? copy.migrated : copy.updated);
       } else {
-        showToast("success", "Token 账号 " + nickname.trim() + " 初始化完成！");
+        showToast("success", copy.created);
       }
     } catch (e) {
       if (session !== wizardSessionRef.current) return;
-      const action = updatingExistingAccount ? "更新账号配置" : "创建账号";
-      setError(`${action}失败: ${String(e)}`);
+      setError(`${updatingExistingAccount ? copy.updateError : copy.createError}: ${String(e)}`);
     } finally {
-      tokenSubmittingRef.current = false;
-      setTokenSubmitting(false);
+      if (session === wizardSessionRef.current) {
+        tokenSubmittingRef.current = false;
+        setTokenSubmitting(false);
+      }
     }
   };
 
-  // ── Render ──
+  const existingAccount = updateAccount || reinitializeAccount;
+  const bnetRunning = nicknameLocked && authMode === "bnet";
+  const connecting = tokenWizard === "token_guide" || tokenWizard === "token_paste";
+  const stage = bnetRunning || connecting ? 2 : tokenWizard === "token_auth" ? 1 : 0;
+  const busy = tokenAccountCreating || tokenSubmitting;
+  const regions = [
+    { value: "CN", label: copy.cn, edition: copy.cnEdition },
+    { value: "KR", label: copy.asia, edition: copy.globalEdition },
+    { value: "NA", label: copy.americas, edition: copy.globalEdition },
+    { value: "EU", label: copy.europe, edition: copy.globalEdition },
+  ] as const;
+  const regionLabel = regions.find(item => item.value === region)?.label || region;
+  const locales = [{ value: "zhCN", label: "简体中文" }, { value: "zhTW", label: "繁體中文" }, { value: "enUS", label: "English" }];
 
   return (
-    <Modal
-      open={open}
-      onClose={handleClose}
-      title={migratingToToken
-        ? "迁移为 Token 直启"
-        : updateAccount
-          ? "更新账号 Token"
-          : reinitializeAccount
-            ? "重新初始化战网账号"
-            : "初始化新账号"}
-      width="max-w-md"
-      footer={
-        currentStep === "done" ? (
-          <Button variant="primary" size="sm" onClick={() => { onDone(accountId); onClose(); }}>完成</Button>
-        ) : (currentStep !== "input_nickname" || tokenWizard !== "token_nick") ? (
-          <Button variant="secondary" size="sm" onClick={() => void handleCancel().then(onClose)}>取消</Button>
-        ) : null
-      }
+    <Modal open={open} onClose={handleClose} dismissible={!tokenSubmitting && currentStep !== "done"}
+      initialFocusRef={existingAccount ? headingRef : nicknameRef}
+      title={migratingToToken ? copy.migrateTitle : updateAccount ? copy.updateTitle : reinitializeAccount ? copy.reinitTitle : copy.title}
+      width="max-w-xl"
+      footer={<div className="account-init-footer">
+        {currentStep === "done" ? <span className="account-init-local"><Check size={14} />{copy.created}</span>
+          : <Button variant="ghost" size="sm" disabled={tokenSubmitting} onClick={handleClose}>{copy.cancel}</Button>}
+        <div className="account-init-footer-actions">
+          {tokenWizard === "token_auth" && !bnetRunning && <Button variant="secondary" size="sm" disabled={busy} onClick={() => { setError(null); setTokenWizard("token_nick"); }}><ArrowLeft size={14} />{copy.back}</Button>}
+          {currentStep === "done" ? <Button variant="primary" size="sm" onClick={() => finishInitialization(wizardSessionRef.current, accountId)}>{copy.done}<Check size={14} /></Button>
+            : bnetRunning ? null
+            : connecting ? <Button variant="primary" size="sm" loading={tokenSubmitting} disabled={!extractBattleNetToken(token)} onClick={() => void tokenStepPasteNext()}>{tokenSubmitting ? copy.saving : existingAccount ? copy.save : copy.finish}<Check size={14} /></Button>
+            : tokenWizard === "token_auth" ? <Button variant="primary" size="sm" loading={tokenAccountCreating} onClick={() => void tokenStepAuthNext()}>{tokenAccountCreating ? copy.creating : authMode === "bnet" ? copy.startBnet : copy.connect}<ArrowRight size={14} /></Button>
+            : <Button variant="primary" size="sm" onClick={tokenStepNickNext}>{copy.next}<ArrowRight size={14} /></Button>}
+        </div>
+      </div>}
     >
-      {/* ═══════════ Token Wizard Flow ═══════════ */}
-      {(!nicknameLocked || Boolean(updateAccount)) && (
-        <div className="mb-3 flex flex-col gap-3">
-          {/* Step indicator */}
-          <div className="flex items-center gap-2 text-xs text-text-muted">
-            <span className={tokenWizard === "token_nick" ? "text-accent font-bold" : ""}>1.昵称</span>
-            <span>→</span>
-            <span className={tokenWizard === "token_settings" ? "text-accent font-bold" : ""}>2.设置</span>
-            <span>→</span>
-            <span className={tokenWizard === "token_auth" ? "text-accent font-bold" : ""}>3.模式</span>
-            <span>→</span>
-            <span className={tokenWizard === "token_guide" ? "text-accent font-bold" : ""}>4.获取Token</span>
-            <span>→</span>
-            <span className={tokenWizard === "token_paste" ? "text-accent font-bold" : ""}>5.粘贴Token</span>
+      <div className="account-init" data-i18n-skip="true">
+        {!existingAccount && <ol className="account-init-steps" aria-label={copy.progress}>
+          {copy.steps.map((label, index) => <li key={label} data-state={index < stage ? "complete" : index === stage ? "active" : "pending"} aria-current={index === stage ? "step" : undefined}>
+            <span className="account-init-step-number">{index < stage ? <Check size={13} /> : index + 1}</span><span>{label}</span>
+          </li>)}
+        </ol>}
+        {stage > 0 && <div className="account-init-summary"><span className="account-init-avatar"><UserRound size={17} /></span><strong>{nickname}</strong><span className="account-init-summary-region"><Globe2 size={13} />{regionLabel}</span></div>}
+        {!bnetRunning && <header className="account-init-heading">
+          <h3 ref={headingRef} tabIndex={-1}>{stage === 0 ? copy.profileTitle : stage === 1 ? copy.authTitle : copy.connectTitle}</h3>
+          <p>{stage === 0 ? copy.profileDescription : stage === 1 ? copy.authDescription : copy.connectDescription}</p>
+        </header>}
+        {stage === 0 && <div className="account-init-profile">
+          <div>
+            <Input id="account-init-nickname" ref={nicknameRef} label={copy.nickname} value={nickname} placeholder={copy.nicknamePlaceholder}
+              aria-describedby="account-init-nickname-hint" onChange={e => { setNickname(e.target.value); setError(null); }}
+              onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing) tokenStepNickNext(); }} />
+            <p id="account-init-nickname-hint" className="account-init-hint">{copy.nicknameHint}</p>
           </div>
-
-          {/* Step 1: Nickname */}
-          {tokenWizard === "token_nick" && (
-            <>
-              <div>
-                <p className="text-md text-text-secondary mb-1.5">设置昵称（用于本地标识）</p>
-                <Input
-                  value={nickname}
-                  onChange={e => { setNickname(e.target.value); setError(null); }}
-                  placeholder="例如：主号、小号1"
-                  autoFocus
-                />
-              </div>
-              <Button variant="primary" size="sm" onClick={tokenStepNickNext}>下一步</Button>
-            </>
-          )}
-
-          {/* Step 2: Settings — sliders for region/language/voice */}
-          {tokenWizard === "token_settings" && (
-            <>
-              <div className="flex flex-col gap-4">
-                {/* Region buttons */}
-                <div>
-                  <p className="text-sm text-text-secondary mb-1.5">区服</p>
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {(["CN", "KR", "NA", "EU"] as const).map(r => (
-                      <button
-                        key={r}
-                        type="button"
-                        disabled={!hasConfiguredPathsForRegion(config, r, "token")}
-                        title={!hasConfiguredPathsForRegion(config, r, "token")
-                          ? `${r === "CN" ? "国服" : "国际服"}游戏安装目录尚未配置`
-                          : undefined}
-                        onClick={() => {
-                          setRegion(r);
-                          if (r !== "CN") setAuthMode("token");
-                          if (r === "CN") {
-                            setLanguage("zhCN");
-                            setVoicelanguage("zhCN");
-                          } else if (r === "KR") {
-                            setLanguage("zhTW");
-                            setVoicelanguage("zhTW");
-                          } else {
-                            setLanguage("enUS");
-                            setVoicelanguage("enUS");
-                          }
-                        }}
-                        className={`py-2 px-1.5 rounded-xl text-xs font-medium transition-all duration-200 ${
-                          region === r
-                            ? "bg-accent text-white shadow-sm scale-[1.03]"
-                            : "bg-surface-hover text-text-secondary hover:bg-surface-active"
-                        } disabled:opacity-35 disabled:cursor-not-allowed disabled:hover:bg-surface-hover`}
-                      >
-                        {r === "CN" && "国服"}
-                        {r === "KR" && "亚服"}
-                        {r === "NA" && "美服"}
-                        {r === "EU" && "欧服"}
-                      </button>
-                    ))}
-                  </div>
-                  {!firstConfiguredRegion(config, "token") && (
-                    <p className="text-xs text-error mt-2">尚未配置任何版本的游戏安装目录，暂时无法创建账号。</p>
-                  )}
-                </div>
-
-                {/* Language buttons */}
-                <div>
-                  <p className="text-sm text-text-secondary mb-1.5">界面语言</p>
-                  <div className="flex gap-2">
-                    {([
-                      { v: "zhCN", label: "简体中文" },
-                      { v: "zhTW", label: "繁体中文" },
-                      { v: "enUS", label: "English" },
-                    ]).map(l => (
-                      <button
-                        key={l.v}
-                        onClick={() => setLanguage(l.v)}
-                        className={`flex-1 py-2.5 px-2 rounded-xl text-sm font-medium transition-all duration-200 ${
-                          language === l.v
-                            ? "bg-accent text-white shadow-sm scale-[1.03]"
-                            : "bg-surface-hover text-text-secondary hover:bg-surface-active"
-                        }`}
-                      >
-                        {l.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Voice language buttons */}
-                <div>
-                  <p className="text-sm text-text-secondary mb-1.5">配音语言</p>
-                  <div className="flex gap-2">
-                    {([
-                      { v: "zhCN", label: "简体中文" },
-                      { v: "zhTW", label: "繁体中文" },
-                      { v: "enUS", label: "English" },
-                    ]).map(vl => (
-                      <button
-                        key={vl.v}
-                        onClick={() => setVoicelanguage(vl.v)}
-                        className={`flex-1 py-2.5 px-2 rounded-xl text-sm font-medium transition-all duration-200 ${
-                          voicelanguage === vl.v
-                            ? "bg-accent text-white shadow-sm scale-[1.03]"
-                            : "bg-surface-hover text-text-secondary hover:bg-surface-active"
-                        }`}
-                      >
-                        {vl.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-              <Button variant="primary" size="sm" onClick={tokenStepSettingsNext}>下一步</Button>
-            </>
-          )}
-
-          {/* Step 3: Auth mode */}
-          {tokenWizard === "token_auth" && (
-            <>
-              <p className="text-md text-text-secondary mb-1.5">选择认证模式</p>
-              <div className="flex flex-col gap-2">
-                <label
-                  className="flex items-center gap-2 cursor-pointer p-3 rounded-xl border border-accent/30 bg-surface-hover"
-                  title="优点：无需战网客户端，零秒启动，长期有效。缺点：需要战网账号（非网易账号）；若通过网易注册的战网号，可能需要用手机号设置战网密码才能登录网页获取 Token。"
-                >
-                  <input type="radio" checked={authMode === "token"} onChange={() => { setAuthMode("token"); setError(null); }} className="accent-accent" />
-                  <span className="text-md">✨ 网页 Token 认证（推荐·免战网）</span>
-                </label>
-                {region === "CN" ? (
-                  <label
-                    className={`flex items-center gap-2 p-3 rounded-xl border border-border-default ${
-                      cnBattleNetModeAvailable
-                        ? "cursor-pointer"
-                        : "cursor-not-allowed opacity-50"
-                    }`}
-                    title={cnBattleNetModeAvailable
-                      ? "国服兼容模式。配置简单，仅需网易账号，但启动较慢且需要经过战网客户端。"
-                      : "国服 Battle.net.exe 尚未完整配置"}
-                  >
-                    <input
-                      type="radio"
-                      checked={authMode === "bnet"}
-                      disabled={!cnBattleNetModeAvailable}
-                      onChange={() => { setAuthMode("bnet"); setError(null); }}
-                      className="accent-accent disabled:cursor-not-allowed"
-                    />
-                    <span className="text-md">战网客户端认证（国服兼容）</span>
-                  </label>
-                ) : (
-                  <p className="text-xs text-text-muted px-1 leading-relaxed">
-                    国际服固定使用 Token 直启，不启动 Battle.net 客户端，避免多客户端冲突。
-                  </p>
-                )}
-                {authMode === "bnet" && (
-                  <p className="text-xs text-text-muted px-1">
-                    战网认证沿用该账号的客户端快照语言；上一步的语言与配音选择仅用于 Token 直启。
-                  </p>
-                )}
-              </div>
-              <Button variant="primary" size="sm" onClick={tokenStepAuthNext} disabled={tokenAccountCreating}>
-                {tokenAccountCreating ? "正在创建账号..." : "下一步"}
-              </Button>
-            </>
-          )}
-
-          {/* Step 4: Guide (browser auto-launches) */}
-          {tokenWizard === "token_guide" && !showGuide && (
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-accent">
-                <Loader2 size={16} className="animate-spin" />
-                <span className="text-sm">正在打开 Token 登录页面...</span>
-              </div>
-              {tokenGuideLoading && (
-                <p className="text-xs text-text-muted">浏览器启动后，请在新打开的登录页中获取 Token，软件将自动弹出指引图</p>
-              )}
-              {!tokenGuideLoading && (
-                <Button variant="primary" size="sm" onClick={tokenOpenGuide}>重新尝试打开浏览器</Button>
-              )}
+          <fieldset className="account-init-fieldset">
+            <legend>{copy.region}</legend><div className="account-init-regions">
+              {regions.map(item => {
+                const available = hasConfiguredPathsForRegion(config, item.value, "token");
+                return <label key={item.value} className="account-init-region" data-selected={region === item.value} data-disabled={!available}>
+                  <input type="radio" name="account-init-region" value={item.value} checked={region === item.value} disabled={!available} onChange={() => {
+                    setRegion(item.value); setError(null);
+                    if (item.value !== "CN") setAuthMode("token");
+                    const locale = item.value === "CN" ? "zhCN" : item.value === "KR" ? "zhTW" : "enUS";
+                    setLanguage(locale); setVoicelanguage(locale);
+                  }} />
+                  <span className="account-init-region-top"><Globe2 size={17} />{region === item.value && <Check size={14} />}</span>
+                  <strong>{item.label}</strong><small>{available ? item.edition : copy.unavailable}</small>
+                </label>;
+              })}
             </div>
-          )}
-
-          {/* Step 5: Paste the complete redirect URL and extract its ST value. */}
-          {tokenWizard === "token_paste" && (
-            <>
-              <div>
-                <p className="text-md text-text-secondary mb-1.5">粘贴完整链接</p>
-                <Input value={token} onChange={e => {
-                  const pasted = e.target.value;
-                  setToken(extractBattleNetToken(pasted) ?? pasted);
-                  setError(null);
-                }} placeholder={`粘贴包含 ST=${getTokenPrefix(region)}-...& 的完整链接`} autoFocus autoComplete="off" spellCheck={false} />
-                <p className="text-xs text-text-muted mt-2 leading-relaxed">
-                  软件会自动提取 ST= 与下一个 &amp; 之间的 Token；复制内容中夹带中文说明也可以识别。
-                </p>
+            {!firstConfiguredRegion(config, "token") && <p className="account-init-hint text-error">{copy.noPaths}</p>}
+          </fieldset>
+          <div className="account-init-languages">
+            {[{ label: copy.language, name: "text", value: language, change: setLanguage }, { label: copy.voice, name: "voice", value: voicelanguage, change: setVoicelanguage }].map(group => <fieldset key={group.name} className="account-init-fieldset">
+              <legend>{group.label}</legend><div className="account-init-segments">
+                {locales.map(locale => <label key={locale.value} data-selected={group.value === locale.value}>
+                  <input type="radio" name={"account-init-" + group.name} value={locale.value} checked={group.value === locale.value} onChange={() => group.change(locale.value)} /><span>{locale.label}</span>
+                </label>)}
               </div>
-              <Button variant="primary" size="sm" onClick={tokenStepPasteNext} disabled={!extractBattleNetToken(token) || tokenSubmitting}>
-                {tokenSubmitting ? "正在保存..." : "确认完成"}
-              </Button>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* ═══════════ Old bnet flow (unchanged) ═══════════ */}
-      {nicknameLocked && authMode === "bnet" && (
-        <div className="relative pl-1">
-          <div className="absolute left-[17px] top-3 bottom-3 w-px"
-            style={{ background: "var(--border-default)" }} />
-          <div className="space-y-0.5">
-            {bnetSteps.filter(s => s.id !== "input_nickname").map(s => {
-              const displayedStep = reinitializeAccount && s.id === "creating"
-                ? { ...s, label: "恢复配置", desc: "恢复账号 Battle.net 快照" }
-                : s;
-              const done = completedSteps.has(s.id);
-              const active = s.id === currentStep;
-              return (
-                <div key={s.id} className="relative flex items-center gap-3.5 py-2">
-                  <div className={"shrink-0 w-[34px] h-[34px] rounded-full flex items-center justify-center z-10 transition-all duration-300 " + (
-                    done ? "bg-success/10 border-2 border-success/30"
-                      : active ? "bg-accent/10 border-2 border-accent/30"
-                        : "border border-border-default bg-surface-base"
-                  )}>
-                    {done ? <Check size={14} className="text-success" />
-                      : active ? <Loader2 size={14} className="animate-spin text-accent" />
-                        : <Circle size={14} className="text-text-muted/20" />
-                    }
-                  </div>
-                  <div>
-                    <p className={"text-md font-medium transition-colors " + (
-                      done ? "text-success" : active ? "text-text-primary" : "text-text-muted"
-                    )}>{displayedStep.label}</p>
-                    {displayedStep.desc && active && <p className="text-xs text-text-muted mt-0.5">{displayedStep.desc}</p>}
-                  </div>
-                </div>
-              );
+            </fieldset>)}
+          </div>
+          <p className="account-init-hint">{copy.localeHint}</p>
+        </div>}
+        {stage === 1 && <fieldset className="account-init-auth account-init-fieldset" disabled={busy}>
+          <legend className="sr-only">{copy.steps[1]}</legend>
+          <label className="account-init-auth-option" data-selected={authMode === "token"}>
+            <input type="radio" name="account-init-auth" value="token" checked={authMode === "token"} onChange={() => { setAuthMode("token"); setError(null); }} />
+            <span className="account-init-auth-icon"><KeyRound size={21} /></span>
+            <span className="account-init-auth-copy"><span className="account-init-auth-title"><strong>{copy.tokenTitle}</strong><small>{copy.recommended}</small></span><span>{copy.tokenDescription}</span></span>
+            <span className="account-init-radio">{authMode === "token" && <Check size={12} />}</span>
+          </label>
+          {region === "CN" && <label className="account-init-auth-option" data-selected={authMode === "bnet"} data-disabled={!cnBattleNetModeAvailable}>
+            <input type="radio" name="account-init-auth" value="bnet" checked={authMode === "bnet"} disabled={!cnBattleNetModeAvailable} onChange={() => { setAuthMode("bnet"); setError(null); }} />
+            <span className="account-init-auth-icon"><MonitorPlay size={21} /></span>
+            <span className="account-init-auth-copy"><span className="account-init-auth-title"><strong>{copy.bnetTitle}</strong><small>{copy.compatibility}</small></span><span>{cnBattleNetModeAvailable ? copy.bnetDescription : copy.bnetUnavailable}</span></span>
+            <span className="account-init-radio">{authMode === "bnet" && <Check size={12} />}</span>
+          </label>}
+          <p className="account-init-notice"><ShieldCheck size={16} /><span>{authMode === "bnet" ? copy.bnetHint : region !== "CN" ? copy.globalHint : copy.tokenHint}</span></p>
+        </fieldset>}
+        {!bnetRunning && connecting && <div className="account-init-connect">
+          <section className="account-init-login">
+            <span className="account-init-login-icon">{tokenGuideLoading ? <Loader2 size={19} className="animate-spin" /> : <ExternalLink size={19} />}</span>
+            <div><strong role="status">{tokenGuideLoading ? copy.opening : loginOpened ? copy.opened : copy.openFailed}</strong><p>{copy.loginInstruction}</p></div>
+            <Button variant="secondary" size="sm" loading={tokenGuideLoading} disabled={tokenSubmitting} onClick={() => void tokenOpenGuide()}>{loginOpened ? copy.reopenLogin : copy.openLogin}</Button>
+          </section>
+          <details className="account-init-guide"><summary>{copy.guide}</summary><img src="/token-copy-guide.png" alt={copy.guideAlt} /></details>
+          <div className="account-init-token">
+            <label htmlFor="account-init-token"><Link2 size={15} />{copy.pasteLabel}</label>
+            <Input id="account-init-token" ref={tokenInputRef} value={token} type="password" disabled={tokenSubmitting} autoComplete="off" spellCheck={false}
+              aria-describedby="account-init-token-hint" placeholder={copy.pastePlaceholder}
+              onChange={e => { const pasted = e.target.value; setToken(extractBattleNetToken(pasted) ?? pasted); setError(null); }}
+              onKeyDown={e => { if (e.key === "Enter" && !e.nativeEvent.isComposing && extractBattleNetToken(token)) void tokenStepPasteNext(); }} />
+            <p id="account-init-token-hint" className="account-init-hint">{copy.pasteHint}</p>
+            {extractBattleNetToken(token) && <p className="account-init-token-ready" role="status"><Check size={14} />{copy.tokenReady}</p>}
+          </div>
+        </div>}
+        {bnetRunning && <div className="account-init-bnet">
+          <h3 ref={headingRef} tabIndex={-1}>{currentStep === "done" ? copy.created : copy.connectTitle}</h3><p>{copy.bnetProgress}</p>
+          <ol aria-label={copy.progress}>
+            {bnetSteps.filter(step => step.id !== "input_nickname").map((step, index) => {
+              const done = completedSteps.has(step.id) || currentStep === "done";
+              const active = step.id === currentStep;
+              const labels = en ? [reinitializeAccount ? "Restore snapshot" : "Create account", "Prepare browser", "Open browser", "Open Battle.net", "Wait for sign-in", "Save snapshot", "Done"] : [reinitializeAccount ? "恢复账号快照" : "创建账号配置", "准备独立浏览器", "打开浏览器", "打开战网客户端", "等待完成登录", "保存认证快照", "完成"];
+              return <li key={step.id} data-active={active} data-done={done}><span>{done ? <Check size={14} /> : active && !error ? <Loader2 size={14} className="animate-spin" /> : <Circle size={12} />}</span><span>{labels[index]}</span></li>;
             })}
-          </div>
-        </div>
-      )}
-
-      {/* ═══════════ Error ═══════════ */}
-      {error && (
-        <div className="mt-3 p-3 rounded-xl text-md text-error"
-          style={{ background: "rgba(224,96,96,0.08)", border: "1px solid rgba(224,96,96,0.15)" }}>
-          {error}
-        </div>
-      )}
-
-      {/* ═══════════ BIG Guide Overlay (Portal to body) ═══════════ */}
-      {showGuide && createPortal(
-        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-[rgba(18,24,34,0.38)] backdrop-blur-[5px]" onClick={(e) => { e.stopPropagation(); handleGuideClose(); }}>
-          <div className="relative bg-surface-elevated rounded-modal p-6 max-w-3xl w-[95vw] mx-4 shadow-elevated border border-border-default" onClick={e => e.stopPropagation()}>
-            <p className="text-xl font-bold text-text-primary mb-4 text-center">🔍 请在浏览器中复制完整链接</p>
-            <img src="/token-copy-guide.png" alt="完整链接复制指引" className="w-full rounded-xl border border-border-default" style={{ maxHeight: "80vh", objectFit: "contain" }} />
-            <p className="text-sm text-text-muted mt-4 text-center">复制完成后关闭此弹窗，在下一步粘贴完整链接</p>
-            <div className="flex gap-2 mt-4">
-              <Button variant="secondary" size="sm" className="flex-1" onClick={handleOpenTokenWeb}>
-                手动打开 Token 网页
-              </Button>
-              <Button variant="primary" size="sm" className="flex-1" onClick={(e) => { e.stopPropagation(); handleGuideClose(); }}>
-                已复制完整链接
-              </Button>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
+          </ol>
+        </div>}
+        {error && <div className="account-init-error" role="alert">{error}</div>}
+      </div>
     </Modal>
   );
 }
+
 
 function sleep(ms: number) { return new Promise<void>(resolve => setTimeout(resolve, ms)); }
 
