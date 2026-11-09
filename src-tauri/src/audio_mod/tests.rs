@@ -194,6 +194,33 @@ fn current_audio_manifest(mod_name: &str) -> serde_json::Value {
     })
 }
 
+#[test]
+fn installed_legacy_loot_credentials_remain_usable_with_audio() {
+    let root = test_mods_directory("legacy_loot_credentials");
+    for (recipe, fingerprint) in [
+        (2, "party-loot-v2;native-party-row;jcy=1;launch=immediate"),
+        (
+            3,
+            "party-loot-v3;native-party-row;portrait-position;launch=immediate",
+        ),
+    ] {
+        let name = format!("legacy-loot-{recipe}");
+        let mut manifest = current_audio_manifest(&name);
+        manifest["feature_groups"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!({
+                "id": "party_loot", "recipe_version": recipe, "fingerprint": fingerprint
+            }));
+        write_test_audio_mod(&root, &name, manifest.clone());
+        assert!(validate_audio_mod_credential(&root, &name).is_ok());
+        manifest["feature_groups"][1]["fingerprint"] = serde_json::json!("forged");
+        write_test_audio_mod(&root, &name, manifest);
+        assert!(validate_audio_mod_credential(&root, &name).is_err());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 fn write_test_room_tool_layouts(mods_directory: &std::path::Path, mod_name: &str) {
     let layouts = mods_directory
         .join(mod_name)

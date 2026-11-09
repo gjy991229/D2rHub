@@ -276,6 +276,27 @@ pub(crate) fn validate_feature_group_entries(
     Ok(())
 }
 
+/// Installed r2/r3 loot buttons remain usable independently of newer geometry.
+/// Generated output must still pass validate_feature_group_entries.
+pub(crate) fn validate_runtime_feature_group_entries(
+    groups: &[GeneratorFeatureGroup],
+    audio_protocol_version: u8,
+) -> Result<(), String> {
+    validate_feature_group_metadata(groups)?;
+    for group in groups {
+        let previous_loot = match group.recipe_version {
+            2 => Some(V2_PARTY_LOOT_FINGERPRINT),
+            3 => Some(V3_PARTY_LOOT_FINGERPRINT),
+            _ => None,
+        };
+        if group.id == PARTY_LOOT_FEATURE_ID && previous_loot == Some(group.fingerprint.as_str()) {
+            continue;
+        }
+        validate_supported_feature_group(group, audio_protocol_version)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_upgrade_source_feature_group_entries(
     groups: &[GeneratorFeatureGroup],
     audio_protocol_version: u8,
@@ -533,6 +554,37 @@ mod tests {
     use super::*;
 
     const TEST_AUDIO_PROTOCOL: u8 = 7;
+
+    #[test]
+    fn previous_loot_is_runtime_compatible_without_relaxing_generated_output() {
+        for (recipe, fingerprint) in [
+            (2, V2_PARTY_LOOT_FINGERPRINT),
+            (3, V3_PARTY_LOOT_FINGERPRINT),
+        ] {
+            let mut group = GeneratorFeatureGroup {
+                id: PARTY_LOOT_FEATURE_ID.into(),
+                recipe_version: recipe,
+                fingerprint: fingerprint.into(),
+                reused_from_source: false,
+            };
+            let groups = std::slice::from_ref(&group);
+            assert!(validate_runtime_feature_group_entries(groups, TEST_AUDIO_PROTOCOL).is_ok());
+            assert!(validate_feature_group_entries(groups, TEST_AUDIO_PROTOCOL).is_err());
+            group.fingerprint = "forged".into();
+            assert!(validate_runtime_feature_group_entries(
+                std::slice::from_ref(&group),
+                TEST_AUDIO_PROTOCOL
+            )
+            .is_err());
+            group.fingerprint = fingerprint.into();
+            group.id = ESC_NEXT_GAME_FEATURE_ID.into();
+            assert!(validate_runtime_feature_group_entries(
+                std::slice::from_ref(&group),
+                TEST_AUDIO_PROTOCOL
+            )
+            .is_err());
+        }
+    }
 
     #[test]
     fn party_loot_r3_can_upgrade_but_is_not_current() {

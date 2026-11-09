@@ -1,4 +1,3 @@
-import { cancelLaunchModConfirmation, confirmLaunchMod } from "./launchModConfirmation";
 import { create } from "zustand";
 import { emitEvent, invokeCommand } from "../platform/tauri";
 import type { LaunchAccountEntry, LaunchProgress, LaunchResult } from "./types";
@@ -33,23 +32,6 @@ interface LaunchState {
   toggleDrawer: () => void;
 }
 
-let cancellationRevision = 0;
-
-async function withModCheck(command: "launch_accounts" | "launch_saved_scheme", args: Record<string, unknown>) {
-  const revision = cancellationRevision;
-  try { return await invokeCommand<LaunchResult[]>(command, args); }
-  catch (error) {
-    const message = String(error);
-    const marker = "[MOD_PREFLIGHT]";
-    const offset = message.indexOf(marker);
-    if (offset < 0) throw error;
-    if (revision !== cancellationRevision) return null;
-    const warning = message.slice(offset + marker.length);
-    if (!await confirmLaunchMod(warning) || revision !== cancellationRevision) return null;
-    return invokeCommand<LaunchResult[]>(command, { ...args, acceptedModWarning: warning });
-  }
-}
-
 export const useLaunch = create<LaunchState>((set, _get) => ({
   launching: false,
   progress: {},
@@ -61,10 +43,9 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   startLaunch: async (accountIds: string[]) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await withModCheck("launch_accounts", {
+      const results = await invokeCommand<LaunchResult[]>("launch_accounts", {
         accountIds,
       });
-      if (!results) { set({ launching: false }); return; }
       set({ results, launching: false });
 
       const hasFailed = results.some((r) => !r.success);
@@ -84,8 +65,7 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   startSavedScheme: async (id, revision) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await withModCheck("launch_saved_scheme", { id, revision });
-      if (!results) { set({ launching: false }); return; }
+      const results = await invokeCommand<LaunchResult[]>("launch_saved_scheme", { id, revision });
       set({ results, launching: false });
       results.filter(result => result.error).forEach(result => showToast(result.success ? "warning" : "error", result.error!));
       emitEvent("launch-ended", { success: results.every(result => result.success) });
@@ -99,8 +79,7 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   startSchemeLaunch: async (entries: LaunchAccountEntry[]) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await withModCheck("launch_accounts", { entries });
-      if (!results) { set({ launching: false }); return; }
+      const results = await invokeCommand<LaunchResult[]>("launch_accounts", { entries });
       set({ results, launching: false });
 
       const hasFailed = results.some((result) => !result.success);
@@ -135,8 +114,6 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   },
 
   cancelLaunch: async () => {
-    cancellationRevision += 1;
-    cancelLaunchModConfirmation();
     try {
       await invokeCommand("cancel_launch");
     } catch {}
@@ -171,8 +148,6 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
   },
 
   reset: () => {
-    cancellationRevision += 1;
-    cancelLaunchModConfirmation();
     invokeCommand("cancel_launch").catch(() => {});
     set({ launching: false, progress: {}, results: [], error: null });
   },

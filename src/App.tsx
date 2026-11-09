@@ -1,5 +1,3 @@
-import { LaunchModConfirmation } from "./components/LaunchModConfirmation";
-import { useLaunchModConfirmation } from "./store/launchModConfirmation";
 import { LaunchGroupEditor } from "./components/dashboard/LaunchGroupEditor";
 import { useEffect, useRef, useState } from "react";
 import { useAccountBatch, refreshBatchRunning } from "./hooks/useAccountBatch";
@@ -218,10 +216,9 @@ function App() {
   const [autoUpdateUrl, setAutoUpdateUrl] = useState("");
   const [autoUpdateVersion, setAutoUpdateVersion] = useState("");
 
-  const launchConfirmationOpen = useLaunchModConfirmation(state => state.warning !== null);
   const miniMode = useMiniMode(
     view.type === "main" && !startupServicesBlocked,
-    launchConfirmationOpen || showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
+    showSettings || showInit || !!tokenUpdateAccount || !!reinitializeAccount
       || showAbout || showAutoUpdateConfirm || !!launchGroupDraft || startupServicesBlocked || view.type !== "main",
   );
   const batch = useAccountBatch(
@@ -507,7 +504,6 @@ function App() {
       </AppShell>
       <ToastContainer />
       {applicationDisclosureDialog}
-      <LaunchModConfirmation />
     </>
   );
 
@@ -523,7 +519,6 @@ function App() {
         <ToastContainer />
       </AppShell>
       {applicationDisclosureDialog}
-      <LaunchModConfirmation />
     </>
   );
 
@@ -545,7 +540,6 @@ function App() {
         <ToastContainer />
       </AppShell>
       {applicationDisclosureDialog}
-      <LaunchModConfirmation />
     </>
   );
 
@@ -868,7 +862,6 @@ function App() {
 
       <ToastContainer />
       {applicationDisclosureDialog}
-      <LaunchModConfirmation />
     </>
   );
 }

@@ -12,9 +12,10 @@ use super::InstalledMod;
 use crate::domain::mod_arguments::{active_mod_name, has_txt_argument, plain_mod_name};
 use crate::domain::mod_processing::{
     parse_feature_groups, validate_feature_group_entries, validate_preserved_feature_groups,
-    validate_upgrade_source_feature_group_entries, GeneratorFeatureGroup, GeneratorReport,
-    RequestedFeatureGroups, AUDIO_TELEMETRY_FEATURE_ID, AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
-    AUTO_EXIT_ON_DEATH_FEATURE_ID, ESC_NEXT_GAME_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID,
+    validate_runtime_feature_group_entries, validate_upgrade_source_feature_group_entries,
+    GeneratorFeatureGroup, GeneratorReport, RequestedFeatureGroups, AUDIO_TELEMETRY_FEATURE_ID,
+    AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION, AUTO_EXIT_ON_DEATH_FEATURE_ID,
+    ESC_NEXT_GAME_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID,
 };
 use crate::rune_audio::{
     catalog::AREA_CATALOG_FILE_NAME, item_catalog::ITEM_CATALOG_FILE_NAME,
@@ -161,7 +162,7 @@ pub(super) fn validate_audio_mod_credential(
         return Err("功能组凭证缺少完整的生成器身份".to_string());
     }
     if current_feature_protocol {
-        validate_feature_group_entries(&parsed_feature_groups, PROTOCOL_VERSION)?;
+        validate_runtime_feature_group_entries(&parsed_feature_groups, PROTOCOL_VERSION)?;
     }
     let feature_groups = if has_feature_group_protocol {
         parsed_feature_groups
@@ -286,7 +287,7 @@ fn validate_compatible_audio_mod_directory_with_policy(
                 PROTOCOL_VERSION,
             )?;
         } else {
-            validate_feature_group_entries(&parsed_feature_groups, PROTOCOL_VERSION)?;
+            validate_runtime_feature_group_entries(&parsed_feature_groups, PROTOCOL_VERSION)?;
         }
     }
     // r21 and earlier manifests did not have independently verifiable feature groups. Keep their
@@ -437,6 +438,7 @@ pub(super) fn validate_audio_mod_directory(
             "Mod 不是可验证的当前功能组产物（需要 r{REQUIRED_AUDIO_MOD_RECIPE_VERSION}+）"
         ));
     }
+    validate_feature_group_entries(&validated.feature_groups, PROTOCOL_VERSION)?;
     Ok(validated)
 }
 

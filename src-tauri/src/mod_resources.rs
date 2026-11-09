@@ -341,7 +341,7 @@ fn normalize_online_catalog(mut catalog: Catalog) -> Result<Catalog, String> {
             && catalog.hub_max_exclusive == "0.9.112"
             // These releases accept the same three unprocessed Mod archives.
             // The retired processor entry is never carried across.
-            && matches!(env!("CARGO_PKG_VERSION"), "0.9.112" | "0.9.113" | "0.9.114" | "0.9.115" | "0.9.116" | "0.9.117" | "0.9.118" | "0.9.119" | "0.9.120" | "0.9.121");
+            && matches!(env!("CARGO_PKG_VERSION"), "0.9.112" | "0.9.113" | "0.9.114" | "0.9.115" | "0.9.116" | "0.9.117" | "0.9.118" | "0.9.119" | "0.9.120" | "0.9.121" | "0.9.122");
         if !known_pairing_range
             && !crate::downloads::compatible(&catalog.hub_min, &catalog.hub_max_exclusive)
         {

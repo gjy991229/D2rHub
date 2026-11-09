@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="sand">
 <head>
-  <meta name="d2rhub-version" content="0.9.121">
+  <meta name="d2rhub-version" content="0.9.122">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
@@ -400,7 +400,7 @@
 <div class="shell">
   <aside class="sidebar guide-sidebar">
     <div id="guideNav">
-      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.121</span></div></div>
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.122</span></div></div>
       <div class="nav-title">你想做什么</div>
       <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
       <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
@@ -413,7 +413,7 @@
     <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.121</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.122</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -479,10 +479,10 @@
 
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-11-08</p>
-      <h1>D2RHub v0.9.121<br>使用手册</h1>
-      <p class="lede">依据当前工作区（版本号 v0.9.121）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
+      <h1>D2RHub v0.9.122<br>使用手册</h1>
+      <p class="lede">依据当前工作区（版本号 v0.9.122）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.121</span>
+        <span class="badge accent">适用版本 v0.9.122</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -615,7 +615,7 @@
         <li><strong>常用方案：</strong>在“启动方案”菜单中点击方案右侧的星标，可将其固定在“启动方案”和“关闭全部”之间；点击固定按钮即可直接启动，再次点击星标可移除。</li>
         <li><strong>批量选择：</strong>在主操作栏打开“选择账号”，可全选可启动或运行中的账号，也可点击卡片上的复选框单独选择。选中后操作栏显示“启动选中”或“关闭选中”；在“已选”菜单中可补齐全选或切换选择范围，切换会替换原选择。点击旁边的 × 或按 Esc 可取消选择；菜单打开时 Esc 只关闭菜单。未初始化、配置异常或待确认的账号不能加入启动选择，执行前会再次检查状态。</li>
         <li><strong>编辑启动方案：</strong>新建或编辑时在同一窗口配置账号与启动差异、跟房角色、识别账号、窗口布局，再明确保存；跟房规则、识别过滤、悬浮窗和启动行为在公共设置中修改。取消不会改变原方案或当前运行；只有编辑方案才能保存方案。旧方案需先补全配置并保存。</li>
-        <li><strong>启动前检查：</strong>完整方案按其保存的账号顺序启动；账号、Mod、跟房、识别与布局统一预检。独立启动按账号参数检查，方案启动按成员实际参数检查。缺少声纹识别、敌对自动重开或局内房间工具时，“启动前检查”列出账号和缺少的功能；可“返回调整”，或“跳过并启动”。跳过后不支持的功能不可用，账号与方案的 Mod 配置保持不变。启动失败后可以补启动本次方案内的账号，固定布局位置不会重新分配。</li>
+        <li><strong>启动前检查：</strong>完整方案按其保存的账号顺序启动；检查账号、安装路径、Mod 文件与布局等启动条件，不再检查 Mod 是否支持声纹识别、敌对自动重开或局内房间工具，也不弹出功能确认。需要这些功能时，请自行选用包含对应功能的 Mod。启动失败后可以补启动本次方案内的账号，固定布局位置不会重新分配。</li>
         <li><strong>取消：</strong>启动队列运行时可以取消；程序会尽量收束本轮产生的战网/认证临时状态。</li>
         <li><strong>窗口聚焦：</strong>使用已绑定快捷键，或在展开悬浮窗双击账号名称。</li>
       </ul>
@@ -771,7 +771,7 @@
       <p><strong>需要：</strong>正常模式、至少两个已初始化账号；主号和每个小号都必须加载包含“局内房间工具”的成品。它按你在 D2RHub 中配置的房名创建 / 加入，不会自动读取任意手动创建房间的房号；也不会代替登录、选角色或自动刷图。</p>
       <ol>
         <li><strong>添加扩展。</strong>“设置中心 → 扩展功能”添加“自动跟房”，阅读模块说明后打开该面板。</li>
-        <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；启动前会检查本次启动的主号和小号是否加载局内房间工具。遇到提示，可返回调整账号或方案，也可跳过不支持的功能继续启动。</li>
+        <li><strong>选参与账号和 Mod。</strong>指定一个“主账号”，勾选“跟随账号”；主号和小号需选用包含局内房间工具的 Mod。启动及触发快捷键时不再执行功能预检；不含所需功能的 Mod 无法完成对应操作。</li>
         <li><strong>准备后台跟房。</strong>创建快捷键可在任意 D2R 窗口触发，程序自动切到配置主号，所有参与账号处于局内；主号和小号同步预填表单，小号跟随时只提交回车。</li>
         <li><strong>填写房名与快捷键。</strong>例如“房名开头”填 <code>hub-</code>、“下一个序号”填 <code>1</code>、“序号位数”选 <code>3</code>，以下次房名预览 <code>hub-001</code> 为准。填写可选密码，并分别录制不冲突的“创建房间快捷键”“跟随账号快捷键”。</li>
         <li><strong>首次先选“手动跟随”。</strong>等待有效配置自动保存，启用模块。用所选 Mod 启动 / 重启所有参与账号，选好角色并分别进入局内；参与者使用可互相加入房间的区服与角色模式。</li>
@@ -924,7 +924,7 @@
 
     </div>
     <footer class="footer">
-      D2RHub v0.9.121 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.122 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>
@@ -968,7 +968,7 @@
     ['首次选择原版游戏，或选择想保留功能的已有 Mod。', '勾选“声纹识别”；“场景声纹”默认开启，关闭可减小体积并改用 OCR 识别场景。为新成品命名，例如 HubMain，然后加工并应用。', '已有成品时可增补功能；改动场景声纹选项会从原始来源重做，修改前关闭使用它的游戏。'],
     '加工成功，监听账号选用的成品带有“声纹识别”功能。', '源 Mod 不会在新建流程中被改写。生成新副本时填写新名称；同名加工会保留原目录备份。已有成品增补无需另起名。', 'mod-processing');
   const audioRestart = step('audio-restart', '重启并开启', '重启监听账号，再打开识别开关', '正在运行的游戏不会自动换成新 Mod。', '账号卡片 → 重启游戏；识别与统计 → 音频声纹自动识别',
-    ['关闭监听账号的游戏，从 D2RHub 重新启动，进入角色；如果上一阶段已用这个成品重启，直接继续即可。启动前提示缺少功能时，返回调整账号或方案的实际 Mod。', '回到识别与统计，确认目标账号正确，打开识别开关。', '保留游戏声音与音效输出，在“记录内容 → 场景计时与掉落截图”启用地区识别，并等待模型及运行库准备完成；截图需覆盖地区提示及下方 TZ 文字。'],
+    ['关闭监听账号的游戏，从 D2RHub 重新启动，进入角色；如果上一阶段已用这个成品重启，直接继续即可。请确认账号或方案实际使用的 Mod 包含所需功能。', '回到识别与统计，确认目标账号正确，打开识别开关。', '保留游戏声音与音效输出，在“记录内容 → 场景计时与掉落截图”启用地区识别，并等待模型及运行库准备完成；截图需覆盖地区提示及下方 TZ 文字。'],
     '识别状态显示“正在捕获 · PID …”，目标是刚启动的游戏账号。', '显示未运行时先检查账号进程和识别开关；只关闭悬浮窗不会停止后台识别。', 'audio-telemetry');
   const audioRecord = step('audio-record', '得到首条记录', '进入野外，让第一段刷图记录保存下来', '先确认地点和计时，不必等到稀有物品掉落。', '游戏内 → 野外；识别与统计 → 查看统计图表',
     ['进入野外或地下城，查看地点信号、最近识别和场景计时是否更新。', '正常刷图后回城、切换到另一野外并等到地区播报被识别，或结束监控，完成当前分段。', '打开掉落统计图表查看已完成记录；没有掉落的场次也可以有计时。'],
