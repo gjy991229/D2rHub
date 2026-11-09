@@ -169,7 +169,6 @@ pub(crate) fn prepare_scheme_launch(
     state: &tauri::State<'_, SharedState>,
     id: &str,
     revision: u64,
-    accepted: Option<&str>,
 ) -> Result<Vec<crate::application::multi_instance::LaunchAccountEntry>, AppError> {
     let _activation = state
         .runtime_activation_lock
@@ -264,16 +263,6 @@ pub(crate) fn prepare_scheme_launch(
         })
         .collect::<Result<Vec<_>, AppError>>()?;
     crate::commands::launch::preflight_scheme_entries(&projected, state.inner(), &entries)?;
-    let plan = crate::application::multi_instance::LaunchBatchPlan::from_request(
-        None,
-        Some(entries.clone()),
-    )?;
-    crate::commands::launch::check_launch_mod_support(
-        &projected,
-        &plan,
-        resolved_room.as_ref(),
-        accepted,
-    )?;
     crate::commands::launch_scheme_recovery::write(
         state.inner(),
         Some(crate::commands::launch_scheme_recovery::PendingApply {

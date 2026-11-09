@@ -340,18 +340,6 @@ fn validate_room_tool_capability(
     Ok(())
 }
 
-pub(crate) fn validate_in_game_room_tools_for_arguments(
-    account_name: &str,
-    context: &LaunchContext,
-    launch_arguments: &str,
-) -> Result<(), String> {
-    validate_room_tools_in_directory(
-        account_name,
-        &context.installation.game_directory,
-        launch_arguments,
-    )
-}
-
 fn validate_room_tools_in_directory(
     account_name: &str,
     directory: &Path,
@@ -1355,16 +1343,6 @@ pub fn apply_audio_mod_to_account(
     update_account_mods_inner(state.inner(), account_id.clone(), next_arguments, mod_list)
         .map_err(|error| error.to_string())?;
     setup_state(state.inner(), &account_id)
-}
-
-pub(crate) fn validate_runtime_audio_mod(
-    config: &GlobalConfig,
-    account: &AccountMeta,
-    launch_arguments: &str,
-) -> Result<PathBuf, String> {
-    let context = LaunchContext::for_account(config, account, ContextPurpose::Settings)
-        .map_err(|error| error.to_string())?;
-    validate_runtime_audio_mod_directory(&context.installation.game_directory, launch_arguments)
 }
 
 pub(crate) fn validate_runtime_audio_mod_directory(

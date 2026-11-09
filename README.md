@@ -5,9 +5,9 @@
   <p>管理账号、启动游戏，按需添加识别统计和自动跟房。</p>
 </div>
 
-当前版本 **v0.9.121**。
+当前版本 **v0.9.122**。
 
-本版修正尸体拾取按钮覆盖头像的尺寸与偏移。完整变更见 [v0.9.121 发行说明](docs/releases/v0.9.121.md)。
+本版移除建房、跟房快捷键及启动方案的 Mod 功能预检，修复旧版拾取按钮连带阻断识别的问题。完整变更见 [v0.9.122 发行说明](docs/releases/v0.9.122.md)。
 
 [下载安装](https://github.com/gjy991229/D2RHub/releases/latest) · [使用手册](docs/user-guide.html) 提供多开、识别、跟房和组合使用的分步路线。[加工器源码](https://github.com/gjy991229/d2r-audio-mod) 单独维护，EXE 随 Hub 安装和更新，不再独立下载或互认软件版本。LiteHub、BoHub、NullHub 仍按需下载。
 
@@ -44,7 +44,7 @@ npm run build
 
 D2RHub is a local Windows tool for managing multiple Diablo II: Resurrected accounts, separate CN/Global installations, authentication, launch groups, and per-account settings. Optional extensions provide audio-based run tracking, room automation, desktop overlays, and Bongo Cat.
 
-Version **0.9.121** shares operational preferences across launch schemes while retaining explicit account overrides, improves localized scene recognition and timing, updates chat collaboration signals, and adds a default Hell option for in-game room creation.
+Version **0.9.122** shares operational preferences across launch schemes while retaining explicit account overrides, improves localized scene recognition and timing, updates chat collaboration signals, and adds a default Hell option for in-game room creation.
 
 [Download](https://github.com/gjy991229/D2RHub/releases/latest), configure a game and save directory, then add and initialize an account. The [Mod processor](https://github.com/gjy991229/d2r-audio-mod) ships with Hub. Account data stays on this computer; the app does not read/write game memory or inject DLLs. See the [manual](docs/user-guide.html), [development guide](docs/DEVELOPMENT.md), and [security policy](SECURITY.md).
 

@@ -279,7 +279,6 @@ impl RuntimeHost for WindowsRuntimeHost {
             .filter(|instance| instance.launch.is_some())
         {
             if crate::infrastructure::system::find_game_hwnd(instance.pid).is_some() {
-                crate::audio_mod::validate_in_game_room_tools_for_account(&self.state, account_id)?;
                 return Ok(instance);
             }
         }

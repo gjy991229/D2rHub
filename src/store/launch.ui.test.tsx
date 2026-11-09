@@ -68,22 +68,3 @@ for (const mode of ["accounts", "scheme"] as const) {
     });
   });
 }
-vi.mock("./launchModConfirmation", () => ({ confirmLaunchMod: vi.fn(), cancelLaunchModConfirmation: vi.fn() }));
-it.each([false, true])("independent launch retries only on acceptance (%s)", async accept => {
-  const { confirmLaunchMod: ask } = await import("./launchModConfirmation");
-  vi.mocked(ask).mockResolvedValue(accept);
-  mocks.invokeCommand.mockRejectedValueOnce("配置错误: [MOD_PREFLIGHT]账号 one 使用的 Mod Plain 不支持识别").mockResolvedValue([confirmed]);
-  await useLaunch.getState().startLaunch(["one"]);
-  expect(ask).toHaveBeenCalledWith("账号 one 使用的 Mod Plain 不支持识别");
-  expect(mocks.invokeCommand).toHaveBeenCalledTimes(accept ? 2 : 1);
-  if (accept) expect(mocks.invokeCommand).toHaveBeenLastCalledWith("launch_accounts", { accountIds: ["one"], acceptedModWarning: "账号 one 使用的 Mod Plain 不支持识别" });
-  expect(useLaunch.getState().launching).toBe(false);
-  expect(useLaunch.getState().error).toBeNull();
-});
-it("preserves the saved scheme revision when continuing past a room warning", async () => {
-  const { confirmLaunchMod: ask } = await import("./launchModConfirmation");
-  vi.mocked(ask).mockResolvedValue(true);
-  mocks.invokeCommand.mockRejectedValueOnce("[MOD_PREFLIGHT]room warning").mockResolvedValue([confirmed]);
-  await useLaunch.getState().startSavedScheme("scheme", 4);
-  expect(mocks.invokeCommand).toHaveBeenLastCalledWith("launch_saved_scheme", { id: "scheme", revision: 4, acceptedModWarning: "room warning" });
-});
