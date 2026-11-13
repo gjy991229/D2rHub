@@ -1,6 +1,6 @@
 """Prepare reproducible release jobs, then publish or resume their exact bytes."""
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import hashlib
 import importlib.util
 import json
@@ -249,6 +249,20 @@ def package_mod(root, name, target):
     return data_version, hashes
 
 
+def software_release_description(source, version, commit, day=None):
+    notes_path = Path(source) / 'docs/releases' / f'v{version}.md'
+    if not notes_path.is_file():
+        raise RuntimeError(f'缺少软件发行说明：{notes_path}')
+    lines = notes_path.read_text(encoding='utf-8-sig').strip().splitlines()
+    notes = '\n'.join(lines[1:]).strip() if lines and lines[0].startswith('# ') else '\n'.join(lines).strip()
+    if not notes:
+        raise RuntimeError(f'软件发行说明为空：{notes_path}')
+    day = day or datetime.now(timezone(timedelta(hours=8))).date().isoformat()
+    title = f'D2RHub v{version}'
+    return {'release_name': title,
+            'release_notes': f'# {title} · {day}\n\n{notes}\n\n来源提交：`{commit}`\n'}
+
+
 def build_software(destination, processor_repo=None):
     commit = source_commit(ROOT)
     source = source_snapshot(ROOT, destination, 'hub', commit)
@@ -260,6 +274,7 @@ def build_software(destination, processor_repo=None):
                 lock['version'], lock['packages']['']['version']]
     if not re.fullmatch(r'\d+\.\d+\.\d+', version) or any(v != version for v in versions):
         raise RuntimeError('Hub 版本号必须为正式版本，并在 npm、Cargo、Tauri 配置中一致。')
+    description = software_release_description(source, version, commit)
     processor, processor_commit = build_processor(processor_repo or ROOT.parent / 'd2r-audio-mod', destination)
     bundled = source / 'src-tauri/processor/d2r-audio-mod.exe'
     bundled.parent.mkdir(parents=True, exist_ok=True)
@@ -288,7 +303,7 @@ def build_software(destination, processor_repo=None):
         raise RuntimeError('构建过程中 Hub 源码发生变化，请重新准备。')
     return {'kind': 'software', 'product': 'D2RHub', 'platform': 'windows-x86_64',
             'assets': [{'id': 'hub', 'version': version, 'file': str(path),
-                        'release_tag': 'v' + version, 'source_commit': commit}]}, commit
+                        'release_tag': 'v' + version, 'source_commit': commit, **description}]}, commit
 
 
 def build_processor(repo, destination):
@@ -507,8 +522,8 @@ def promote_software(asset, cfg):
         release = platform.release(asset['release_tag'], create=False, source_commit=source)
         if not release:
             raise RuntimeError('缺少已验证的软件 Release。')
-        body = {'tag_name': release['tag_name'], 'name': release['name'],
-                'body': release['body'], 'prerelease': False}
+        body = {'tag_name': release['tag_name'], 'name': asset.get('release_name', release['name']),
+                'body': asset.get('release_notes', release['body']), 'prerelease': False}
         if platform.name == 'github':
             body['make_latest'] = 'true'
         platform.call('PATCH', f"/releases/{release['id']}", json=body)
