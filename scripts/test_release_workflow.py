@@ -228,6 +228,9 @@ class WorkflowTests(unittest.TestCase):
                 self.name = name
             def call(self, method, endpoint, **kwargs):
                 calls.append((self.name, method, endpoint))
+                if method == 'PATCH':
+                    self_test.assertEqual(kwargs['json']['name'], 'D2RHub v0.9.107')
+                    self_test.assertEqual(kwargs['json']['body'], 'Prepared release notes')
                 return {'tag_name': 'v0.99.106'}
             def release(self, tag, create=False, source_commit=None):
                 if self.name == 'github':
@@ -237,7 +240,8 @@ class WorkflowTests(unittest.TestCase):
         with patch('release_platforms.Platform', Platform), patch('release_platforms.credentials', return_value=(
                 {'github_repo': 'a/b', 'gitee_repo': 'a/b'}, 'fake')):
             workflow.promote_software({'version': '0.9.107', 'release_tag': 'v0.9.107',
-                                       'source_commit': 'a' * 40}, {'publisher_config': 'unused'})
+                                       'source_commit': 'a' * 40, 'release_name': 'D2RHub v0.9.107',
+                                       'release_notes': 'Prepared release notes'}, {'publisher_config': 'unused'})
         self.assertEqual(calls, [('github', 'GET', '/releases/latest'),
                                 ('gitee', 'PATCH', '/releases/7'), ('github', 'PATCH', '/releases/7')])
 
@@ -253,6 +257,21 @@ class WorkflowTests(unittest.TestCase):
                 workflow.build_software(self.root / 'output')
             run.assert_not_called()
 
+    def test_release_description_requires_notes_and_preserves_known_limitations(self):
+        with self.assertRaisesRegex(RuntimeError, '缺少软件发行说明'):
+            workflow.software_release_description(self.root, '1.0.0', 'a' * 40)
+        notes = self.root / 'docs/releases/v1.0.0.md'
+        notes.parent.mkdir(parents=True)
+        notes.write_text('# v1.0.0\n', encoding='utf-8')
+        with self.assertRaisesRegex(RuntimeError, '发行说明为空'):
+            workflow.software_release_description(self.root, '1.0.0', 'a' * 40)
+        notes.write_text('# v1.0.0\n\n- 更新\n\n已知限制：大厅识别。', encoding='utf-8')
+        description = workflow.software_release_description(self.root, '1.0.0', 'a' * 40, '2026-11-13')
+        self.assertEqual(description['release_name'], 'D2RHub v1.0.0')
+        self.assertIn('D2RHub v1.0.0 · 2026-11-13', description['release_notes'])
+        self.assertIn('已知限制：大厅识别。', description['release_notes'])
+        self.assertIn('来源提交：`' + 'a' * 40 + '`', description['release_notes'])
+
     def software_repo(self):
         repo = self.root / 'hub-repo'
         workflow.write_json(repo / 'package.json', {'version': '1.0.0'})
@@ -260,6 +279,8 @@ class WorkflowTests(unittest.TestCase):
         workflow.write_json(repo / 'src-tauri/tauri.conf.json', {'version': '1.0.0'})
         (repo / 'src-tauri/Cargo.toml').write_text('[package]\nversion = "1.0.0"\n')
         (repo / 'src-tauri/Cargo.lock').write_text('# fixture lockfile\n')
+        (repo / 'docs/releases').mkdir(parents=True)
+        (repo / 'docs/releases/v1.0.0.md').write_text('# v1.0.0\n\n- Release changes\n', encoding='utf-8')
         processor = self.root / 'd2r-audio-mod'
         processor.mkdir(exist_ok=True)
         (processor / 'LICENSE').write_text('MIT')
