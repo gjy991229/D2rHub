@@ -91,138 +91,32 @@ pub struct ModResourceStatus {
     reason_code: Option<&'static str>,
     integrity_checked: bool,
 }
-fn processed(root: &Path) -> bool {
-    ["d2rhub-mod-manifest.json", "audio-telemetry-manifest.json"]
-        .iter()
-        .any(|f| root.join(f).exists())
-}
-fn mod_status(root: &Path, asset: &Asset, verify_integrity: bool) -> ModResourceStatus {
-    let mut status = ModResourceStatus {
+fn mod_status(root: &Path, asset: &Asset, _verify_integrity: bool) -> ModResourceStatus {
+    let installed = root.exists();
+    // Receipts are display metadata only. Local changes, old versions and missing
+    // receipts never prevent the user's explicit replacement of a HubMod.
+    let receipt = crate::resource_install::read_receipt(root).ok().flatten();
+    ModResourceStatus {
         id: asset.id.clone(),
-        installed_version: None,
-        update_available: false,
+        installed_version: receipt.as_ref().map(|r| r.version.clone()),
+        update_available: installed && receipt.as_ref().is_none_or(|r| r.sha256 != asset.sha256),
         protected: false,
-        message: String::new(),
-        reason_code: Some("not_installed"),
+        message: if installed {
+            "已安装；下载将覆盖同名 Mod".into()
+        } else {
+            String::new()
+        },
+        reason_code: Some(if installed {
+            "replace_available"
+        } else {
+            "not_installed"
+        }),
         integrity_checked: false,
-    };
-    let protect = |mut status: ModResourceStatus, code, message: &str| {
-        status.protected = true;
-        status.reason_code = Some(code);
-        status.message = message.into();
-        status
-    };
-    match root.try_exists() {
-        Ok(false) => return status,
-        Ok(true) => {}
-        Err(_) => {
-            return protect(
-                status,
-                "integrity_unavailable",
-                "无法读取 Mod 目录，保留现有内容",
-            )
-        }
     }
-    if processed(root) {
-        return protect(
-            status,
-            "processed",
-            "此 Mod 已加工，保留现有功能；请另存后再更新成品",
-        );
-    }
-    if reject_links(root).is_err() {
-        return protect(
-            status,
-            "integrity_unavailable",
-            "无法安全检查 Mod 目录，保留现有内容",
-        );
-    }
-    let receipt = match crate::resource_install::read_receipt(root) {
-        Ok(receipt) => receipt,
-        Err(_) => {
-            return protect(
-                status,
-                "invalid_receipt",
-                "Mod 安装记录损坏或无法读取，保留现有内容",
-            )
-        }
-    };
-    status.installed_version = receipt.as_ref().map(|receipt| receipt.version.clone());
-    if let Some(receipt) = &receipt {
-        if receipt.id != asset.id
-            || receipt.sequence > asset.sequence
-            || (receipt.version != asset.version && asset.sequence <= receipt.sequence)
-            || (receipt.version == asset.version && receipt.sha256 != asset.sha256)
-        {
-            return protect(
-                status,
-                "invalid_receipt",
-                "安装记录与推荐资源不兼容，拒绝降级或覆盖同版本的不同内容",
-            );
-        }
-        if verify_integrity {
-            match crate::resource_install::tree_hash(root) {
-                Ok(actual) if actual.eq_ignore_ascii_case(&receipt.tree_sha256) => {
-                    status.integrity_checked = true;
-                }
-                Ok(_) => {
-                    status.integrity_checked = true;
-                    return protect(
-                        status,
-                        "locally_modified",
-                        "Mod 已被本地修改，保留现有目录；请先另存修改后的 Mod",
-                    );
-                }
-                Err(_) => {
-                    return protect(
-                        status,
-                        "integrity_unavailable",
-                        "无法完成 Mod 文件校验，保留现有内容",
-                    )
-                }
-            }
-        }
-    }
-    if crate::lightweight_mod::inspect(root, &asset.id)
-        .ok()
-        .flatten()
-        .is_none()
-    {
-        return protect(
-            status,
-            "unknown_source",
-            "无法确认此 Mod 的来源，保留现有内容",
-        );
-    }
-    status.update_available = receipt
-        .as_ref()
-        .is_none_or(|receipt| receipt.sha256 != asset.sha256);
-    let (code, message) = if receipt.is_none() {
-        (
-            "legacy_unverified",
-            "旧版 Mod：下载后将与原始文件核对，确认未修改后接管",
-        )
-    } else if status.update_available {
-        (
-            "update_available",
-            "发现 Mod 更新；关闭游戏后可校验并原位更新",
-        )
-    } else if status.integrity_checked {
-        ("current", "已校验，当前 Mod 文件与安装记录一致")
-    } else {
-        ("integrity_unchecked", "已安装；点击检查更新可校验本地文件")
-    };
-    status.reason_code = Some(code);
-    status.message = message.into();
-    status
 }
 
-fn preflight_mod_install(root: &Path, asset: &Asset) -> Result<(), String> {
-    let status = mod_status(root, asset, true);
-    if status.protected {
-        return Err(status.message);
-    }
-    Ok(())
+fn preflight_mod_install(root: &Path, _asset: &Asset) -> Result<(), String> {
+    reject_links(root)
 }
 
 fn begin_install_task(
@@ -250,19 +144,6 @@ fn mod_statuses(mods: &Path, c: &Catalog, verify_integrity: bool) -> Vec<ModReso
         .map(|asset| mod_status(&mods.join(&asset.id), asset, verify_integrity))
         .collect()
 }
-fn validate_advance(current: &Catalog, next: &Catalog) -> Result<(), String> {
-    for a in &next.assets {
-        if let Some(old) = current.assets.iter().find(|v| v.id == a.id) {
-            if a.sequence < old.sequence
-                || (a.version != old.version && a.sequence <= old.sequence)
-                || (a.version == old.version && (a.sha256 != old.sha256 || a.size != old.size))
-            {
-                return Err("资源清单试图降级或修改同版本文件，拒绝更新".into());
-            }
-        }
-    }
-    Ok(())
-}
 pub(crate) fn recover_updates(_app: &tauri::AppHandle, state: &SharedState) -> Result<(), String> {
     let _mutation = state.mod_mutations().try_acquire()?;
     if let Some(c) = state.configuration().snapshot() {
@@ -288,9 +169,7 @@ fn safe_token(s: &str) -> bool {
 }
 fn validate_catalog(c: &Catalog) -> Result<(), String> {
     if !matches!(c.schema, 1 | 2)
-        || (c.schema == 2
-            && (c.kind != "resources"
-                || !crate::downloads::compatible(&c.hub_min, &c.hub_max_exclusive)))
+        || (c.schema == 2 && c.kind != "resources")
         || c.channel != CHANNEL
         || c.assets.len() != 3
         || !c
@@ -335,18 +214,6 @@ fn validate_catalog(c: &Catalog) -> Result<(), String> {
 /// the three Mod entries are carried into the bundled-processor catalog.
 fn normalize_online_catalog(mut catalog: Catalog) -> Result<Catalog, String> {
     if catalog.channel == LEGACY_CHANNEL {
-        // Only the known pairing-only restriction is waived during migration.
-        // A future or malformed range must not become compatible by rewriting it.
-        let known_pairing_range = catalog.hub_min == "0.9.111"
-            && catalog.hub_max_exclusive == "0.9.112"
-            // These releases accept the same three unprocessed Mod archives.
-            // The retired processor entry is never carried across.
-            && matches!(env!("CARGO_PKG_VERSION"), "0.9.112" | "0.9.113" | "0.9.114" | "0.9.115" | "0.9.116" | "0.9.117" | "0.9.118" | "0.9.119" | "0.9.120" | "0.9.121" | "0.9.122");
-        if !known_pairing_range
-            && !crate::downloads::compatible(&catalog.hub_min, &catalog.hub_max_exclusive)
-        {
-            return Err("旧版 Mod 资源清单与当前 Hub 不兼容".into());
-        }
         if catalog.schema != 2
             || catalog.kind != "resources"
             || catalog.assets.len() != 4
@@ -400,7 +267,7 @@ fn verify_file(path: &Path, a: &Asset) -> Result<(), String> {
 fn game_root(state: &SharedState, edition: &str) -> Result<PathBuf, String> {
     crate::lightweight_mod::game_path(state, edition)
 }
-fn game_version(root: &Path) -> Result<String, String> {
+pub(crate) fn game_version(root: &Path) -> Result<String, String> {
     let text = fs::read_to_string(root.join(".build.info")).map_err(err)?;
     parse_game_version(&text)
 }
@@ -432,14 +299,14 @@ fn parse_game_version(text: &str) -> Result<String, String> {
 async fn remote_catalog(
     app: &tauri::AppHandle,
     state: &SharedState,
-    current: &Catalog,
+    _current: &Catalog,
 ) -> Result<Catalog, String> {
     let value = crate::downloads::fetch_index(app, state, "resources", |v| {
         let c = normalize_online_catalog(serde_json::from_value(v.clone()).map_err(err)?)?;
         if c.schema != 2 {
             return Err("请使用新版资源清单".into());
         }
-        validate_advance(current, &c)
+        Ok(())
     })
     .await?;
     normalize_online_catalog(serde_json::from_value(value).map_err(err)?)
@@ -459,7 +326,7 @@ async fn read_mod_resources(
     state: tauri::State<'_, SharedState>,
     edition: String,
     refresh: bool,
-    verify_integrity: bool,
+    _verify_integrity: bool,
 ) -> Result<ResourceState, String> {
     let cache_path = app
         .path()
@@ -493,27 +360,9 @@ async fn read_mod_resources(
     };
     let mods = if let Ok(game) = game_root(state.inner(), &edition) {
         let catalog = c.clone();
-        let shared = state.inner().clone();
         tokio::task::spawn_blocking(move || {
             let mods = game.join("mods");
-            if !verify_integrity {
-                return mod_statuses(&mods, &catalog, false);
-            }
-            match shared.mod_mutations().try_acquire() {
-                Ok(_lease) => mod_statuses(&mods, &catalog, true),
-                Err(message) => {
-                    let mut statuses = mod_statuses(&mods, &catalog, false);
-                    for status in &mut statuses {
-                        if status.reason_code != Some("not_installed") {
-                            status.protected = true;
-                            status.update_available = false;
-                            status.reason_code = Some("integrity_unavailable");
-                            status.message = format!("{message}；本地校验暂未完成，请稍后重试");
-                        }
-                    }
-                    statuses
-                }
-            }
+            mod_statuses(&mods, &catalog, false)
         })
         .await
         .map_err(|error| format!("读取 Mod 资源状态失败：{error}"))?
@@ -719,9 +568,6 @@ pub async fn install_mod_resource(
         .ok_or("未知资源")?
         .clone();
     let game = game_root(&shared, &edition)?;
-    if Some(game_version(&game)?) != a.game_data_version {
-        return Err("成品与当前游戏数据版本不一致，请等待适配资源".into());
-    }
     let parent = game.join("mods");
     reject_links(&parent)?;
     fs::create_dir_all(&parent).map_err(err)?;
@@ -757,28 +603,12 @@ pub async fn install_mod_resource(
             if Some(info.profile) != a.profile {
                 return Err("Mod 方案不匹配".into());
             }
-            let version = fs::read_to_string(
-                output.join(format!("{}.mpq/data/global/dataversionbuild.txt", a.id)),
-            )
-            .map_err(err)?;
-            if Some(version.trim().to_owned()) != a.game_data_version {
-                return Err("Mod 数据版本不匹配".into());
-            }
         }
         cancelled(&task)?;
         reject_links(&parent)?;
         let new_tree = crate::resource_install::tree_hash(&output)?;
         if destination.exists() {
-            // Repeat after transfer: an external editor can modify files while
-            // the download runs even though Hub owns the mutation lease.
-            preflight_mod_install(&destination, &a)?;
-            if crate::resource_install::read_receipt(&destination)?.is_none()
-                && crate::resource_install::tree_hash(&destination)? != new_tree
-            {
-                return Err(
-                    "旧版 Mod 与已发布原始文件不一致，无法安全接管；请先另存现有 Mod".into(),
-                );
-            }
+            reject_links(&destination)?;
             let config = shared.configuration().snapshot().ok_or("配置未就绪")?;
             crate::audio_mod::ensure_audio_mod_not_in_use(&shared, &config, &game, &a.id)?;
             let system = sysinfo::System::new_all();
@@ -801,7 +631,21 @@ pub async fn install_mod_resource(
             },
         )?;
         cancelled(&task)?;
-        crate::resource_install::replace(&parent, &output, &destination)?;
+        if let Some(backup) = crate::resource_install::replace(&parent, &output, &destination)? {
+            // The user chose replacement. Discard the old tree after commit, so a
+            // failed download never destroys the currently usable installation.
+            debug_assert_eq!(backup.parent(), Some(parent.as_path()));
+            if let Err(error) = fs::remove_dir_all(&backup) {
+                crate::logger::log_msg(
+                    "WARN",
+                    "HubMod",
+                    &format!(
+                        "新 Mod 已安装，旧目录清理失败 {}: {error}",
+                        backup.display()
+                    ),
+                );
+            }
+        }
         Ok(destination.clone())
     }
     .await;
@@ -811,6 +655,8 @@ pub async fn install_mod_resource(
     }
     match result {
         Ok(path) => {
+            drop(_lease);
+            crate::hub_mod_settings::synchronize_installed(&shared);
             let _ = task.succeed("资源已安装，可在 Mod 管理中使用");
             Ok(InstallResult {
                 path: path.to_string_lossy().into_owned(),
@@ -832,8 +678,7 @@ pub async fn check_mod_resource_updates(
     app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
 ) -> Result<Vec<String>, String> {
-    // Automatic update notification checks metadata only. Full local hashing
-    // belongs to an explicit refresh and the mandatory installation preflight.
+    // Version differences inform updates, but never gate installation.
     let cn = read_mod_resources(app.clone(), state.clone(), "CN".into(), true, false).await?;
     if !cn.checked_online {
         return Err("资源更新检查暂不可用，请稍后重试".into());
@@ -842,14 +687,7 @@ pub async fn check_mod_resource_updates(
     let mut notices = Vec::new();
     for (edition, status) in [("国服", cn), ("国际服", global)] {
         for m in status.mods {
-            if m.update_available
-                && !m.protected
-                && status
-                    .catalog
-                    .assets
-                    .iter()
-                    .any(|a| a.id == m.id && a.game_data_version == status.game_data_version)
-            {
+            if m.update_available {
                 notices.push(format!("{edition} {}", m.id));
             }
         }
@@ -919,115 +757,51 @@ mod tests {
     }
 
     #[test]
-    fn explicit_check_protects_local_edits_while_initial_status_stays_metadata_only() {
+    fn local_edits_versions_and_invalid_receipts_never_block_replacement() {
         let scratch = Scratch::new();
         let (root, asset) = installed_mod_fixture(&scratch.0);
-        let quick = mod_status(&root, &asset, false);
-        assert_eq!(quick.reason_code, Some("integrity_unchecked"));
-        assert!(!quick.integrity_checked);
-        assert_eq!(mod_status(&root, &asset, true).reason_code, Some("current"));
-        let file = root.join("LiteHub.mpq/data/global/excel/misc.txt");
-        fs::write(&file, "user customization").unwrap();
-        assert!(!mod_status(&root, &asset, false).protected);
-        let checked = mod_status(&root, &asset, true);
-        assert!(checked.protected && checked.integrity_checked);
-        assert!(!checked.update_available);
-        assert_eq!(checked.reason_code, Some("locally_modified"));
-        assert_eq!(fs::read_to_string(file).unwrap(), "user customization");
-    }
-
-    #[test]
-    fn modified_mod_is_rejected_before_task_and_download_admission() {
-        let scratch = Scratch::new();
-        let (root, asset) = installed_mod_fixture(&scratch.0);
+        fs::write(root.join("custom-file"), "local edit").unwrap();
+        fs::write(root.join("d2rhub-mod-manifest.json"), "custom processing").unwrap();
+        fs::write(
+            root.join(crate::resource_install::RECEIPT),
+            "broken receipt",
+        )
+        .unwrap();
+        fs::write(
+            root.join("LiteHub.mpq/data/global/dataversionbuild.txt"),
+            "99999",
+        )
+        .unwrap();
+        for verify in [false, true] {
+            let status = mod_status(&root, &asset, verify);
+            assert!(!status.protected);
+            assert!(!status.integrity_checked);
+            assert_eq!(status.reason_code, Some("replace_available"));
+        }
+        preflight_mod_install(&root, &asset).unwrap();
+        // Download admission does not delete or hash the old tree.
         let state = std::sync::Arc::new(crate::state::AppState::new());
-        fs::write(root.join("custom-file"), "keep").unwrap();
-        assert!(begin_install_task(&state, "CN", &root, &asset).is_err());
-        assert!(state.tasks().snapshots().is_empty());
+        assert!(begin_install_task(&state, "CN", &root, &asset).is_ok());
         assert_eq!(
             fs::read_to_string(root.join("custom-file")).unwrap(),
-            "keep"
+            "local edit"
         );
-        assert_eq!(fs::read_dir(&scratch.0).unwrap().count(), 1);
     }
 
     #[test]
-    fn transfer_preflight_is_repeated_and_detects_edits_after_admission() {
+    fn missing_receipts_and_same_version_allow_download_again() {
         let scratch = Scratch::new();
         let (root, asset) = installed_mod_fixture(&scratch.0);
+        let status = mod_status(&root, &asset, true);
+        assert!(!status.protected && !status.update_available);
         preflight_mod_install(&root, &asset).unwrap();
-        fs::write(root.join("after-download-started"), "external edit").unwrap();
-        assert!(preflight_mod_install(&root, &asset).is_err());
-    }
-
-    #[test]
-    fn game_generated_bins_are_ignored_but_standalone_bins_are_protected() {
-        let scratch = Scratch::new();
-        let (root, asset) = installed_mod_fixture(&scratch.0);
-        let tables = root.join("LiteHub.mpq/data/global/excel");
-        fs::write(tables.join("misc.bin"), "derived cache").unwrap();
-        assert_eq!(mod_status(&root, &asset, true).reason_code, Some("current"));
-        fs::write(tables.join("user.bin"), "custom content").unwrap();
-        assert_eq!(
-            mod_status(&root, &asset, true).reason_code,
-            Some("locally_modified")
-        );
-    }
-
-    #[test]
-    fn bad_receipt_is_distinct_from_unmanaged_legacy_and_does_not_hide_other_rows() {
-        let scratch = Scratch::new();
-        let (root, asset) = installed_mod_fixture(&scratch.0);
-        fs::write(root.join(crate::resource_install::RECEIPT), "invalid").unwrap();
-        assert_eq!(
-            mod_status(&root, &asset, true).reason_code,
-            Some("invalid_receipt")
-        );
-        assert!(preflight_mod_install(&root, &asset).is_err());
-        let catalog: Catalog = serde_json::from_str(EMBEDDED).unwrap();
-        let statuses = mod_statuses(&scratch.0, &catalog, true);
-        assert_eq!(statuses.len(), 3);
-        assert_eq!(
-            statuses
-                .iter()
-                .find(|s| s.id == "BoHub")
-                .unwrap()
-                .reason_code,
-            Some("not_installed")
-        );
         fs::remove_file(root.join(crate::resource_install::RECEIPT)).unwrap();
-        assert_eq!(
-            mod_status(&root, &asset, true).reason_code,
-            Some("legacy_unverified")
-        );
         preflight_mod_install(&root, &asset).unwrap();
+        assert!(mod_status(&root, &asset, true).update_available);
     }
 
     #[test]
-    fn receipt_identity_and_unreadable_tree_fail_closed() {
-        let scratch = Scratch::new();
-        let (root, asset) = installed_mod_fixture(&scratch.0);
-        let mut receipt = crate::resource_install::read_receipt(&root)
-            .unwrap()
-            .unwrap();
-        receipt.id = "BoHub".into();
-        crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
-            .unwrap();
-        assert_eq!(
-            mod_status(&root, &asset, true).reason_code,
-            Some("invalid_receipt")
-        );
-        receipt.id = asset.id.clone();
-        crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
-            .unwrap();
-        fs::write(root.join("generation-manifest.json"), "bad json").unwrap();
-        assert_eq!(
-            mod_status(&root, &asset, true).reason_code,
-            Some("integrity_unavailable")
-        );
-    }
-    #[test]
-    fn catalog_publication_rejects_a_newer_revision_that_downgrades_resources() {
+    fn catalog_publication_accepts_resource_version_changes_from_a_newer_catalog() {
         let scratch = Scratch::new();
         let path = scratch.0.join("catalog.json");
         let cache = Mutex::new(None);
@@ -1037,12 +811,12 @@ mod tests {
         let mut invalid = known.clone();
         invalid.revision += 1;
         invalid.assets[0].sequence = 4;
-        assert!(publish_catalog(&cache, &path, invalid, true).is_err());
+        publish_catalog(&cache, &path, invalid, true).unwrap();
         let disk: Catalog = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
-        assert_eq!(disk.revision, known.revision);
+        assert_eq!(disk.revision, known.revision + 1);
         assert_eq!(
             cache.lock().unwrap().as_ref().unwrap().revision,
-            known.revision
+            known.revision + 1
         );
     }
 
@@ -1148,14 +922,14 @@ mod tests {
         assert_eq!(migrated.channel, CHANNEL);
         assert_eq!(migrated.assets.len(), 3);
         assert!(migrated.assets.iter().all(|asset| asset.id != "processor"));
-        validate_advance(&current, &migrated).unwrap();
+        validate_catalog(&migrated).unwrap();
         let mut future = old.clone();
         future.hub_min = "99.0.0".into();
         future.hub_max_exclusive = "100.0.0".into();
-        assert!(normalize_online_catalog(future).is_err());
+        assert!(normalize_online_catalog(future).is_ok());
         let mut malformed = old.clone();
         malformed.hub_min = "not-a-version".into();
-        assert!(normalize_online_catalog(malformed).is_err());
+        assert!(normalize_online_catalog(malformed).is_ok());
         old.assets.push(old.assets[3].clone());
         assert!(normalize_online_catalog(old).is_err());
     }
@@ -1205,7 +979,7 @@ mod tests {
             let root = scratch.0.join(&a.id);
             assert_eq!(
                 mod_status(&root, a, true).reason_code,
-                Some("legacy_unverified")
+                Some("replace_available")
             );
             preflight_mod_install(&root, a).unwrap();
             let tree = crate::resource_install::tree_hash(&root).unwrap();
@@ -1227,7 +1001,10 @@ mod tests {
             };
             crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
                 .unwrap();
-            assert_eq!(mod_status(&root, a, true).reason_code, Some("current"));
+            assert_eq!(
+                mod_status(&root, a, true).reason_code,
+                Some("replace_available")
+            );
             receipt.version = "previous-release".into();
             receipt.sequence = a.sequence.saturating_sub(1);
             receipt.sha256 = "a".repeat(64);
@@ -1235,14 +1012,14 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 mod_status(&root, a, true).reason_code,
-                Some("update_available")
+                Some("replace_available")
             );
             fs::write(root.join("user-added.txt"), b"preserve me").unwrap();
             assert_eq!(
                 mod_status(&root, a, true).reason_code,
-                Some("locally_modified")
+                Some("replace_available")
             );
-            assert!(preflight_mod_install(&root, a).is_err());
+            assert!(preflight_mod_install(&root, a).is_ok());
         }
     }
     #[test]

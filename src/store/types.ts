@@ -126,6 +126,7 @@ export interface GlobalConfig {
   enable_auto_update: boolean;
   download_source?: "auto" | "gitee" | "github";
   first_launch: boolean;
+  combat_time_format?: string;
   rune_audio_enabled: boolean;
   hostile_auto_restart_enabled?: boolean;
   hostile_auto_restart_all_windows?: boolean;
@@ -303,6 +304,7 @@ export interface TrackingSnapshot {
   location_kind: "town" | "wilderness" | "frontend" | null;
   is_town: boolean;
   is_frontend: boolean;
+  accumulated_ms?: number | null;
   is_timing: boolean;
   timer_started_at_ms: number | null;
   current_run_key: string | null;

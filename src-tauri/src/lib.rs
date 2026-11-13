@@ -61,6 +61,8 @@ pub(crate) fn activate_application_runtime(app: &tauri::AppHandle) -> Result<boo
     commands::launch_scheme_recovery::recover(state.inner()).map_err(|error| error.to_string())?;
     commands::launch_scheme_recovery::recover_processes(state.inner(), app)
         .map_err(|error| error.to_string())?;
+    // Complete recovery before optional version synchronization; both own the Mod lease.
+    hub_mod_settings::synchronize_installed(state.inner());
     // Internal window creation uses the same activation gate as commands.
     state.runtime_activated.store(true, Ordering::Release);
     if config.optional_features_runtime_allowed() {
@@ -167,6 +169,22 @@ pub fn run() {
     let geo = GlobalConfig::load_geometry(&app_state.app_data_dir);
 
     tauri::Builder::default()
+        .plugin(tauri::plugin::Builder::<tauri::Wry>::new("desktop-webview")
+            .on_webview_ready(|webview| {
+                #[cfg(windows)]
+                let _ = webview.with_webview(|native| unsafe {
+                    use windows_core_webview::Interface;
+                    let result = (|| -> windows_core_webview::Result<()> {
+                        let settings = native.controller().CoreWebView2()?.Settings()?;
+                        let settings: webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Settings3 = settings.cast()?;
+                        settings.SetAreBrowserAcceleratorKeysEnabled(false)?;
+                        Ok(())
+                    })();
+                    if let Err(error) = result {
+                        crate::logger::log_msg("WARN", "WebView", &format!("关闭浏览器快捷键失败: {error}"));
+                    }
+                });
+            }).build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())

@@ -1439,6 +1439,12 @@ async fn prepare_bnet_environment(
     wait_login: bool,
     options: BnetPreparationOptions<'_>,
 ) -> Result<LaunchContext, LaunchResult> {
+    let repaired_config =
+        crate::commands::global_config::detection::repair_auxiliary_path(state, app, false)
+            .map_err(|error| account_path_error(account_id, error))?;
+    let mut effective_config = config.clone();
+    effective_config.app_data_roaming_bnet_path = repaired_config.app_data_roaming_bnet_path;
+    let config = &effective_config;
     let BnetPreparationOptions {
         meta_override,
         preserved_default_mod_args,
@@ -2122,6 +2128,36 @@ async fn launch_accounts_impl(
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    crate::hub_mod_settings::synchronize_installed(state.inner());
+    if config.rune_audio_enabled {
+        for account_id in account_ids {
+            let Ok(original) = AccountManager::load_meta(&config.accounts_dir, account_id) else {
+                continue;
+            };
+            let Ok((account, _)) = plan.apply_for(account_id, original, false) else {
+                continue;
+            };
+            let Ok(context) =
+                LaunchContext::for_account(&config, &account, ContextPurpose::LaunchGame)
+            else {
+                continue;
+            };
+            if let Err(error) = crate::audio_mod::upgrade_activity_if_needed(
+                &app,
+                account_id,
+                &context.installation.game_directory,
+                &account.mod_args,
+            )
+            .await
+            {
+                let _ = app.emit(
+                    "launch-progress",
+                    LaunchProgress::new(account_id, "mod", "warning", &error),
+                );
+            }
+        }
+    }
 
     // 启动方案必须在触碰共享注册表、Battle.net 或 Settings.json 前整组完成预检。
     let layout_config = config.clone();

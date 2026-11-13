@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="sand">
 <head>
-  <meta name="d2rhub-version" content="0.9.122">
+  <meta name="d2rhub-version" content="0.9.123">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
@@ -400,7 +400,7 @@
 <div class="shell">
   <aside class="sidebar guide-sidebar">
     <div id="guideNav">
-      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.122</span></div></div>
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.123</span></div></div>
       <div class="nav-title">你想做什么</div>
       <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
       <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
@@ -413,7 +413,7 @@
     <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.122</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.123</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -479,10 +479,11 @@
 
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-11-08</p>
-      <h1>D2RHub v0.9.122<br>使用手册</h1>
-      <p class="lede">依据当前工作区（版本号 v0.9.122）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
+      <h1>D2RHub v0.9.123<br>使用手册</h1>
+      <p class="lede">当前版本：视觉资源仅用于拼房跟随，默认不下载，应用跟随模式时确认下载，也可在下载页手动下载。计时按游戏进程累计，主城和主界面暂停，历史时间直接汇总。OCR 仅用于拼房跟随。旧声纹成品通过 Hub 启动时尝试自动升级到 r8；原始加工来源缺失时，请在 Mod 管理中选择来源同名重做。识别设置可选择计时显示格式。主城暂停保留累计值，启动时等待进入游戏。下方旧版场景分段、TZ 和地区 OCR 的说明不适用于本测试版。</p>
+      <p class="lede">依据当前工作区（版本号 v0.9.123）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.122</span>
+        <span class="badge accent">适用版本 v0.9.123</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -683,9 +684,9 @@
     <section id="mod-processing">
       <p class="eyebrow">MOD PROCESSING · PREPARATION</p>
       <h2>Mod 加工：把游戏能力准备好，再交给账号使用</h2>
-      <p>入口是“设置中心 → Mod 管理”。已有成品显示“更新”时，可从卡片直接进入加工页面。Mod 可通过“下载与更新”进入同级下载页，直接下载并自动安装；进度显示在对应资源按钮附近。加工器已随 Hub 内置；缺失或损坏时修复 Hub 安装。下载页按 NullHub、BoHub、LiteHub 排列，以内存参考标签辅助选择；实际占用随场景和设置变化，文件可通过“打开目录”查看。自动更新检查沿用每日检查设置，也可在下载页手动检查。浏览器下载的文件也可通过“导入已下载文件”校验后自动安装。下载会按“设置 → 启动策略 → 下载源”的选择优先使用 Gitee 或 GitHub，失败自动切源。未修改的Mod 可以校验后原位更新并保留备份；已加工或手动修改的 Mod 不会被纯净包覆盖。</p>
+      <p>入口是“设置中心 → Mod 管理”。已有成品显示“更新”时，可从卡片直接进入加工页面。Mod 可通过“下载与更新”进入同级下载页，直接下载并自动安装；进度显示在对应资源按钮附近。加工器已随 Hub 内置；缺失或损坏时修复 Hub 安装。下载页按 NullHub、BoHub、LiteHub 排列，以内存参考标签辅助选择；实际占用随场景和设置变化，文件可通过“打开目录”查看。自动更新检查沿用每日检查设置，也可在下载页手动检查。浏览器下载的文件也可通过“导入已下载文件”校验后自动安装。下载会按“设置 → 启动策略 → 下载源”的选择优先使用 Gitee 或 GitHub，失败自动切源。有新版时按钮显示“更新 Mod”，已是最新时显示“当前已是最新版”，均可点击下载覆盖；未安装时显示“下载并安装”。下载标准成品会覆盖并删除同名旧目录，包括已加工或手动修改的内容；下载失败不会提前删除旧目录。</p>
       <p>“已安装”显示游戏目录中的 Mod；点击条目“设置”查看详细选项，需要添加能力时使用“加工功能”。“下载与更新”负责获取 Mod 成品。</p>
-      <p>从识别或跟房进入加工时，页面会保留目标账号，并提供返回原页面的入口；返回 Mod 库也不会丢失已编辑配方。目标账号已删除或不可用时，需要重新选择，不会自动改用其他账号。“检查更新”会验证受管 Mod 的本地文件，检测到手动修改时先保留现有内容。</p>
+      <p>从识别或跟房进入加工时，页面会保留目标账号，并提供返回原页面的入口；返回 Mod 库也不会丢失已编辑配方。目标账号已删除或不可用时，需要重新选择，不会自动改用其他账号。“检查更新”只查询可用成品信息，不校验现有 Mod 文件。同名 HubMod 可以随时重新下载覆盖，包括已加工或手动修改的目录；下载完成后才替换旧目录。游戏数据版本仅作提示，不阻止下载安装或配置。</p>
       <h3>内置加工器与同名重做</h3>
       <p>加工器无需单独下载，也不做 Hub 软件版本互认。加工结果按各模块协议和文件结构验证。已有 Mod 增补兼容模块时保留现有内容；覆盖更新或协议不一致时，从原始源 Mod 与旧模块配置重新生成，校验完成后替换同名成品。原始源 Mod 缺失时先恢复来源，失败或取消不会覆盖旧成品。</p>
       <p>“批量加工／更新”提供加工新副本、增补模块、同名重做三种操作。选择同一游戏目录内的多个 Mod，预览目标名称和阻塞原因后串行执行。每项显示成功或失败，可重试失败项，也可在当前项完成后停止。批量完成不会自动切换账号，请在 Mod 库选用。房间工具保留默认地狱和原创建时序；加入确认直接发送原生加入消息。更新后重启使用该 Mod 的游戏。</p>
@@ -924,7 +925,7 @@
 
     </div>
     <footer class="footer">
-      D2RHub v0.9.122 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.123 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>

@@ -12,11 +12,66 @@ use std::{
 const ORIGIN: &str = "d2rhub-base-mod.json";
 const VERSION: &str = "data/global/dataversionbuild.txt";
 const JOURNAL: &str = ".d2rhub-version-transaction.json";
-const RECORDS: [&str; 3] = [
+const RECORDS: [&str; 4] = [
     "generation-manifest.json",
     "enhancement-manifest.json",
     "mod-version.json",
+    crate::resource_install::RECEIPT,
 ];
+
+/// Runs at startup and after installation, never on a timer.
+pub(crate) fn synchronize_installed(state: &SharedState) {
+    let Ok(_lease) = state.mod_mutations().try_acquire() else {
+        return;
+    };
+    let Some(config) = state.configuration().snapshot() else {
+        return;
+    };
+    if ensure_closed().is_err() {
+        return;
+    }
+    for game in [&config.cn_game_path, &config.global_game_path] {
+        let game = Path::new(game);
+        let Ok(version) = crate::mod_resources::game_version(game) else {
+            continue;
+        };
+        let mods = game.join("mods");
+        let Ok(entries) = fs::read_dir(&mods) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let result = (|| -> Result<(), String> {
+                let root = entry.path();
+                if fs::read_to_string(version_path(&root, &name))
+                    .ok()
+                    .is_some_and(|text| text.trim() == version)
+                {
+                    return Ok(());
+                }
+                let Some(current) = settings(&root, &name)? else {
+                    return Ok(());
+                };
+                if current.game_data_version != version {
+                    save(&root, &name, &version, &current.etag)?;
+                    crate::logger::log_msg(
+                        "INFO",
+                        "HubMod",
+                        &format!("已同步 {name} 数据版本为 {version}"),
+                    );
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                crate::logger::log_msg(
+                    "WARN",
+                    "HubMod",
+                    &format!("{name} 数据版本自动同步未完成: {error}"),
+                );
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct Identity {
@@ -286,8 +341,15 @@ fn save(root: &Path, name: &str, next: &str, expected: &str) -> Result<HubModSet
         return Err("Mod 配置已被修改，请重新读取后保存".into());
     }
     let mut after = before.clone();
+    let managed_receipt = crate::resource_install::read_receipt(root)?.filter(|receipt| {
+        crate::resource_install::tree_hash(root).ok().as_deref()
+            == Some(receipt.tree_sha256.as_str())
+    });
     after.insert(VERSION.into(), next.as_bytes().to_vec());
     for record in RECORDS {
+        if record == crate::resource_install::RECEIPT {
+            continue;
+        }
         let Some(bytes) = before.get(record) else {
             continue;
         };
@@ -298,11 +360,6 @@ fn save(root: &Path, name: &str, next: &str, expected: &str) -> Result<HubModSet
         document["game_data_version"] = next.clone().into();
         if let Some(entry) = document.get_mut("files").and_then(|v| v.get_mut(VERSION)) {
             let prior_size = entry["bytes"].as_u64().ok_or("数据版本大小记录无效")?;
-            if entry["sha256"] != hash(&before[VERSION])
-                || prior_size != before[VERSION].len() as u64
-            {
-                return Err("数据版本文件校验不一致，请检查本地修改".into());
-            }
             *entry = serde_json::json!({"sha256":hash(next.as_bytes()), "bytes":next.len()});
             if let Some(total) = document.get("generated_bytes").and_then(Value::as_u64) {
                 document["generated_bytes"] = total
@@ -324,6 +381,15 @@ fn save(root: &Path, name: &str, next: &str, expected: &str) -> Result<HubModSet
     crate::mod_waypoints::atomic_write(&root.join(JOURNAL), &journal)?;
     let result = (|| {
         write_files(root, name, &after)?;
+        if let Some(mut receipt) = managed_receipt {
+            receipt.tree_sha256 = crate::resource_install::tree_hash(root)?;
+            let bytes = serde_json::to_vec_pretty(&receipt).map_err(|error| error.to_string())?;
+            crate::mod_waypoints::atomic_write(
+                &root.join(crate::resource_install::RECEIPT),
+                &bytes,
+            )?;
+            after.insert(crate::resource_install::RECEIPT.into(), bytes);
+        }
         if snapshot(root, name)? != after {
             return Err("数据版本写入校验失败".into());
         }
@@ -471,6 +537,31 @@ mod tests {
             );
             assert!(!root.join(JOURNAL).exists());
         }
+    }
+
+    #[test]
+    fn automatic_version_changes_keep_managed_resources_updatable() {
+        let scratch = Scratch::new();
+        let root = base(&scratch.0, "NullHub");
+        let receipt = crate::resource_install::Receipt {
+            id: "NullHub".into(),
+            version: "r1".into(),
+            sequence: 1,
+            sha256: "a".repeat(64),
+            tree_sha256: crate::resource_install::tree_hash(&root).unwrap(),
+        };
+        crate::downloads::save_json(&root.join(crate::resource_install::RECEIPT), &receipt)
+            .unwrap();
+        let before = settings(&root, "NullHub").unwrap().unwrap();
+        save(&root, "NullHub", "100001", &before.etag).unwrap();
+        let receipt = crate::resource_install::read_receipt(&root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            receipt.tree_sha256,
+            crate::resource_install::tree_hash(&root).unwrap()
+        );
+        assert!(!root.join(JOURNAL).exists());
     }
     #[test]
     fn verified_descendants_inherit_without_granting_unrelated_mods_access() {

@@ -269,17 +269,12 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             <div className="mod-processing-features">
               {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "Audio recognition" : "声纹识别"}
-                detail={isEnglish ? "Scenes, drops, Terror Zones, and run statistics" : "场景、掉落、恐怖区域与刷图统计"}
+                detail={isEnglish ? "Drops and accumulated combat time" : "掉落与累计战斗时间，包含主城和主界面声纹"}
                 checked={audioSelected}
                 locked={audioRequired || audioInherited}
                 lockLabel={audioInherited ? (operationKind === "augment" ? (isEnglish ? "Already installed" : "目标 Mod 已有") : (isEnglish ? "Included in source" : "源 Mod 已有")) : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includeAudioTelemetry: value })} />
-              {audioSelected && <div className="mod-feature-options"><label><input type="checkbox"
-                checked={analysis.selection.includeSceneAudio ?? analysis.selected?.scene_audio_enabled ?? true} disabled={preparing}
-                onChange={event => actions.changeFeatures({ includeSceneAudio: event.target.checked })} />
-                <span>{isEnglish ? "Scene audio markers" : "场景声纹"}</span></label>
-                <p>{isEnglish ? "Adds scene audio files and increases Mod size. Turn off to use OCR for scenes; drop recognition stays enabled." : "场景声纹文件占用空间较大。关闭后场景改用 OCR 识别，掉落声纹仍然有效。"}</p></div>}
               </div>}
               {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "In-game room tools" : "局内房间工具"}

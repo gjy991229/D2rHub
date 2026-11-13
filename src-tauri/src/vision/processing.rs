@@ -137,6 +137,7 @@ fn lines_with_gap(image: &RgbImage, kind: Mask, limit: usize, gap: usize) -> Vec
         })
         .collect()
 }
+#[cfg(test)]
 pub fn normalize(text: &str) -> String {
     text.chars()
         .filter(|c| c.is_alphanumeric())

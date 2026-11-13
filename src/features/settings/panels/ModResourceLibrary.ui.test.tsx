@@ -32,6 +32,16 @@ const resourceTask = (overrides: Partial<TaskSnapshot> = {}): TaskSnapshot => ({
 beforeEach(() => { subscribe.mockReset().mockResolvedValue(() => {}); invoke.mockReset(); picker.mockReset(); invoke.mockImplementation(async (cmd: string) => cmd === "get_mod_resources" ? state() : { path: "C:\\User\\tools\\processor.exe" }); });
 afterEach(cleanup);
 describe("Mod resources", () => {
+  it.each([[false, "当前已是最新版"], [true, "更新 Mod"]] as const)("allows replacing an installed Mod with update=%s", async (updateAvailable, label) => {
+    const data = { ...state(), game_data_version: "99999", mods: [{ id: "LiteHub", installed_version: "r1", update_available: updateAvailable, protected: true, reason_code: "replace_available" }] };
+    invoke.mockImplementation(async cmd => cmd === "get_mod_resources" ? data : { path: "D:\\Game\\mods\\LiteHub" });
+    render(<ModResourceLibrary edition="CN" en={false} />);
+    const button = await screen.findByRole("button", { name: label });
+    expect((button as HTMLButtonElement).disabled).toBe(false);
+    await userEvent.click(button);
+    expect(invoke).toHaveBeenCalledWith("install_mod_resource", expect.objectContaining({ resourceId: "LiteHub" }));
+  });
+
   it("orders Mods by memory reference and hides technical installation details", async () => {
     const data = state();
     invoke.mockResolvedValue({ ...data, catalog: { ...data.catalog, assets: [...data.catalog.assets,
@@ -195,12 +205,12 @@ describe("Mod resources", () => {
     expect(screen.queryByRole("article", { name: "Mod 加工器" })).toBeNull();
     expect(screen.queryByRole("button", { name: "更新加工器" })).toBeNull();
   });
-  it("blocks incompatible game packages without blocking processor installation", async () => {
+  it("allows packages with a different game data version", async () => {
     invoke.mockResolvedValue({ ...state(), game_data_version: "99999" });
     render(<ModResourceLibrary edition="CN" en={false} />);
     await screen.findByText("LiteHub");
     const card = screen.getByText("LiteHub").closest("article")!;
-    expect((within(card).getByRole("button", { name: "下载并安装" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(card).getByRole("button", { name: "下载并安装" }) as HTMLButtonElement).disabled).toBe(false);
     expect(screen.queryByRole("button", { name: "更新加工器" })).toBeNull();
   });
   it("restores a failed background installation after reopening the library", async () => {
@@ -217,13 +227,13 @@ describe("Mod resources", () => {
     expect(within(card).getByRole("alert").textContent).toContain("文件校验失败");
     expect(within(card).getByRole("button", { name: "下载并安装" })).toHaveProperty("disabled", false);
   });
-  it("explains protected local modifications without offering to overwrite them", async () => {
+  it("offers replacement with clear localized wording", async () => {
     invoke.mockResolvedValue({ ...state(), mods: [{ id: "LiteHub", installed_version: "r1",
-      update_available: true, protected: true, message: "本地文件已修改", reason_code: "locally_modified", integrity_checked: true }] });
+      update_available: true, protected: false, message: "已安装；下载将覆盖同名 Mod", reason_code: "replace_available", integrity_checked: false }] });
     render(<ModResourceLibrary edition="CN" en />);
     const card = (await screen.findByText("LiteHub")).closest("article")!;
-    expect(within(card).getByText(/Local files have changed/)).toBeTruthy();
-    expect(within(card).getByRole("button", { name: "Preserved" })).toHaveProperty("disabled", true);
+    expect(within(card).getByText(/Downloading replaces/)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Update Mod" })).toHaveProperty("disabled", false);
     expect(within(card).queryByText("本地文件已修改")).toBeNull();
   });
   it("ignores an old edition read that resolves after a new edition", async () => {

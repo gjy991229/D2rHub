@@ -82,7 +82,6 @@ export const BATTLE_REPORT_PRESET_STRATEGIES: BattleReportStrategy[] = [
   { id: "preset-burial-grounds", name: "墓园双陵", route: "埋骨之地 → 墓穴 / 寝陵", scene_names: ["埋骨之地", "墓穴", "寝陵"], preset: true },
 ];
 
-const METRIC_IDS = ["runs", "duration", "average", "median", "best", "p90", "tz", "drops", "high"];
 export const BATTLE_REPORT_CONFIG_DEFAULTS: BattleReportConfig = {
   range: "today",
   customStart: "",
@@ -92,13 +91,13 @@ export const BATTLE_REPORT_CONFIG_DEFAULTS: BattleReportConfig = {
   dropScope: "all",
   customTitle: "",
   customHeadline: "",
-  metrics: ["runs", "duration", "average", "tz"],
+  metrics: ["duration", "drops", "high"],
   chartMetric: "runs",
-  leftRanking: "scenes",
+  leftRanking: "characters",
   rightRanking: "drops",
-  dataSource: "strategy",
-  outliers: "optimized",
-  tzGrouping: "separate",
+  dataSource: "raw",
+  outliers: "raw",
+  tzGrouping: "combined",
 };
 
 const categoryLabels: Record<string, string> = { runes: "符文", gems: "宝石", charms: "护身符", jewels: "珠宝", keys: "钥匙", organs: "器官", essences: "精华 / 徽章" };
@@ -117,24 +116,23 @@ function option<T extends string>(value: unknown, allowed: readonly T[], fallbac
 }
 
 export function sanitizeBattleReportConfig(value: Partial<BattleReportConfig> = {}): BattleReportConfig {
-  const metrics = [...new Set(Array.isArray(value.metrics) ? value.metrics : BATTLE_REPORT_CONFIG_DEFAULTS.metrics)]
-    .filter((metric) => METRIC_IDS.includes(metric)).slice(0, 4);
+  const metrics = [...new Set(value.metrics || ["duration", "drops", "high"])].filter(metric => ["duration", "drops", "high", "efficiency"].includes(metric)).slice(0, 4);
   return {
     range: option(value.range, ["today", "week", "month", "7", "30", "custom"], "today"),
     customStart: String(value.customStart || "").slice(0, 10),
     customEnd: String(value.customEnd || "").slice(0, 10),
     character: String(value.character || ""),
-    areaType: option(value.areaType, ["all", "normal", "tz"], "all"),
+    areaType: "all",
     dropScope: option(value.dropScope, ["all", "any", "high"], "all"),
     customTitle: String(value.customTitle || "").trim().slice(0, 12),
     customHeadline: String(value.customHeadline || "").trim().slice(0, 36),
-    metrics: metrics.length ? metrics : [...BATTLE_REPORT_CONFIG_DEFAULTS.metrics],
-    chartMetric: option(value.chartMetric, ["runs", "average", "drops", "high"], "runs"),
-    leftRanking: option(value.leftRanking, ["scenes", "characters"], "scenes"),
+    metrics: metrics.length ? metrics : ["duration", "drops", "high"],
+    chartMetric: option(value.chartMetric, ["runs", "drops", "high"], "runs"),
+    leftRanking: "characters",
     rightRanking: option(value.rightRanking, ["drops", "efficiency"], "drops"),
-    dataSource: option(value.dataSource, ["raw", "strategy"], "strategy"),
-    outliers: option(value.outliers, ["optimized", "short", "raw"], "optimized"),
-    tzGrouping: option(value.tzGrouping, ["separate", "combined"], "separate"),
+    dataSource: "raw",
+    outliers: "raw",
+    tzGrouping: "combined",
   };
 }
 
@@ -354,12 +352,12 @@ function formatDuration(seconds: number) {
 type SeriesItem = { label: string; value: number; display: string };
 function seriesValue(records: BattleReportRecord[], metric: BattleReportConfig["chartMetric"]) {
   const summary = summarize(records);
-  if (metric === "average") return summary.average;
+  if (metric === "average") return summary.totalSeconds;
   if (metric === "drops") return summary.drops.length;
   if (metric === "high") return summary.highDrops.length;
-  return summary.runs;
+  return summary.totalSeconds;
 }
-function seriesDisplay(value: number, metric: BattleReportConfig["chartMetric"]) { return metric === "average" ? (value ? formatDuration(value) : "0") : String(Math.round(value)); }
+function seriesDisplay(value: number, metric: BattleReportConfig["chartMetric"]) { return (metric === "average" || metric === "runs") ? (value ? formatDuration(value) : "0") : String(Math.round(value)); }
 function barSeries(records: BattleReportRecord[], range: ReturnType<typeof reportPeriodRange>, config: BattleReportConfig): SeriesItem[] {
   if (config.range === "today") {
     const buckets = Array.from({ length: 6 }, () => [] as BattleReportRecord[]);
@@ -444,15 +442,14 @@ export function buildBattleReportSnapshot(data: BattleReportStatsData, preferenc
   const previousRecords = recordsBetween(range.previousStart, range.previousEnd);
   const summary = summarize(records);
   const previous = summarize(previousRecords);
-  const scenes = groupedScenes(records, config).sort((a, b) => b.summary.runs - a.summary.runs || a.summary.average - b.summary.average);
+  const scenes = groupedScenes(records, config).sort((a, b) => b.summary.totalSeconds - a.summary.totalSeconds);
   const drops = aggregateDrops(records);
   const tzRuns = records.filter((record) => Boolean(record.tz)).length;
   const leftGroups = (config.leftRanking === "characters" ? groupedStats(records, "character_name").map((group) => ({ ...group, tz: false })) : scenes)
-    .sort((a, b) => b.summary.runs - a.summary.runs || a.summary.average - b.summary.average);
-  const topScene = scenes[0] || null;
+    .sort((a, b) => b.summary.totalSeconds - a.summary.totalSeconds);
   const topDrop = drops[0] || null;
-  const headline = topDrop && topDrop.rune >= 24 ? `${topDrop.label}，写进本期战绩` : topDrop ? `${topDrop.label} ×${topDrop.count}，领衔本期战利品` : topScene ? `${topScene.tz ? "TZ " : ""}${topScene.name}，${summary.runs} 场实录` : "等待下一段地狱征途";
-  const chartLabels: Record<BattleReportConfig["chartMetric"], [string, string]> = { runs: ["场次节奏", "各时段完成场次"], average: ["耗时节奏", "各时段平均耗时"], drops: ["掉落节奏", "各时段记录掉落"], high: ["高级符文", "各时段 #24+ 符文"] };
+  const headline = topDrop && topDrop.rune >= 24 ? `${topDrop.label}，写进本期战绩` : topDrop ? `${topDrop.label} ×${topDrop.count}，领衔本期战利品` : records.length ? `累计战斗 ${formatDuration(summary.totalSeconds)}` : "等待下一段地狱征途";
+  const chartLabels: Record<BattleReportConfig["chartMetric"], [string, string]> = { runs: ["战斗时间", "各时段累计时间"], average: ["战斗时间", "各时段累计时间"], drops: ["掉落节奏", "各时段记录掉落"], high: ["高级符文", "各时段 #24+ 符文"] };
   const rightUsesDrops = config.rightRanking === "drops" && drops.length > 0;
   const snapshot: BattleReportSnapshot = {
     range, records, summary, previous, scenes, drops, tzRuns,
@@ -464,7 +461,7 @@ export function buildBattleReportSnapshot(data: BattleReportStatsData, preferenc
     chartTitle: chartLabels[config.chartMetric][0],
     chartSubtitle: chartLabels[config.chartMetric][1],
     leftTitle: config.leftRanking === "characters" ? "主要角色" : "主要区域",
-    leftSubtitle: config.leftRanking === "characters" ? "按完成场次排序" : config.tzGrouping === "separate" ? "普通 / TZ 分开统计" : "普通 / TZ 合并统计",
+    leftSubtitle: config.leftRanking === "characters" ? "按累计战斗时间排序" : config.tzGrouping === "separate" ? "普通 / TZ 分开统计" : "普通 / TZ 合并统计",
     rightMode: rightUsesDrops ? "drops" : "efficiency",
     rightTitle: rightUsesDrops ? "重点掉落" : "效率概览",
     rightSubtitle: rightUsesDrops ? "按稀有度与数量排序" : "本期战斗节奏",
@@ -473,6 +470,7 @@ export function buildBattleReportSnapshot(data: BattleReportStatsData, preferenc
   };
   const areaCount = records.length ? new Set(records.map((record) => record.scene_name)).size : 0;
   const definitions: Record<string, ReportMetric> = {
+    efficiency: { label: "每小时掉落", value: summary.totalSeconds ? (summary.drops.length * 3600 / summary.totalSeconds).toFixed(1) : "—", note: "掉落数 ÷ 战斗小时" },
     runs: { label: "完成场次", value: summary.runs.toLocaleString(), note: `记录 ${areaCount} 个区域` },
     duration: { label: "战斗时长", value: formatDuration(summary.totalSeconds), note: "本期累计" },
     average: { label: "场均耗时", value: summary.average ? formatDuration(summary.average) : "—", note: percentDelta(summary.average, previous.average) },
@@ -522,11 +520,11 @@ export function drawBattleReport(canvas: HTMLCanvasElement, snapshot: BattleRepo
   const chartX = 76, chartY = 573, chartWidth = 928, max = Math.max(1, ...snapshot.series.map((item) => item.value)), gap = 16, barWidth = (chartWidth - gap * (snapshot.series.length - 1)) / Math.max(1, snapshot.series.length); ctx.fillStyle = reportRule; ctx.fillRect(chartX, chartY + 99, chartWidth, 1);
   snapshot.series.forEach((item, index) => { const x = chartX + index * (barWidth + gap), height = item.value / max * 82, center = x + barWidth / 2; roundRect(ctx, x, chartY + 99 - height, barWidth, height, Math.min(8, barWidth / 2), index === snapshot.series.length - 1 ? clayDeep : clay); canvasText(ctx, item.display, center, chartY + 88 - height, barWidth, 13, 700, item.value ? ink : muted, "center"); canvasText(ctx, item.label, center, chartY + 125, barWidth, 12, 600, muted, "center"); });
   rule(ctx, 745, 76, 928, reportRule); sectionTitle(ctx, snapshot.leftTitle, snapshot.leftSubtitle, 76, 801, 548, ink, muted); sectionTitle(ctx, snapshot.rightTitle, snapshot.rightSubtitle, 686, 801, 318, ink, muted); ctx.fillStyle = reportRule; ctx.fillRect(655, 783, 1, 300);
-  const zoneMax = Math.max(1, ...snapshot.leftGroups.slice(0, 4).map((group) => group.summary.runs)); snapshot.leftGroups.slice(0, 4).forEach((group, index) => { const y = 858 + index * 66, color = group.tz ? violet : ink; rank(ctx, index + 1, 91, y - 7, group.tz ? violet : clay); canvasText(ctx, `${group.tz ? "TZ · " : ""}${group.name}`, 120, y, 318, 18, 700, color); canvasText(ctx, `${group.summary.runs} 场`, 624, y, 86, 15, 720, color, "right"); canvasText(ctx, group.summary.average ? `场均 ${formatDuration(group.summary.average)}` : "暂无耗时", 120, y + 24, 220, 12, 580, muted); ctx.fillStyle = paperDeep; ctx.fillRect(350, y + 18, 274, 4); ctx.fillStyle = group.tz ? violet : clay; ctx.fillRect(350, y + 18, Math.max(6, 274 * group.summary.runs / zoneMax), 4); });
+  const zoneMax = Math.max(1, ...snapshot.leftGroups.slice(0, 4).map((group) => group.summary.totalSeconds)); snapshot.leftGroups.slice(0, 4).forEach((group, index) => { const y = 858 + index * 66, color = group.tz ? violet : ink; rank(ctx, index + 1, 91, y - 7, group.tz ? violet : clay); canvasText(ctx, `${group.tz ? "TZ · " : ""}${group.name}`, 120, y, 318, 18, 700, color); canvasText(ctx, formatDuration(group.summary.totalSeconds), 624, y, 86, 15, 720, color, "right"); canvasText(ctx, `${group.summary.drops.length} 次掉落`, 120, y + 24, 220, 12, 580, muted); ctx.fillStyle = paperDeep; ctx.fillRect(350, y + 18, 274, 4); ctx.fillStyle = group.tz ? violet : clay; ctx.fillRect(350, y + 18, Math.max(6, 274 * group.summary.totalSeconds / zoneMax), 4); });
   if (snapshot.rightMode === "drops") snapshot.drops.slice(0, 4).forEach((drop, index) => { const y = 858 + index * 66, color = drop.rune >= 24 ? clayDeep : ink; rank(ctx, index + 1, 701, y - 7, drop.rune >= 24 ? clayDeep : clay); canvasText(ctx, drop.label, 730, y, 208, 18, 700, color); canvasText(ctx, `×${drop.count}`, 1004, y, 58, 17, 760, color, "right"); canvasText(ctx, drop.category, 730, y + 24, 190, 12, 580, muted); });
-  else [{ label: "最快完成", value: snapshot.summary.best ? formatDuration(snapshot.summary.best) : "—" }, { label: "中位耗时", value: snapshot.summary.median ? formatDuration(snapshot.summary.median) : "—" }, { label: "P90 耗时", value: snapshot.summary.p90 ? formatDuration(snapshot.summary.p90) : "—" }, { label: "高级符文", value: `${snapshot.summary.highDrops.length} 次` }].forEach((item, index) => { const y = 858 + index * 66; canvasText(ctx, item.label, 686, y, 140, 14, 600, muted); canvasText(ctx, item.value, 1004, y + 2, 220, 24, 700, ink, "right", true); if (index < 3) rule(ctx, y + 27, 686, 318, reportRule); });
-  const topScene = snapshot.scenes[0]; const insight = topScene ? `${topScene.tz ? "TZ " : ""}${topScene.name}贡献 ${Math.round(topScene.summary.runs / Math.max(1, snapshot.summary.runs) * 100)}% 场次，场均 ${formatDuration(topScene.summary.average)}。${snapshot.tzRuns ? `本期 TZ 共完成 ${snapshot.tzRuns} 场。` : ""}` : "开始记录后，这里会出现最值得分享的一句战绩。"; roundRect(ctx, 76, 1128, 928, 126, 16, clayPale); canvasText(ctx, snapshot.summaryLabel, 104, 1168, 180, 14, 760, clayDeep); canvasText(ctx, insight, 104, 1216, 848, 23, 600, ink, "left", true);
-  canvasText(ctx, "每一场，都算数。", 76, 1305, 300, 17, 700, ink); const generated = new Date(); const stamp = `D2RHub · 本地声纹统计 · ${generated.getFullYear()}.${String(generated.getMonth() + 1).padStart(2, "0")}.${String(generated.getDate()).padStart(2, "0")}`; canvasText(ctx, stamp, 1004, 1305, 520, 13, 580, muted, "right");
+  else [{ label: "累计时间", value: formatDuration(snapshot.summary.totalSeconds) }, { label: "记录掉落", value: String(snapshot.summary.drops.length) }, { label: "每小时掉落", value: snapshot.summary.totalSeconds ? (snapshot.summary.drops.length * 3600 / snapshot.summary.totalSeconds).toFixed(1) : "—" }, { label: "高级符文", value: String(snapshot.summary.highDrops.length) }].forEach((item, index) => { const y = 858 + index * 66; canvasText(ctx, item.label, 686, y, 140, 14, 600, muted); canvasText(ctx, item.value, 1004, y + 2, 220, 24, 700, ink, "right", true); if (index < 3) rule(ctx, y + 27, 686, 318, reportRule); });
+  const insight = `累计战斗 ${formatDuration(snapshot.summary.totalSeconds)}，记录 ${snapshot.summary.drops.length} 次掉落。`; roundRect(ctx, 76, 1128, 928, 126, 16, clayPale); canvasText(ctx, snapshot.summaryLabel, 104, 1168, 180, 14, 760, clayDeep); canvasText(ctx, insight, 104, 1216, 848, 23, 600, ink, "left", true);
+  canvasText(ctx, "每一份收获，都记得。", 76, 1305, 300, 17, 700, ink); const generated = new Date(); const stamp = `D2RHub · 本地声纹统计 · ${generated.getFullYear()}.${String(generated.getMonth() + 1).padStart(2, "0")}.${String(generated.getDate()).padStart(2, "0")}`; canvasText(ctx, stamp, 1004, 1305, 520, 13, 580, muted, "right");
 }
 
 export async function copyBattleReportToClipboard(data: BattleReportStatsData, preferences: StatsPagePreferences = {}) {

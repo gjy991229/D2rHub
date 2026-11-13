@@ -66,7 +66,7 @@ impl VisionConfig {
         self.diagnostic_enabled != other.diagnostic_enabled && runtime == *other
     }
     pub fn needs_ocr(&self) -> bool {
-        self.chat_follow || self.area_enabled
+        self.chat_follow
     }
     pub fn validate(&self) -> Result<(), String> {
         if !self.chat_roi.valid() || !self.area_roi.valid() {
@@ -195,13 +195,13 @@ mod tests {
         config.chat_follow = false;
         assert!(!config.needs_ocr());
         config.area_enabled = true;
-        assert!(config.needs_ocr());
+        assert!(!config.needs_ocr());
     }
     #[test]
     fn missing_preferences_enable_statistics_but_keep_chat_and_diagnostics_off() {
         let c: VisionConfig = serde_json::from_str("{}").unwrap();
         assert!(!c.diagnostic_enabled);
-        assert!(c.needs_ocr());
+        assert!(!c.needs_ocr());
         assert!(c.area_enabled);
         assert!(!c.chat_send);
         assert!(c.validate().is_ok());

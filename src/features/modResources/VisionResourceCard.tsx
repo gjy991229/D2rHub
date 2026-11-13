@@ -58,13 +58,13 @@ export function VisionResourceCard({ en }: { en: boolean }) {
       <div className="resource-title"><strong>{title}</strong>
         {data && <span>{en ? "Download" : "下载"} {(data.size / 1048576).toFixed(1)} MB</span>}
       </div>
-      <p>{en ? "Shared by scene recognition and room signals. Download once for all accounts and game editions."
-        : "用于地区识别和聊天跟房；所有账号与游戏版本共用，下载一次即可。"}</p>
+      <p>{en ? "Required only for room-following signals. Download once for all accounts and game editions."
+        : "仅用于拼房跟随识别；所有账号与游戏版本共用，下载一次即可。"}</p>
     </div>
     <div className="resource-metadata">
       <small>{en ? "Gitee mirror available; follows your download source setting." : "支持 Gitee 国内镜像，遵循软件的下载源设置。"}</small>
       <p className="resource-install-state" data-state={data?.ready ? "ready" : active ? "update" : "neutral"} role="status">{data?.message || (en ? "Checking local resources…" : "正在检查本地资源…")}</p>
-      <small>{en ? "Recognition still prepares missing resources automatically when needed." : "未提前下载时，启用识别仍会自动准备所需资源。"}</small>
+      <small>{en ? "Downloads only when requested here or confirmed when applying follower mode." : "默认不下载；可在此手动下载，或应用跟随模式时确认下载。"}</small>
     </div>
     <div className="resource-actions">
       <Button size="sm" variant="primary" disabled={active} onClick={() => void prepare()}>

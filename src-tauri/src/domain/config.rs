@@ -199,6 +199,9 @@ pub struct GlobalConfig {
     /// 是否首次启动（自动弹出帮助文档）
     #[serde(default = "default_first_launch")]
     pub first_launch: bool,
+    /// Timer display preference; missing values retain the seconds display.
+    #[serde(default)]
+    pub combat_time_format: String,
     /// 是否启用按 D2R 进程捕获的符文声纹识别。
     #[serde(default)]
     pub rune_audio_enabled: bool,
@@ -536,6 +539,7 @@ impl Default for GlobalConfig {
             enable_auto_update: true,
             download_source: DownloadSource::Auto,
             first_launch: true,
+            combat_time_format: "seconds".into(),
             rune_audio_enabled: false,
             hostile_auto_restart_enabled: false,
             hostile_auto_restart_all_windows: true,

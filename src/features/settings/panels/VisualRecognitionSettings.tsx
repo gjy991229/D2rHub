@@ -46,7 +46,7 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
       if (alive) setStatus(value);
     }).catch(e => { if (alive) setError(String(e)); });
     refresh(); const timer = window.setInterval(refresh, 1500);
-    return () => { alive = false; window.clearInterval(timer); };
+  return () => { alive = false; window.clearInterval(timer); };
   }, [opened]);
   const update = (patch: Partial<Config>) => {
     setSavedMessage("");
@@ -91,6 +91,13 @@ export function VisualRecognitionSettings({ mode, language, accounts = [], prima
     </fieldset>
   );
   const dirty = !!draft && !!snapshot && JSON.stringify(draft) !== JSON.stringify(snapshot.config);
+    if (["audio"].includes(mode)) return <section className="spatial-panel p-4 space-y-3">
+    <strong>{en ? "Combat time and drop screenshots" : "累计战斗时间与掉落截图"}</strong>
+    <p className="feature-help">{en ? "Audible game time accumulates outside towns and menus until the game process closes. Updated audio markers are included when processing a Mod." : "游戏有声音且处于主城、主界面之外时累计计时，游戏进程关闭后结算。加工 Mod 默认包含所需声纹。"}</p>
+    <p className="feature-help">{en ? "Confirmed rune drops #24–33 save a screenshot." : "声纹确认 24–33 号符文掉落后保存截图。"}</p>
+    <Button size="sm" onClick={() => { void invokeCommand("open_drop_screenshots_dir").catch(e => setError(String(e))); }}>{en ? "Open screenshots" : "打开掉落截图目录"}</Button>
+    {error && <p role="alert">{error}</p>}
+  </section>;
   return <details className="feature-settings spatial-panel" onToggle={e => { if (e.target === e.currentTarget) setOpened(e.currentTarget.open); }}>
     <summary className="feature-settings-heading">
       <ScanLine size={17} aria-hidden="true" />

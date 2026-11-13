@@ -262,12 +262,13 @@ pub fn validate_config_path_selection(field: String, path: String) -> Result<(),
         return Ok(()); // Unused editions and optional configuration remain skippable.
     }
     let selected = Path::new(path.trim());
-    if !selected
-        .file_name()
-        .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected))
+    if executable
+        && !selected
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(expected))
     {
         return Err(AppError::ConfigWriteError(format!(
-            "{label}最终应选择 {expected}，前缀路径不限"
+            "{label}应选择 {expected} 文件，所在文件夹名称不限"
         )));
     }
     if executable {
@@ -632,7 +633,7 @@ mod validation_tests {
         assert!(validate("global_game_path", &game).is_ok());
         assert!(validate("cn_saved_games_path", &cn_config).is_ok());
         assert!(!cn_config.join("Settings.json").exists());
-        assert!(validate("global_saved_games_path", &cn_config).is_err());
+        assert!(validate("global_saved_games_path", &cn_config).is_ok());
         assert!(validate("global_saved_games_path", &game).is_ok());
         assert!(validate("cn_game_path", &cn_config).is_err());
         let bnet = root.join("battle.NET.EXE");

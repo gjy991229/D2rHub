@@ -91,11 +91,11 @@ function InstallationProfileFields({
 
       <label htmlFor={`path-${fields.game}`} className="text-xs text-text-muted block">游戏安装目录</label>
       <div className="path-input-row">
-        <input id={`path-${fields.game}`} aria-label={`${label}游戏安装目录`} title={config[fields.game]} placeholder={en ? "Choose Diablo II Resurrected (containing D2R.exe)" : "最终选择 Diablo II Resurrected（包含 D2R.exe）"} type="text" value={config[fields.game]} readOnly className="min-w-0 flex-1 h-9 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
+        <input id={`path-${fields.game}`} aria-label={`${label}游戏安装目录`} title={config[fields.game]} placeholder={en ? "Choose Diablo II Resurrected (containing D2R.exe)" : "最终选择 游戏文件夹（包含 D2R.exe）"} type="text" value={config[fields.game]} readOnly className="min-w-0 flex-1 h-9 px-3 rounded-lg bg-surface-hover text-xs border border-border-default text-text-primary" />
         <Button aria-label={`浏览${label}游戏安装目录`} size="sm" className="shrink-0 whitespace-nowrap" onClick={() => pickFolder(fields.game, `${label}游戏安装目录`)}>浏览</Button>
       </div>
 
-      <p className="text-2xs text-text-muted">最终应选择：Diablo II Resurrected 文件夹，内含 D2R.exe；前缀路径不限。</p>
+      <p className="text-2xs text-text-muted">最终应选择：含 D2R.exe 的文件夹，文件夹名称和路径不限。</p>
 
       <label htmlFor={`path-${fields.savedGames}`} className="text-xs text-text-muted block">
         配置目录（可选） · Diablo II Resurrected{isCn ? " (CN)" : ""}

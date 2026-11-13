@@ -640,7 +640,7 @@ async fn prepare_audio_mod_task(
             source_mod_name,
             replace_source,
             include_audio_telemetry,
-            include_scene_audio,
+            _include_scene_audio: include_scene_audio,
             include_room_tools,
             room_tools_default_hell,
             include_esc_next_game,
@@ -673,7 +673,7 @@ struct PrepareAudioModRequest {
     source_mod_name: Option<String>,
     replace_source: Option<bool>,
     include_audio_telemetry: Option<bool>,
-    include_scene_audio: Option<bool>,
+    _include_scene_audio: Option<bool>,
     include_room_tools: Option<bool>,
     room_tools_default_hell: Option<bool>,
     include_esc_next_game: Option<bool>,
@@ -696,7 +696,7 @@ async fn prepare_audio_mod_impl(
         source_mod_name,
         replace_source,
         include_audio_telemetry,
-        include_scene_audio,
+        _include_scene_audio: _,
         include_room_tools,
         room_tools_default_hell,
         include_esc_next_game,
@@ -781,12 +781,7 @@ async fn prepare_audio_mod_impl(
             requested_features,
             progress_ceiling: 100,
             audio_options: Some(&rebuild::AudioOptions {
-                areas: if include_scene_audio == Some(false) {
-                    "none"
-                } else {
-                    "all"
-                }
-                .into(),
+                areas: "all".into(),
                 ..Default::default()
             }),
         },
@@ -1162,9 +1157,7 @@ async fn upgrade_audio_mod_impl(
             rebuild::audio_options(&document)?,
         )
     };
-    if let Some(enabled) = include_scene_audio {
-        audio_options.areas = if enabled { "all" } else { "none" }.into();
-    }
+    audio_options.areas = "all".into();
     let required_existing_groups = if rebuilding {
         Vec::new()
     } else {
@@ -1354,11 +1347,60 @@ pub(crate) fn validate_runtime_audio_mod_directory(
     if !result.ready {
         return Err(result.message);
     }
-    validate_audio_mod(
+    let validated = validate_audio_mod(
         &mods_directory,
         result.mod_name.as_deref().unwrap_or_default(),
+    )?;
+    if validated.feature_groups.iter().any(|group| {
+        group.id == "audio_telemetry"
+            && group.recipe_version
+                < crate::domain::mod_processing::AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+    }) {
+        return Err("此 Mod 缺少累计计时所需的主城和主界面水印。关闭游戏后，通过 Hub 启动以自动升级；也可在 Mod 管理中同名重做。".into());
+    }
+    Ok(validated.directory)
+}
+
+pub(crate) async fn upgrade_activity_if_needed(
+    app: &tauri::AppHandle,
+    account_id: &str,
+    game: &Path,
+    arguments: &str,
+) -> Result<(), String> {
+    use tauri::Manager;
+    let Some(name) = active_mod_name(arguments)? else {
+        return Ok(());
+    };
+    let Ok(current) = validate_audio_mod_credential(&game.join("mods"), &name) else {
+        return Ok(());
+    };
+    if !current.feature_groups.iter().any(|group| {
+        group.id == "audio_telemetry"
+            && group.recipe_version
+                < crate::domain::mod_processing::AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+    }) {
+        return Ok(());
+    }
+    upgrade_audio_mod(
+        app.clone(),
+        app.state::<SharedState>(),
+        account_id.into(),
+        None,
+        Some(name),
+        None,
+        Some(true),
+        Some(true),
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        Some(true),
     )
-    .map(|validated| validated.directory)
+    .await?;
+    Ok(())
 }
 
 pub(crate) fn validate_runtime_feature_directory(

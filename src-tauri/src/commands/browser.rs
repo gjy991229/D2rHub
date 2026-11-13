@@ -311,15 +311,23 @@ pub fn launch_browser_for_account_impl(
 /// 启动浏览器并打开账号对应的独立 Profile。
 #[tauri::command]
 pub fn launch_browser_for_account(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     browser_path: String,
     account_id: String,
 ) -> Result<(), AppError> {
     let _account_lease = AccountLifecycleLease::try_acquire(state.inner(), &account_id)?;
-    let config = state
+    let original = state
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("未配置".into()))?;
+    ensure_browser_path_allowed(&original, &browser_path)?;
+    let config = crate::commands::global_config::detection::repair_auxiliary_path(
+        state.inner(),
+        &app,
+        true,
+    )?;
+    let browser_path = config.browser_path.clone();
 
     // 在启动浏览器之前，收集现有的 Chrome/Edge 窗口句柄列表
     #[cfg(target_os = "windows")]

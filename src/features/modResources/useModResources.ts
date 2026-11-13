@@ -1,3 +1,4 @@
+import { notifyModCatalogChanged } from "../modCapsules/catalogChanges";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { taskGateway } from "../tasks/gateway";
 import { subscribeBeforeReadingTasks } from "../tasks/taskSync";
@@ -112,6 +113,7 @@ export function useModResources({ edition, onInstalled, onBusy }: Options) {
       // Navigating while the file picker is open must not install into a stale edition.
       if (!current()) return;
       const result = await modResourcesGateway.install(edition, asset.id, localFile);
+      notifyModCatalogChanged();
       if (!current()) return;
       setFeedback({ assetId: asset.id, installedPath: result.path });
       await read();

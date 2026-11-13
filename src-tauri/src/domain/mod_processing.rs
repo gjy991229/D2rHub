@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub(crate) const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
-pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 5;
+pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 8;
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 33;
 pub(crate) const PARTY_LOOT_FEATURE_ID: &str = "party_loot";
@@ -446,7 +446,7 @@ fn validate_supported_feature_group(
             Ok(())
         }
         AUDIO_TELEMETRY_FEATURE_ID => {
-            if !matches!(group.recipe_version, 4 | 5) {
+            if !matches!(group.recipe_version, 4..=8) {
                 return Err(format!(
                     "D2RHub Mod 的声纹识别功能组配方 r{} 不受支持（需要 r{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION}）",
                     group.recipe_version
@@ -514,7 +514,10 @@ fn validate_audio_feature_fingerprint(
     let parts = fingerprint.split(';').collect::<Vec<_>>();
     let expected_protocol = format!("protocol={audio_protocol_version}");
     if parts.len() != 5
-        || !matches!(parts[0], "audio-v4" | "audio-v5")
+        || !matches!(
+            parts[0],
+            "audio-v4" | "audio-v5" | "audio-v6" | "audio-v7" | "audio-v8"
+        )
         || parts[1] != expected_protocol
         || !matches!(
             parts[2],

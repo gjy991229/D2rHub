@@ -239,6 +239,17 @@ fn mix_packet(
     payload: u32,
     amplitude: f64,
 ) {
+    let scene = matches!(
+        marker,
+        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend
+    );
+    let preamble_hz = if marker == TelemetryMarker::Frontend {
+        20_600.0
+    } else if scene {
+        21_000.0
+    } else {
+        PREAMBLE_CARRIER_HZ
+    };
     let code = if drop_signature_number(marker).is_some() {
         rune_preamble()
     } else {
@@ -254,7 +265,7 @@ fn mix_packet(
             let value = amplitude
                 * envelope
                 * *sign as f64
-                * (std::f64::consts::TAU * PREAMBLE_CARRIER_HZ as f64 * time).sin();
+                * (std::f64::consts::TAU * preamble_hz as f64 * time).sin();
             for channel in 0..channels {
                 mixed[frame * channels + channel] += value;
             }
@@ -286,9 +297,21 @@ fn mix_packet(
     for bit_index in 0..PAYLOAD_BITS {
         let shift = PAYLOAD_BITS - 1 - bit_index;
         let frequency = if (payload >> shift) & 1 == 0 {
-            BIT_ZERO_HZ
+            if marker == TelemetryMarker::Frontend {
+                20_100.0
+            } else if scene {
+                20_500.0
+            } else {
+                BIT_ZERO_HZ
+            }
         } else {
-            BIT_ONE_HZ
+            if marker == TelemetryMarker::Frontend {
+                21_100.0
+            } else if scene {
+                21_500.0
+            } else {
+                BIT_ONE_HZ
+            }
         };
         for offset in 0..symbol_len {
             let phase = offset as f64 / symbol_len as f64;
@@ -409,6 +432,9 @@ pub fn embed_marker_with_delay(
 }
 
 struct DetectorPlan {
+    preamble_hz: f32,
+    zero_hz: f32,
+    one_hz: f32,
     sample_rate: u32,
     chip_len: usize,
     symbol_len: usize,
@@ -440,6 +466,9 @@ impl DetectorPlan {
             packet_len: packet_frames(sample_rate),
             marker_len: marker_frames(sample_rate),
             step: (chip_len / 4).max(1),
+            preamble_hz: PREAMBLE_CARRIER_HZ,
+            zero_hz: BIT_ZERO_HZ,
+            one_hz: BIT_ONE_HZ,
             control_code: control_preamble(),
             rune_code: rune_preamble(),
             rune_signatures: std::array::from_fn(|index| rune_signature(index as u32 + 1)),
@@ -499,8 +528,8 @@ fn decode_candidate(
     for bit_index in 0..PAYLOAD_BITS {
         let symbol_start = payload_start + bit_index * plan.symbol_len;
         let symbol = &samples[symbol_start..symbol_start + plan.symbol_len];
-        let zero = tone_energy(symbol, plan.sample_rate, BIT_ZERO_HZ);
-        let one = tone_energy(symbol, plan.sample_rate, BIT_ONE_HZ);
+        let zero = tone_energy(symbol, plan.sample_rate, plan.zero_hz);
+        let one = tone_energy(symbol, plan.sample_rate, plan.one_hz);
         let total = zero + one;
         if total < 1e-10 {
             return None;
@@ -823,9 +852,12 @@ fn detect_pass(samples: &[f32], plan: &DetectorPlan, threshold: f32) -> Vec<Dete
     if samples.len() < plan.packet_len {
         return Vec::new();
     }
-    let (demod_i, demod_q) = demodulate(samples, plan.sample_rate, PREAMBLE_CARRIER_HZ);
-    let (signature_i, signature_q) =
-        demodulate(samples, plan.sample_rate, RUNE_SIGNATURE_CARRIER_HZ);
+    let (demod_i, demod_q) = demodulate(samples, plan.sample_rate, plan.preamble_hz);
+    let (signature_i, signature_q) = if plan.preamble_hz == PREAMBLE_CARRIER_HZ {
+        demodulate(samples, plan.sample_rate, RUNE_SIGNATURE_CARRIER_HZ)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     let mut raw = Vec::new();
     for start in (0..=samples.len() - plan.packet_len).step_by(plan.step) {
         let mut control_correlation_i = 0.0f32;
@@ -884,7 +916,7 @@ fn detect_pass(samples: &[f32], plan: &DetectorPlan, threshold: f32) -> Vec<Dete
                 }
             }
         }
-        if rune_preamble_confidence >= threshold {
+        if plan.preamble_hz == PREAMBLE_CARRIER_HZ && rune_preamble_confidence >= threshold {
             for (marker, signature_confidence) in
                 decode_rune_signatures(&signature_i, &signature_q, plan, start, threshold)
             {
@@ -939,6 +971,8 @@ fn detect_pass(samples: &[f32], plan: &DetectorPlan, threshold: f32) -> Vec<Dete
 /// signatures with temporal support checks. NMS deduplicates repeated packets.
 pub struct StreamingDetector {
     plan: DetectorPlan,
+    scene_plan: DetectorPlan,
+    frontend_plan: DetectorPlan,
     threshold: f32,
     buffer: Vec<f32>,
     buffer_start_frame: u64,
@@ -954,7 +988,17 @@ impl StreamingDetector {
         if !(0.0..=1.0).contains(&threshold) {
             return Err("识别阈值必须位于 0 到 1 之间".to_string());
         }
+        let mut scene_plan = DetectorPlan::new(sample_rate);
+        scene_plan.preamble_hz = 21_000.0;
+        scene_plan.zero_hz = 20_500.0;
+        scene_plan.one_hz = 21_500.0;
+        let mut frontend_plan = DetectorPlan::new(sample_rate);
+        frontend_plan.preamble_hz = 20_600.0;
+        frontend_plan.zero_hz = 20_100.0;
+        frontend_plan.one_hz = 21_100.0;
         Ok(Self {
+            frontend_plan,
+            scene_plan,
             plan: DetectorPlan::new(sample_rate),
             threshold,
             buffer: Vec::new(),
@@ -976,6 +1020,22 @@ impl StreamingDetector {
         let history_steps = self.plan.packet_len.div_ceil(self.plan.step);
         let consumed_frames = candidate_count.saturating_sub(history_steps) * self.plan.step;
         let mut detections = detect_ready_samples(&self.buffer, &self.plan, self.threshold);
+        detections.extend(
+            detect_ready_samples(&self.buffer, &self.scene_plan, self.threshold)
+                .into_iter()
+                .filter(|detection| {
+                    matches!(
+                        detection.marker,
+                        TelemetryMarker::Area { .. } | TelemetryMarker::Frontend
+                    )
+                }),
+        );
+        detections.extend(
+            detect_ready_samples(&self.buffer, &self.frontend_plan, self.threshold)
+                .into_iter()
+                .filter(|detection| detection.marker == TelemetryMarker::Frontend),
+        );
+        detections.sort_by_key(|detection| detection.start_frame);
         for detection in &mut detections {
             detection.start_frame += self.buffer_start_frame;
         }
@@ -1305,7 +1365,12 @@ mod tests {
 
     #[test]
     fn marker_survives_44100_to_48000_resampling() {
-        for marker in [TelemetryMarker::Hostile, rune(24)] {
+        for marker in [
+            TelemetryMarker::Hostile,
+            rune(24),
+            TelemetryMarker::Frontend,
+            TelemetryMarker::Area { area_id: 1 },
+        ] {
             let source = tagged(marker, 44_100, -26.0);
             let output_frames = source.len() * 160 / 147;
             let resampled = (0..output_frames)
@@ -1319,6 +1384,75 @@ mod tests {
             assert!(detect_markers(&resampled, 48_000, 0.50)
                 .iter()
                 .any(|detection| detection.marker == marker));
+        }
+    }
+
+    #[test]
+    fn simultaneous_frontend_and_town_are_both_decoded() {
+        let town = tagged(TelemetryMarker::Area { area_id: 1 }, 48_000, -40.0);
+        let menu = tagged(TelemetryMarker::Frontend, 48_000, -40.0);
+        let mixed: Vec<_> = town.iter().zip(menu).map(|(a, b)| a + b).collect();
+        let found = detect_markers(&mixed, 48_000, 0.56);
+        assert!(found.iter().any(|d| d.marker == TelemetryMarker::Frontend));
+        assert!(found
+            .iter()
+            .any(|d| d.marker == TelemetryMarker::Area { area_id: 1 }));
+    }
+
+    #[test]
+    fn half_second_scene_heartbeats_survive_streaming_and_overlap() {
+        for rate in [44_100, 48_000] {
+            let town = TelemetryMarker::Area { area_id: 1 };
+            let menu = TelemetryMarker::Frontend;
+            let mut audio = vec![0.0; rate as usize * 4];
+            for marker in [town, menu] {
+                let packet = tagged(marker, rate, -40.0);
+                for start in (0..rate as usize * 3).step_by(rate as usize / 2) {
+                    for (index, sample) in packet.iter().enumerate() {
+                        audio[start + index] += sample * 0.25;
+                    }
+                }
+            }
+            let mut decoder = StreamingDetector::new(rate, 0.56).unwrap();
+            let found: Vec<_> = audio
+                .chunks(4800)
+                .flat_map(|chunk| decoder.push(chunk))
+                .collect();
+            for marker in [town, menu] {
+                let beats: Vec<_> = found.iter().filter(|d| d.marker == marker).collect();
+                assert_eq!(beats.len(), 6, "rate={rate}: {beats:?}");
+                assert!(beats.windows(2).all(|pair| {
+                    pair[1]
+                        .start_frame
+                        .abs_diff(pair[0].start_frame)
+                        .abs_diff(rate as u64 / 2)
+                        < 100
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn quiet_scene_watermarks_survive_both_rates() {
+        for rate in [44_100, 48_000] {
+            for marker in [
+                TelemetryMarker::Frontend,
+                TelemetryMarker::Area { area_id: 1 },
+            ] {
+                let signal = tagged(marker, rate, -40.0);
+                let mixed: Vec<_> = signal
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        *value * 0.25
+                            + (std::f32::consts::TAU * 440.0 * index as f32 / rate as f32).sin()
+                                * 0.1
+                    })
+                    .collect();
+                assert!(detect_markers(&mixed, rate, 0.56)
+                    .iter()
+                    .any(|detection| detection.marker == marker));
+            }
         }
     }
 

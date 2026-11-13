@@ -556,6 +556,46 @@ pub(crate) fn save_scene_record_inner(
     Ok(conn.last_insert_rowid())
 }
 
+pub(crate) fn resume_activity(
+    root: &str,
+    journey: &str,
+    source: &str,
+) -> Result<(f64, Vec<crate::rune_audio::tracking::TrackedDrop>), String> {
+    use crate::rune_audio::tracking::{TrackedDrop, TrackedDropKind};
+    let database = get_db(root)?;
+    let connection = database.lock().map_err(|error| error.to_string())?;
+    let saved: Option<(f64, String)> = connection.query_row(
+        "SELECT timer_seconds, drops_json FROM scene_records WHERE journey_id=?1 AND source_id=?2 LIMIT 1",
+        rusqlite::params![journey, source], |row| Ok((row.get(0)?, row.get(1)?)))
+        .optional().map_err(|error| error.to_string())?;
+    let Some((seconds, json)) = saved else {
+        return Ok((0.0, Vec::new()));
+    };
+    let drops: Vec<DropEntry> =
+        serde_json::from_str(&json).map_err(|error| format!("恢复累计掉落失败: {error}"))?;
+    Ok((
+        seconds.max(0.0),
+        drops
+            .into_iter()
+            .map(|drop| TrackedDrop {
+                observation_id: 0,
+                kind: match drop.kind {
+                    DropKind::Rune => TrackedDropKind::Rune,
+                    DropKind::Item => TrackedDropKind::Item,
+                },
+                telemetry_id: drop.telemetry_id,
+                code: drop.item_code,
+                category: drop.category,
+                name_en: drop
+                    .display_name_en
+                    .unwrap_or_else(|| drop.display_name.clone()),
+                name: drop.display_name,
+                rune_number: drop.rune_number,
+            })
+            .collect(),
+    ))
+}
+
 pub(crate) fn save_completed_segment(
     state: &SharedState,
     segment: &crate::rune_audio::tracking::CompletedSegment,
@@ -597,11 +637,24 @@ pub(crate) fn save_completed_segment(
     let transaction = conn
         .transaction()
         .map_err(|error| format!("开始自动刷图保存事务失败: {error}"))?;
+    let existing_id: Option<i64> = if segment.scene_key == "activity" {
+        transaction
+            .query_row(
+                "SELECT id FROM scene_records WHERE journey_id = ?1 AND source_id = ?2 LIMIT 1",
+                rusqlite::params![record.journey_id, record.source_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| format!("读取累计计时记录失败: {error}"))?
+    } else {
+        None
+    };
     transaction
         .execute(
             "INSERT INTO scene_records
-             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id, id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(id) DO UPDATE SET timer_seconds=excluded.timer_seconds, drops_json=excluded.drops_json",
             rusqlite::params![
                 &record.absolute_time,
                 &record.character_name,
@@ -612,10 +665,11 @@ pub(crate) fn save_completed_segment(
                 record.segment_index,
                 drops_json,
             &record.source_id,
+                existing_id,
             ],
         )
         .map_err(|error| format!("保存自动刷图记录失败: {error}"))?;
-    let scene_record_id = transaction.last_insert_rowid();
+    let scene_record_id = existing_id.unwrap_or_else(|| transaction.last_insert_rowid());
     for observation_id in segment
         .drops
         .iter()

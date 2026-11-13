@@ -1,9 +1,8 @@
 #[cfg(test)]
 use super::catalog::ResolvedLocation;
-use super::catalog::{
-    scene_name_identity, LocationCatalog, LocationKind, NamedLocation, TelemetryMarker,
-    MAX_ITEM_ID, RUNE_COUNT,
-};
+#[cfg(test)]
+use super::catalog::{scene_name_identity, NamedLocation};
+use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -163,6 +162,8 @@ pub struct CompletedSegment {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackingSnapshot {
+    #[serde(default)]
+    pub accumulated_ms: Option<u64>,
     pub revision: u64,
     pub account_id: String,
     #[serde(default)]
@@ -221,6 +222,7 @@ struct TrackedLocation {
 }
 
 impl TrackedLocation {
+    #[cfg(test)]
     fn named(location: NamedLocation, tz: bool) -> Self {
         let tz = tz && location.kind == LocationKind::Wilderness;
         Self {
@@ -292,19 +294,23 @@ impl TrackedLocation {
 /// town/frontend stopping, wilderness splitting and journey continuity stay hidden.
 #[derive(Debug, Clone)]
 pub struct SegmentTracker {
+    activity: Option<super::activity::Activity>,
     account_id: String,
     source_id: String,
     character_name: String,
     current_location: Option<TrackedLocation>,
     active_segment: Option<ActiveSegment>,
     journey_id: Option<String>,
+    #[cfg(test)]
     next_segment_index: u32,
     session_runs: HashMap<String, u32>,
     previous_run_drops: Vec<TrackedDrop>,
     session_drops: Vec<TrackedDrop>,
     revision: u64,
     sample_rate: u32,
+    #[cfg(test)]
     current_announcement: Option<u64>,
+    #[cfg(test)]
     current_detail: Option<String>,
     #[cfg(test)]
     catalog: LocationCatalog,
@@ -331,18 +337,22 @@ impl SegmentTracker {
         let _ = catalog;
         Self {
             source_id: account_id.clone(),
+            activity: None,
             account_id,
             character_name,
             current_location: None,
             active_segment: None,
             journey_id: None,
+            #[cfg(test)]
             next_segment_index: 0,
             session_runs: HashMap::new(),
             previous_run_drops: Vec::new(),
             session_drops: Vec::new(),
             revision: 0,
             sample_rate,
+            #[cfg(test)]
             current_announcement: None,
+            #[cfg(test)]
             current_detail: None,
             #[cfg(test)]
             catalog,
@@ -354,9 +364,65 @@ impl SegmentTracker {
         self
     }
 
+    pub fn with_activity_timing(mut self) -> Self {
+        self.activity = Some(super::activity::Activity::new(std::time::Instant::now()));
+        self.journey_id = Some(uuid::Uuid::new_v4().to_string());
+        self
+    }
+
+    pub fn restore_activity(&mut self, journey: String, seconds: f64, drops: Vec<TrackedDrop>) {
+        self.journey_id = Some(journey);
+        self.session_drops = drops;
+        if let Some(activity) = &mut self.activity {
+            activity.elapsed = std::time::Duration::from_secs_f64(seconds);
+        }
+    }
+
+    pub fn observe_activity_marker(&mut self, kind: LocationKind) {
+        if let Some(activity) = &mut self.activity {
+            activity.mark(kind, std::time::Instant::now());
+        }
+    }
+
+    pub fn tick_activity(&mut self, audible: bool) -> bool {
+        let Some(activity) = &mut self.activity else {
+            return false;
+        };
+        let changed = activity.tick(std::time::Instant::now(), audible);
+        if changed {
+            self.revision += 1;
+        }
+        changed
+    }
+
     /// Account-free process exit/connection changes settle the last wilderness
     /// segment once, including time after the last captured audio frame.
     pub fn finish_session(&mut self, observed_at_ms: i64) -> TrackingOutcome {
+        if self.activity.is_some() {
+            self.tick_activity(false);
+            let activity = self.activity.take().unwrap();
+            let completed_segment = (activity.elapsed.as_millis() > 0
+                || !self.session_drops.is_empty())
+            .then(|| CompletedSegment {
+                source_id: self.source_id.clone(),
+                absolute_time: chrono::Local::now().format("%Y/%m/%d/%H:%M:%S").to_string(),
+                character_name: self.character_name.clone(),
+                scene_key: "activity".into(),
+                scene_name: "累计战斗时间".into(),
+                scene_name_en: "Combat time".into(),
+                tz: false,
+                journey_id: self.journey_id.take().unwrap_or_default(),
+                segment_index: 0,
+                timer_seconds: activity.elapsed.as_secs_f64(),
+                drops: self.session_drops.clone(),
+            });
+            self.revision += 1;
+            return TrackingOutcome {
+                changed: true,
+                completed_segment,
+                snapshot: self.snapshot(),
+            };
+        }
         let elapsed = self
             .active_segment
             .as_ref()
@@ -450,9 +516,7 @@ impl SegmentTracker {
 
     /// OCR identifies an actual location transition. Wall time is authoritative:
     /// audio samples may be silent, paused, or absent during a loading screen.
-    pub fn timer_started_at_ms(&self) -> Option<i64> {
-        self.active_segment.as_ref().map(|v| v.started_at_ms)
-    }
+    #[cfg(test)]
     pub fn observe_visual_location(
         &mut self,
         location: NamedLocation,
@@ -530,6 +594,7 @@ impl SegmentTracker {
         outcome
     }
 
+    #[cfg(test)]
     fn observe_tracked_location(
         &mut self,
         location: TrackedLocation,
@@ -578,6 +643,11 @@ impl SegmentTracker {
     }
 
     pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
+        if self.activity.is_some() {
+            self.session_drops.push(drop);
+            self.revision += 1;
+            return self.snapshot();
+        }
         if let Some(active_segment) = &mut self.active_segment {
             active_segment.drops.push(drop.clone());
             self.session_drops.push(drop);
@@ -589,12 +659,51 @@ impl SegmentTracker {
     /// Drops are recordable only after a wilderness/dungeon segment is active.
     /// Town, frontend and the pre-location state intentionally reject them.
     pub fn accepts_drop_observations(&self) -> bool {
+        if let Some(activity) = &self.activity {
+            return activity.running;
+        }
         self.active_segment.is_some()
     }
 
     pub fn snapshot(&self) -> TrackingSnapshot {
+        if let Some(activity) = &self.activity {
+            let elapsed = activity.elapsed.as_millis() as u64;
+            let kind = activity.excluded.map(|(kind, _)| kind);
+            let name = match kind {
+                Some(LocationKind::Town) => "主城",
+                Some(LocationKind::Frontend) => "主界面",
+                _ if activity.running => "战斗中",
+                _ if !activity.entered_game => "等待进入游戏",
+                _ => "等待游戏声音",
+            };
+            return TrackingSnapshot {
+                accumulated_ms: Some(elapsed),
+                revision: self.revision,
+                account_id: self.account_id.clone(),
+                source_id: self.source_id.clone(),
+                current_area_id: None,
+                current_scene: name.into(),
+                current_scene_en: name.into(),
+                tz: false,
+                location_kind: kind.or(activity.running.then_some(LocationKind::Wilderness)),
+                is_town: kind == Some(LocationKind::Town),
+                is_frontend: kind == Some(LocationKind::Frontend),
+                is_timing: activity.running,
+                timer_started_at_ms: activity
+                    .running
+                    .then(|| chrono::Local::now().timestamp_millis() - elapsed as i64),
+                current_run_key: Some("activity".into()),
+                current_run_name: Some("累计战斗时间".into()),
+                current_run_name_en: Some("Combat time".into()),
+                current_run_drops: self.session_drops.clone(),
+                previous_run_drops: Vec::new(),
+                session_drops: self.session_drops.clone(),
+                session_runs: HashMap::new(),
+            };
+        }
         let location = self.current_location.as_ref();
         TrackingSnapshot {
+            accumulated_ms: None,
             revision: self.revision,
             account_id: self.account_id.clone(),
             source_id: self.source_id.clone(),
@@ -643,6 +752,7 @@ impl SegmentTracker {
         }
     }
 
+    #[cfg(test)]
     fn start_segment(
         location: &TrackedLocation,
         journey_id: String,

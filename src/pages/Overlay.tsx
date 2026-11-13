@@ -1,3 +1,4 @@
+import { formatCombatTime } from "../utils/combatTimeFormat";
 import { matchesRecognitionSource } from "../utils/recognitionSource";
 import React, { useEffect, useState, useRef } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -1733,9 +1734,8 @@ export function Overlay() {
   const currentSessionRuns = stats.sessionRuns[
     getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)
   ] || 0;
-  const elapsedDisplay = stats.isTiming
-    ? (stats.elapsedMs / 1000).toFixed(1)
-    : "0.0";
+  const formattedTime = formatCombatTime(stats.elapsedMs, config?.combat_time_format, useEnglish);
+  const elapsedDisplay = formattedTime.value;
   const currentTerrorZone = terrorZones.current;
   const nextTerrorZone = terrorZones.next;
   const hasTerrorZoneData = !!(currentTerrorZone || nextTerrorZone);
@@ -1769,7 +1769,7 @@ export function Overlay() {
           ? "Double-click an empty area or press Enter for mini mode"
           : "双击空白区域或按 Enter 切换迷你模式")
       : (useEnglish ? "Double-click anywhere or press Enter for mini mode" : "双击任意位置或按 Enter 切换迷你模式");
-  const timerActionTitle = stats.isTiming
+  const timerActionTitle = stats.currentRunKey === "activity" ? (useEnglish ? "Accumulated combat time" : "累计战斗时间") : stats.isTiming
     ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
     : (useEnglish ? "No active timer" : "当前没有正在进行的计时");
 
@@ -1872,8 +1872,8 @@ export function Overlay() {
         <div
           className="relative flex h-full min-w-0 flex-1 items-center gap-2"
           aria-label={useEnglish
-            ? `${translateOverlaySceneName(stats.currentScene, true)}, ${elapsedDisplay} seconds, ${currentSessionRuns} runs this session`
-            : `${translateOverlaySceneName(stats.currentScene, false)}，${elapsedDisplay} 秒，本次 ${currentSessionRuns} 场`}
+            ? `${translateOverlaySceneName(stats.currentScene, true)}, ${elapsedDisplay} ${formattedTime.unit}`
+            : `${translateOverlaySceneName(stats.currentScene, false)}，${elapsedDisplay} ${formattedTime.unit}`}
         >
           <div className="flex min-w-0 flex-1 flex-col justify-center leading-none">
             <span className="text-2xs font-medium text-text-muted">
@@ -1893,7 +1893,7 @@ export function Overlay() {
               className="text-sm font-bold"
               style={{ color: stats.isTiming ? "var(--success)" : "var(--text-muted)" }}
             >
-              {elapsedDisplay}s
+              {elapsedDisplay} {formattedTime.unit}
             </span>
             <span className="mt-1 text-2xs font-medium text-text-muted">
               {useEnglish ? "Timer" : "计时"}
@@ -1946,7 +1946,7 @@ export function Overlay() {
           data-overlay-interactive="true"
           role="button"
           tabIndex={0}
-          aria-disabled={!stats.isTiming}
+          aria-disabled={!stats.isTiming || stats.currentRunKey === "activity"}
           aria-label={timerActionTitle}
           aria-keyshortcuts="Enter Space"
           title={timerActionTitle}
@@ -1968,9 +1968,9 @@ export function Overlay() {
               color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
             }}
           >
-            SEC
+            {formattedTime.unit}
           </span>
-          {avgTime !== null && (
+          {stats.currentRunKey !== "activity" && avgTime !== null && (
             <div className="flex flex-col items-center mt-1.5 gap-0.5">
               <span
                 className="text-xs font-medium select-none"

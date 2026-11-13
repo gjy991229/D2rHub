@@ -166,6 +166,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   stopTimerAndSave: async () => {
+    if (get().currentRunKey === "activity") return;
     const { isTiming, timerStart, currentScene, currentTz, currentRunName, characterName, currentRunDrops } = get();
     if (!isTiming || !timerStart) return;
 
@@ -226,6 +227,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   finishRunAsTown: async (townScene = MANUAL_FINISH_SCENE) => {
+    if (get().currentRunKey === "activity") return false;
     const wasTiming = get().isTiming;
     const savePromise = wasTiming ? get().stopTimerAndSave() : Promise.resolve();
 
@@ -395,7 +397,7 @@ export const useStats = create<StatsState>((set, get) => ({
       timerStart: snapshot.timer_started_at_ms,
       elapsedMs: snapshot.is_timing && snapshot.timer_started_at_ms
         ? Math.max(0, Date.now() - snapshot.timer_started_at_ms)
-        : 0,
+        : snapshot.accumulated_ms ?? 0,
       currentRunDrops,
       previousRunDrops,
       currentDrops: sessionDrops,
@@ -403,7 +405,8 @@ export const useStats = create<StatsState>((set, get) => ({
       ...(snapshot.is_timing ? {} : { dbAvgTime: null, dbTotalRuns: null }),
     });
     if (
-      snapshot.current_run_name
+      snapshot.accumulated_ms == null
+      && snapshot.current_run_name
       && (snapshot.current_run_name !== previousRunName || Boolean(snapshot.tz) !== previousTz)
     ) {
       void get().fetchDbStats(snapshot.current_run_name, Boolean(snapshot.tz));

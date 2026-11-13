@@ -203,7 +203,7 @@ function App() {
         ...syncedPreferences,
         reportConfig: { ...syncedPreferences.reportConfig, range },
       });
-      showToast("success", `${result.rangeLabel}战报已复制（${result.runs} 场），可直接粘贴。`);
+      showToast("success", `${result.rangeLabel}战报已复制，可直接粘贴。`);
     } catch (error) {
       showToast("error", `生成战报失败: ${error}`);
     } finally {
