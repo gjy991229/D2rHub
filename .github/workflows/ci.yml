@@ -76,7 +76,7 @@ jobs:
         uses: actions/checkout@v7
         with:
           repository: gjy991229/d2r-audio-mod
-          ref: 7e1ed65d366837a096ad70eba22c29a0fd3fe41e
+          ref: 44f7c42c8872e1b8f6457c4d2d0c7680c9bd9058
           path: .processor-source
 
       - name: Build bundled processor

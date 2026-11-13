@@ -654,9 +654,8 @@ fn decode_rune_signatures(
     let mut carrier_power = 0.0f32;
     for chip_index in 0..RUNE_SIGNATURE_CHIPS {
         let chip_start = signature_start + chip_index * plan.chip_len;
-        for offset in 0..plan.chip_len {
+        for (offset, &weight) in plan.chip_weights.iter().enumerate().take(plan.chip_len) {
             let frame = chip_start + offset;
-            let weight = plan.chip_weights[offset];
             chip_i[chip_index] += demod_i[frame] * weight;
             chip_q[chip_index] += demod_q[frame] * weight;
         }
@@ -869,9 +868,8 @@ fn detect_pass(samples: &[f32], plan: &DetectorPlan, threshold: f32) -> Vec<Dete
             let chip_start = start + chip_index * plan.chip_len;
             let mut chip_i = 0.0f32;
             let mut chip_q = 0.0f32;
-            for offset in 0..plan.chip_len {
+            for (offset, &weight) in plan.chip_weights.iter().enumerate().take(plan.chip_len) {
                 let frame = chip_start + offset;
-                let weight = plan.chip_weights[offset];
                 chip_i += demod_i[frame] * weight;
                 chip_q += demod_q[frame] * weight;
             }
