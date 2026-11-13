@@ -1,3 +1,5 @@
+import { confirm } from "@tauri-apps/plugin-dialog";
+import { visionResourcesGateway } from "../modResources/visionResourcesGateway";
 import { invokeCommand, listenEvent } from "../../platform/tauri";
 import type {
   RoomAutomationConfig,
@@ -44,10 +46,18 @@ function acceptNewerConfig(
 
 export const roomAutomationGateway: RoomAutomationGateway = {
   getConfig: () => invokeCommand<RoomAutomationConfigSnapshot>("room_automation_get_config"),
-  saveConfig: (expectedGeneration, config, resetChatHistory = false) => invokeCommand<RoomAutomationSaveOutcome>(
-    "room_automation_save_config",
-    { expectedGeneration, config, ...(resetChatHistory ? { resetChatHistory: true } : {}) },
-  ),
+  saveConfig: async (expectedGeneration, config, resetChatHistory = false) => {
+    if (config.collaboration_mode === "follower") {
+      const resources = await visionResourcesGateway.read();
+      if (!resources.ready) {
+        const accepted = await confirm(`拼房跟随需要下载约 ${(resources.size / 1048576).toFixed(1)} MB 的视觉资源。是否下载并应用？也可以稍后在 Mod 管理中手动下载。`, { title: "下载拼房跟随资源", kind: "info", okLabel: "下载并应用", cancelLabel: "暂不下载" });
+        if (!accepted) throw new Error("已取消下载，跟随配置未应用");
+        await visionResourcesGateway.prepare();
+      }
+    }
+    return invokeCommand<RoomAutomationSaveOutcome>("room_automation_save_config",
+      { expectedGeneration, config, ...(resetChatHistory ? { resetChatHistory: true } : {}) });
+  },
   getStatus: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_get_status"),
   startPrimary: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_start_primary"),
   startFollowers: () => invokeCommand<RoomAutomationWorkflowStatus>("room_automation_start_followers"),

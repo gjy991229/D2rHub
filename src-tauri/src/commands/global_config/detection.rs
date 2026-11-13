@@ -1,5 +1,66 @@
 use std::path::{Path, PathBuf};
 
+pub(crate) fn repair_auxiliary_path(
+    state: &crate::state::SharedState,
+    app: &tauri::AppHandle,
+    browser: bool,
+) -> Result<super::GlobalConfig, crate::error::AppError> {
+    use crate::error::AppError;
+    let current = state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))?;
+    if (browser && Path::new(&current.browser_path).is_file())
+        || (!browser
+            && Path::new(&current.app_data_roaming_bnet_path)
+                .join("Battle.net.config")
+                .is_file())
+    {
+        return Ok(current);
+    }
+    super::mutate_loaded_global_config(state, app, |config| {
+        let (current, detected, label) = if browser {
+            let detected = if Path::new(&config.browser_path).is_file() {
+                None
+            } else {
+                detect_browser_path_by_type(config.browser_type.clone())
+            };
+            (&mut config.browser_path, detected, "隔离浏览器")
+        } else {
+            let detected = if Path::new(&config.app_data_roaming_bnet_path)
+                .join("Battle.net.config")
+                .is_file()
+            {
+                None
+            } else {
+                detect_app_data_roaming_bnet_path()
+            };
+            (
+                &mut config.app_data_roaming_bnet_path,
+                detected,
+                "Battle.net 数据目录",
+            )
+        };
+        let valid = if browser {
+            Path::new(current).is_file()
+        } else {
+            Path::new(current).join("Battle.net.config").is_file()
+        };
+        if valid {
+            return Ok(false);
+        }
+        let path = detected.ok_or_else(|| AppError::ConfigReadError(format!(
+            "{label}路径无效（{current}），自动探测未找到可用位置。请在设置 → 运行环境 → 辅助路径与浏览器中重新选择。"
+        )))?;
+        *current = path;
+        Ok(true)
+    })?;
+    state
+        .configuration()
+        .snapshot()
+        .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))
+}
+
 fn detect_saved_games_path_for_edition(cn: bool) -> Option<String> {
     let saved_games = dirs::home_dir()?.join("Saved Games");
     std::fs::read_dir(&saved_games)

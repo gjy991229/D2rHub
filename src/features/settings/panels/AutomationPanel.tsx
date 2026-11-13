@@ -283,6 +283,15 @@ export function AutomationPanel({
   <section className="settings-section-body recognition-side" hidden={section !== "filters"} aria-label={isEnglish ? "Recording" : "记录内容"}>
 
     <VisualRecognitionSettings mode="audio" language={config.app_language} />
+    <label className="feature-setting-row">
+      <span>{isEnglish ? "Timer display" : "计时显示格式"}</span>
+      <select className="settings-input" value={config.combat_time_format || "seconds"}
+        onChange={event => updateConfig(next => { next.combat_time_format = event.target.value; })}>
+        <option value="seconds">{isEnglish ? "Seconds · 75.4" : "秒 · 75.4"}</option>
+        <option value="minutes">{isEnglish ? "Minutes and seconds · 01:15" : "分与秒 · 01:15"}</option>
+        <option value="hours">{isEnglish ? "Hours, minutes and seconds · 0:01:15" : "时、分与秒 · 0:01:15"}</option>
+      </select>
+    </label>
     <details open className="spatial-panel group overflow-hidden recognition-filters">
       <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4">
         <span>

@@ -1,3 +1,4 @@
+import { notifyModCatalogChanged } from "../../modCapsules/catalogChanges";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeCommand, listenEvent } from "../../../platform/tauri";
 import { showToast } from "../../../components/ui/Toast";
@@ -232,6 +233,7 @@ export function useModWorkflow(options: Options) {
       if (!targetStillValid()) throw new Error(targetUnavailable);
       await latest.current.onApplied({ origin: current.origin, accountId: current.accountId, state: completed.applied!,
         ...(current.installationOnly ? { installationEdition: current.edition } : {}) });
+      notifyModCatalogChanged();
       await latest.current.catalog.refresh();
       receiptRef.current = null; setReceipt(null); setProgress(null);
       draftRef.current = null; setDraft(null); accountDrafts.current.clear();

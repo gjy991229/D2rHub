@@ -32,6 +32,7 @@ export function resourceInstallLocation(asset: ModResourceAsset, state: ModResou
 }
 
 const REASON_COPY: Record<string, readonly [string, string]> = {
+  replace_available: ["已安装；下载将覆盖同名 Mod。", "Installed. Downloading replaces the Mod with the same name."],
   processed: ["此 Mod 已加工，保留现有内容。", "This Mod has custom features. Its files will be preserved."],
   unknown_source: ["无法确认此目录的来源，保留现有内容。", "The origin of this directory is unknown. Its files will be preserved."],
   invalid_receipt: ["安装记录无效，保留现有内容。", "The installation record is invalid. Existing files will be preserved."],

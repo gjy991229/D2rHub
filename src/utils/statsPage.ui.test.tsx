@@ -23,7 +23,7 @@ it("keeps statistics tabs keyboard accessible and links each tab to its named pa
   expect(overview.tabIndex).toBe(-1);
   expect(screen.getByRole("tabpanel", { name: "符文" }).id).toBe(runes.getAttribute("aria-controls"));
   fireEvent.keyDown(runes, { key: "End" });
-  expect(document.activeElement).toBe(screen.getByRole("tab", { name: "场次记录" }));
+  expect(document.activeElement).toBe(screen.getByRole("tab", { name: "时间记录" }));
   expect(screen.queryByRole("tabpanel", { name: "符文" })).toBeNull();
 });
 
@@ -66,7 +66,7 @@ it("shows explicit time and run labels with bar heights proportional to duration
 
 it("keeps per-run details available through bar clicks and keyboard activation", () => {
   document.body.innerHTML = `<div id="run-scatter">${recentRunMarkup()}</div><div id="run-detail"></div>`;
-  const source = template.slice(template.indexOf("    function showExplorerRun("), template.indexOf("    function renderAll(){"));
+  const source = template.slice(template.indexOf("    function showExplorerRun("), template.indexOf("    function renderActivityVisuals()"));
   new Function("$", "window", "formatDate", "formatDuration", "statDuration", "getDrops", source)(
     (selector: string) => document.querySelector(selector),
     { explorerRecords: runSamples },

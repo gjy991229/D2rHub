@@ -114,7 +114,7 @@ it("keeps daily settings concise and lets filters apply without opening diagnost
   expect(screen.queryByRole("checkbox", { name: "符文" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "记录内容" }));
   expect(screen.getByRole("checkbox", { name: "符文" })).toBeTruthy();
-  expect(screen.getByText("场景计时与掉落截图")).toBeTruthy();
+  expect(screen.getByText("累计战斗时间与掉落截图")).toBeTruthy();
   expect(screen.queryByRole("combobox", { name: "监听目标" })).toBeNull();
   await userEvent.click(screen.getByRole("button", { name: "应用掉落过滤" }));
   await waitFor(() => expect(props.persistConfig).toHaveBeenCalledWith(props.config, true));

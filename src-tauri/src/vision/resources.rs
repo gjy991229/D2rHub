@@ -57,7 +57,7 @@ pub fn package_status(root: &Path, refresh: bool) -> Result<PackageStatus, Strin
         message: if ready {
             "资源包已就绪"
         } else {
-            "尚未准备完整资源包，启用识别时会自动下载"
+            "尚未下载；仅拼房跟随需要，可手动下载或应用跟随模式时确认下载"
         }
         .into(),
         size: m.model.size + m.runtime.size,
@@ -65,6 +65,19 @@ pub fn package_status(root: &Path, refresh: bool) -> Result<PackageStatus, Strin
     };
     *status = Some(current.clone());
     Ok(current)
+}
+
+pub(super) fn installed(root: &Path) -> Result<Installed, String> {
+    let manifest = local_manifest(root)?;
+    if !installed_valid(root, &manifest) {
+        return Err(
+            "拼房跟随需要视觉资源，请在 Mod 管理中手动下载，或重新应用跟随模式并确认下载".into(),
+        );
+    }
+    Ok(Installed {
+        model: root.join(format!("{}.onnx", manifest.model.sha256)),
+        runtime: root.join(&manifest.runtime.sha256).join("onnxruntime.dll"),
+    })
 }
 
 fn report(progress: &impl Fn(String), message: String, percent: Option<u8>) {

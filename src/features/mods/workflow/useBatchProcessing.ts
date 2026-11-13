@@ -1,3 +1,4 @@
+import { notifyModCatalogChanged } from "../../modCapsules/catalogChanges";
 import { useRef, useState, type RefObject } from "react";
 import { invokeCommand, listenEvent } from "../../../platform/tauri";
 import type { AccountMeta, AudioModSetupState } from "../../../store/types";
@@ -77,6 +78,7 @@ export function useBatchProcessing(accounts: AccountMeta[], catalog: ModCapsuleC
       // The next preview must see outputs created by this batch and updated recipes.
       setInspection(null);
       setInspection(await invokeCommand<AudioModSetupState>("get_audio_mod_setup_state", { accountId }));
+      notifyModCatalogChanged();
       await latest.current.catalog.refresh();
     } catch (cause) { setError(String(cause)); }
     finally { unlisten?.(); lock.current = false; setBusy(false); setProgress(null); update(); }

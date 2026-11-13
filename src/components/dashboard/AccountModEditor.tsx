@@ -51,8 +51,8 @@ export function AccountModEditor({
   const minimalMode = useGlobalConfig((state) => isMinimalMode(state.config));
   const [open, setOpen] = useState(false);
   useEffect(() => {
-    if (open && !modCapsulePool) void onRequestPool?.();
-  }, [open, modCapsulePool, onRequestPool]);
+    if (open) void onRequestPool?.();
+  }, [open, onRequestPool]);
   const [position, setPosition] = useState<{ left: number; top: number; opensUpward: boolean } | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);

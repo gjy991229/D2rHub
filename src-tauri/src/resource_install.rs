@@ -66,6 +66,9 @@ pub fn tree_hash(root: &Path) -> Result<String, String> {
     list.sort();
     let mut h = Sha256::new();
     for p in list {
+        if p == root.join(".d2rhub-version-transaction.json") {
+            continue;
+        }
         // -txt regenerates these tables on game launch. A standalone .bin with
         // no matching text source remains protected as user content.
         let relative = p

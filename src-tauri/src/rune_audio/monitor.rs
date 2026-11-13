@@ -700,58 +700,6 @@ fn handle_item_detection(
     emit_tracking_snapshot(app, &snapshot);
 }
 
-fn handle_visual_location(
-    app: &tauri::AppHandle,
-    tracker: &mut SegmentTracker,
-    candidate: crate::vision::Candidate,
-) -> bool {
-    let Some(location) = candidate.location else {
-        return false;
-    };
-    let now = chrono::Local::now();
-    let previous_timer = tracker.timer_started_at_ms();
-    let outcome = tracker.observe_visual_location(
-        location.clone(),
-        candidate.tz,
-        candidate.announcement,
-        now.timestamp_millis(),
-        now.format("%Y/%m/%d/%H:%M:%S").to_string(),
-    );
-    if !outcome.changed {
-        return false;
-    }
-    if let Some(segment) = &outcome.completed_segment {
-        if let Err(error) =
-            crate::stats::save_completed_segment(&app.state::<crate::state::SharedState>(), segment)
-        {
-            crate::logger::log_msg("ERROR", "RuneAudio", &format!("保存场景分段失败: {error}"));
-        }
-    }
-    {
-        let mut current = status().lock().unwrap_or_else(|error| error.into_inner());
-        if !candidate.audio_mapped {
-            current.scene_ocr_events += 1;
-        }
-    }
-    crate::logger::log_msg(
-        "INFO",
-        "SceneRecognition",
-        &format!(
-            "场景更新：{}，TZ={}，上一分段={}，新计时起点={:?}",
-            outcome.snapshot.current_scene,
-            outcome.snapshot.tz,
-            outcome
-                .completed_segment
-                .as_ref()
-                .map(|v| format!("{} {:.1}s", v.scene_name, v.timer_seconds))
-                .unwrap_or_default(),
-            outcome.snapshot.timer_started_at_ms
-        ),
-    );
-    emit_tracking_snapshot(app, &outcome.snapshot);
-    outcome.completed_segment.is_some() || previous_timer != outcome.snapshot.timer_started_at_ms
-}
-
 #[cfg(target_os = "windows")]
 fn capture_loop(
     app: tauri::AppHandle,
@@ -851,36 +799,49 @@ fn capture_loop(
         CAPTURE_SAMPLE_RATE,
         catalog.clone(),
     )
-    .with_source_id(config.source_id.clone());
+    .with_source_id(config.source_id.clone())
+    .with_activity_timing();
+    let mut process_system = sysinfo::System::new_all();
+    let process_id = sysinfo::Pid::from(config.target_pid as usize);
+    let started_at = process_system
+        .process(process_id)
+        .ok_or("计时目标进程已退出")?
+        .start_time();
+    let journey = format!(
+        "activity:{}:{}:{started_at}",
+        config.source_id, config.target_pid
+    );
+    let (seconds, drops) = crate::stats::resume_activity(
+        &app.state::<crate::state::SharedState>().app_data_dir,
+        &journey,
+        &config.source_id,
+    )?;
+    tracker.restore_activity(journey, seconds, drops);
     let mut drop_gate = DropPresenceGate::new(CAPTURE_SAMPLE_RATE);
     let mut hostile_gate = super::hostile::TriggerGate::default();
-    let mut visual = crate::vision::audio::AudioVision::default();
-    let mut process_system = sysinfo::System::new();
-    let process_id = sysinfo::Pid::from(config.target_pid as usize);
     let mut process_check_ticks = 0u8;
+    let mut last_checkpoint = std::time::Instant::now();
 
     let capture_result = (|| -> Result<(), String> {
         while RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation {
-            if config.tracking_enabled {
-                visual.tick_area(&app, config.target_pid, &catalog);
+            if tracker.tick_activity(false) {
+                emit_tracking_snapshot(&app, &tracker.snapshot());
             }
-            for evidence in visual.poll() {
-                if !app
-                    .state::<crate::state::SharedState>()
-                    .configuration()
-                    .snapshot()
-                    .is_some_and(|c| c.rune_audio_enabled)
-                {
-                    continue;
-                }
-                match evidence {
-                    crate::vision::audio::Evidence::Area(candidate) => {
-                        if handle_visual_location(&app, &mut tracker, candidate) {
-                            drop_gate.clear();
-                            break;
-                        }
+            if config.tracking_enabled
+                && last_checkpoint.elapsed() >= std::time::Duration::from_secs(30)
+            {
+                let outcome = tracker
+                    .clone()
+                    .finish_session(chrono::Local::now().timestamp_millis());
+                if let Some(segment) = outcome.completed_segment {
+                    if let Err(error) = crate::stats::save_completed_segment(
+                        &app.state::<crate::state::SharedState>(),
+                        &segment,
+                    ) {
+                        crate::logger::log_msg("ERROR", "CombatTime", &error);
                     }
                 }
+                last_checkpoint = std::time::Instant::now();
             }
             let _ = event_handle.wait_for_event(500);
             process_check_ticks = process_check_ticks.saturating_add(1);
@@ -978,7 +939,20 @@ fn capture_loop(
             {
                 break;
             }
-            for detection in detector.push(&chunk) {
+            let detections = detector.push(&chunk);
+            for detection in &detections {
+                if let Some(location) = catalog.resolve(detection.marker) {
+                    tracker.observe_activity_marker(location.kind);
+                }
+            }
+            let was_timing = tracker.snapshot().is_timing;
+            if tracker.tick_activity(peak > 0.0001 && runtime.rune_audio_enabled) {
+                if was_timing && !tracker.snapshot().is_timing {
+                    drop_gate.clear();
+                }
+                emit_tracking_snapshot(&app, &tracker.snapshot());
+            }
+            for detection in detections {
                 if detection.marker == TelemetryMarker::Hostile {
                     record_decoded_packet(
                         detection.marker,
@@ -1072,13 +1046,6 @@ fn capture_loop(
                             &item_catalog,
                             false,
                         );
-                        if let Some(candidate) =
-                            visual.observe_audio_area(marker, &catalog, detection.confidence)
-                        {
-                            if handle_visual_location(&app, &mut tracker, candidate) {
-                                drop_gate.clear();
-                            }
-                        }
                     }
                 }
             }
@@ -1086,7 +1053,7 @@ fn capture_loop(
 
         Ok(())
     })();
-    if config.process_started_at.is_some() {
+    if config.tracking_enabled {
         let outcome = tracker.finish_session(chrono::Local::now().timestamp_millis());
         if let Some(segment) = outcome.completed_segment.as_ref() {
             crate::stats::save_completed_segment(

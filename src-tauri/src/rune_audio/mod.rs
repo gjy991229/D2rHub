@@ -9,4 +9,5 @@ pub mod monitor;
 pub mod protocol;
 pub mod tracking;
 
+pub(crate) mod activity;
 pub(crate) mod screenshots;

@@ -1,6 +1,6 @@
 [package]
 name = "d2rhub"
-version = "0.9.122"
+version = "0.9.123"
 description = "Diablo II Resurrected Multi-Account Manager"
 authors = ["D2RHub"]
 edition = "2021"
@@ -72,5 +72,7 @@ base64 = "0.22"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["std", "load-dynamic"] }
 
 [target.'cfg(windows)'.dependencies]
+webview2-com = "0.38.2"
+windows-core-webview = { package = "windows-core", version = "0.61" }
 wasapi = "0.24.0"
 windows-capture = "2.0.1"

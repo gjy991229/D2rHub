@@ -1,6 +1,10 @@
 //! Shared, bounded visual evidence worker. Audio never waits for image inference.
+#[cfg(test)]
 mod area;
+#[cfg(test)]
 mod area_names;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod audio;
 pub(crate) mod capture;
 mod chat_ocr;
@@ -18,10 +22,12 @@ use crate::application::capability::{
 use crate::state::SharedState;
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
+#[cfg(test)]
+use std::sync::mpsc;
 use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc, Arc, OnceLock,
+        Arc, OnceLock,
     },
     time::{Duration, Instant},
 };
@@ -29,6 +35,7 @@ use tauri::Manager;
 pub const ID: CapabilityId = CapabilityId::new("visual-recognition");
 static CONFIG: OnceLock<RwLock<config::VisionConfig>> = OnceLock::new();
 static CONFIG_EPOCH: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
 pub fn config_epoch() -> u64 {
     CONFIG_EPOCH.load(Ordering::Acquire)
 }
@@ -82,6 +89,8 @@ pub struct Status {
     pub rejected: u64,
     pub unavailable: u64,
 }
+#[cfg(test)]
+#[allow(dead_code)]
 #[derive(Clone, Default)]
 pub struct Candidate {
     pub audio_mapped: bool,
@@ -93,9 +102,12 @@ pub struct Candidate {
     pub confidence: f32,
     pub announcement: Option<u64>,
 }
+#[cfg(test)]
 pub enum Kind {
     Area(Vec<Candidate>, Option<Candidate>),
 }
+#[cfg(test)]
+#[allow(dead_code)]
 pub struct Request {
     pub pid: u32,
     pub kind: Kind,
@@ -106,6 +118,7 @@ struct Worker {
     chat_follow: bool,
     stop: Arc<AtomicBool>,
     handle: std::thread::JoinHandle<()>,
+    #[cfg(test)]
     sender: mpsc::SyncSender<Request>,
 }
 pub struct Vision {
@@ -133,6 +146,7 @@ impl Vision {
         app.manage(service.clone());
         Ok(service)
     }
+    #[cfg(test)]
     pub fn submit(
         &self,
         pid: u32,
@@ -178,17 +192,13 @@ pub fn project_configuration(app: &tauri::AppHandle, g: &crate::domain::config::
     let state = app.state::<SharedState>();
     let c = effective_configuration(app);
     let requested = state.optional_runtime_ready() && {
-        let audio = g
-            .optional_module_runtime_allowed(crate::domain::config::OPTIONAL_MODULE_AUTOMATION)
-            && g.rune_audio_enabled
-            && c.area_enabled;
         let room = g.optional_module_runtime_allowed(
             crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
         ) && app
             .try_state::<crate::capabilities::room_automation_runtime::RoomAutomationCommandState>()
             .is_some_and(|s| s.manager().is_ok_and(|m| m.requested_enabled()))
             && c.chat_follow;
-        audio || room
+        room
     };
     let _ = state.capabilities().set_requested(ID, requested);
 }
@@ -206,23 +216,18 @@ impl CapabilityDriver for Vision {
         let config = effective_configuration(&app);
         let chat_follow = config.chat_follow;
         let root = resources::resource_root(&app.state::<SharedState>().app_data_dir);
-        let preferred = crate::downloads::cached_preference(&app, &app.state::<SharedState>());
-        let (tx, rx) = mpsc::sync_channel(8);
+        #[cfg(test)]
+        let (tx, _rx) = mpsc::sync_channel(8);
         let handle=std::thread::Builder::new().name("visual-recognition".into()).spawn(move||{
             status.lock().running=true;
             let preparation=Instant::now();
             diagnostics::event(configuration().diagnostic_enabled,"worker_start",serde_json::json!({"chat":config.chat_follow,"area":config.area_enabled,"poll_ms":config.poll_ms,"chat_roi":config.chat_roi,"area_roi":config.area_roi,"needs_ocr":config.needs_ocr()}));
-            let result=if config.needs_ocr() { tauri::async_runtime::block_on(async {
-                tokio::select! {
-                    result=resources::ensure_preferred(&root,&stopped,&preferred,|message|{status.lock().message=message})=>result,
-                    _=async {while !stopped.load(Ordering::Acquire){tokio::time::sleep(Duration::from_millis(100)).await;}}=>Err("资源准备已取消".into())
-                }
-            }).and_then(|files|ocr::Ocr::new(&files)).map(Some) } else { Ok(None) };
+            let result=if config.needs_ocr() { resources::installed(&root).and_then(|files|ocr::Ocr::new(&files)).map(Some) } else { Ok(None) };
             match result {
                 Ok(mut ocr)=>{
                     diagnostics::event(configuration().diagnostic_enabled,"worker_ready",serde_json::json!({"preparation_ms":preparation.elapsed().as_secs_f64()*1000.0,"ocr_loaded":ocr.is_some()}));
                     status.lock().ready=ocr.is_some();
-                    run(&app,&config,&stopped,&rx,&mut ocr,&status);
+                    run(&app,&config,&stopped,&mut ocr,&status);
                 },
                 Err(error)=>{diagnostics::event(configuration().diagnostic_enabled,"resource_or_model_error",serde_json::json!({"error":diagnostics::short(&error),"preparation_ms":preparation.elapsed().as_secs_f64()*1000.0}));status.lock().message=error;},
             }
@@ -233,6 +238,7 @@ impl CapabilityDriver for Vision {
             chat_follow,
             stop,
             handle,
+            #[cfg(test)]
             sender: tx,
         });
         Ok(())
@@ -264,15 +270,12 @@ fn run(
     app: &tauri::AppHandle,
     c: &config::VisionConfig,
     stop: &AtomicBool,
-    rx: &mpsc::Receiver<Request>,
     ocr: &mut Option<ocr::Ocr>,
     status: &Mutex<Status>,
 ) {
     let mut chat = ChatState::default();
     let mut next_chat = Instant::now();
     let mut last_chat_error: Option<(String, Instant)> = None;
-    let mut area_gate = area::Gate::default();
-    let mut area_context = None;
     while !stop.load(Ordering::Acquire) {
         if c.chat_follow
             && (Instant::now() >= next_chat || chat.pending.is_some())
@@ -302,57 +305,11 @@ fn run(
                 }
             }
         }
-        let request = rx.recv_timeout(Duration::from_millis(50)).ok();
-        if let Some(request) = request {
-            let kind = match request.kind {
-                Kind::Area(..) => "area",
-            };
-            let mut trace =
-                diagnostics::Trace::new(configuration().diagnostic_enabled, kind, request.pid);
-            trace.fields["queue_ms"] =
-                serde_json::json!(request.created.elapsed().as_secs_f64() * 1000.0);
-            let result = if request.created.elapsed() > Duration::from_secs(3) {
-                Err("核验请求已过期".into())
-            } else {
-                if area_context != Some(request.pid) {
-                    area_gate = area::Gate::default();
-                    area_context = Some(request.pid);
-                }
-                evaluate_area(&request, c, ocr.as_mut(), &mut area_gate, &mut trace)
-            };
-            trace.fields["outcome"] = serde_json::json!(match &result {
-                Ok(Some(_)) => "matched",
-                Ok(None) => "unmatched",
-                Err(_) => "unavailable",
-            });
-            if let Err(error) = &result {
-                trace.fields["error"] = serde_json::json!(diagnostics::short(error));
-            }
-            if let Ok(Some(candidate)) = &result {
-                trace.fields["matched_name"] =
-                    serde_json::json!(diagnostics::short(&candidate.name));
-                trace.fields["matched_name_en"] = serde_json::json!(candidate.name_en);
-                trace.fields["tz"] = serde_json::json!(candidate.tz);
-            }
-            deliver(request, result, status);
-        }
+        std::thread::sleep(Duration::from_millis(50));
     }
 }
-fn deliver(request: Request, result: Result<Option<Candidate>, String>, status: &Mutex<Status>) {
-    let mut s = status.lock();
-    s.checked += 1;
-    match &result {
-        Ok(Some(_)) => s.matched += 1,
-        Ok(None) => s.rejected += 1,
-        Err(_) => s.unavailable += 1,
-    };
-    s.message = match &result {
-        Ok(Some(v)) => format!("视觉匹配：{}", v.name),
-        Ok(None) => "未匹配到目标文字".into(),
-        Err(e) => e.clone(),
-    };
-    let _ = request.reply.try_send(result);
-}
+#[cfg(test)]
+#[allow(dead_code)]
 fn evaluate_area(
     r: &Request,
     c: &config::VisionConfig,

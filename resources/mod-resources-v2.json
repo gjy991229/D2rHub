@@ -5,7 +5,7 @@
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
   "hub_min": "0.9.112",
-  "hub_max_exclusive": "0.9.123",
+  "hub_max_exclusive": "0.9.124",
   "assets": [
     {
       "id": "LiteHub",

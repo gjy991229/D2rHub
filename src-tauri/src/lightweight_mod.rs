@@ -118,16 +118,6 @@ fn metadata(report: &Value, root: &Path, name: &str) -> Result<Metadata, String>
     {
         return Err("轻量 Mod 清单与名称或启动参数不一致".into());
     }
-    if enhanced {
-        let version = read_report(root, "mod-version.json")?;
-        if report["mod_version"].as_str().is_none_or(str::is_empty)
-            || version["mod_name"] != name
-            || version["mod_version"] != report["mod_version"]
-            || version["game_data_version"] != report["game_data_version"]
-        {
-            return Err("成品版本记录与身份清单不一致".into());
-        }
-    }
     let mpq = root.join(format!("{name}.mpq"));
     regular(&mpq)?;
     let info_path = mpq.join("modinfo.json");
@@ -139,21 +129,7 @@ fn metadata(report: &Value, root: &Path, name: &str) -> Result<Metadata, String>
     if info["name"] != name {
         return Err("Mod 元数据名称不一致".into());
     }
-    let version_path = mpq.join("data/global/dataversionbuild.txt");
-    // Reject links on all components of the version path, not just its leaf.
-    regular(&mpq.join("data"))?;
-    regular(&mpq.join("data/global"))?;
-    if regular(&version_path)?.len() > 128 {
-        return Err("数据版本文件过大".into());
-    }
-    let version = fs::read_to_string(version_path).map_err(|e| e.to_string())?;
-    let version = version.trim_start_matches('\u{feff}').trim();
-    if version.is_empty()
-        || !version.bytes().all(|b| b.is_ascii_digit())
-        || report["game_data_version"] != version
-    {
-        return Err("游戏数据版本与生成清单不一致".into());
-    }
+    // Version records are editable compatibility hints, not product identity.
     Ok(Metadata {
         profile: profile.into(),
         arguments: args,
@@ -224,7 +200,7 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_product_flags_and_rejects_missing_version() {
+    fn recognizes_product_flags_without_requiring_a_version_file() {
         let (root, mut report) = fixture();
         assert_eq!(
             inspect(&root, "NullHub").unwrap().unwrap().arguments,
@@ -242,7 +218,7 @@ mod tests {
             Value::String("-mod NullHub -txt -assettestmode 0".into());
         assert!(metadata(&wrong_flags, &root, "NullHub").is_err());
         fs::remove_file(root.join("NullHub.mpq/data/global/dataversionbuild.txt")).unwrap();
-        assert!(inspect(&root, "NullHub").is_err());
+        assert!(inspect(&root, "NullHub").is_ok());
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
@@ -254,7 +230,7 @@ mod tests {
     }
 
     #[test]
-    fn enhanced_products_require_matching_identity_version_and_profile() {
+    fn enhanced_products_require_identity_and_profile_but_versions_are_advisory() {
         let (root, mut report) = fixture();
         fs::remove_file(root.join(MANIFEST)).unwrap();
         report["producer"] = "d2rhub-local-mod-builder".into();
@@ -284,7 +260,11 @@ mod tests {
                 serde_json::to_vec(&bad).unwrap(),
             )
             .unwrap();
-            assert!(inspect(&root, "NullHub").is_err(), "{field}");
+            assert_eq!(
+                inspect(&root, "NullHub").is_ok(),
+                matches!(field, "mod_version" | "game_data_version"),
+                "{field}"
+            );
         }
         report["producer"] = "unknown".into();
         fs::write(

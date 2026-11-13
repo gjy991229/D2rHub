@@ -121,32 +121,10 @@ pub fn vision_preview(
         serde_json::json!(captured.metrics),
     );
     let image = captured.image;
-    let chat = kind.as_deref() == Some("chat");
-    let lines = if chat {
-        super::processing::chat_lines(&image)
-    } else {
-        super::area::crop(&image, &super::area::feature(&image))
-            .into_iter()
-            .collect()
-    };
-    let line_analysis = if chat {
-        lines.iter().map(super::processing::chat_analysis).collect()
-    } else {
-        Vec::new()
-    };
-    // Area previews show exactly the intact RGB crop passed to OCR.
-    let mask = if chat {
-        super::processing::binary(&image, super::processing::Mask::Text)
-    } else {
-        lines.first().cloned().unwrap_or_else(|| image.clone())
-    };
-    let tz_image_url = if chat {
-        None
-    } else {
-        super::area::tz_crop(&image, &super::area::feature(&image))
-            .map(|v| png_url(&v))
-            .transpose()?
-    };
+    let lines = super::processing::chat_lines(&image);
+    let line_analysis = lines.iter().map(super::processing::chat_analysis).collect();
+    let mask = super::processing::binary(&image, super::processing::Mask::Text);
+    let tz_image_url = None;
     Ok(Preview {
         image_url: png_url(&image)?,
         mask_url: png_url(&mask)?,

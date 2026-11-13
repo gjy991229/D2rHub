@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { invokeCommand } from "../../../platform/tauri";
@@ -28,36 +28,14 @@ describe("visual settings", () => {
     view.rerender(<VisualRecognitionSettings mode="chat" language="en-US" />);
     expect(screen.getByText("Choose a primary account")).toBeTruthy();
   });
-  it("renders the original OCR crop without a binary preview and reports broken previews", async () => {
-    const imageUrl="data:image/png;base64,iVBORw0KGgo=";
-    vi.mocked(invokeCommand).mockImplementation(async command => {
-      if (command === "vision_get_config") return {generation: 1, config};
-      if (command === "vision_preview") return {image_url:imageUrl,mask_url:imageUrl,candidate_lines:2,line_analysis:[]};
-      return {message:"idle"};
-    });
-    const user=userEvent.setup();
+  it("keeps audio timing independent of OCR resources and opens screenshots", async () => {
+    vi.mocked(invokeCommand).mockResolvedValue(undefined);
     render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await screen.findByText("Capture and timing");
-    await user.click(screen.getByText("Capture and timing"));
-    await user.click(screen.getByRole("button",{name:"Preview capture region"}));
-    const image=await screen.findByAltText("Current capture region");
-    expect(image.getAttribute("src")).toBe(imageUrl);
-    expect(screen.getByAltText("Original OCR crop")).toBeTruthy();
-    fireEvent.error(image);
-    expect((await screen.findByRole("alert")).textContent).toContain("Preview image could not load");
-  });
-
-  it("removes drop verification and opens the screenshot directory", async () => {
-    vi.mocked(invokeCommand).mockImplementation(async command => command === "vision_get_config"
-      ? { generation: 1, config } : { message: "idle" });
-    const user = userEvent.setup();
-    render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await user.click(await screen.findByRole("button", { name: "Open drop screenshots" }));
-    expect(invokeCommand).toHaveBeenCalledWith("open_drop_screenshots_dir");
-    expect(screen.queryByRole("switch", { name: "Verify low-score drops" })).toBeNull();
-    expect(screen.queryByRole("switch", { name: "Record confirmed drops only" })).toBeNull();
+    expect(screen.getByText("Combat time and drop screenshots")).toBeTruthy();
+    expect(invokeCommand).not.toHaveBeenCalled();
+    expect(screen.queryByRole("switch")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Open screenshots" }));
+    expect(invokeCommand).toHaveBeenCalledExactlyOnceWith("open_drop_screenshots_dir");
   });
   it("waits for an in-flight save when switching pages immediately", async () => {
     let stored = { generation: 4, config: { ...config } };
@@ -73,9 +51,9 @@ describe("visual settings", () => {
       return { message: "idle" };
     });
     const user = userEvent.setup();
-    const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await screen.findByRole("switch", { name: "Recognize scenes and time runs" });
+    const view = render(<VisualRecognitionSettings mode="chat" language="en-US" />);
+    await user.click(screen.getByText("Cross-PC room signals"));
+    await screen.findByText("Diagnostics and resources");
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     view.unmount();
@@ -95,24 +73,23 @@ describe("visual settings", () => {
       }
       return { message: "Resources idle", checked: 0, matched: 0, rejected: 0, unavailable: 0 };
     });
-    const view = render(<VisualRecognitionSettings mode="audio" language="en-US" />);
+    const view = render(<VisualRecognitionSettings mode="chat" language="en-US" />);
     expect(invokeCommand).not.toHaveBeenCalled();
     const user = userEvent.setup();
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await user.click(await screen.findByLabelText("Recognize scenes and time runs"));
-    await screen.findByText("Saved");
+    await user.click(screen.getByText("Cross-PC room signals"));
+    await screen.findByText("Diagnostics and resources");
     // Another page changes an unrelated field before the next save.
     stored = { generation: 8, config: { ...stored.config, chat_send: true } };
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     await waitFor(() => expect(stored.config.diagnostic_enabled).toBe(true));
     expect(stored.config.chat_send).toBe(true);
-    expect(stored.config.area_enabled).toBe(true);
+    expect(stored.config.area_enabled).toBe(false);
     view.unmount();
-    render(<VisualRecognitionSettings mode="audio" language="en-US" />);
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    render(<VisualRecognitionSettings mode="chat" language="en-US" />);
+    await user.click(screen.getByText("Cross-PC room signals"));
     expect((await screen.findByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
-    expect((screen.getByLabelText("Recognize scenes and time runs")).getAttribute("aria-checked")).toBe("true");
+
   });
   it("retains failed edits across collapse and allows explicit retry", async () => {
     vi.mocked(invokeCommand).mockImplementation(async (command) => {
@@ -120,15 +97,15 @@ describe("visual settings", () => {
       if (command === "vision_save_config") throw new Error("disk error");
       return { message: "idle" };
     });
-    render(<VisualRecognitionSettings mode="audio" language="en-US" />);
+    render(<VisualRecognitionSettings mode="chat" language="en-US" />);
     const user = userEvent.setup();
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await screen.findByRole("switch", { name: "Recognize scenes and time runs" });
+    await user.click(screen.getByText("Cross-PC room signals"));
+    await screen.findByText("Diagnostics and resources");
     await user.click(screen.getByText("Diagnostics and resources"));
     await user.click(screen.getByRole("switch", { name: "Diagnostic logging" }));
     expect((await screen.findByRole("alert")).textContent).toContain("disk error");
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
-    await user.click(screen.getByText("Scene timing & drop screenshots"));
+    await user.click(screen.getByText("Cross-PC room signals"));
+    await user.click(screen.getByText("Cross-PC room signals"));
     expect((screen.getByLabelText("Diagnostic logging")).getAttribute("aria-checked")).toBe("true");
     expect(screen.getByText("Save needs attention")).toBeTruthy();
     await user.click(screen.getByText("Save changes"));

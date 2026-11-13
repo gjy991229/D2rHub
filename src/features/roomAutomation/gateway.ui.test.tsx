@@ -7,6 +7,9 @@ const platform = vi.hoisted(() => ({
 }));
 
 vi.mock("../../platform/tauri", () => platform);
+vi.mock("@tauri-apps/plugin-dialog", () => ({ confirm: vi.fn() }));
+import { confirm } from "@tauri-apps/plugin-dialog";
+import type { RoomAutomationConfig } from "./types";
 
 import { roomAutomationGateway } from "./gateway";
 
@@ -57,3 +60,24 @@ describe("room automation gateway synchronization", () => {
   });
 });
 
+
+it("does not download resources for ordinary modes", async () => {
+  platform.invokeCommand.mockResolvedValue({});
+  await roomAutomationGateway.saveConfig(1, { collaboration_mode: "default" } as RoomAutomationConfig);
+  expect(platform.invokeCommand).not.toHaveBeenCalledWith("vision_prepare_resource_package");
+  expect(confirm).not.toHaveBeenCalled();
+});
+it("cancelled confirmation leaves follower configuration unchanged", async () => {
+  platform.invokeCommand.mockResolvedValue({ ready: false, size: 90000000 });
+  vi.mocked(confirm).mockResolvedValue(false);
+  await expect(roomAutomationGateway.saveConfig(1, { collaboration_mode: "follower" } as RoomAutomationConfig)).rejects.toThrow("已取消");
+  expect(platform.invokeCommand).not.toHaveBeenCalledWith("vision_prepare_resource_package");
+  expect(platform.invokeCommand.mock.calls.some(([name]) => name === "room_automation_save_config")).toBe(false);
+});
+it("downloads only after confirmation and then applies follower configuration", async () => {
+  platform.invokeCommand.mockResolvedValue({ ready: false, size: 90000000 });
+  vi.mocked(confirm).mockResolvedValue(true);
+  await roomAutomationGateway.saveConfig(1, { collaboration_mode: "follower" } as RoomAutomationConfig);
+  const names = platform.invokeCommand.mock.calls.map(([name]) => name);
+  expect(names.indexOf("vision_prepare_resource_package")).toBeLessThan(names.indexOf("room_automation_save_config"));
+});

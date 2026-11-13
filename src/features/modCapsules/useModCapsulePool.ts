@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invokeCommand, listenEvent } from "../../platform/tauri";
 import type { ModCapsulePool, ModUnpackProgress, ModUnpackResult } from "../../store/types";
+import { notifyModCatalogChanged, subscribeModCatalogChanges } from "./catalogChanges";
 
 interface UseModCapsulePoolOptions {
   active: boolean;
@@ -17,6 +18,7 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
   const [unpackResult, setUnpackResult] = useState<ModUnpackResult | null>(null);
   const unpackLock = useRef(false);
   const poolRevision = useRef(0);
+  const owner = useRef(Symbol());
   const refreshInFlight = useRef<Promise<ModCapsulePool | null> | null>(null);
 
   const refresh = useCallback((): Promise<ModCapsulePool | null> => {
@@ -46,12 +48,26 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     void refresh();
   }, [active, refresh]);
 
+  useEffect(() => subscribeModCatalogChanges(() => {
+    poolRevision.current += 1;
+    if (!active) {
+      setPool(null);
+      return;
+    }
+    // A read begun before the mutation must not repopulate the stale list.
+    void (async () => {
+      await refreshInFlight.current;
+      await refresh();
+    })();
+  }, owner.current), [active, refresh]);
+
   const scan = useCallback(async () => {
-    const version = poolRevision.current;
+    const version = ++poolRevision.current;
     setLoading(true);
     setError(null);
     try {
       const next = await invokeCommand<ModCapsulePool>("scan_mod_capsule_pool");
+      notifyModCatalogChanged(owner.current);
       if (version === poolRevision.current) setPool(next);
       return next;
     } catch (reason) {
@@ -73,7 +89,9 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
     setLoading(true);
     setError(null);
     try {
+      poolRevision.current += 1;
       const next = await invokeCommand<ModCapsulePool>(command, payload);
+      notifyModCatalogChanged(owner.current);
       setPool(next);
       await onAssigned?.();
       return next;
@@ -100,6 +118,7 @@ export function useModCapsulePool({ active, onAssigned }: UseModCapsulePoolOptio
       // An earlier read must finish before the mutation, or it could restore stale buttons.
       await refreshInFlight.current;
       const result = await invokeCommand<ModUnpackResult>("unpack_mod_capsule", { capsuleId });
+      notifyModCatalogChanged(owner.current);
       poolRevision.current += 1;
       setPool(result.pool);
       setUnpackResult(result);

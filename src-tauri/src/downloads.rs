@@ -158,13 +158,6 @@ pub fn version_newer(candidate: &str, current: &str) -> bool {
         _ => false,
     }
 }
-pub fn compatible(min: &str, max: &str) -> bool {
-    let parse = |s: &str| semver::Version::parse(s.trim_start_matches('v')).ok();
-    match (parse(min), parse(max), parse(env!("CARGO_PKG_VERSION"))) {
-        (Some(lo), Some(hi), Some(v)) => lo <= v && v < hi,
-        _ => false,
-    }
-}
 fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -314,6 +307,11 @@ pub fn select_index(current: Option<Value>, candidate: Value) -> Result<Value, S
             // Version identity is immutable even when the conflicting mirror has
             // an older catalog revision and would otherwise be ignored.
             for next in candidate["assets"].as_array().ok_or("清单缺少资源")? {
+                // HubMod versions are advisory; a newer signed catalog may replace
+                // or republish them. Software/update executables keep strict pairing.
+                if matches!(next["id"].as_str(), Some("LiteHub" | "BoHub" | "NullHub")) {
+                    continue;
+                }
                 if let Some(prev) = c["assets"]
                     .as_array()
                     .and_then(|a| a.iter().find(|a| a["id"] == next["id"]))
@@ -327,6 +325,11 @@ pub fn select_index(current: Option<Value>, candidate: Value) -> Result<Value, S
             }
             if n > old {
                 for next in candidate["assets"].as_array().ok_or("清单缺少资源")? {
+                    // HubMod versions are advisory; a newer signed catalog may replace
+                    // or republish them. Software/update executables keep strict pairing.
+                    if matches!(next["id"].as_str(), Some("LiteHub" | "BoHub" | "NullHub")) {
+                        continue;
+                    }
                     if let Some(prev) = c["assets"]
                         .as_array()
                         .and_then(|a| a.iter().find(|a| a["id"] == next["id"]))

@@ -27,8 +27,9 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
   const profile = LIGHTWEIGHT_PROFILES.find(value => value.name === asset.id);
   const location = resourceInstallLocation(asset, state);
   const incompatible = state.game_data_version !== asset.game_data_version;
-  const current = local ? !!local.installed_version && !local.update_available : installed;
-  const blocked = controller.busy || current || local?.protected || incompatible || (!location);
+  const current = !!local?.installed_version && !local.update_available;
+  const hasLocal = local ? local.reason_code !== "not_installed" && (!!local.installed_version || local.reason_code === "replace_available") : installed;
+  const blocked = controller.busy || (!location);
   const status = resourceStatusMessage(local, en);
   const progress = useRef<HTMLDivElement | null>(null);
 
@@ -37,10 +38,10 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
   }, [active]);
 
   const actionLabel = active ? (en ? "Working…" : "正在处理…")
-    : local?.protected ? (en ? "Preserved" : "保留现有 Mod")
-      : current ? (en ? "Installed" : "已是当前版本")
-          : local?.update_available ? (en ? "Verify & update" : "校验并原位更新")
-            : (en ? "Download & install" : "下载并安装");
+    : current ? (en ? "Already up to date" : "当前已是最新版")
+    : hasLocal && local?.installed_version && local.update_available ? (en ? "Update Mod" : "更新 Mod")
+    : hasLocal ? (en ? "Download & replace" : "下载并覆盖")
+    : (en ? "Download & install" : "下载并安装");
 
   return <article className="resource-card" aria-label={asset.id} aria-busy={active}>
     <div className="resource-summary">
@@ -58,8 +59,8 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
     <small>{`${en ? "Game data" : "游戏数据版本"} ${asset.game_data_version}`}</small>
     {status && <p className="resource-install-state" data-state={local?.protected ? "attention" : current ? "ready" : "update"}>{status}</p>}
     {incompatible && <p className="resource-note resource-attention">{en
-      ? `Current game: ${state.game_data_version ?? "not configured"}. This package requires ${asset.game_data_version}.`
-      : `当前游戏版本：${state.game_data_version ?? "尚未配置或无法识别"}，此成品需要 ${asset.game_data_version}。`}</p>}
+      ? `Current game: ${state.game_data_version ?? "unknown"}. Package data: ${asset.game_data_version}. Installation is available; Hub will try to synchronize the local data version.`
+      : `当前游戏版本：${state.game_data_version ?? "无法识别"}，成品数据版本：${asset.game_data_version}。可以安装，Hub 将尝试自动同步本地数据版本。`}</p>}
     {!location && <p className="resource-note resource-attention">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
     </div>
     <div className="resource-actions">

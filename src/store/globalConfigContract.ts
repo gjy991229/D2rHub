@@ -36,6 +36,7 @@ export const GLOBAL_CONFIG_FIELDS = [
   "enable_auto_update",
   "download_source",
   "first_launch",
+  "combat_time_format",
   "rune_audio_enabled",
   "hostile_auto_restart_enabled",
   "hostile_auto_restart_all_windows",

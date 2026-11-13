@@ -2667,6 +2667,7 @@ fn run_bnet_initialization_transaction(
     kind: AccountInitializationKind,
     cancellation_ticket: CancellationTicket,
 ) -> Result<(), AppError> {
+    crate::commands::global_config::detection::repair_auxiliary_path(state, app, false)?;
     // 只取得不可变配置快照，不能让最长 600 秒的登录等待阻塞设置写入。
     let cfg = state
         .configuration()

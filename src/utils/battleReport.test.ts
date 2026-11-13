@@ -33,7 +33,7 @@ const stats: BattleReportStatsData = {
 };
 const now = new Date(2026, 7, 30, 12, 0, 0);
 const defaultSnapshot = buildBattleReportSnapshot(stats, {}, now);
-assert(defaultSnapshot.summary.runs === 1, "首次使用时全部预设应默认启用并合并路线分段");
+assert(defaultSnapshot.summary.runs === 2, "历史原始分段各参与累计一次");
 assert(defaultSnapshot.summary.totalSeconds === 50, "策略合并不能改变战报总耗时");
 
 const rawSnapshot = buildBattleReportSnapshot(stats, {
