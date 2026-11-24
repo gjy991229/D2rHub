@@ -16,6 +16,7 @@ interface ImportAccountsSummary {
 }
 
 export interface ConfigRepairReport {
+  checked: number;
   repaired: string[];
   issues: string[];
 }

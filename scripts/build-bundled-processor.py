@@ -27,7 +27,9 @@ def build():
     shutil.copytree(repo / 'crates/stormlib-sys/LICENSES', DESTINATION.parent / 'LICENSES', dirs_exist_ok=True)
     shutil.copyfile(repo / 'crates/stormlib-sys/THIRD_PARTY_NOTICES.md', DESTINATION.parent / 'THIRD_PARTY_NOTICES.md')
     DESTINATION.with_suffix('.json').write_text(json.dumps({
-        'sha256': hashlib.sha256(binary.read_bytes()).hexdigest()
+        'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+        'capabilities': json.loads(subprocess.check_output(
+            [str(binary), 'capabilities', '--json'], encoding='utf-8'))['capabilities']
     }), encoding='utf-8')
 
 

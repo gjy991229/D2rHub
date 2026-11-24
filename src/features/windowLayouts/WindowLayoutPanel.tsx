@@ -119,7 +119,10 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   useEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useEffect(() => () => { onDraftChange?.(false); }, [onDraftChange]);
   useEffect(() => () => { onSavingChange?.(false); }, [onSavingChange]);
-  const labels = layout?.windows.map((slot, index) => slot.window_title || (english ? `Unbound ${index + 1}` : `未绑定 ${index + 1}`)) ?? [];
+  const boundTitle = (slot: LayoutSlot) => slot.account_id
+    ? accounts.find(account => account.id === slot.account_id)?.display_name?.trim() || slot.account_id
+    : slot.window_title;
+  const labels = layout?.windows.map((slot, index) => boundTitle(slot) || (english ? `Unbound ${index + 1}` : `未绑定 ${index + 1}`)) ?? [];
   const windowTitles = [...new Set(accounts.map(account => account.display_name.trim() ? account.display_name : account.id))].sort();
   const titleSuggestionsId = useId();
   const replace = (next: WindowLayout) => { setEditor(current => current ? { ...current, draft: next } : current); setFeedback(null); setConfirmDelete(false); };
@@ -308,7 +311,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             </div>
           </div>
           <div className="layout-presets">{[2, 3, 4, 5, 6, 7, 8].map(count => <button type="button" key={count} disabled={!capable} className="layout-preset"
-            onClick={() => { replace({ ...layout, windows: presetSlots(monitors, count, resolution).map((slot, index) => ({ ...slot, window_title: layout.windows[index]?.window_title })) }); setSelected(0); setPresetsOpen(false); }}
+            onClick={() => { replace({ ...layout, windows: presetSlots(monitors, count, resolution).map((slot, index) => ({ ...slot, account_id: layout.windows[index]?.account_id, window_title: layout.windows[index]?.window_title })) }); setSelected(0); setPresetsOpen(false); }}
             aria-label={english ? `Fill ${resolution} ${count}-window preset` : `填充 ${resolution.toUpperCase()} ${count} 开预设`}>
             <PresetThumbnail monitors={monitors} count={count} resolution={resolution} /><span>{english ? `${count} windows` : ["", "", "双开", "三开", "四开", "五开", "六开", "七开", "八开"][count]}</span>
           </button>)}</div>
@@ -347,9 +350,9 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
         </div>
         {slot && monitor && rect && <div className="layout-inspector">
           <label className="layout-monitor-field"><span>{english ? "Window title" : "窗口名称"}</span>
-            <input className="settings-input" list={titleSuggestionsId} value={slot.window_title ?? ""}
+            <input className="settings-input" list={titleSuggestionsId} value={boundTitle(slot) ?? ""}
               placeholder={english ? "Select or enter a title" : "选择或输入窗口名称"}
-              onChange={event => changeSlot({ window_title: event.target.value || undefined })} />
+              onChange={event => changeSlot({ account_id: undefined, window_title: event.target.value || undefined })} />
           </label>
           <datalist id={titleSuggestionsId}>{windowTitles.map(title => <option key={title} value={title} />)}</datalist>
           <div className="layout-inspector-heading"><strong>{labels[selectedIndex]}</strong><span>{english ? "Window position and game resolution" : "窗口位置与游戏分辨率"}</span></div>
@@ -379,7 +382,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           </div>
           </>}
         </div>}
-        {layout.windows.some(slot => !slot.window_title?.trim()) && <p className="layout-helper">{english ? "Assign a window title to each position you want to apply." : "为需要应用的位置填写窗口名称。"}</p>}
+        {layout.windows.some(slot => !boundTitle(slot)?.trim()) && <p className="layout-helper">{english ? "Assign a window title to each position you want to apply." : "为需要应用的位置填写窗口名称。"}</p>}
         <div className="layout-panel-footer"><p>{english ? "Window mode and windowed resolution take effect on the next launch. Restore moves matching windowed games and fits matching fullscreen games to their displays." : "窗口模式和窗口化分辨率下次启动时生效。恢复布局只调整模式相符的窗口：普通窗口只移动，无边框全屏铺满所选显示器。"}</p>
           <div>{confirmDelete && <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>{english ? "Keep layout" : "保留布局"}</Button>}
             {editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}

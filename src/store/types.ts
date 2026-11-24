@@ -79,6 +79,7 @@ export interface LayoutMonitor {
 }
 
 export interface LayoutSlot extends LayoutRect {
+  account_id?: string | null;
   window_title?: string | null;
   /** width/height are Settings.json game resolution, not native window size. */
   monitor_id: string;

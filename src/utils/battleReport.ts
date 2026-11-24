@@ -117,7 +117,7 @@ function option<T extends string>(value: unknown, allowed: readonly T[], fallbac
 }
 
 export function sanitizeBattleReportConfig(value: Partial<BattleReportConfig> = {}): BattleReportConfig {
-  const metrics = [...new Set(value.metrics || ["duration", "drops", "high"])].filter(metric => ["chaos", "duration", "drops", "high", "efficiency", "travincal"].includes(metric)).slice(0, 4);
+  const metrics = [...new Set(Array.isArray(value.metrics) ? value.metrics : ["duration", "drops", "high"])].filter(metric => ["chaos", "duration", "drops", "high", "efficiency", "travincal"].includes(metric)).slice(0, 4);
   return {
     range: option(value.range, ["today", "week", "month", "7", "30", "custom"], "today"),
     customStart: String(value.customStart || "").slice(0, 10),
@@ -261,7 +261,7 @@ function parseReportDate(value: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function reportPeriodRange(config: BattleReportConfig, now = new Date()) {
+function reportPeriodRange(config: BattleReportConfig, now = new Date(), offset = 0) {
   const today = localDayStart(now);
   let start: Date;
   let next: Date;
@@ -278,15 +278,15 @@ function reportPeriodRange(config: BattleReportConfig, now = new Date()) {
     title = "自定义战报";
     kicker = "CUSTOM REPORT";
   } else if (config.range === "week") {
-    start = shiftLocalDate(today, -((today.getDay() + 6) % 7)); next = shiftLocalDate(start, 7); title = "一周战报"; kicker = "WEEKLY REPORT";
+    start = shiftLocalDate(today, offset * 7 - ((today.getDay() + 6) % 7)); next = shiftLocalDate(start, 7); title = "一周战报"; kicker = "WEEKLY REPORT";
   } else if (config.range === "month") {
-    start = new Date(today.getFullYear(), today.getMonth(), 1); next = new Date(today.getFullYear(), today.getMonth() + 1, 1); title = "月度战报"; kicker = "MONTHLY REPORT";
+    start = new Date(today.getFullYear(), today.getMonth() + offset, 1); next = new Date(today.getFullYear(), today.getMonth() + offset + 1, 1); title = "月度战报"; kicker = "MONTHLY REPORT";
   } else if (config.range === "7") {
-    start = shiftLocalDate(today, -6); next = shiftLocalDate(start, 7); title = "七日战报"; kicker = "7-DAY REPORT";
+    start = shiftLocalDate(today, offset * 7 - 6); next = shiftLocalDate(start, 7); title = "七日战报"; kicker = "7-DAY REPORT";
   } else if (config.range === "30") {
-    start = shiftLocalDate(today, -29); next = shiftLocalDate(start, 30); title = "三十日战报"; kicker = "30-DAY REPORT";
+    start = shiftLocalDate(today, offset * 30 - 29); next = shiftLocalDate(start, 30); title = "三十日战报"; kicker = "30-DAY REPORT";
   } else {
-    start = today; next = shiftLocalDate(start, 1); title = "每日战报"; kicker = "DAILY REPORT";
+    start = shiftLocalDate(today, offset); next = shiftLocalDate(start, 1); title = "每日战报"; kicker = "DAILY REPORT";
   }
   const end = next > now && start <= now ? now : next;
   const periodDuration = Math.max(1, next.getTime() - start.getTime());
@@ -300,7 +300,7 @@ function reportPeriodRange(config: BattleReportConfig, now = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   const full = (date: Date) => `${date.getFullYear()}.${pad(date.getMonth() + 1)}.${pad(date.getDate())}`;
   const last = shiftLocalDate(next, -1);
-  const suffix = config.range === "today" ? " · 今日" : config.range === "week" ? " · 本周" : config.range === "month" ? " · 本月" : config.range === "7" ? " · 近 7 天" : config.range === "30" ? " · 近 30 天" : "";
+  const suffix = offset ? "" : config.range === "today" ? " · 今日" : config.range === "week" ? " · 本周" : config.range === "month" ? " · 本月" : config.range === "7" ? " · 近 7 天" : config.range === "30" ? " · 近 30 天" : "";
   const label = config.range === "today" ? `${full(start)}${suffix}` : `${full(start)} — ${full(last)}${suffix}`;
   return { start, end, next, label, previousStart, previousEnd, title, kicker };
 }
@@ -422,13 +422,13 @@ function percentDelta(current: number, previous: number) {
   return `较同期 ${value > 0 ? "+" : ""}${value.toFixed(0)}%`;
 }
 
-export function buildBattleReportSnapshot(data: BattleReportStatsData, preferences: StatsPagePreferences = {}, now = new Date()): BattleReportSnapshot {
+export function buildBattleReportSnapshot(data: BattleReportStatsData, preferences: StatsPagePreferences = {}, now = new Date(), offset = 0): BattleReportSnapshot {
   const config = sanitizeBattleReportConfig(preferences.reportConfig || {});
   const strategies = activeStrategies(data, preferences);
   const sessionRecords = (data.records || []).filter(record => !record.scene_visit);
   const source = config.dataSource === "strategy" && strategies.length ? materializeBattleReportRecords(sessionRecords, strategies) : sessionRecords;
   const threshold = Math.max(0, Math.min(10, numberValue(preferences.shortThresholdSeconds ?? 1)));
-  const range = reportPeriodRange(config, now);
+  const range = reportPeriodRange(config, now, offset);
   const recordsBetween = (records: BattleReportRecord[], start: Date, end: Date) => {
     const scoped = records.filter((record) => {
       const date = parseRecordDate(record.absolute_time);

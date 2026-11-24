@@ -1,6 +1,7 @@
 import {
   BATTLE_REPORT_PRESET_STRATEGIES,
   buildBattleReportSnapshot,
+  sanitizeBattleReportConfig,
   type BattleReportStatsData,
 } from "./battleReport";
 
@@ -18,7 +19,7 @@ function assert(condition: boolean, message: string) {
 }
 
 const template = fs.readFileSync(path.join(__dirname, "../../docs/stats.html"), "utf8");
-const templatePresetIds = [...template.matchAll(/\{id:"(preset-[^"]+)"/g)].map((match) => match[1]);
+const templatePresetIds = [...template.split("/* END SHARED REPORT */")[1].matchAll(/\{id:"(preset-[^"]+)"/g)].map((match) => match[1]);
 assert(
   JSON.stringify(templatePresetIds) === JSON.stringify(BATTLE_REPORT_PRESET_STRATEGIES.map((strategy) => strategy.id)),
   "主界面快捷战报与统计 HTML 必须使用同一组系统预设",
@@ -33,6 +34,17 @@ const stats: BattleReportStatsData = {
   strategies: [],
 };
 const now = new Date(2026, 7, 30, 12, 0, 0);
+const inline = template.split("/* BEGIN SHARED REPORT */")[1].split("/* END SHARED REPORT */")[0];
+const pageReport = new Function(inline + ";return HubReport")() as {
+  buildBattleReportSnapshot: typeof buildBattleReportSnapshot;
+};
+for (const offset of [-1, 0]) {
+  const options = { reportConfig: { range: "month" as const, metrics: {} as never } };
+  const page = pageReport.buildBattleReportSnapshot(stats, options, now, offset);
+  const app = buildBattleReportSnapshot(stats, options, now, offset);
+  assert(JSON.stringify(app) === JSON.stringify(page), "两个战报入口应使用一致的统计与偏好");
+  assert(page.range.start.getMonth() === 7 + offset, "切换上一期应使用完整自然月");
+}
 const defaultSnapshot = buildBattleReportSnapshot(stats, {}, now);
 assert(defaultSnapshot.summary.runs === 2, "历史原始分段各参与累计一次");
 assert(defaultSnapshot.summary.totalSeconds === 50, "策略合并不能改变战报总耗时");
@@ -69,4 +81,5 @@ assert(monthlySnapshot.range.start.getDate() === 1 && monthlySnapshot.range.next
 assert(monthlySnapshot.title === "月度战报" && monthlySnapshot.summaryLabel === "本月小结", "本月战报应使用月度标题与小结");
 assert(template.includes('data-report-range="month"'), "统计 HTML 应提供与快捷分享同步的本月范围");
 
+assert(JSON.stringify(sanitizeBattleReportConfig({ metrics: {} as never }).metrics) === JSON.stringify(["duration", "drops", "high"]), "malformed saved metrics fall back to defaults");
 console.log("battle report sharing tests passed");

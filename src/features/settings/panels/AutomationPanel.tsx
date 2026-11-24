@@ -211,9 +211,7 @@ export function AutomationPanel({
           最近识别：{audioStatus.last_marker} · {((audioStatus.last_confidence ?? 0) * 100).toFixed(1)}%
         </p>
       )}
-      {audioStatus?.last_error && (
-        <p className="text-2xs text-danger break-all">{audioStatus.last_error}</p>
-      )}
+
     </div>
 
 

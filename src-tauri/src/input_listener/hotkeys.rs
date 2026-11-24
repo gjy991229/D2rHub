@@ -155,6 +155,7 @@ pub(super) fn initialize(app: AppHandle) -> Result<(), String> {
 
 fn report_error(app: &AppHandle, error: &str) {
     crate::logger::log_msg("ERROR", "Shortcut", error);
+    crate::logger::report_background_error("系统快捷键", error);
     let _ = app.emit("global-hotkey-error", error);
 }
 

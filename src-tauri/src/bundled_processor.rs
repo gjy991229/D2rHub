@@ -6,6 +6,7 @@ use tauri::Manager;
 #[derive(serde::Serialize)]
 pub struct ProcessorStatus {
     ready: bool,
+    capabilities: Vec<String>,
     blocking_reason: Option<String>,
 }
 
@@ -30,6 +31,16 @@ pub async fn get_bundled_processor_status(app: tauri::AppHandle) -> ProcessorSta
     let error = resolve_processor(&app).await.err();
     ProcessorStatus {
         ready: error.is_none(),
+        capabilities: if error.is_none() {
+            serde_json::from_str::<serde_json::Value>(include_str!(
+                "../processor/d2r-audio-mod.json"
+            ))
+            .ok()
+            .and_then(|value| serde_json::from_value(value["capabilities"].clone()).ok())
+            .unwrap_or_default()
+        } else {
+            Vec::new()
+        },
         blocking_reason: error,
     }
 }

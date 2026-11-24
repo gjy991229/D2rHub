@@ -61,6 +61,74 @@ export function MaintenancePanel({
   return (
     <>
     <div className="settings-content-grid maintenance-settings-panel">
+      <section className="spatial-panel maintenance-tools settings-span-full" aria-labelledby="maintenance-title">
+        <h2 id="maintenance-title" className="text-xs font-bold text-text-primary">应用维护</h2>
+        <div className="maintenance-action-row maintenance-primary">
+          <div>
+            <span className="text-sm font-semibold text-text-primary">配置检查与修复</span>
+            <p className="text-2xs text-text-muted">检查账号配置文件。自动恢复有效备份，保留损坏原件。</p>
+          </div>
+          <Button size="sm" variant="primary" loading={repairBusy} onClick={onRepairConfigs}>
+            <Wrench size={14} aria-hidden="true" />
+            {repairBusy ? "正在检查配置…" : "检查并修复配置"}
+          </Button>
+        </div>
+        {typeof repairResult === "string" ? (
+          <p className="text-xs break-all text-text-secondary" role="alert">检查失败：{repairResult}</p>
+        ) : repairResult && (
+          <div className="maintenance-report" data-attention={repairResult.issues.length > 0} role="status">
+            <header><strong>{repairResult.issues.length ? "检查需要关注" : "检查完成"}</strong><span>已检查 {repairResult.checked} 个账号</span></header>
+            {repairResult.repaired.length > 0 && (
+              <div>
+                <p>已修复 {repairResult.repaired.length} 个文件，原件保留在：</p>
+                <ul className="list-disc pl-4">{repairResult.repaired.map(path => <li key={path}>{path}</li>)}</ul>
+              </div>
+            )}
+            {repairResult.issues.length > 0 && (
+              <div>
+                <p>仍需处理 {repairResult.issues.length} 项：</p>
+                <ul className="list-disc pl-4">{repairResult.issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
+              </div>
+            )}
+            {repairResult.repaired.length === 0 && repairResult.issues.length === 0 && <p>{repairResult.checked ? "配置正常。" : "目录中没有账号配置。"}</p>}
+          </div>
+        )}
+        <div className="maintenance-utilities">
+        <div className="maintenance-action-row border-t border-border-default/50">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">打开系统运行日志</span>
+            <p className="text-2xs text-text-muted">查看当前多开工具的底层系统日志以供排查故障</p>
+          </div>
+          <Button size="sm" onClick={onOpenLogs}>
+            <FolderOpen size={14} aria-hidden="true" />
+            打开日志
+          </Button>
+        </div>
+
+        <div className="maintenance-action-row border-t border-border-default/50">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">导出隐私脱敏诊断包</span>
+            <p className="text-2xs text-text-muted">包含模块健康、任务时间线、配置摘要与脱敏日志，不导出 Token、账号名或用户目录</p>
+          </div>
+          <Button size="sm" loading={diagnosticBusy} onClick={onExportDiagnostics}>
+            <FileArchive size={14} aria-hidden="true" />
+            {diagnosticBusy ? "正在导出" : "导出诊断包"}
+          </Button>
+        </div>
+
+        <div className="maintenance-action-row border-t border-border-default/50">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">重新配置游戏路径</span>
+            <p className="text-2xs text-text-muted">重新运行首次引导向导以修改基础路径配置</p>
+          </div>
+          <Button size="sm" onClick={onRunSetup}>
+            <Settings size={14} aria-hidden="true" />
+            运行向导
+          </Button>
+        </div>
+        </div>
+      </section>
+
       <section className="spatial-panel p-3 space-y-3 settings-span-full" aria-labelledby="feature-profile-title">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-[68ch]">
@@ -103,71 +171,6 @@ export function MaintenancePanel({
               </button>
             );
           })}
-        </div>
-      </section>
-
-      <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="maintenance-title">
-        <h2 id="maintenance-title" className="text-xs font-bold text-text-primary">应用维护</h2>
-        <div className="maintenance-action-row">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">配置检查与修复</span>
-            <p className="text-2xs text-text-muted">检查账号配置文件。修复前保留原件，检查结果会列出需要手动处理的文件。</p>
-          </div>
-          <Button size="sm" loading={repairBusy} onClick={onRepairConfigs}>
-            <Wrench size={14} aria-hidden="true" />
-            {repairBusy ? "正在检查配置…" : "检查并修复配置"}
-          </Button>
-        </div>
-        {typeof repairResult === "string" ? (
-          <p className="text-xs break-all text-text-secondary" role="alert">检查失败：{repairResult}</p>
-        ) : repairResult && (
-          <div className="space-y-2 text-xs break-all text-text-secondary" role="status">
-            {repairResult.repaired.length > 0 && (
-              <div>
-                <p>已修复 {repairResult.repaired.length} 个文件，原件保留在：</p>
-                <ul className="list-disc pl-4">{repairResult.repaired.map(path => <li key={path}>{path}</li>)}</ul>
-              </div>
-            )}
-            {repairResult.issues.length > 0 && (
-              <div>
-                <p>仍需处理 {repairResult.issues.length} 项：</p>
-                <ul className="list-disc pl-4">{repairResult.issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
-              </div>
-            )}
-            {repairResult.repaired.length === 0 && repairResult.issues.length === 0 && <p>检查完成，未发现需要修复的配置。</p>}
-          </div>
-        )}
-        <div className="maintenance-action-row border-t border-border-default/50">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">打开系统运行日志</span>
-            <p className="text-2xs text-text-muted">查看当前多开工具的底层系统日志以供排查故障</p>
-          </div>
-          <Button size="sm" onClick={onOpenLogs}>
-            <FolderOpen size={14} aria-hidden="true" />
-            打开日志
-          </Button>
-        </div>
-
-        <div className="maintenance-action-row border-t border-border-default/50">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">导出隐私脱敏诊断包</span>
-            <p className="text-2xs text-text-muted">包含模块健康、任务时间线、配置摘要与脱敏日志，不导出 Token、账号名或用户目录</p>
-          </div>
-          <Button size="sm" loading={diagnosticBusy} onClick={onExportDiagnostics}>
-            <FileArchive size={14} aria-hidden="true" />
-            {diagnosticBusy ? "正在导出" : "导出诊断包"}
-          </Button>
-        </div>
-
-        <div className="maintenance-action-row border-t border-border-default/50">
-          <div>
-            <span className="text-sm font-semibold text-text-secondary">重新配置游戏路径</span>
-            <p className="text-2xs text-text-muted">重新运行首次引导向导以修改基础路径配置</p>
-          </div>
-          <Button size="sm" onClick={onRunSetup}>
-            <Settings size={14} aria-hidden="true" />
-            运行向导
-          </Button>
         </div>
       </section>
 

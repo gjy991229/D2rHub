@@ -335,7 +335,7 @@ impl WindowGeometryRequest {
             account_id: account_id.into(),
             monitors: crate::commands::window_layout::configured_monitors(Some(config))
                 .unwrap_or_default(),
-            layout_slot: account.as_ref().and_then(|account| layout?.slot_index_for_title(&account_window_title(account))),
+            layout_slot: account.as_ref().and_then(|account| super::window_layout::slot_for_account(layout?, config, account_id, &account_window_title(account))),
             layout: layout.cloned(),
             position: account.map(|account| {
                     (
@@ -372,7 +372,7 @@ impl WindowGeometryRequest {
         selected_window_layout(config) == self.layout.as_ref()
             && self.layout_slot
                 == self.layout.as_ref().and_then(|layout| {
-                    layout.slot_index_for_title(&account_window_title(account))
+                    super::window_layout::slot_for_account(layout, config, &account.id, &account_window_title(account))
                 })
             && self.position.as_ref().is_some_and(|position| {
                 position

@@ -19,7 +19,7 @@ pub(crate) fn take_background_errors() -> Vec<String> {
     std::mem::take(&mut *BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner()))
 }
 
-fn report_background_error(module: &str, message: &str) {
+pub(crate) fn report_background_error(module: &str, message: &str) {
     let entry = format!("{module}：{message}");
     {
         let mut pending = BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner());
@@ -242,9 +242,6 @@ pub fn log_msg(level: &str, module: &str, message: &str) {
     // 输出到标准输出
     print!("{}", log_line);
 
-    if level == "ERROR" && module != "Frontend" {
-        report_background_error(module, message);
-    }
 
     // 写入文件
     if let Some(mutex) = LOG_FILE.get() {

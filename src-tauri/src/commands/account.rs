@@ -622,20 +622,28 @@ impl AccountManager {
 
     /// 列出所有已存在的账号 ID（通过扫描 accounts 目录）
     pub fn list_ids(accounts_dir: &str) -> Vec<String> {
+        Self::inspect_ids(accounts_dir, |_| {})
+    }
+
+    pub fn inspect_ids(accounts_dir: &str, mut issue: impl FnMut(String)) -> Vec<String> {
         let dir = Path::new(accounts_dir);
-        if !dir.exists() {
-            return vec![];
-        }
         recover_interrupted_account_directories(dir);
-        let mut ids: Vec<String> = vec![];
-        if let Ok(entries) = std::fs::read_dir(dir) {
-            for entry in entries.flatten() {
-                if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                    let name = entry.file_name().to_string_lossy().to_string();
-                    if Self::is_valid_account_id(&name) {
-                        ids.push(name);
-                    }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(error) => {
+                issue(format!("{}：{error}", dir.display()));
+                return Vec::new();
+            }
+        };
+        let mut ids = Vec::new();
+        for entry in entries {
+            match entry.and_then(|entry| Ok((entry.file_name(), entry.file_type()?))) {
+                Ok((name, kind)) if kind.is_dir() => {
+                    let id = name.to_string_lossy();
+                    if Self::is_valid_account_id(&id) { ids.push(id.into_owned()); }
                 }
+                Ok(_) => {}
+                Err(error) => issue(format!("{}：{error}", dir.display())),
             }
         }
         ids.sort();

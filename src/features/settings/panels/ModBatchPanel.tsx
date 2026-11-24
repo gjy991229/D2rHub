@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ModProcessorStatus } from "./ModProcessorStatus";
 import { ArrowLeft, ArrowRight, CheckCircle2, Layers3, PackageOpen } from "lucide-react";
 import { Button } from "../../../components/ui/Button";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
@@ -8,6 +10,7 @@ import type { ModWorkflowController } from "../../mods/workflow/useModWorkflow";
 import type { AudioModFeatureSelection } from "../../mods/featureContract";
 
 export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController }) {
+  const [inventory, setInventory] = useState(false);
   const { batch, en } = workflow;
   const candidates = (batch.inspection?.installed_mods ?? []).filter(mod => (batch.mode === "create" || batch.mode === "replace-source")
     ? mod.source_eligible || mod.requires_unpack : mod.feature_groups.length || mod.update_required);
@@ -55,10 +58,11 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
       </section>
       {batch.mode !== "rebuild" && <fieldset className="mod-processing-section mod-batch-features">
         <legend>{en ? "Modules for this batch" : "本批次添加的模块"}</legend>
-        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={detail}
+        <ModProcessorStatus edition={batch.edition} en={en} onInventory={setInventory} />
+        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={key === "includeJcyInventory" && !inventory ? (en ? "This processor has no inventory preset." : "当前加工器未内置背包预设。") : detail}
           checked={!!batch.features[key] || (key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart)}
           locked={key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart}
-          lockLabel={en ? "Required by hostile auto-restart" : "敌对自动重开必选"} disabled={batch.busy}
+          lockLabel={en ? "Required by hostile auto-restart" : "敌对自动重开必选"} disabled={batch.busy || (key === "includeJcyInventory" && !inventory && !batch.features[key])}
           onChange={checked => batch.changeFeatures({ ...batch.features, [key]: checked,
             ...(key === "includeHostileAutoRestart" && checked ? { includeEscNextGame: true } : {}) })} />
           {key === "includeRoomTools" && batch.features.includeRoomTools && <RoomToolProcessingOptions en={en}
@@ -69,7 +73,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
       <section className="mod-processing-section mod-batch-selection">
         <div className="mod-section-toolbar">
           <div className="mod-section-heading"><h3>{en ? "Select Mods" : "选择 Mod"} <span className="mod-count">{candidates.length}</span></h3></div>
-          <div className="mod-page-header-actions"><Button size="sm" variant="ghost" disabled={batch.loading || !candidates.length} onClick={() => batch.select(candidates.filter(mod => !mod.requires_unpack).map(mod => mod.name))}>{en ? "Select available" : "全选可处理项"}</Button>
+          <div className="mod-page-header-actions"><Button size="sm" variant="ghost" disabled={(batch.mode !== "rebuild" && !!batch.features.includeJcyInventory && !inventory) || batch.loading || !candidates.length} onClick={() => batch.select(candidates.filter(mod => !mod.requires_unpack).map(mod => mod.name))}>{en ? "Select available" : "全选可处理项"}</Button>
             <Button size="sm" variant="ghost" disabled={!batch.selected.length} onClick={() => batch.select([])}>{en ? "Clear" : "清空选择"}</Button></div>
         </div>
         {batch.loading ? <p className="mod-empty-state" role="status">{en ? "Inspecting Mods…" : "正在检查 Mod…"}</p> : candidates.length ? <div className="mod-batch-sources">
@@ -83,7 +87,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
           </div>)}
         </div> : <div className="mod-empty-state"><PackageOpen size={20} aria-hidden="true" /><p>{en ? "No eligible Mods in this directory." : "此目录没有适用于当前操作的 Mod。"}</p></div>}
         <div className="mod-action-footer"><span role="status">{en ? `${batch.selected.length} selected` : `已选择 ${batch.selected.length} 项`}</span>
-          <Button variant="primary" disabled={batch.loading || !batch.inspection || !batch.selected.length || !batch.accountId} onClick={batch.preview}>{en ? "Review processing plan" : "预览处理计划"}<ArrowRight size={14} aria-hidden="true" /></Button>
+          <Button variant="primary" disabled={(batch.mode !== "rebuild" && !!batch.features.includeJcyInventory && !inventory) || batch.loading || !batch.inspection || !batch.selected.length || !batch.accountId} onClick={batch.preview}>{en ? "Review processing plan" : "预览处理计划"}<ArrowRight size={14} aria-hidden="true" /></Button>
         </div>
       </section>
     </> : <section className="mod-processing-section mod-batch-plan">

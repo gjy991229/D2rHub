@@ -644,8 +644,10 @@ function installIpcMock() {
         return { version: appVersion, available: true, downloaded: true };
       case "check_mod_resource_updates":
         return ["国服 LiteHub"];
+      case "check_and_repair_configs":
+        return { checked: accounts.length, repaired: [], issues: [] };
       case "get_bundled_processor_status":
-        return { ready: true, blocking_reason: null };
+        return { ready: true, blocking_reason: null, capabilities: ["jcy_inventory"] };
       case "get_mod_resources":
         return {
           catalog: { release_url: "https://github.com/gjy991229/D2rHub/releases", assets: [

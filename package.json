@@ -15,7 +15,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "check": "tsc --noEmit && npm test && npm run check:guide && npm run test:publisher && python scripts/test_generate_area_name_aliases.py",
+    "sync:report": "node scripts/sync-report-template.mjs",
+    "check": "node scripts/sync-report-template.mjs --check && tsc --noEmit && npm test && npm run check:guide && npm run test:publisher && python scripts/test_generate_area_name_aliases.py",
     "build": "tsc && vite build",
     "package:mod-resources": "python scripts/release-workflow.py --target mods",
     "build:desktop": "tauri build",
@@ -54,6 +55,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "autoprefixer": "^10.4.20",
     "cross-env": "^7.0.3",
+    "esbuild": "0.25.12",
     "jsdom": "^26.1.0",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.14",

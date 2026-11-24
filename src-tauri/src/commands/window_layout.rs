@@ -181,10 +181,10 @@ pub(crate) fn calibrate_game_frame(
     }
     let observed = windows::snapshot()?;
     for (id, window) in match_accounts(&identities(&config, state), &observed) {
-        let Some(index) = layout.slot_index_for_title(&window.title) else {
+        let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
             continue;
         };
-        if !unique_observed_title(&observed, &window.title) {
+        if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID && !unique_observed_title(&observed, &window.title) {
             continue;
         }
         let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
@@ -275,6 +275,7 @@ pub async fn capture_game_window_layout(
             }) {
                 slots.push(LayoutSlot {
                     monitor_id: monitor.id.clone(),
+                    account_id: None,
                     window_title: Some(window.title.clone()),
                     fullscreen: true,
                     x: monitor.bounds.x - monitor.work_area.x,
@@ -342,6 +343,7 @@ fn captured_slot(
         .ok_or_else(|| AppError::FileError("显示器配置已变化，请重新捕获布局".into()))?;
     Ok(LayoutSlot {
         monitor_id: monitor.id.clone(),
+        account_id: None,
         window_title: None,
         fullscreen: false,
         x: sample.visible_rect.x - monitor.work_area.x,
@@ -439,6 +441,19 @@ impl LaunchLayoutPlan {
     }
 }
 
+pub(super) fn slot_for_account(layout: &WindowLayout, config: &GlobalConfig, id: &str, title: &str) -> Option<usize> {
+    if layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID {
+        if let Some(index) = layout.windows.iter().position(|slot| slot.account_id.as_deref() == Some(id)) {
+            return Some(index);
+        }
+        if layout.windows.iter().all(|slot| slot.window_title.is_none() && slot.account_id.is_none()) {
+            return config.launch_session.as_ref()?.scheme.account_ids.iter()
+                .position(|member| member == id).filter(|index| *index < layout.windows.len());
+        }
+    }
+    layout.slot_index_for_title(title)
+}
+
 fn unique_observed_title(observed: &[GameLayoutWindow], title: &str) -> bool {
     let key = window_title_key(title);
     observed.iter().filter(|window| window_title_key(&window.title) == key).count() == 1
@@ -460,6 +475,11 @@ pub(crate) fn prepare_launch_layout(
         .iter()
         .find(|layout| layout.id == id)
         .ok_or_else(|| AppError::ConfigReadError("所选窗口布局不存在，请重新选择".into()))?;
+    if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
+        && layout.windows.iter().all(|slot| slot.window_title.is_none())
+    {
+        return Err(AppError::ConfigReadError(format!("布局“{}”尚未绑定窗口。请在设置的窗口布局中填写窗口名称，或关闭窗口布局后启动", layout.name)));
+    }
     let positions = layout.resolve_targets(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
     let accounts = identities(config, state);
@@ -472,11 +492,11 @@ pub(crate) fn prepare_launch_layout(
         if !requested.iter().any(|id| id.eq_ignore_ascii_case(&account.id)) {
             continue;
         }
-        let Some(index) = layout.slot_index_for_title(&account.title) else {
+        let Some(index) = slot_for_account(layout, config, &account.id, &account.title) else {
             continue;
         };
         let key = window_title_key(&account.title);
-        if accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
+        if layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID || accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
             targets.insert(account.id.to_ascii_lowercase(), (key, positions[index]));
         }
     }
@@ -510,10 +530,10 @@ pub(crate) fn restore_layout(
     };
     let mut placements = Vec::new();
     for (id, window) in matched {
-        let Some(index) = layout.slot_index_for_title(&window.title) else {
+        let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
             continue;
         };
-        if !unique_observed_title(&observed, &window.title) {
+        if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID && !unique_observed_title(&observed, &window.title) {
             result.failures.push(format!("{}：窗口名称重复", window.title));
             continue;
         }

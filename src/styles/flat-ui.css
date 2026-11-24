@@ -593,3 +593,15 @@
 
 /* Path fields need readable width; a collapsed auxiliary panel must not reserve half the page. */
 :root[data-theme] .settings-workspace .settings-paths-grid { grid-template-columns: minmax(0, 1fr); }
+
+.account-grid-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; padding: 14px 0 12px; }
+.account-grid-heading h2 { font-size: var(--text-lg); font-weight: 650; color: var(--text-primary); }
+.account-grid-heading > span { color: var(--text-secondary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+:root[data-theme] .dashboard-launch-controls > .primary-cta:not(:disabled) {
+  background: var(--text-primary); color: var(--surface-card); border-color: var(--text-primary);
+}
+:root[data-theme] .dashboard-surface .account-card-actions > .primary-cta:not(:disabled) {
+  padding-inline: 9px; background: var(--surface-control); border: 1px solid var(--border-default); border-radius: 6px;
+}
+:root[data-theme] .account-status-control:has([data-running="true"]) .account-status-label { color: var(--success); }
+:root[data-theme] .account-status-control:has([data-error="true"]) .account-status-label { color: var(--error); }

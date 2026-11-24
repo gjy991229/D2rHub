@@ -1,4 +1,4 @@
-import { useId, type KeyboardEvent } from "react";
+import { useId, useState, type KeyboardEvent } from "react";
 import { AlertTriangle, ArrowLeft, CheckCircle2, Layers3, PackageOpen, PackagePlus, RefreshCw } from "lucide-react";
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
@@ -27,6 +27,7 @@ function navigateChoices(event: KeyboardEvent<HTMLDivElement>) {
 /** The form renders one explicit workflow draft; it does not own navigation or scanning. */
 export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowController }) {
   const blockedReasonId = useId();
+  const [inventory, setInventory] = useState(false);
   const { draft, inspection, analysis, actions, en: isEnglish, minimalMode } = workflow;
   if (!draft || !analysis) return null;
   const initializedAccounts = workflow.accounts;
@@ -91,7 +92,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
       </ModPageHeader>
 
       <div className="mod-processing-processor"><ModProcessorStatus edition={draft.edition} en={isEnglish}
-        onReady={actions.setProcessorReady} /></div>
+        onReady={actions.setProcessorReady} onInventory={setInventory} /></div>
       {workflow.error && <p className="mod-catalog-error" role="alert">{workflow.error}</p>}
       {inspection.error && <p className="mod-catalog-error" role="alert">{inspection.error}</p>}
       <section className="mod-processing-section mod-processing-target">
@@ -313,11 +314,11 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Inventory and stash" : "背包与仓库"}
-                detail={isEnglish ? "Applies the packaged JCY reference layout and sprites, including the embedded cube and stash page shortcuts." : "使用内置的 JCY 参考布局和贴图，含背包内嵌方盒和共享仓库直达。"}
+                detail={!inventory && !inheritedFeatureGroups.includes("jcy_inventory") ? (isEnglish ? "This processor has no inventory preset." : "当前加工器未内置背包预设。") : isEnglish ? "Applies the packaged JCY reference layout and sprites, including the embedded cube and stash page shortcuts." : "使用内置的 JCY 参考布局和贴图，含背包内嵌方盒和共享仓库直达。"}
                 checked={!!analysis.selection.includeJcyInventory}
                 locked={inheritedFeatureGroups.includes("jcy_inventory")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}
-                disabled={preparing}
+                disabled={preparing || (!inventory && !analysis.selection.includeJcyInventory)}
                 onChange={value => actions.changeFeatures({ includeJcyInventory: value })}
               />
               <FeatureChoice
@@ -425,7 +426,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                   variant="primary"
                   size="md"
                   loading={preparing}
-                  disabled={preparing || (!workflow.prepared && (!workflow.processorReady || !!blockedReason))}
+                  disabled={preparing || (!workflow.prepared && (!workflow.processorReady || !!blockedReason || (!!analysis.selection.includeJcyInventory && !inventory && !inheritedFeatureGroups.includes("jcy_inventory"))))}
                   aria-describedby={blockedReason && workflow.processorReady && !workflow.prepared ? blockedReasonId : undefined}
                   onClick={() => void actions.prepare()}
                 >

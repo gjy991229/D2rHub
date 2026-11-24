@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 #[derive(Default, Serialize)]
 pub(crate) struct ConfigRepairReport {
+    pub checked: usize,
     pub repaired: Vec<PathBuf>,
     pub issues: Vec<String>,
 }
@@ -44,7 +45,8 @@ fn repair_account_configs(
     leases: &AccountLeaseManager,
     report: &mut ConfigRepairReport,
 ) {
-    for id in AccountManager::list_ids(accounts_dir) {
+    for id in AccountManager::inspect_ids(accounts_dir, |error| report.issues.push(error)) {
+        report.checked += 1;
         let path = Path::new(accounts_dir).join(&id).join("account.json");
         match repair_account_config(&path, &id, leases) {
             Ok(Some(archive)) => report.repaired.push(archive),
@@ -226,6 +228,11 @@ mod tests {
         assert!(report.issues[0].contains("acount3"));
         assert!(repair().repaired.is_empty());
 
-        fs::remove_dir_all(root).unwrap();
+        assert_eq!(report.checked, 5);
+        fs::remove_dir_all(&root).unwrap();
+        let unavailable = repair();
+        assert_eq!(unavailable.checked, 0);
+        assert_eq!(unavailable.issues.len(), 1);
+        assert!(unavailable.issues[0].contains(root.to_str().unwrap()));
     }
 }

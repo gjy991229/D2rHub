@@ -71,6 +71,7 @@ it("can repair supported configs from maintenance in Pure mode without an instal
   const originalLoadAccounts = useAccounts.getState().loadAccounts;
   useAccounts.setState({ loadAccounts: reloadAccounts });
   const report = {
+    checked: 2,
     repaired: ["acount1/account.json.corrupt-test"],
     issues: ["acount2/account.json: 没有有效备份"],
   };
@@ -82,6 +83,7 @@ it("can repair supported configs from maintenance in Pure mode without an instal
         expect(screen.getByLabelText("Current section").textContent).toBe("advanced");
         fireEvent.click(await screen.findByRole("button", { name: "检查并修复配置" }));
         expect(await screen.findByText(report.repaired[0])).toBeTruthy();
+        expect(screen.getByText("已检查 2 个账号")).toBeTruthy();
         expect(screen.getByText(report.issues[0])).toBeTruthy();
         expect(invokeCommand).toHaveBeenCalledWith("check_and_repair_configs");
         expect(reloadAccounts).toHaveBeenCalledOnce();

@@ -35,3 +35,29 @@
   .launch-agent-options { grid-template-columns: minmax(0, 1fr); }
   .launch-agent-choice { justify-content: flex-start; }
 }
+
+.maintenance-tools { padding: clamp(16px, 2.4vw, 28px); }
+.maintenance-tools > h2 { margin-bottom: 12px; font-size: var(--text-base); }
+.maintenance-tools .maintenance-primary { padding: 16px; border-radius: 10px; background: var(--surface-control); }
+.maintenance-primary p { margin-top: 4px; }
+.maintenance-report {
+  display: grid; gap: 8px; margin-block: 10px 16px; padding: 12px 16px;
+  border-inline-start: 3px solid var(--success); background: var(--surface-control);
+  font-size: var(--text-xs); line-height: 1.65; overflow-wrap: anywhere;
+}
+.maintenance-report[data-attention=true] { border-color: var(--warning); }
+.maintenance-report header { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; }
+.maintenance-report header span { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.maintenance-report li { font-family: var(--font-mono, monospace); }
+
+.maintenance-settings-panel .maintenance-primary {
+  padding: 18px; gap: 12px 20px;
+  border: 1px solid var(--border-default);
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-card));
+}
+.maintenance-utilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 16px; margin-top: 16px; }
+.maintenance-settings-panel .maintenance-utilities .maintenance-action-row {
+  grid-template-columns: minmax(0, 1fr); align-content: space-between; align-items: start; gap: 12px; padding-block: 14px 2px;
+}
+.maintenance-utilities button { justify-self: start; }
+.maintenance-utilities p { margin-top: 5px; }

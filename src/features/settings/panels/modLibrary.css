@@ -51,7 +51,14 @@
 .mod-source-choice:disabled { opacity: .5; cursor: not-allowed; }
 .mod-processing-features, .mod-feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
 .mod-feature-choice { display: flex; gap: 10px; align-items: flex-start; padding: 12px; min-width: 0; border: 1px solid var(--border-default); border-radius: 7px; cursor: pointer; }
-.mod-feature-choice[data-selected="true"] { background: var(--surface-hover); border-color: var(--border-strong); }
+.mod-feature-choice[data-selected="true"] {
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-card));
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border-default));
+}
+.mod-feature-choice:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.mod-feature-choice > input { flex: none; margin-block-start: 3px; accent-color: var(--accent); }
+.mod-feature-choice[data-disabled="true"][data-selected="false"] { border-style: dashed; background: var(--surface-control); }
+
 .mod-feature-choice:hover:not([data-disabled="true"]) { background: var(--surface-hover); }
 .mod-feature-choice[data-disabled="true"] { cursor: default; }
 .mod-feature-choice > span { min-width: 0; }

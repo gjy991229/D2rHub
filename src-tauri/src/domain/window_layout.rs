@@ -82,6 +82,8 @@ impl LayoutMonitor {
 pub struct LayoutSlot {
     pub monitor_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub window_title: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fullscreen: bool,
@@ -104,7 +106,7 @@ pub struct WindowLayout {
     pub id: String,
     pub name: String,
     pub monitors: Vec<LayoutMonitor>,
-    /// Array order controls presentation and stacking. Slots match window titles.
+    /// Array order controls presentation and stacking. Independent slots match titles; scheme slots bind account IDs.
     pub windows: Vec<LayoutSlot>,
 }
 
@@ -375,6 +377,7 @@ mod tests {
             ],
             windows: vec![LayoutSlot {
                 monitor_id: "left".into(),
+            account_id: None,
             window_title: None,
                 fullscreen: false,
                 x: 640,
@@ -514,6 +517,7 @@ mod tests {
         let mut value = layout();
         value.windows.push(LayoutSlot {
             monitor_id: "left".into(),
+            account_id: None,
             window_title: None,
             fullscreen: false,
             x: 1280,

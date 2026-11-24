@@ -290,6 +290,7 @@ mod tests {
             }],
             windows: vec![LayoutSlot {
                 monitor_id: "display".into(),
+            account_id: None,
             window_title: None,
                 fullscreen: false,
                 x: 0,

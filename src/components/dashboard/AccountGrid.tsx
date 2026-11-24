@@ -1,3 +1,4 @@
+import { useI18n } from "../../i18n";
 import React from "react";
 import { Zap } from "lucide-react";
 import type { AccountMeta } from "../../store/types";
@@ -26,6 +27,8 @@ interface AccountGridProps {
 }
 
 export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: AccountGridProps) {
+  const en = useI18n().language === "en-US";
+  const running = accounts.filter(account => account.is_running).length;
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
@@ -42,6 +45,10 @@ export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: 
 
   return (
     <div className="dashboard-accounts flex-1 overflow-auto px-5 pb-5">
+      <header className="account-grid-heading">
+        <h2>{en ? "Accounts" : "账号"}</h2>
+        <span>{en ? `${running} running · ${accounts.length} total` : `${running} 个运行中 · 共 ${accounts.length} 个`}</span>
+      </header>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
         <SortableContext items={accounts.map(account => account.id)} strategy={rectSortingStrategy}>
           <div className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
