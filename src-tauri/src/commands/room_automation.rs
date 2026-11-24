@@ -12,17 +12,19 @@ fn manager(app: &tauri::AppHandle) -> Result<Arc<RoomAutomationManager>, String>
     app.try_state::<RoomAutomationCommandState>()
         .ok_or_else(|| "当前模式未加载自动跟房模块".to_string())?
         .manager()
-        .cloned()
 }
 
-fn require_module_installed(state: &tauri::State<'_, SharedState>) -> Result<(), String> {
-    let installed = state.optional_runtime_ready()
+fn module_runtime_allowed(state: &SharedState) -> bool {
+    state.optional_runtime_ready()
         && state.configuration().snapshot().is_some_and(|config| {
             config.optional_module_runtime_allowed(
                 crate::domain::config::OPTIONAL_MODULE_ROOM_AUTOMATION,
             )
-        });
-    installed
+        })
+}
+
+fn require_module_installed(state: &SharedState) -> Result<(), String> {
+    module_runtime_allowed(state)
         .then_some(())
         .ok_or_else(|| "自动跟房模块尚未安装".to_string())
 }
@@ -32,6 +34,22 @@ pub(crate) fn room_automation_get_config(
     app: tauri::AppHandle,
 ) -> Result<RoomAutomationConfigSnapshot, String> {
     Ok(manager(&app)?.get_config())
+}
+
+pub(super) fn reload_after_config_repair(
+    app: &tauri::AppHandle,
+    global: &SharedState,
+) -> Result<(), String> {
+    if !module_runtime_allowed(global) {
+        return Ok(());
+    }
+    let slot = app
+        .try_state::<RoomAutomationCommandState>()
+        .ok_or_else(|| "当前模式未加载自动跟房模块".to_string())?;
+    slot.clear_initialization_failure();
+    manager(app)?;
+    crate::capabilities::schedule_reconcile(app);
+    Ok(())
 }
 
 #[tauri::command(async, rename_all = "camelCase")]

@@ -106,7 +106,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
 }>> = {
   "zh-CN": {
     accounts: { label: "账号与实例", description: "账号身份、启动参数、窗口与游戏配置" },
-    "window-layouts": { label: "窗口布局", description: "按启动顺序安排多开窗口，拖动、缩放与多显示器适配" },
+    "window-layouts": { label: "窗口布局", description: "按窗口名称匹配布局，支持拖动、缩放与多显示器" },
     paths: { label: "运行环境", description: "游戏、战网、浏览器与存档位置" },
     agent: { label: "启动策略", description: "战网 Agent、多开后保留战网与应用行为" },
     shortcuts: { label: "窗口快捷键", description: "呼出主面板并快速聚焦多开实例" },
@@ -122,7 +122,7 @@ export const SETTINGS_COPY: Record<SettingsLanguage, Record<SettingsTabId, {
   },
   "en-US": {
     accounts: { label: "Accounts & Instances", navigationLabel: "Accounts", description: "Identity, launch options, windows, and game settings" },
-    "window-layouts": { label: "Window Layouts", navigationLabel: "Layouts", description: "Arrange game windows by launch order across your displays" },
+    "window-layouts": { label: "Window Layouts", navigationLabel: "Layouts", description: "Arrange game windows by title across your displays" },
     paths: { label: "Runtime Paths", navigationLabel: "Game paths", description: "Game, Battle.net, browser, and saved-game locations" },
     agent: { label: "Launch Strategy", navigationLabel: "Launch", description: "Battle.net Agent, client retention after launch, and application behavior" },
     shortcuts: { label: "Window Shortcuts", navigationLabel: "Shortcuts", description: "Show D2RHub or focus a game instance" },

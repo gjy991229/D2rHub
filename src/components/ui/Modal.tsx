@@ -13,6 +13,7 @@ interface ModalProps {
   footer?: ReactNode;
   width?: string;
   closeOnContextMenu?: boolean;
+  closeOnBackdropClick?: boolean;
   dismissible?: boolean;
   initialFocusRef?: RefObject<HTMLElement | null>;
   returnFocusRef?: RefObject<HTMLElement | null>;
@@ -26,6 +27,7 @@ export function Modal({
   footer,
   width = "max-w-md",
   closeOnContextMenu = false,
+  closeOnBackdropClick = true,
   dismissible = true,
   initialFocusRef,
   returnFocusRef,
@@ -137,7 +139,7 @@ export function Modal({
       className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? "modal-backdrop-exit" : "modal-backdrop"}`}
       style={{ background: "rgba(18,24,34,0.08)" }}
       onClick={(e) => {
-        if (dismissible && open && e.target === backdropRef.current) onClose();
+        if (dismissible && closeOnBackdropClick && open && e.target === backdropRef.current) onClose();
       }}
       onContextMenu={(e) => {
         if (!dismissible || !closeOnContextMenu) return;

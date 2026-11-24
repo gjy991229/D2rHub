@@ -209,9 +209,13 @@ impl RoomAutomationConfigController {
 
         self.merge_sidecar(|config| {
             let mut changed = false;
+            let independent_rooms = config.collaboration_mode
+                == crate::domain::room_automation::CollaborationMode::UberDiablo;
             if config.primary_account_id.eq_ignore_ascii_case(account_id) {
                 config.primary_account_id.clear();
-                config.enabled = false;
+                if !independent_rooms || config.follower_account_ids.is_empty() {
+                    config.enabled = false;
+                }
                 changed = true;
             }
 
@@ -222,9 +226,10 @@ impl RoomAutomationConfigController {
             if config.follower_account_ids.len() != follower_count {
                 changed = true;
                 if config.follower_account_ids.is_empty()
-                    && (config.collaboration_mode
-                        != crate::domain::room_automation::CollaborationMode::Follower
-                        || config.primary_account_id.is_empty())
+                    && (config.primary_account_id.is_empty()
+                        || (!independent_rooms
+                            && config.collaboration_mode
+                                != crate::domain::room_automation::CollaborationMode::Follower))
                 {
                     config.enabled = false;
                 }

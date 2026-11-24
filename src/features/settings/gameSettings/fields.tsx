@@ -56,16 +56,6 @@ const settingsSections: ConfigSection[] = [
     title: "视频部分",
     icon: <Monitor size={15} />,
     fields: [
-      {
-        key: "Window Mode",
-        label: "窗口模式",
-        type: "select",
-        defaultValue: 0,
-        options: [
-          { label: "窗口化", value: 0 },
-          { label: "全屏", value: 1 },
-        ],
-      },
       { key: "Screen Resolution (Windowed)", label: "分辨率", type: "resolution", defaultValue: "1280x720" },
       { key: "Sharpening", label: "锐化", type: "range", defaultValue: 25, min: 0, max: 100 },
       { key: "GammaHD", label: "亮度", type: "range", defaultValue: 2400, min: 1600, max: 3200 },

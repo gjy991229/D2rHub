@@ -59,6 +59,8 @@ pub struct SceneRecord {
     pub absolute_time: String,
     pub character_name: String,
     pub scene_name: String,
+    #[serde(default)]
+    pub scene_visit: bool,
     /// 恐怖区域记录。旧数据库与缺失字段一律按普通区域处理。
     #[serde(default)]
     pub tz: bool,
@@ -203,6 +205,13 @@ fn ensure_scene_segment_columns(conn: &Connection) -> Result<(), String> {
         conn.execute("ALTER TABLE scene_records ADD COLUMN source_id TEXT", [])
             .map_err(|e| format!("迁移统计来源字段失败: {e}"))?;
     }
+    if !scene_columns.iter().any(|column| column == "scene_visit") {
+        conn.execute(
+            "ALTER TABLE scene_records ADD COLUMN scene_visit INTEGER NOT NULL DEFAULT 0",
+            [],
+        )
+        .map_err(|e| format!("迁移场景计次字段失败: {e}"))?;
+    }
     Ok(())
 }
 
@@ -316,6 +325,7 @@ fn get_db(app_data_dir: &str) -> Result<&Mutex<Connection>, String> {
             scene_name TEXT NOT NULL,
             tz INTEGER NOT NULL DEFAULT 0,
             timer_seconds REAL NOT NULL,
+            scene_visit INTEGER NOT NULL DEFAULT 0,
             journey_id TEXT,
             segment_index INTEGER,
             drops_json TEXT NOT NULL DEFAULT '[]'
@@ -537,8 +547,8 @@ pub(crate) fn save_scene_record_inner(
 
     conn.execute(
         "INSERT INTO scene_records
-         (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+         (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id, scene_visit)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             &record.absolute_time,
             &record.character_name,
@@ -549,6 +559,7 @@ pub(crate) fn save_scene_record_inner(
             record.segment_index,
             drops_json,
             &record.source_id,
+            record.scene_visit,
         ],
     )
     .map_err(|e| format!("保存记录失败: {}", e))?;
@@ -606,6 +617,7 @@ pub(crate) fn save_completed_segment(
         absolute_time: segment.absolute_time.clone(),
         character_name: segment.character_name.clone(),
         scene_name: segment.scene_name.clone(),
+        scene_visit: segment.scene_visit,
         tz: segment.tz,
         timer_seconds: segment.timer_seconds,
         journey_id: Some(segment.journey_id.clone()),
@@ -637,7 +649,7 @@ pub(crate) fn save_completed_segment(
     let transaction = conn
         .transaction()
         .map_err(|error| format!("开始自动刷图保存事务失败: {error}"))?;
-    let existing_id: Option<i64> = if segment.scene_key == "activity" {
+    let existing_id: Option<i64> = if segment.scene_key == "activity" || segment.scene_visit {
         transaction
             .query_row(
                 "SELECT id FROM scene_records WHERE journey_id = ?1 AND source_id = ?2 LIMIT 1",
@@ -652,8 +664,8 @@ pub(crate) fn save_completed_segment(
     transaction
         .execute(
             "INSERT INTO scene_records
-             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id, id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             (absolute_time, character_name, scene_name, tz, timer_seconds, journey_id, segment_index, drops_json, source_id, id, scene_visit)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(id) DO UPDATE SET timer_seconds=excluded.timer_seconds, drops_json=excluded.drops_json",
             rusqlite::params![
                 &record.absolute_time,
@@ -664,8 +676,9 @@ pub(crate) fn save_completed_segment(
                 &record.journey_id,
                 record.segment_index,
                 drops_json,
-            &record.source_id,
+                &record.source_id,
                 existing_id,
+                record.scene_visit,
             ],
         )
         .map_err(|error| format!("保存自动刷图记录失败: {error}"))?;
@@ -678,8 +691,11 @@ pub(crate) fn save_completed_segment(
     {
         transaction
             .execute(
-                "UPDATE drop_observations SET scene_record_id = ?1 WHERE id = ?2",
-                rusqlite::params![scene_record_id, observation_id],
+                "UPDATE drop_observations SET scene_record_id = ?1
+                 WHERE id = ?2 AND (?3 OR NOT EXISTS (
+                     SELECT 1 FROM scene_records WHERE id = drop_observations.scene_record_id AND scene_visit = 1
+                 ))",
+                rusqlite::params![scene_record_id, observation_id, record.scene_visit],
             )
             .map_err(|error| format!("关联掉落观测与场次失败: {error}"))?;
     }
@@ -693,7 +709,7 @@ fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, absolute_time, character_name, scene_name, timer_seconds,
-                    tz, journey_id, segment_index, drops_json, source_id
+                    tz, journey_id, segment_index, drops_json, source_id, scene_visit
              FROM scene_records ORDER BY id ASC",
         )
         .map_err(|e| format!("查询准备失败: {e}"))?;
@@ -703,6 +719,7 @@ fn query_scene_records(conn: &Connection) -> Result<Vec<SceneRecord>, String> {
             Ok(SceneRecord {
                 id: Some(row.get(0)?),
                 source_id: row.get(9)?,
+                scene_visit: row.get(10)?,
                 absolute_time: row.get(1)?,
                 character_name: row.get(2)?,
                 scene_name: row.get(3)?,
@@ -1862,6 +1879,7 @@ mod tests {
             .unwrap();
         assert!(columns.contains(&"journey_id".to_string()));
         assert!(columns.contains(&"segment_index".to_string()));
+        assert!(columns.contains(&"scene_visit".to_string()));
         assert!(columns.contains(&"tz".to_string()));
         assert!(!conn
             .query_row("SELECT tz FROM scene_records LIMIT 1", [], |row| {

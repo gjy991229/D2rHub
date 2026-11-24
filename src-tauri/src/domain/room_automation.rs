@@ -205,6 +205,8 @@ pub struct RoomAutomationConfig {
     pub enabled: bool,
     #[serde(default)]
     pub collaboration_mode: CollaborationMode,
+    #[serde(default)]
+    pub show_uber_diablo_in_quick_settings: bool,
     /// Transient workflow mode; never a user setting. Legacy saved values are ignored.
     #[serde(skip)]
     pub join_only: bool,
@@ -252,6 +254,7 @@ impl Default for RoomAutomationConfig {
         Self {
             enabled: false,
             collaboration_mode: CollaborationMode::Default,
+            show_uber_diablo_in_quick_settings: false,
             join_only: false,
             primary_account_id: String::new(),
             follower_account_ids: Vec::new(),
@@ -498,6 +501,7 @@ impl RoomAutomationConfig {
         }
         if self.follower_account_ids.is_empty()
             && self.collaboration_mode != CollaborationMode::Follower
+            && (self.collaboration_mode != CollaborationMode::UberDiablo || primary.is_empty())
         {
             return Err(RoomAutomationConfigError::MissingFollowerAccount);
         }

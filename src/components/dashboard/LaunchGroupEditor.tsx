@@ -10,7 +10,7 @@ import { DisplaySection, GraphicsSection, AudioSection, GameplaySection, Automap
 import { Modal } from "../ui/Modal";
 import { invokeCommand } from "../../platform/tauri";
 import { getLayoutMonitors } from "../../features/windowLayouts/gateway";
-import { presetSlots } from "../../features/windowLayouts/model";
+import { presetSlots, validateLayout } from "../../features/windowLayouts/model";
 import type { RoomAutomationConfigSnapshot } from "../../features/roomAutomation/types";
 import { showToast } from "../ui/Toast";
 import "./launchSchemeEditor.css";
@@ -30,7 +30,10 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
   const en = config.app_language === "en-US";
   const env = draft.environment, room = env.room, settings = env.settings;
   const selected = accounts.filter(account => draft.members.some(member => member.account_id === account.id));
-  const name = (id: string) => accounts.find(account => account.id === id)?.display_name || id;
+  const name = (id: string) => {
+    const title = accounts.find(account => account.id === id)?.display_name;
+    return title?.trim() ? title : id;
+  };
   const edit = controller.updateEnvironment;
   const setting = <K extends keyof SchemeEnvironment["settings"]>(key: K, value: SchemeEnvironment["settings"][K]) => edit(env => { env.settings[key] = value; });
   const errors: string[] = [];
@@ -39,13 +42,15 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     if (room.follower_account_ids.some(id => !selected.some(account => account.id === id) || id === room.primary_account_id)) errors.push("跟房：请选择有效的小号");
   }
   if (settings.rune_audio_target_account && !selected.some(account => account.id === settings.rune_audio_target_account)) errors.push("识别：请选择方案内的账号");
+  const layoutError = env.layout && validateLayout(env.layout);
+  if (layoutError) errors.push(layoutError);
   const ready = draft.name.trim() && draft.members.length && draft.members.every(member => member.snapshot && member.resolution && member.fps != null) && !errors.length;
   const createLayout = async () => {
     setLayoutBusy(true);
     try {
       const monitors = await getLayoutMonitors();
       if (!monitors.length) throw new Error("未检测到显示器");
-      edit(env => { env.layout = { id: crypto.randomUUID(), name: "方案布局", monitors, windows: presetSlots(monitors, Math.max(1, draft.members.length), "1080p") }; });
+      edit(env => { env.layout = { id: crypto.randomUUID(), name: "方案布局", monitors, windows: presetSlots(monitors, draft.members.length, "1080p").map((slot, index) => ({ ...slot, window_title: name(draft.members[index].account_id) })) }; });
     } catch (error) { showToast("error", String(error)); }
     finally { setLayoutBusy(false); }
   };
@@ -90,7 +95,8 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
           {draft.members.map((member, index) => {
             const account = accounts.find(account => account.id === member.account_id), snapshot = member.snapshot;
             const update = (patch: Partial<typeof member>) => controller.updateMember(member.account_id, patch);
-            const layoutSlot = env.layout?.windows[index];
+            const layoutIndex = env.layout?.windows.findIndex(slot => slot.window_title?.trim().toLowerCase() === name(member.account_id).trim().toLowerCase()) ?? -1;
+            const layoutSlot = env.layout?.windows[layoutIndex];
             const edition = modCapsulePool?.accounts.find(account => account.account_id === member.account_id)?.edition;
             const mods = modCapsulePool?.capsules.filter(capsule => capsule.edition === edition && capsule.ready) ?? [];
             return <section className="scheme-account" key={member.account_id}>
@@ -101,7 +107,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
               </div>
               <div className="scheme-fields">
                 <label>Mod<select value={member.mod_args ?? ""} onChange={event => update({ mod_args: event.target.value })}><option value="">不使用 Mod</option>{member.mod_args && !mods.some(mod => mod.launch_arguments === member.mod_args) && <option value={member.mod_args}>{member.mod_args}</option>}{mods.map(mod => <option key={mod.id} value={mod.launch_arguments}>{mod.name}</option>)}</select></label>
-                <label>分辨率{layoutSlot ? <span className="scheme-note" data-i18n-skip>{en ? `Scheme layout · Slot ${index + 1}` : `方案布局 · 位置 ${index + 1}`}<br/>{layoutSlot.width} × {layoutSlot.height}</span> : <input aria-label={`${name(member.account_id)} 分辨率`} value={member.resolution ?? ""} placeholder="1920x1080" disabled={!snapshot} onChange={event => update({ resolution: event.target.value, graphics_configured: true })}/>}</label>
+                <label>分辨率{layoutSlot ? <span className="scheme-note" data-i18n-skip>{en ? `Scheme layout · Slot ${layoutIndex + 1}` : `方案布局 · 位置 ${layoutIndex + 1}`}<br/>{layoutSlot.width} × {layoutSlot.height}</span> : <input aria-label={`${name(member.account_id)} 分辨率`} value={member.resolution ?? ""} placeholder="1920x1080" disabled={!snapshot} onChange={event => update({ resolution: event.target.value, graphics_configured: true })}/>}</label>
                 <label>FPS（0 为不限）<input type="number" min={0} max={500} disabled={!snapshot} value={member.fps ?? 30} onChange={event => update({ fps: Number(event.target.value), graphics_configured: true })}/></label>
               </div>
               {!snapshot ? <p className="scheme-note">正在读取账号默认设置…</p> : <details><summary>位置、语言与启动参数</summary><div className="scheme-fields">
@@ -118,7 +124,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
                 void invokeCommand<Record<string, unknown>>("get_account_settings", { accountId: member.account_id, defaultsOnly: true })
                   .then(settings => { if (!Object.keys(settings).length) throw new Error("账号游戏设置为空"); update({ snapshot: { ...snapshot, game_settings: settings } }); })
                   .catch(error => showToast("error", `读取账号设置失败：${error}`)).finally(() => setLayoutBusy(false));
-              }}/>覆盖账号游戏设置</label>{Object.keys(snapshot.game_settings).length > 0 && <details><summary>独立游戏设置</summary>{[...(!env.layout ? [DisplaySection] : []), GraphicsSection, AudioSection, GameplaySection, AutomapSection].map((Section, sectionIndex) => <Section key={sectionIndex} settings={{ ...snapshot.game_settings, "Screen Resolution (Windowed)": member.resolution, "Framerate Cap": member.fps }} update={(key, value) => {
+              }}/>覆盖账号游戏设置</label>{Object.keys(snapshot.game_settings).length > 0 && <details><summary>独立游戏设置</summary>{[...(!layoutSlot ? [DisplaySection] : []), GraphicsSection, AudioSection, GameplaySection, AutomapSection].map((Section, sectionIndex) => <Section key={sectionIndex} settings={{ ...snapshot.game_settings, "Screen Resolution (Windowed)": member.resolution, "Framerate Cap": member.fps }} update={(key, value) => {
                 if (key === "Screen Resolution (Windowed)") update({ resolution: String(value) });
                 else if (key === "Framerate Cap" || key === "Framerate Target") update({ fps: Number(value) });
                 else update({ snapshot: { ...snapshot, game_settings: { ...snapshot.game_settings, [key]: value } } });
@@ -140,8 +146,8 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
         </>}
         {tab === "layout" && <>
           <div className="scheme-fields"><label>布局模板<select value="" onChange={event => { const layout = config.window_layouts?.find(layout => layout.id === event.target.value); if (layout) edit(env => { env.layout = structuredClone(layout); }); }}><option value="">选择模板，复制到方案…</option>{config.window_layouts?.map(layout => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label><button className="control-btn" disabled={!draft.members.length} onClick={() => void createLayout()}>生成 {draft.members.length || 1} 窗口布局</button><button className="control-btn" onClick={() => edit(env => { env.layout = null; })}>不使用统一布局</button></div>
-          {env.layout ? <><SchemeLayoutPreview layout={env.layout} names={draft.members.map(member => name(member.account_id))}/><p className="scheme-note">布局只在启动或点击应用时使用。位置不足时，多余账号沿用自身位置；启动后可自由调整。</p><label>布局名称<input value={env.layout.name} onChange={event => edit(env => { env.layout!.name = event.target.value; })}/></label>
-          {draft.members.map((member, index) => { const slot = env.layout!.windows[index]; return slot && <section className="scheme-account" key={member.account_id}><strong>位置 {index + 1} · {name(member.account_id)}</strong><div className="scheme-fields"><label>显示器<select value={slot.monitor_id} onChange={event => edit(env => { env.layout!.windows[index].monitor_id = event.target.value; })}>{env.layout!.monitors.map(monitor => <option key={monitor.id} value={monitor.id}>{monitor.name}</option>)}</select></label>{([["x", "X"], ["y", "Y"], ["width", "分辨率宽"], ["height", "分辨率高"]] as const).map(([key, label]) => <label key={key}>{label}<input type="number" value={slot[key]} onChange={event => edit(env => { env.layout!.windows[index][key] = Number(event.target.value); })}/></label>)}</div></section>; })}</> : <p className="scheme-note">使用方案内各账号自己的位置与分辨率。</p>}
+          {env.layout ? <><SchemeLayoutPreview layout={env.layout} names={env.layout.windows.map(slot => slot.window_title || "未绑定")}/><p className="scheme-note">布局按窗口名称匹配。未匹配的账号使用自身位置。</p><label>布局名称<input value={env.layout.name} onChange={event => edit(env => { env.layout!.name = event.target.value; })}/></label>
+          {env.layout.windows.map((slot, index) => <section className="scheme-account" key={index}><strong>位置 {index + 1}</strong><div className="scheme-fields"><label>窗口名称<input list="scheme-window-titles" value={slot.window_title ?? ""} onChange={event => edit(env => { env.layout!.windows[index].window_title = event.target.value.trimStart() || undefined; })}/></label><label>显示器<select value={slot.monitor_id} onChange={event => edit(env => { env.layout!.windows[index].monitor_id = event.target.value; })}>{env.layout!.monitors.map(monitor => <option key={monitor.id} value={monitor.id}>{monitor.name}</option>)}</select></label><label>窗口模式<select value={slot.fullscreen ? "fullscreen" : "windowed"} onChange={event => edit(env => { env.layout!.windows[index].fullscreen = event.target.value === "fullscreen" || undefined; })}><option value="windowed">窗口化</option><option value="fullscreen">无边框全屏</option></select></label>{!slot.fullscreen && ([["x", "X"], ["y", "Y"], ["width", "分辨率宽"], ["height", "分辨率高"]] as const).map(([key, label]) => <label key={key}>{label}<input type="number" value={slot[key]} onChange={event => edit(env => { env.layout!.windows[index][key] = Number(event.target.value); })}/></label>)}</div></section>)}<datalist id="scheme-window-titles">{draft.members.map(member => <option key={member.account_id} value={name(member.account_id)} />)}</datalist></> : <p className="scheme-note">使用方案内各账号自己的位置与分辨率。</p>}
         </>}
       </fieldset>
       {controller.loadError && <p role="alert" className="scheme-error">{controller.loadError}。可移除后重新添加该账号以重试。</p>}

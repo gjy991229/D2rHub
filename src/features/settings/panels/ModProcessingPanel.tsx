@@ -269,7 +269,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
             <div className="mod-processing-features">
               {!minimalMode && <div className="mod-feature-with-options"><FeatureChoice
                 title={isEnglish ? "Audio recognition" : "声纹识别"}
-                detail={isEnglish ? "Drops and accumulated combat time" : "掉落与累计战斗时间，包含主城和主界面声纹"}
+                detail={isEnglish ? "Drops, accumulated combat time and timed scene visits" : "掉落、累计战斗时间与指定场景计次"}
                 checked={audioSelected}
                 locked={audioRequired || audioInherited}
                 lockLabel={audioInherited ? (operationKind === "augment" ? (isEnglish ? "Already installed" : "目标 Mod 已有") : (isEnglish ? "Included in source" : "源 Mod 已有")) : (isEnglish ? "Required for this setup" : "本次目标 · 必选")}
@@ -310,6 +310,15 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 lockLabel={isEnglish ? "Installed" : "已安装"}
                 disabled={preparing}
                 onChange={value => actions.changeFeatures({ includePartyLoot: value })}
+              />
+              <FeatureChoice
+                title={isEnglish ? "Inventory and stash" : "背包与仓库"}
+                detail={isEnglish ? "Applies the packaged JCY reference layout and sprites, including the embedded cube and stash page shortcuts." : "使用内置的 JCY 参考布局和贴图，含背包内嵌方盒和共享仓库直达。"}
+                checked={!!analysis.selection.includeJcyInventory}
+                locked={inheritedFeatureGroups.includes("jcy_inventory")}
+                lockLabel={isEnglish ? "Installed" : "已安装"}
+                disabled={preparing}
+                onChange={value => actions.changeFeatures({ includeJcyInventory: value })}
               />
               <FeatureChoice
                 title={isEnglish ? "Scene restart" : "场景重开"}

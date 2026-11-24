@@ -170,15 +170,19 @@ impl Vision {
         Ok(rx)
     }
     pub fn stop_worker(&self) -> Result<(), String> {
-        if let Some(worker) = self.worker.lock().take() {
+        let worker = self.worker.lock().take();
+        let stopped = worker.map(|worker| {
             worker.stop.store(true, Ordering::Release);
-            worker.handle.join().map_err(|_| "视觉线程异常退出")?;
-        }
+            worker.handle.join()
+        });
         capture::release_sessions();
         let mut s = self.status.lock();
         s.running = false;
         s.ready = false;
-        Ok(())
+        stopped
+            .transpose()
+            .map(|_| ())
+            .map_err(|_| "视觉线程异常退出".into())
     }
 }
 pub fn project(app: &tauri::AppHandle) {
@@ -218,22 +222,50 @@ impl CapabilityDriver for Vision {
         let root = resources::resource_root(&app.state::<SharedState>().app_data_dir);
         #[cfg(test)]
         let (tx, _rx) = mpsc::sync_channel(8);
-        let handle=std::thread::Builder::new().name("visual-recognition".into()).spawn(move||{
-            status.lock().running=true;
-            let preparation=Instant::now();
-            diagnostics::event(configuration().diagnostic_enabled,"worker_start",serde_json::json!({"chat":config.chat_follow,"area":config.area_enabled,"poll_ms":config.poll_ms,"chat_roi":config.chat_roi,"area_roi":config.area_roi,"needs_ocr":config.needs_ocr()}));
-            let result=if config.needs_ocr() { resources::installed(&root).and_then(|files|ocr::Ocr::new(&files)).map(Some) } else { Ok(None) };
-            match result {
-                Ok(mut ocr)=>{
-                    diagnostics::event(configuration().diagnostic_enabled,"worker_ready",serde_json::json!({"preparation_ms":preparation.elapsed().as_secs_f64()*1000.0,"ocr_loaded":ocr.is_some()}));
-                    status.lock().ready=ocr.is_some();
-                    run(&app,&config,&stopped,&mut ocr,&status);
-                },
-                Err(error)=>{diagnostics::event(configuration().diagnostic_enabled,"resource_or_model_error",serde_json::json!({"error":diagnostics::short(&error),"preparation_ms":preparation.elapsed().as_secs_f64()*1000.0}));status.lock().message=error;},
-            }
-            diagnostics::event(configuration().diagnostic_enabled,"worker_stop",serde_json::json!({}));
-            let mut s=status.lock();s.ready=false;s.running=false;
-        }).map_err(|e|CapabilityFailure::new("vision-start",e.to_string()))?;
+        let handle = std::thread::Builder::new()
+            .name("visual-recognition".into())
+            .spawn(move || {
+                run_worker(&status, || {
+                    let preparation = Instant::now();
+                    diagnostics::event(
+                        configuration().diagnostic_enabled,
+                        "worker_start",
+                        serde_json::json!({
+                            "chat": config.chat_follow, "area": config.area_enabled,
+                            "poll_ms": config.poll_ms, "chat_roi": config.chat_roi,
+                            "area_roi": config.area_roi, "needs_ocr": config.needs_ocr(),
+                        }),
+                    );
+                    let mut ocr = if config.needs_ocr() {
+                        Some(resources::installed(&root).and_then(|files| ocr::Ocr::new(&files))
+                            .inspect_err(|error| {
+                                diagnostics::event(
+                                    configuration().diagnostic_enabled,
+                                    "resource_or_model_error",
+                                    serde_json::json!({
+                                        "error": diagnostics::short(error),
+                                        "preparation_ms": preparation.elapsed().as_secs_f64() * 1000.0,
+                                    }),
+                                );
+                            })?)
+                    } else {
+                        None
+                    };
+                    diagnostics::event(
+                        configuration().diagnostic_enabled,
+                        "worker_ready",
+                        serde_json::json!({
+                            "preparation_ms": preparation.elapsed().as_secs_f64() * 1000.0,
+                            "ocr_loaded": ocr.is_some(),
+                        }),
+                    );
+                    status.lock().ready = ocr.is_some();
+                    run(&app, &config, &stopped, &mut ocr, &status);
+                    Ok(())
+                });
+                diagnostics::event(configuration().diagnostic_enabled, "worker_stop", serde_json::json!({}));
+            })
+            .map_err(|e| CapabilityFailure::new("vision-start", e.to_string()))?;
         *slot = Some(Worker {
             chat_follow,
             stop,
@@ -266,6 +298,44 @@ impl CapabilityDriver for Vision {
         CapabilityHealth::Healthy
     }
 }
+
+fn run_worker(status: &Mutex<Status>, work: impl FnOnce() -> Result<(), String>) {
+    {
+        let mut status = status.lock();
+        status.running = true;
+        status.ready = false;
+        status.message.clear();
+    }
+    // The dynamic ONNX loader can panic when the DLL or a system dependency fails to load.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(work));
+    let mut status = status.lock();
+    let error = match result {
+        Ok(result) => result.err(),
+        Err(panic) => {
+            let stage = if status.ready {
+                "视觉监听"
+            } else {
+                "视觉资源初始化"
+            };
+            let detail = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("未提供错误详情");
+            Some(format!("{stage}异常退出：{detail}"))
+        }
+    };
+    status.running = false;
+    status.ready = false;
+    if let Some(error) = &error {
+        status.message.clone_from(error);
+    }
+    drop(status);
+    if let Some(error) = error {
+        crate::logger::log_msg("ERROR", "Vision", &error);
+    }
+}
+
 fn run(
     app: &tauri::AppHandle,
     c: &config::VisionConfig,
@@ -512,6 +582,33 @@ impl ChatState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn worker_initialization_panic_reports_the_cause_and_allows_retry() {
+        let status = Arc::new(Mutex::new(Status::default()));
+        let worker_status = status.clone();
+        std::thread::spawn(move || {
+            run_worker(&worker_status, || panic!("ONNX Runtime DLL could not load"));
+        })
+        .join()
+        .expect("a failed initialization must not prevent joining the worker");
+        {
+            let failed = status.lock();
+            assert!(!failed.running);
+            assert!(!failed.ready);
+            assert_eq!(
+                failed.message,
+                "视觉资源初始化异常退出：ONNX Runtime DLL could not load"
+            );
+        }
+        run_worker(&status, || {
+            assert!(status.lock().running);
+            assert!(status.lock().message.is_empty());
+            Ok(())
+        });
+        assert!(!status.lock().running);
+    }
+
     #[test]
     fn new_chat_epoch_cancels_pending_and_reestablishes_baseline() {
         let root = std::env::temp_dir().join(format!("chat-reset-{}", uuid::Uuid::new_v4()));

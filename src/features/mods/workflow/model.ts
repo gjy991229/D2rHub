@@ -1,7 +1,7 @@
 import type { AudioModSetupState } from "../../../store/types";
 import { validateAudioModName } from "../../../utils/audioModName";
 import {
-  AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ESC_NEXT_GAME_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID,
+  AUDIO_TELEMETRY_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, ESC_NEXT_GAME_FEATURE_ID, AUTO_EXIT_ON_DEATH_FEATURE_ID, JCY_INVENTORY_FEATURE_ID,
   audioModFeatureDefaultsForPurpose, hasSelectedAudioModFeature, selectedAudioModFeatureAddsCapability,
 } from "../featureContract";
 import type { ModProcessingDraft, ModWorkflowOrigin } from "./types";
@@ -26,6 +26,7 @@ export function describeModDraft(draft: ModProcessingDraft, state: AudioModSetup
     roomToolsDefaultHell: draft.features.roomToolsDefaultHell ?? selected?.room_tools_default_hell ?? true,
     includeAudioTelemetry,
     includeRoomTools: draft.features.includeRoomTools || draft.origin === "room-automation" || inherited.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID),
+    includeJcyInventory: draft.features.includeJcyInventory || inherited.includes(JCY_INVENTORY_FEATURE_ID),
     includeSceneShortcuts: draft.features.includeSceneShortcuts || inherited.includes("scene_shortcuts"),
     includePartyLoot: draft.features.includePartyLoot || inherited.includes("party_loot"),
     includeHostileAutoRestart: draft.features.includeHostileAutoRestart || inherited.includes("hostile_auto_restart"),

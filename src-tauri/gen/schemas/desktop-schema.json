@@ -459,6 +459,12 @@
           "markdownDescription": "Enables the capture_game_window_layout command without any pre-configured scope."
         },
         {
+          "description": "Enables the check_and_repair_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-check-and-repair-configs",
+          "markdownDescription": "Enables the check_and_repair_configs command without any pre-configured scope."
+        },
+        {
           "description": "Enables the check_browser_running command without any pre-configured scope.",
           "type": "string",
           "const": "allow-check-browser-running",
@@ -1287,6 +1293,12 @@
           "markdownDescription": "Enables the switch_feature_profile command without any pre-configured scope."
         },
         {
+          "description": "Enables the take_background_errors command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-take-background-errors",
+          "markdownDescription": "Enables the take_background_errors command without any pre-configured scope."
+        },
+        {
           "description": "Enables the unpack_mod_capsule command without any pre-configured scope.",
           "type": "string",
           "const": "allow-unpack-mod-capsule",
@@ -1459,6 +1471,12 @@
           "type": "string",
           "const": "deny-capture-game-window-layout",
           "markdownDescription": "Denies the capture_game_window_layout command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the check_and_repair_configs command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-check-and-repair-configs",
+          "markdownDescription": "Denies the check_and_repair_configs command without any pre-configured scope."
         },
         {
           "description": "Denies the check_browser_running command without any pre-configured scope.",
@@ -2287,6 +2305,12 @@
           "type": "string",
           "const": "deny-switch-feature-profile",
           "markdownDescription": "Denies the switch_feature_profile command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the take_background_errors command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-take-background-errors",
+          "markdownDescription": "Denies the take_background_errors command without any pre-configured scope."
         },
         {
           "description": "Denies the unpack_mod_capsule command without any pre-configured scope.",

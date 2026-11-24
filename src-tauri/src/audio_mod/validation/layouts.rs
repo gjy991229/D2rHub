@@ -6,6 +6,101 @@ use std::path::Path;
 
 pub(in crate::audio_mod) const ROOM_TOOL_LAYOUT_DIRECTORY: &str = "data/global/ui/layouts";
 
+pub(in crate::audio_mod) fn validate_jcy_inventory(
+    mod_directory: &Path,
+    mod_name: &str,
+) -> Result<(), String> {
+    let root = mod_directory.join(format!("{mod_name}.mpq"));
+    let layouts = root.join("data/global/ui/layouts");
+    let bag = read_room_tool_layout(&layouts, "playerinventoryexpansionlayouthd.json")?;
+    let bank = read_room_tool_layout(&layouts, "bankexpansionlayouthd.json")?;
+    let cube = read_room_tool_layout(&layouts, "JcyMiniCubehd.json")?;
+    let close = read_room_tool_layout(&layouts, "JcyMiniCubeClosehd.json")?;
+    let invalid = || "JCY 背包、仓库或内嵌方盒布局不完整，请重新加工".to_string();
+    if bag["name"] != "PlayerInventoryExpansionLayout"
+        || bank["name"] != "BankExpansionLayout"
+        || cube["type"] != "HoradricCubePanel"
+        || close["name"] != "JcyMiniCubeClose"
+        || find_layout_node(&bag, "OpenJcyMiniCube")
+            .is_none_or(|node| node["fields"]["message"] != "PanelManager:OpenPanel:JcyMiniCube")
+        || find_layout_node(&cube, "grid")
+            .is_none_or(|node| node["fields"]["cellCount"] != serde_json::json!({"x":3,"y":4}))
+        || find_layout_node(&cube, "convert").is_none_or(|node| {
+            node["fields"]["onClickMessage"] != "HoradricCubePanelMessage:Convert"
+        })
+    {
+        return Err(invalid());
+    }
+    let navigation = find_layout_node(&bank, "StashNavigation").ok_or_else(invalid)?;
+    let count = navigation["children"]
+        .as_array()
+        .ok_or_else(invalid)?
+        .iter()
+        .filter(|node| {
+            node["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("page_button_"))
+        })
+        .count();
+    if !(9..=11).contains(&count) {
+        return Err(invalid());
+    }
+    for page in 1..=count {
+        let name = format!("JcyStashPage{page}");
+        if find_layout_node(navigation, &format!("page_button_{page}")).is_none_or(|node| {
+            node["fields"]["onClickMessage"] != format!("PanelManager:OpenPanel:{name}")
+        }) || read_room_tool_layout(&layouts, &format!("{name}hd.json"))?["name"] != name
+        {
+            return Err(invalid());
+        }
+    }
+    let sprites = root.join("data/hd/global/ui");
+    const JCY_SPRITE_PREFIX: &str = "d2rhub/jcy_inventory/";
+    fn check_sprites(node: &serde_json::Value, sprites: &Path) -> Result<(), String> {
+        if let Some(text) = node.as_str() {
+            if let Some(name) = text.strip_prefix(JCY_SPRITE_PREFIX) {
+                if name.split('/').any(|part| {
+                    part.is_empty()
+                        || !part
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))
+                }) {
+                    return Err(format!("JCY 背包与仓库的贴图路径无效：{text}"));
+                }
+                for suffix in [".sprite", ".lowend.sprite"] {
+                    if !sprites.join(format!("{text}{suffix}")).is_file() {
+                        return Err(format!("JCY 背包与仓库缺少贴图：{text}{suffix}"));
+                    }
+                }
+            }
+        } else if let Some(values) = node.as_array() {
+            for value in values {
+                check_sprites(value, sprites)?;
+            }
+        } else if let Some(fields) = node.as_object() {
+            for value in fields.values() {
+                check_sprites(value, sprites)?;
+            }
+        }
+        Ok(())
+    }
+    for (layout, widget) in [
+        (&bag, "background"),
+        (&bank, "BankTabs"),
+        (&cube, "background"),
+    ] {
+        if find_layout_node(layout, widget).is_none_or(|node| {
+            !node["fields"]["filename"]
+                .as_str()
+                .is_some_and(|name| name.starts_with(JCY_SPRITE_PREFIX))
+        }) {
+            return Err(invalid());
+        }
+        check_sprites(layout, &sprites)?;
+    }
+    Ok(())
+}
+
 pub(in crate::audio_mod) fn validate_party_loot(
     mod_directory: &Path,
     mod_name: &str,

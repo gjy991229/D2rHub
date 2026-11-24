@@ -96,6 +96,10 @@ interface StatsState {
   isTiming: boolean;
   timerStart: number | null;
   elapsedMs: number;
+  sceneVisitStart: number | null;
+  sceneVisitElapsedMs: number;
+  sceneVisitName: string;
+  sceneVisitNameEn: string;
 
   // ── 数据库历史平均耗时和总场次（当前场景）──
   dbAvgTime: number | null;
@@ -140,6 +144,8 @@ interface StatsState {
   removeCurrentDrop: (index: number) => void;
 }
 
+let dbStatsRequest = 0;
+
 export const useStats = create<StatsState>((set, get) => ({
   currentScene: "等待识别...",
   currentTz: false,
@@ -150,6 +156,10 @@ export const useStats = create<StatsState>((set, get) => ({
   isTiming: false,
   timerStart: null,
   elapsedMs: 0,
+  sceneVisitStart: null,
+  sceneVisitElapsedMs: 0,
+  sceneVisitName: "",
+  sceneVisitNameEn: "",
   dbAvgTime: null,
   dbTotalRuns: null,
   sessionRuns: {},
@@ -245,20 +255,23 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   tick: () => {
-    const { isTiming, timerStart } = get();
-    if (!isTiming || !timerStart) return;
-    set({ elapsedMs: Date.now() - timerStart });
+    const { isTiming, timerStart, sceneVisitStart } = get();
+    const now = Date.now();
+    if ((!isTiming || timerStart == null) && sceneVisitStart == null) return;
+    set({
+      ...(isTiming && timerStart != null && { elapsedMs: Math.max(0, now - timerStart) }),
+      ...(sceneVisitStart != null && { sceneVisitElapsedMs: Math.max(0, now - sceneVisitStart) }),
+    });
   },
 
   fetchDbStats: async (sceneName: string, tz = false) => {
     if (!sceneName || sceneName === "等待识别...") return;
+    const request = ++dbStatsRequest;
+    const stillShowing = () => request === dbStatsRequest && get().currentTz === tz
+      && [get().sceneVisitName, get().currentRunName, get().currentScene].includes(sceneName);
     try {
       const stats: { avg_time: number, total_runs: number } | null = await invokeCommand("get_scene_stats", { sceneName, tz });
-      // 竞态校验：如果当前场景已变（如已回城），丢弃迟到的历史数据
-      if (
-        (get().currentRunName !== sceneName && get().currentScene !== sceneName)
-        || get().currentTz !== tz
-      ) return;
+      if (!stillShowing()) return;
       if (stats) {
         set({
           dbAvgTime: Math.round(stats.avg_time * 10) / 10,
@@ -268,10 +281,7 @@ export const useStats = create<StatsState>((set, get) => ({
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     } catch {
-      if (
-        (get().currentRunName === sceneName || get().currentScene === sceneName)
-        && get().currentTz === tz
-      ) {
+      if (stillShowing()) {
         set({ dbAvgTime: null, dbTotalRuns: null });
       }
     }
@@ -367,7 +377,7 @@ export const useStats = create<StatsState>((set, get) => ({
   },
 
   applyTrackingSnapshot: (snapshot) => {
-    const previousRunName = get().currentRunName;
+    const { currentRunName: previousRunName, sceneVisitName: previousVisitName, sceneVisitStart: previousVisitStart } = get();
     const previousTz = get().currentTz;
     const toDropEntries = (drops: TrackingSnapshot["current_run_drops"]): DropEntry[] => drops.map((drop) => ({
       observationId: drop.observation_id > 0 ? drop.observation_id : null,
@@ -386,7 +396,15 @@ export const useStats = create<StatsState>((set, get) => ({
     const currentRunDrops = visibleDrops(snapshot.current_run_drops);
     const previousRunDrops = visibleDrops(snapshot.previous_run_drops ?? []);
     const sessionDrops = visibleDrops(snapshot.session_drops ?? snapshot.current_run_drops);
+    const sceneVisitStart = snapshot.scene_visit_started_at_ms ?? null;
+    const finished = snapshot.finished_visit_display;
+    const sceneVisitName = sceneVisitStart != null ? snapshot.current_scene : finished?.name ?? "";
+    const visitChanged = sceneVisitStart !== previousVisitStart || sceneVisitName !== previousVisitName;
     set({
+      sceneVisitStart,
+      sceneVisitName,
+      sceneVisitElapsedMs: sceneVisitStart == null ? finished?.elapsed_ms ?? 0 : Math.max(0, Date.now() - sceneVisitStart),
+      sceneVisitNameEn: sceneVisitStart != null ? snapshot.current_scene_en : finished?.name_en ?? "",
       currentScene: snapshot.current_scene || "等待识别...",
       currentTz: Boolean(snapshot.tz),
       lastCombatScene: snapshot.location_kind === "wilderness" ? snapshot.current_scene : "",
@@ -402,9 +420,11 @@ export const useStats = create<StatsState>((set, get) => ({
       previousRunDrops,
       currentDrops: sessionDrops,
       sessionRuns: snapshot.session_runs,
-      ...(snapshot.is_timing ? {} : { dbAvgTime: null, dbTotalRuns: null }),
+      ...(sceneVisitName !== previousVisitName || (!snapshot.is_timing && !sceneVisitName) ? { dbAvgTime: null, dbTotalRuns: null } : {}),
     });
-    if (
+    if (sceneVisitName && visitChanged) {
+      void get().fetchDbStats(sceneVisitName, false);
+    } else if (
       snapshot.accumulated_ms == null
       && snapshot.current_run_name
       && (snapshot.current_run_name !== previousRunName || Boolean(snapshot.tz) !== previousTz)

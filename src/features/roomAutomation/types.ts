@@ -18,6 +18,7 @@ export type FollowerJoinMode = "simultaneous" | "interval";
 
 export interface RoomAutomationConfig {
   collaboration_mode?: CollaborationMode;
+  show_uber_diablo_in_quick_settings?: boolean;
   enabled: boolean;
   primary_account_id: string;
   follower_account_ids: string[];

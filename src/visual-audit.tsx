@@ -545,6 +545,8 @@ function installIpcMock() {
         return;
       case "get_global_config":
         return { ...persistedGlobalConfig, first_run_complete: surface !== "setup" };
+      case "take_background_errors":
+        return [];
       case "get_capability_statuses":
         return {
           revision: 3,

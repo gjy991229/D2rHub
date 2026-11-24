@@ -551,6 +551,7 @@ pub async fn prepare_audio_mod(
     include_party_loot: Option<bool>,
     include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    include_jcy_inventory: Option<bool>,
 ) -> Result<AudioModPrepareResult, String> {
     prepare_audio_mod_task(
         app,
@@ -570,6 +571,7 @@ pub async fn prepare_audio_mod(
             include_party_loot,
             include_hostile_auto_restart,
             include_auto_exit_on_death,
+            include_jcy_inventory,
         },
         None,
     )
@@ -597,6 +599,7 @@ async fn prepare_audio_mod_task(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
     } = payload
     else {
         return Err("任务重试数据与 Mod 准备操作不匹配".to_string());
@@ -616,6 +619,7 @@ async fn prepare_audio_mod_task(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
     let mut request = TaskRequest::new("audio-mod-prepare")
@@ -648,6 +652,7 @@ async fn prepare_audio_mod_task(
             include_party_loot,
             include_hostile_auto_restart,
             include_auto_exit_on_death,
+            include_jcy_inventory,
         },
         &task,
     )
@@ -681,6 +686,7 @@ struct PrepareAudioModRequest {
     include_party_loot: Option<bool>,
     include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    include_jcy_inventory: Option<bool>,
 }
 
 async fn prepare_audio_mod_impl(
@@ -704,6 +710,7 @@ async fn prepare_audio_mod_impl(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
     } = request;
     let shared_state = state.inner().clone();
     let _lease = shared_state.mod_mutations().try_acquire()?;
@@ -758,6 +765,7 @@ async fn prepare_audio_mod_impl(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
     )?;
 
     emit_prepare_progress(
@@ -875,6 +883,7 @@ pub async fn upgrade_audio_mod(
     include_party_loot: Option<bool>,
     include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    include_jcy_inventory: Option<bool>,
     force_rebuild: Option<bool>,
 ) -> Result<AudioModSetupState, String> {
     let force_rebuild = force_rebuild.unwrap_or(false);
@@ -895,6 +904,7 @@ pub async fn upgrade_audio_mod(
             include_party_loot,
             include_hostile_auto_restart,
             include_auto_exit_on_death,
+            include_jcy_inventory,
             force_rebuild,
         },
         None,
@@ -922,6 +932,7 @@ async fn upgrade_audio_mod_task(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
         force_rebuild,
     } = payload
     else {
@@ -941,6 +952,7 @@ async fn upgrade_audio_mod_task(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
         force_rebuild,
     })
     .map_err(|error| format!("创建任务重试数据失败: {error}"))?;
@@ -973,6 +985,7 @@ async fn upgrade_audio_mod_task(
             include_party_loot,
             include_hostile_auto_restart,
             include_auto_exit_on_death,
+            include_jcy_inventory,
             force_rebuild,
         },
         &task,
@@ -1012,6 +1025,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         include_party_loot: Option<bool>,
         include_hostile_auto_restart: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
+        include_jcy_inventory: Option<bool>,
     },
     Upgrade {
         account_id: String,
@@ -1028,6 +1042,7 @@ pub(crate) enum AudioModTaskRetryPayload {
         include_party_loot: Option<bool>,
         include_hostile_auto_restart: Option<bool>,
         include_auto_exit_on_death: Option<bool>,
+        include_jcy_inventory: Option<bool>,
         #[serde(default)]
         force_rebuild: bool,
     },
@@ -1067,6 +1082,7 @@ struct UpgradeAudioModRequest {
     include_party_loot: Option<bool>,
     include_hostile_auto_restart: Option<bool>,
     include_auto_exit_on_death: Option<bool>,
+    include_jcy_inventory: Option<bool>,
     force_rebuild: bool,
 }
 
@@ -1090,6 +1106,7 @@ async fn upgrade_audio_mod_impl(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
         force_rebuild,
     } = request;
     let shared_state = state.inner().clone();
@@ -1120,6 +1137,7 @@ async fn upgrade_audio_mod_impl(
         include_party_loot,
         include_hostile_auto_restart,
         include_auto_exit_on_death,
+        include_jcy_inventory,
     )?;
     let current_validated = validate_audio_mod(&mods_directory, mod_name).ok();
     let rebuilding = include_scene_audio.is_some()
@@ -1354,7 +1372,7 @@ pub(crate) fn validate_runtime_audio_mod_directory(
     if validated.feature_groups.iter().any(|group| {
         group.id == "audio_telemetry"
             && group.recipe_version
-                < crate::domain::mod_processing::AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+                < crate::domain::mod_processing::COMBAT_TIME_AUDIO_RECIPE_VERSION
     }) {
         return Err("此 Mod 缺少累计计时所需的主城和主界面水印。关闭游戏后，通过 Hub 启动以自动升级；也可在 Mod 管理中同名重做。".into());
     }
@@ -1397,6 +1415,7 @@ pub(crate) async fn upgrade_activity_if_needed(
         None,
         None,
         None,
+        None, // include_jcy_inventory
         Some(true),
     )
     .await?;

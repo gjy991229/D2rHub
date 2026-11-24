@@ -6,6 +6,7 @@
 //! signal so capability shutdown never leaves detached input work behind.
 
 use crate::capabilities::room_automation::{FlowStrategy, RoomAutomationConfig};
+use crate::domain::room_automation::CollaborationMode;
 use crate::infrastructure::physical_input::{modifiers_released, DesktopInput};
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -189,7 +190,9 @@ pub(crate) fn prepare_background_room(
             config, account_id, pid, hwnd, created, cancel,
         )?);
     }
-    if !config.join_only && foreground_pid() != Some(primary_pid) {
+    let use_window_messages =
+        config.join_only || config.collaboration_mode == CollaborationMode::UberDiablo;
+    if !use_window_messages && foreground_pid() != Some(primary_pid) {
         if !foreground_is_game() {
             return Err("前台已离开 D2R，已停止创建房间".into());
         }
@@ -205,15 +208,13 @@ pub(crate) fn prepare_background_room(
             wait(cancel, Duration::from_millis(25))?;
         }
     }
-    let mut input = if config.join_only {
+    let mut input = if use_window_messages {
         DesktopInput::acquire_for_messages(targets[0].hwnd, primary_pid)?
     } else {
         DesktopInput::acquire(targets[0].hwnd, primary_pid)?
     };
     let flow = config.flow();
-    if !config.join_only
-        && config.collaboration_mode == crate::domain::room_automation::CollaborationMode::Host
-    {
+    if !config.join_only && config.collaboration_mode == CollaborationMode::Host {
         let signal = crate::vision::processing::chat_signal(
             room_name
                 .strip_prefix(&config.name_prefix)
@@ -983,6 +984,12 @@ fn key_lparam(key: u16, pressed: bool) -> isize {
         value |= (1 << 30) | (1 << 31);
     }
     value as isize
+}
+
+pub(crate) fn validate_room_window(pid: u32) -> Result<(), String> {
+    let hwnd = crate::infrastructure::system::find_game_hwnd(pid)
+        .ok_or_else(|| format!("无法找到 D2R 窗口 (PID: {pid})"))?;
+    validate_target(hwnd)
 }
 
 fn validate_target(hwnd: isize) -> Result<(), String> {

@@ -1,10 +1,13 @@
-#[cfg(test)]
-use super::catalog::ResolvedLocation;
+use super::catalog::{is_timed_scene, ResolvedLocation};
 #[cfg(test)]
 use super::catalog::{scene_name_identity, NamedLocation};
 use super::catalog::{LocationCatalog, LocationKind, TelemetryMarker, MAX_ITEM_ID, RUNE_COUNT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
+const SCENE_HEARTBEAT: Duration = Duration::from_millis(500);
+const SCENE_LEASE: Duration = Duration::from_millis(1500);
 
 #[cfg(test)]
 pub const GENERIC_TERROR_ZONE_NAME: &str = "恐怖区域";
@@ -151,6 +154,7 @@ pub struct CompletedSegment {
     pub absolute_time: String,
     pub character_name: String,
     pub scene_key: String,
+    pub scene_visit: bool,
     pub scene_name: String,
     pub scene_name_en: String,
     pub tz: bool,
@@ -161,9 +165,20 @@ pub struct CompletedSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FinishedVisitDisplay {
+    pub name: String,
+    pub name_en: String,
+    pub elapsed_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackingSnapshot {
     #[serde(default)]
     pub accumulated_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scene_visit_started_at_ms: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_visit_display: Option<FinishedVisitDisplay>,
     pub revision: u64,
     pub account_id: String,
     #[serde(default)]
@@ -194,6 +209,18 @@ pub struct TrackingOutcome {
     pub changed: bool,
     pub snapshot: TrackingSnapshot,
     pub completed_segment: Option<CompletedSegment>,
+}
+
+#[derive(Debug, Clone)]
+struct SceneVisit {
+    area_id: u32,
+    location: ResolvedLocation,
+    id: String,
+    started_at: Instant,
+    started_at_ms: i64,
+    absolute_time: String,
+    last_seen: Instant,
+    drops: Vec<TrackedDrop>,
 }
 
 #[derive(Debug, Clone)]
@@ -295,6 +322,9 @@ impl TrackedLocation {
 #[derive(Debug, Clone)]
 pub struct SegmentTracker {
     activity: Option<super::activity::Activity>,
+    scene_visit: Option<SceneVisit>,
+    finished_visit_display: Option<FinishedVisitDisplay>,
+    completed_visits: Vec<CompletedSegment>,
     account_id: String,
     source_id: String,
     character_name: String,
@@ -338,6 +368,9 @@ impl SegmentTracker {
         Self {
             source_id: account_id.clone(),
             activity: None,
+            scene_visit: None,
+            finished_visit_display: None,
+            completed_visits: Vec::new(),
             account_id,
             character_name,
             current_location: None,
@@ -378,21 +411,107 @@ impl SegmentTracker {
         }
     }
 
-    pub fn observe_activity_marker(&mut self, kind: LocationKind) {
-        if let Some(activity) = &mut self.activity {
-            activity.mark(kind, std::time::Instant::now());
-        }
-    }
-
-    pub fn tick_activity(&mut self, audible: bool) -> bool {
+    pub fn observe_activity_marker(&mut self, location: ResolvedLocation, now: Instant) -> bool {
         let Some(activity) = &mut self.activity else {
             return false;
         };
-        let changed = activity.tick(std::time::Instant::now(), audible);
-        if changed {
+        if !activity.mark(location.kind, now) {
+            return false;
+        }
+        if let TelemetryMarker::Area { area_id } = location.marker {
+            if location.kind == LocationKind::Wilderness && is_timed_scene(area_id) {
+                let expired = self.expire_scene_visit(now);
+                if let Some(visit) = &mut self.scene_visit {
+                    if visit.area_id == area_id {
+                        visit.last_seen = now;
+                        return expired;
+                    }
+                }
+                self.finish_scene_visit(now);
+                let wall_time = chrono::Local::now();
+                self.finished_visit_display = None;
+                self.scene_visit = Some(SceneVisit {
+                    area_id,
+                    location,
+                    id: uuid::Uuid::new_v4().to_string(),
+                    started_at: now,
+                    started_at_ms: wall_time.timestamp_millis(),
+                    absolute_time: wall_time.format("%Y/%m/%d/%H:%M:%S").to_string(),
+                    last_seen: now,
+                    drops: Vec::new(),
+                });
+                self.revision += 1;
+                return true;
+            }
+        }
+        let finished = self.finish_scene_visit(now);
+        if location.kind != LocationKind::Town && self.finished_visit_display.take().is_some() {
+            self.revision += 1;
+            return true;
+        }
+        finished
+    }
+
+    fn expire_scene_visit(&mut self, now: Instant) -> bool {
+        let end = self.scene_visit.as_ref().and_then(|visit| {
+            (now.saturating_duration_since(visit.last_seen) >= SCENE_LEASE)
+                .then_some(visit.last_seen + SCENE_HEARTBEAT)
+        });
+        end.is_some_and(|end| self.finish_scene_visit(end))
+    }
+
+    fn finish_scene_visit(&mut self, now: Instant) -> bool {
+        let Some(visit) = self.scene_visit.take() else {
+            return false;
+        };
+        let end = now.min(visit.last_seen + SCENE_HEARTBEAT);
+        *self.session_runs.entry(session_run_key(&visit.location.scene_name, false)).or_default() += 1;
+        let duration = end.saturating_duration_since(visit.started_at);
+        self.finished_visit_display = Some(FinishedVisitDisplay {
+            name: visit.location.scene_name.clone(),
+            name_en: visit.location.scene_name_en.clone(),
+            elapsed_ms: duration.as_millis() as u64,
+        });
+        self.previous_run_drops = visit.drops.clone();
+        self.completed_visits.push(CompletedSegment {
+            source_id: self.source_id.clone(),
+            absolute_time: visit.absolute_time,
+            character_name: self.character_name.clone(),
+            scene_key: visit.location.scene_key,
+            scene_visit: true,
+            scene_name: visit.location.scene_name,
+            scene_name_en: visit.location.scene_name_en,
+            tz: false,
+            journey_id: visit.id,
+            segment_index: 0,
+            timer_seconds: duration.as_secs_f64(),
+            drops: visit.drops,
+        });
+        self.revision += 1;
+        true
+    }
+
+    pub fn take_completed_visits(&mut self) -> Vec<CompletedSegment> {
+        std::mem::take(&mut self.completed_visits)
+    }
+
+    pub fn tick_activity(&mut self, audible: bool) -> bool {
+        self.tick_activity_at(audible, Instant::now())
+    }
+
+    fn tick_activity_at(&mut self, audible: bool, now: Instant) -> bool {
+        let scene_changed = self.expire_scene_visit(now);
+        let Some(activity) = &mut self.activity else {
+            return false;
+        };
+        let changed = activity.tick(now, audible);
+        // Unmarked wilderness is identified by audible game activity after the town lease ends.
+        let entered_other = activity.running && self.scene_visit.is_none()
+            && self.finished_visit_display.take().is_some();
+        if changed || entered_other {
             self.revision += 1;
         }
-        changed
+        changed || scene_changed || entered_other
     }
 
     /// Account-free process exit/connection changes settle the last wilderness
@@ -400,22 +519,24 @@ impl SegmentTracker {
     pub fn finish_session(&mut self, observed_at_ms: i64) -> TrackingOutcome {
         if self.activity.is_some() {
             self.tick_activity(false);
+            self.finish_scene_visit(Instant::now());
             let activity = self.activity.take().unwrap();
-            let completed_segment = (activity.elapsed.as_millis() > 0
-                || !self.session_drops.is_empty())
-            .then(|| CompletedSegment {
-                source_id: self.source_id.clone(),
-                absolute_time: chrono::Local::now().format("%Y/%m/%d/%H:%M:%S").to_string(),
-                character_name: self.character_name.clone(),
-                scene_key: "activity".into(),
-                scene_name: "累计战斗时间".into(),
-                scene_name_en: "Combat time".into(),
-                tz: false,
-                journey_id: self.journey_id.take().unwrap_or_default(),
-                segment_index: 0,
-                timer_seconds: activity.elapsed.as_secs_f64(),
-                drops: self.session_drops.clone(),
-            });
+            let drops = std::mem::take(&mut self.session_drops);
+            let completed_segment =
+                (activity.elapsed.as_millis() > 0 || !drops.is_empty()).then(|| CompletedSegment {
+                    source_id: self.source_id.clone(),
+                    absolute_time: chrono::Local::now().format("%Y/%m/%d/%H:%M:%S").to_string(),
+                    character_name: self.character_name.clone(),
+                    scene_key: "activity".into(),
+                    scene_visit: false,
+                    scene_name: "累计战斗时间".into(),
+                    scene_name_en: "Combat time".into(),
+                    tz: false,
+                    journey_id: self.journey_id.take().unwrap_or_default(),
+                    segment_index: 0,
+                    timer_seconds: activity.elapsed.as_secs_f64(),
+                    drops,
+                });
             self.revision += 1;
             return TrackingOutcome {
                 changed: true,
@@ -644,6 +765,9 @@ impl SegmentTracker {
 
     pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
         if self.activity.is_some() {
+            if let Some(visit) = &mut self.scene_visit {
+                visit.drops.push(drop.clone());
+            }
             self.session_drops.push(drop);
             self.revision += 1;
             return self.snapshot();
@@ -669,6 +793,7 @@ impl SegmentTracker {
         if let Some(activity) = &self.activity {
             let elapsed = activity.elapsed.as_millis() as u64;
             let kind = activity.excluded.map(|(kind, _)| kind);
+            let visit = self.scene_visit.as_ref();
             let name = match kind {
                 Some(LocationKind::Town) => "主城",
                 Some(LocationKind::Frontend) => "主界面",
@@ -678,12 +803,14 @@ impl SegmentTracker {
             };
             return TrackingSnapshot {
                 accumulated_ms: Some(elapsed),
+                finished_visit_display: self.finished_visit_display.clone(),
+                scene_visit_started_at_ms: visit.map(|visit| visit.started_at_ms),
                 revision: self.revision,
                 account_id: self.account_id.clone(),
                 source_id: self.source_id.clone(),
-                current_area_id: None,
-                current_scene: name.into(),
-                current_scene_en: name.into(),
+                current_area_id: visit.map(|visit| visit.area_id),
+                current_scene: visit.map_or_else(|| name.into(), |visit| visit.location.scene_name.clone()),
+                current_scene_en: visit.map_or_else(|| name.into(), |visit| visit.location.scene_name_en.clone()),
                 tz: false,
                 location_kind: kind.or(activity.running.then_some(LocationKind::Wilderness)),
                 is_town: kind == Some(LocationKind::Town),
@@ -695,15 +822,17 @@ impl SegmentTracker {
                 current_run_key: Some("activity".into()),
                 current_run_name: Some("累计战斗时间".into()),
                 current_run_name_en: Some("Combat time".into()),
-                current_run_drops: self.session_drops.clone(),
-                previous_run_drops: Vec::new(),
+                current_run_drops: visit.map_or_else(|| self.session_drops.clone(), |visit| visit.drops.clone()),
+                previous_run_drops: self.previous_run_drops.clone(),
                 session_drops: self.session_drops.clone(),
-                session_runs: HashMap::new(),
+                session_runs: self.session_runs.clone(),
             };
         }
         let location = self.current_location.as_ref();
         TrackingSnapshot {
             accumulated_ms: None,
+            scene_visit_started_at_ms: None,
+            finished_visit_display: None,
             revision: self.revision,
             account_id: self.account_id.clone(),
             source_id: self.source_id.clone(),
@@ -797,6 +926,7 @@ impl SegmentTracker {
             absolute_time: active.absolute_time,
             character_name: self.character_name.clone(),
             scene_key: active.scene_key,
+            scene_visit: false,
             scene_name: active.scene_name,
             scene_name_en: active.scene_name_en,
             tz: active.tz,
@@ -811,6 +941,93 @@ impl SegmentTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn town_retains_finished_visit_until_another_field_is_detected() {
+        let mut tracker = SegmentTracker::new("a".into(), "char".into(), 48_000).with_activity_timing();
+        let catalog = LocationCatalog::default();
+        let area = |id| catalog.resolve(TelemetryMarker::Area { area_id: id }).unwrap();
+        let mut now = Instant::now();
+        tracker.observe_activity_marker(area(1), now);
+        assert!(tracker.snapshot().finished_visit_display.is_none());
+        for (id, name, count) in [(83, "崔凡克", 1), (83, "崔凡克", 2), (108, "混沌魔殿", 1)] {
+            now += SCENE_HEARTBEAT;
+            tracker.observe_activity_marker(area(id), now);
+            tracker.tick_activity_at(true, now);
+            assert!(tracker.snapshot().scene_visit_started_at_ms.is_some());
+            now += SCENE_HEARTBEAT;
+            tracker.observe_activity_marker(area(1), now);
+            tracker.tick_activity_at(true, now);
+            let town = tracker.snapshot();
+            assert!(town.is_town && !town.is_timing && town.scene_visit_started_at_ms.is_none());
+            let display = town.finished_visit_display.unwrap();
+            assert_eq!(display.name, name);
+            assert_eq!(display.elapsed_ms, 500);
+            assert_eq!(town.session_runs[&session_run_key(name, false)], count);
+            assert_eq!(tracker.take_completed_visits().len(), 1);
+        }
+        // Audible wilderness without a dedicated marker resumes the default display.
+        now += SCENE_LEASE + Duration::from_secs(1);
+        tracker.tick_activity_at(true, now);
+        assert!(tracker.snapshot().finished_visit_display.is_none());
+        tracker.observe_activity_marker(area(1), now);
+        assert!(tracker.snapshot().finished_visit_display.is_none());
+    }
+
+    #[test]
+    fn timed_scene_heartbeats_complete_one_visit_without_resetting_combat_time() {
+        use super::super::catalog::{CHAOS_SANCTUARY_AREA_ID, TRAVINCAL_AREA_ID};
+
+        let mut tracker = SegmentTracker::new("account".into(), "character".into(), 48_000)
+            .with_activity_timing();
+        let catalog = LocationCatalog::default();
+        let scene = |area_id| catalog.resolve(TelemetryMarker::Area { area_id }).unwrap();
+        let start = Instant::now();
+        assert!(tracker.observe_activity_marker(scene(TRAVINCAL_AREA_ID), start));
+        tracker.activity.as_mut().unwrap().tick(start, true);
+        let next = start + SCENE_HEARTBEAT;
+        assert!(!tracker.observe_activity_marker(scene(TRAVINCAL_AREA_ID), next));
+        tracker.activity.as_mut().unwrap().tick(next, true);
+        assert!(tracker.take_completed_visits().is_empty());
+
+        let transition = next + SCENE_HEARTBEAT;
+        assert!(tracker.observe_activity_marker(scene(CHAOS_SANCTUARY_AREA_ID), transition));
+        assert_eq!(tracker.snapshot().accumulated_ms, Some(500));
+        let records = tracker.take_completed_visits();
+        assert_eq!(records.len(), 1);
+        assert!(records[0].scene_visit);
+        assert_eq!(records[0].scene_name, "崔凡克");
+        assert_eq!(records[0].timer_seconds, 1.0);
+        assert_eq!(tracker.snapshot().session_runs["normal:崔凡克"], 1);
+
+        assert!(tracker.expire_scene_visit(transition + SCENE_LEASE));
+        assert!(!tracker.expire_scene_visit(transition + SCENE_LEASE * 2));
+        let records = tracker.take_completed_visits();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].scene_name, "混沌魔殿");
+        assert_eq!(records[0].timer_seconds, 0.5);
+        assert!(tracker.snapshot().scene_visit_started_at_ms.is_none());
+    }
+
+
+    #[test]
+    fn activity_end_clears_time_and_drops_but_keeps_them_in_the_saved_record() {
+        let mut tracker = tracker().with_activity_timing();
+        let drop = rune_drop(7, 24, "伊斯特", "Ist");
+        tracker.restore_activity("activity:test".into(), 12.5, vec![drop.clone()]);
+
+        let checkpoint = tracker.clone().finish_session(0).completed_segment.unwrap();
+        assert_eq!(checkpoint.timer_seconds, 12.5);
+        assert_eq!(tracker.snapshot().session_drops, vec![drop.clone()]);
+
+        let finished = tracker.finish_session(0);
+        let record = finished.completed_segment.unwrap();
+        assert_eq!(record.timer_seconds, 12.5);
+        assert_eq!(record.drops, vec![drop]);
+        assert!(finished.snapshot.accumulated_ms.is_none());
+        assert!(finished.snapshot.current_run_drops.is_empty());
+        assert!(finished.snapshot.session_drops.is_empty());
+    }
 
     #[test]
     fn floors_share_timer_but_different_regions_split_and_tz_refines() {

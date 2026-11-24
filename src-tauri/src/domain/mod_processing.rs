@@ -8,9 +8,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 pub(crate) const AUDIO_TELEMETRY_FEATURE_ID: &str = "audio_telemetry";
-pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 8;
+pub(crate) const AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION: u32 = 9;
+pub(crate) const COMBAT_TIME_AUDIO_RECIPE_VERSION: u32 = 8;
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_ID: &str = "in_game_room_tools";
 pub(crate) const IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION: u32 = 33;
+pub(crate) const JCY_INVENTORY_FEATURE_ID: &str = "jcy_inventory";
+pub(crate) const JCY_INVENTORY_FEATURE_RECIPE_VERSION: u32 = 4;
+const JCY_INVENTORY_FINGERPRINT: &str =
+    "inventory-stash-v4;reference=jcy;cube=embedded;assets=packaged";
+const LEGACY_JCY_INVENTORY_FINGERPRINT: &str = "jcy-inventory-v1;layout=replace;cube=embedded";
+const V2_JCY_INVENTORY_FINGERPRINT: &str =
+    "inventory-stash-v2;base=game;cube=side-panel;stash=direct-pages";
+const V3_JCY_INVENTORY_FINGERPRINT: &str =
+    "inventory-stash-v3;base=game;cube=embedded;stash=vertical-pages";
 pub(crate) const PARTY_LOOT_FEATURE_ID: &str = "party_loot";
 pub(crate) const PARTY_LOOT_FINGERPRINT: &str =
     "party-loot-v4;native-party-row;portrait-scale=1.6;offset=-0.8,2.4;launch=immediate";
@@ -74,11 +84,13 @@ pub(crate) struct RequestedFeatureGroups {
     pub(crate) esc_next_game: bool,
     pub(crate) scene_shortcuts: bool,
     pub(crate) party_loot: bool,
+    pub(crate) jcy_inventory: bool,
     pub(crate) hostile_auto_restart: bool,
     pub(crate) auto_exit_on_death: bool,
 }
 
 impl RequestedFeatureGroups {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn from_options(
         audio_telemetry: Option<bool>,
         room_tools: Option<bool>,
@@ -87,6 +99,7 @@ impl RequestedFeatureGroups {
         party_loot: Option<bool>,
         hostile_auto_restart: Option<bool>,
         auto_exit_on_death: Option<bool>,
+        jcy_inventory: Option<bool>,
     ) -> Result<Self, String> {
         // Missing fields preserve the pre-r22 command contract used by older D2RHub frontends.
         let requested = Self {
@@ -95,12 +108,14 @@ impl RequestedFeatureGroups {
             esc_next_game: esc_next_game.unwrap_or(false) || hostile_auto_restart.unwrap_or(false),
             scene_shortcuts: scene_shortcuts.unwrap_or(false),
             party_loot: party_loot.unwrap_or(false),
+            jcy_inventory: jcy_inventory.unwrap_or(false),
             hostile_auto_restart: hostile_auto_restart.unwrap_or(false),
             auto_exit_on_death: auto_exit_on_death.unwrap_or(false),
         };
         if !requested.audio_telemetry
             && !requested.room_tools
             && !requested.party_loot
+            && !requested.jcy_inventory
             && !requested.scene_shortcuts
             && !requested.esc_next_game
             && !requested.auto_exit_on_death
@@ -133,6 +148,9 @@ impl RequestedFeatureGroups {
         if self.auto_exit_on_death {
             features.push("death-exit");
         }
+        if self.jcy_inventory {
+            features.push("inventory-stash");
+        }
         features.join(",")
     }
 
@@ -153,6 +171,7 @@ impl RequestedFeatureGroups {
                 "左侧玩家尸体拾取按钮",
             ),
             (self.scene_shortcuts, SCENE_SHORTCUTS_FEATURE_ID, "场景重开"),
+            (self.jcy_inventory, JCY_INVENTORY_FEATURE_ID, "背包与仓库"),
             (self.audio_telemetry, AUDIO_TELEMETRY_FEATURE_ID, "声纹识别"),
             (
                 self.esc_next_game,
@@ -177,6 +196,11 @@ impl RequestedFeatureGroups {
                     .ok_or_else(|| format!("生成结果缺少已选择的{label}功能组"))?;
                 validate_supported_feature_group(group, audio_protocol_version)
                     .map_err(|error| format!("生成结果中的{label}功能组无效：{error}"))?;
+                if id == JCY_INVENTORY_FEATURE_ID
+                    && group.recipe_version != JCY_INVENTORY_FEATURE_RECIPE_VERSION
+                {
+                    return Err("加工器版本过旧，无法生成原版背包与仓库功能".into());
+                }
             }
         }
         Ok(())
@@ -194,6 +218,9 @@ impl RequestedFeatureGroups {
             .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID);
         self.hostile_auto_restart |= groups.iter().any(|g| g.id == "hostile_auto_restart");
         self.party_loot |= groups.iter().any(|group| group.id == PARTY_LOOT_FEATURE_ID);
+        self.jcy_inventory |= groups
+            .iter()
+            .any(|group| group.id == JCY_INVENTORY_FEATURE_ID);
         self.scene_shortcuts |= groups
             .iter()
             .any(|group| group.id == SCENE_SHORTCUTS_FEATURE_ID);
@@ -217,6 +244,10 @@ impl RequestedFeatureGroups {
                 || groups
                     .iter()
                     .any(|group| group.id == ESC_NEXT_GAME_FEATURE_ID))
+            && (!self.jcy_inventory
+                || groups
+                    .iter()
+                    .any(|group| group.id == JCY_INVENTORY_FEATURE_ID))
             && (!self.party_loot || groups.iter().any(|group| group.id == PARTY_LOOT_FEATURE_ID))
             && (!self.scene_shortcuts
                 || groups
@@ -400,6 +431,19 @@ pub(crate) fn validate_preserved_feature_groups(
             {
                 return true;
             }
+            if required.id == JCY_INVENTORY_FEATURE_ID
+                && matches!(
+                    (required.recipe_version, required.fingerprint.as_str()),
+                    (1, LEGACY_JCY_INVENTORY_FINGERPRINT)
+                        | (2, V2_JCY_INVENTORY_FINGERPRINT)
+                        | (3, V3_JCY_INVENTORY_FINGERPRINT)
+                )
+                && actual.id == required.id
+                && actual.recipe_version == JCY_INVENTORY_FEATURE_RECIPE_VERSION
+                && actual.fingerprint == JCY_INVENTORY_FINGERPRINT
+            {
+                return true;
+            }
             if required.id == ESC_NEXT_GAME_FEATURE_ID
                 && required.recipe_version == 2
                 && required.fingerprint == LEGACY_ESC_NEXT_GAME_FINGERPRINT
@@ -446,7 +490,10 @@ fn validate_supported_feature_group(
             Ok(())
         }
         AUDIO_TELEMETRY_FEATURE_ID => {
-            if !matches!(group.recipe_version, 4..=8) {
+            if !matches!(
+                group.recipe_version,
+                4..=AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+            ) {
                 return Err(format!(
                     "D2RHub Mod 的声纹识别功能组配方 r{} 不受支持（需要 r{AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION}）",
                     group.recipe_version
@@ -464,6 +511,20 @@ fn validate_supported_feature_group(
             let expected = format!("room-tools-v{IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION}");
             if group.fingerprint != expected {
                 return Err("D2RHub Mod 的局内房间工具指纹无效，请重新加工".to_string());
+            }
+            Ok(())
+        }
+        JCY_INVENTORY_FEATURE_ID => {
+            if !matches!(
+                (group.recipe_version, group.fingerprint.as_str()),
+                (
+                    JCY_INVENTORY_FEATURE_RECIPE_VERSION,
+                    JCY_INVENTORY_FINGERPRINT
+                ) | (1, LEGACY_JCY_INVENTORY_FINGERPRINT)
+                    | (2, V2_JCY_INVENTORY_FINGERPRINT)
+                    | (3, V3_JCY_INVENTORY_FINGERPRINT)
+            ) {
+                return Err("背包与仓库功能组无效，请重新加工".into());
             }
             Ok(())
         }
@@ -516,7 +577,7 @@ fn validate_audio_feature_fingerprint(
     if parts.len() != 5
         || !matches!(
             parts[0],
-            "audio-v4" | "audio-v5" | "audio-v6" | "audio-v7" | "audio-v8"
+            "audio-v4" | "audio-v5" | "audio-v6" | "audio-v7" | "audio-v8" | "audio-v9"
         )
         || parts[1] != expected_protocol
         || !matches!(
@@ -640,6 +701,7 @@ mod tests {
             None,
             Some(true),
             Some(false),
+            None,
         )
         .unwrap();
         assert!(!selected.audio_telemetry && !selected.room_tools);
@@ -683,6 +745,7 @@ mod tests {
             None,
             None,
             Some(false),
+            None,
         )
         .unwrap();
         assert_eq!(requested.generator_value(), "scene-shortcuts");
@@ -705,9 +768,58 @@ mod tests {
     }
 
     #[test]
+    fn jcy_inventory_is_independent_and_preserved_in_upgrades() {
+        let selected = RequestedFeatureGroups::from_options(
+            Some(false),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(selected.generator_value(), "inventory-stash");
+        let group = GeneratorFeatureGroup {
+            id: JCY_INVENTORY_FEATURE_ID.into(),
+            recipe_version: JCY_INVENTORY_FEATURE_RECIPE_VERSION,
+            fingerprint: JCY_INVENTORY_FINGERPRINT.into(),
+            reused_from_source: false,
+        };
+        let groups = std::slice::from_ref(&group);
+        selected
+            .validate_present(groups, TEST_AUDIO_PROTOCOL)
+            .unwrap();
+        let audio_only =
+            RequestedFeatureGroups::from_options(None, None, None, None, None, None, None, None)
+                .unwrap();
+        assert!(!audio_only.jcy_inventory);
+        assert!(audio_only.include_existing_known(groups).jcy_inventory);
+        for (version, fingerprint) in [
+            (1, LEGACY_JCY_INVENTORY_FINGERPRINT),
+            (2, V2_JCY_INVENTORY_FINGERPRINT),
+            (3, V3_JCY_INVENTORY_FINGERPRINT),
+        ] {
+            let legacy = GeneratorFeatureGroup {
+                recipe_version: version,
+                fingerprint: fingerprint.into(),
+                ..group.clone()
+            };
+            let legacy_groups = std::slice::from_ref(&legacy);
+            validate_runtime_feature_group_entries(legacy_groups, TEST_AUDIO_PROTOCOL).unwrap();
+            assert!(selected
+                .validate_present(legacy_groups, TEST_AUDIO_PROTOCOL)
+                .is_err());
+            validate_preserved_feature_groups(legacy_groups, groups).unwrap();
+        }
+    }
+
+    #[test]
     fn omitted_feature_flags_keep_the_legacy_audio_command_contract() {
         let requested =
-            RequestedFeatureGroups::from_options(None, None, None, None, None, None, None).unwrap();
+            RequestedFeatureGroups::from_options(None, None, None, None, None, None, None, None)
+                .unwrap();
         assert!(requested.audio_telemetry);
         assert!(!requested.room_tools);
         assert!(!requested.auto_exit_on_death);
@@ -730,6 +842,7 @@ mod tests {
             None,
             None,
             Some(false),
+            None,
         )
         .unwrap()
         .include_existing_known(std::slice::from_ref(&audio));
@@ -844,9 +957,17 @@ mod tests {
 
     #[test]
     fn requested_audio_must_match_the_host_protocol_and_a_supported_fingerprint() {
-        let requested =
-            RequestedFeatureGroups::from_options(Some(true), None, None, None, None, None, None)
-                .unwrap();
+        let requested = RequestedFeatureGroups::from_options(
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         let mut group = GeneratorFeatureGroup {
             id: AUDIO_TELEMETRY_FEATURE_ID.into(),
             recipe_version: AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,

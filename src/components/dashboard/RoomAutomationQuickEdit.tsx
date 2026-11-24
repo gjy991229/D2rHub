@@ -233,13 +233,18 @@ export function RoomAutomationQuickEdit({
     if (mountedRef.current) { setDraft(draftRef.current); setError(null); }
   };
 
-  const closeEditor = (): Promise<boolean> => {
-    if (closingRef.current) return closingRef.current;
-    if (pastePending.current) return pastePending.current.then(() => flushRef.current());
-    const pending = draftRef.current;
-    if (!pending || !draftDirtyRef.current) {
+  const saveEditor = (close: boolean): Promise<boolean> => {
+    if (closingRef.current) return close
+      ? closingRef.current.then(saved => saved && flushRef.current())
+      : closingRef.current;
+    if (pastePending.current) return pastePending.current.then(() => saveEditor(close));
+    const closePanel = () => {
       openRef.current = false;
       if (mountedRef.current) setOpen(false);
+    };
+    const pending = draftRef.current;
+    if (!pending || !draftDirtyRef.current) {
+      if (close) closePanel();
       return Promise.resolve(true);
     }
     const fail = (message: string) => {
@@ -273,13 +278,13 @@ export function RoomAutomationQuickEdit({
         draftDirtyRef.current = false;
         editedFields.current.clear();
         draftRef.current = namingDraft(outcome.snapshot.config);
-        openRef.current = false;
         if (mountedRef.current) {
           setSnapshot(outcome.snapshot);
           setDraft(draftRef.current);
-          setOpen(false);
         }
-        if (outcome.apply_warning) showToast("warning", `${copy.savedWithWarning}: ${outcome.apply_warning}`);
+        if (close) closePanel();
+        else if (!outcome.apply_warning) showToast("success", locale === "en-US" ? "Room settings saved" : "跟房设置已保存");
+        if (outcome.apply_warning) showToast("error", `${copy.savedWithWarning}: ${outcome.apply_warning}`);
         return true;
       } catch (saveError) {
         return fail(`${copy.saveFailed}: ${errorMessage(saveError)}`);
@@ -291,6 +296,7 @@ export function RoomAutomationQuickEdit({
     closingRef.current = task;
     return task;
   };
+  const closeEditor = () => saveEditor(true);
   flushRef.current = closeEditor;
 
   const openEditor = () => {
@@ -324,7 +330,8 @@ export function RoomAutomationQuickEdit({
         <span className="room-automation-quick-dot" aria-hidden="true" />
         <DoorOpen size={13} strokeWidth={1.9} aria-hidden="true" />
         <span>{copy.trigger}</span>
-        {snapshot?.config.collaboration_mode && snapshot.config.collaboration_mode !== "default" && <span className="text-2xs text-text-muted">{roomModeLabel(snapshot.config.collaboration_mode, locale === "en-US")}</span>}
+        {snapshot?.config.collaboration_mode && snapshot.config.collaboration_mode !== "default"
+          && (snapshot.config.collaboration_mode !== "uber_diablo" || snapshot.config.show_uber_diablo_in_quick_settings) && <span className="text-2xs text-text-muted">{roomModeLabel(snapshot.config.collaboration_mode, locale === "en-US")}</span>}
         <ChevronDown size={12} strokeWidth={1.9} aria-hidden="true" />
       </button>
 
@@ -335,7 +342,7 @@ export function RoomAutomationQuickEdit({
           className="room-automation-quick-popover"
           onSubmit={(event) => {
             event.preventDefault();
-            void closeEditor();
+            void saveEditor(false);
           }}
         >
           <header className="room-automation-quick-header">
@@ -357,8 +364,9 @@ export function RoomAutomationQuickEdit({
           <div className="scheme-account-picker" aria-label={locale === "en-US" ? "Followers" : "小号"}>
             {accounts.filter(account => account.id !== draft.primary_account_id).map(account => <label key={account.id}><input type="checkbox" checked={draft.follower_account_ids.includes(account.id)} onChange={event => updateDraft({ follower_account_ids: event.target.checked ? [...draft.follower_account_ids, account.id] : draft.follower_account_ids.filter(id => id !== account.id) })}/>{account.display_name || account.id}</label>)}
           </div>
-          <p className="feature-help">{locale === "en-US" ? "Changing leader keeps the other followers. Applied when closed." : "切换主号保留其他小号，旧主号自动加入小号。关闭时应用。"}</p>
-          <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"} />
+          <p className="feature-help">{locale === "en-US" ? "Changing leader keeps the other followers and adds the previous leader as a follower." : "切换主号保留其他小号，旧主号自动加入小号。"}</p>
+          <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"}
+            showUberDiablo={!!snapshot.config.show_uber_diablo_in_quick_settings} />
           <div className="room-quick-toolbar">
             <span>{locale === "en-US" ? "Room rule" : "房间规则"}</span>
             <div>
@@ -440,10 +448,13 @@ export function RoomAutomationQuickEdit({
           )}
 
           <footer className="room-automation-quick-footer">
-            <span className="room-quick-save-status" role="status">
-              {saving && <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />}
-              {saving ? copy.saving : locale === "en-US" ? "Saves when you leave" : "离开时自动保存"}
-            </span>
+            <div>
+              <Button type="submit" size="sm" variant="secondary" disabled={saving || !draftDirtyRef.current}>{locale === "en-US" ? "Save" : "保存"}</Button>
+              <span className="room-quick-save-status" role="status">
+                {saving && <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />}
+                {saving ? copy.saving : locale === "en-US" ? "Saves when you leave" : "离开时自动保存"}
+              </span>
+            </div>
             <button type="button" className="room-automation-quick-settings" disabled={saving}
               onClick={async () => { if (await closeEditor()) onOpenSettings(); }}>
               <Settings2 size={12} strokeWidth={1.9} aria-hidden="true" />

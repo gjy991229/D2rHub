@@ -191,6 +191,7 @@ pub fn run() {
         .manage(app_state.clone())
         .manage(auxiliary_windows::AuxiliaryWindowLifecycle::default())
         .setup(move |app| {
+            logger::set_error_window(app.handle().clone());
             let mut apply_default = true;
             if let Some(g) = &geo {
                 if g.x > -32000 && g.y > -32000 && g.width > 100 && g.height > 100 {
@@ -247,6 +248,7 @@ pub fn run() {
             commands::task::retry_task,
             commands::diagnostics::export_diagnostic_bundle,
             commands::room_automation::room_automation_get_config,
+            commands::config_repair::check_and_repair_configs,
             commands::room_automation::room_automation_save_config,
             commands::room_automation::room_automation_get_status,
             commands::room_automation::room_automation_start_primary,
@@ -400,6 +402,7 @@ pub fn run() {
             commands::system::check_cloud_version,
             commands::system::check_path_exists,
             logger::write_log,
+            logger::take_background_errors,
             input_listener::set_bongo_cat_input_visible,
             input_listener::set_shortcut_capture_active,
             input_listener::validate_shortcut_availability,

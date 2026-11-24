@@ -23,6 +23,7 @@ export interface AudioModFeatureSelection {
   roomToolsDefaultHell?: boolean;
   includeEscNextGame?: boolean;
   includeSceneShortcuts?: boolean;
+  includeJcyInventory?: boolean;
   includePartyLoot?: boolean;
   includeHostileAutoRestart?: boolean;
   includeAutoExitOnDeath: boolean;
@@ -33,6 +34,7 @@ export type AudioModProcessingPurpose = "recognition" | "room-tools" | "manage";
 export const AUDIO_TELEMETRY_FEATURE_ID = "audio_telemetry";
 export const IN_GAME_ROOM_TOOLS_FEATURE_ID = "in_game_room_tools";
 export const PARTY_LOOT_FEATURE_ID = "party_loot";
+export const JCY_INVENTORY_FEATURE_ID = "jcy_inventory";
 export const SCENE_SHORTCUTS_FEATURE_ID = "scene_shortcuts";
 export const ESC_NEXT_GAME_FEATURE_ID = "esc_next_game";
 export const AUTO_EXIT_ON_DEATH_FEATURE_ID = "auto_exit_on_death";
@@ -62,6 +64,7 @@ export function audioModFeatureInvokeOptions(
       ? { roomToolsDefaultHell: selection.roomToolsDefaultHell } : {}),
     includeEscNextGame: !!selection.includeHostileAutoRestart || (selection.includeEscNextGame ?? false),
     includeSceneShortcuts: selection.includeSceneShortcuts ?? false,
+    ...(selection.includeJcyInventory ? { includeJcyInventory: true } : {}),
     includePartyLoot: selection.includePartyLoot ?? false,
     includeHostileAutoRestart: selection.includeHostileAutoRestart ?? false,
     includeAutoExitOnDeath: selection.includeAutoExitOnDeath,
@@ -73,6 +76,7 @@ export function hasSelectedAudioModFeature(
 ): boolean {
   return selection.includeAudioTelemetry
     || selection.includeRoomTools
+    || selection.includeJcyInventory
     || selection.includeSceneShortcuts
     || selection.includePartyLoot
     || selection.includeHostileAutoRestart
@@ -87,6 +91,7 @@ export function selectedAudioModFeatureAddsCapability(
   return (
     (selection.includeAudioTelemetry && !installedGroups.includes(AUDIO_TELEMETRY_FEATURE_ID))
     || (selection.includeRoomTools && !installedGroups.includes(IN_GAME_ROOM_TOOLS_FEATURE_ID))
+    || (selection.includeJcyInventory && !installedGroups.includes(JCY_INVENTORY_FEATURE_ID))
     || (selection.includeSceneShortcuts && !installedGroups.includes(SCENE_SHORTCUTS_FEATURE_ID))
     || (selection.includePartyLoot && !installedGroups.includes(PARTY_LOOT_FEATURE_ID))
     || (selection.includeHostileAutoRestart && !installedGroups.includes("hostile_auto_restart"))

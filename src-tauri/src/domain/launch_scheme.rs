@@ -290,6 +290,8 @@ mod tests {
             }],
             windows: vec![LayoutSlot {
                 monitor_id: "display".into(),
+            window_title: None,
+                fullscreen: false,
                 x: 0,
                 y: 0,
                 width: 1280,

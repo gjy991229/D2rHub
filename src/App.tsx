@@ -15,6 +15,9 @@ import { FeatureProfileChooser } from "./pages/FeatureProfileChooser";
 import { AboutModal } from "./pages/AboutModal";
 import { SettingsCenter } from "./components/config/SettingsCenter";
 import { ToastContainer, showToast } from "./components/ui/Toast";
+import { initCapabilityStatusSync } from "./features/capabilities";
+import { taskGateway } from "./features/tasks/gateway";
+import type { TaskSnapshot } from "./features/tasks/types";
 import { AppShell } from "./components/layout/AppShell";
 
 import {
@@ -73,8 +76,43 @@ type View =
 
 function App() {
   useEffect(() => {
-    const listener = listenEvent<string>("global-hotkey-error", event => showToast("error", event.payload));
-    return () => { void listener.then(stop => stop()).catch(() => {}); };
+    let disposed = false;
+    const report = (message: string) => { if (!disposed) showToast("error", message); };
+    let capabilityErrors = new Map<string, string>();
+    const failedTasks = new Set<number>();
+    const reportTaskFailure = (task: TaskSnapshot) => {
+      if (task.state !== "failed" || failedTasks.has(task.task_id)) return;
+      failedTasks.add(task.task_id);
+      const label = task.subject || task.kind;
+      report(`${label}：${task.message || task.error_code || task.state}`);
+    };
+    const readErrors = () => invokeCommand<string[]>("take_background_errors")
+      .then(errors => errors.forEach(report));
+    const subscriptions = [
+      listenEvent("background-errors-available", () => { void readErrors().catch(console.error); })
+        .then(stop => { if (!disposed) void readErrors().catch(console.error); return stop; }),
+      initCapabilityStatusSync(snapshot => {
+        const next = new Map<string, string>();
+        for (const status of snapshot.capabilities) {
+          const blocked = status.requested_enabled && status.reason_code?.startsWith("dependency-");
+          if (status.state !== "failed" && status.state !== "degraded" && !blocked) continue;
+          const detail = status.last_error || status.reason_code;
+          if (!detail) continue;
+          next.set(status.id, detail);
+          if (capabilityErrors.get(status.id) !== detail) report(`${status.id}：${detail}`);
+        }
+        capabilityErrors = next;
+      }),
+      taskGateway.subscribe(reportTaskFailure).then(stop => {
+        if (!disposed) void taskGateway.list().then(tasks => tasks.forEach(reportTaskFailure)).catch(console.error);
+        return stop;
+      }),
+    ];
+    subscriptions.forEach(subscription => { void subscription.catch(console.error); });
+    return () => {
+      disposed = true;
+      for (const subscription of subscriptions) void subscription.then(stop => stop()).catch(() => {});
+    };
   }, []);
   const { config, initialLoading, saving: configSaving, restarting, error: configError, patch } = useGlobalConfig();
   const profileDecisionCurrent = isFeatureProfileDecisionCurrent(config);
@@ -682,7 +720,6 @@ function App() {
             </div>
           )}
 
-          {config?.launch_session && (launching || accounts.some(account => account.is_running && config.launch_session?.scheme.account_ids.includes(account.id))) && <p className="scheme-note px-8" role="status">本次启动：{config.launch_session.scheme.name} · 当前调整不会修改方案</p>}
           <div className="dashboard-workspace">
             {(launchGroupPanelOpen || launchGroupDraft) && (
               <LaunchGroupPanel

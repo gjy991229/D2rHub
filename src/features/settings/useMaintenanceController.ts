@@ -15,6 +15,11 @@ interface ImportAccountsSummary {
   reencrypted_token_count: number;
 }
 
+export interface ConfigRepairReport {
+  repaired: string[];
+  issues: string[];
+}
+
 export function useMaintenanceController(
   accounts: AccountMeta[],
   loadAccounts: () => Promise<void>,
@@ -24,6 +29,8 @@ export function useMaintenanceController(
   const [plaintextRiskAcknowledged, setPlaintextRiskAcknowledged] = useState(false);
   const [transferBusy, setTransferBusy] = useState<"export" | "import" | null>(null);
   const [diagnosticBusy, setDiagnosticBusy] = useState(false);
+  const [repairBusy, setRepairBusy] = useState(false);
+  const [repairResult, setRepairResult] = useState<ConfigRepairReport | string | null>(null);
 
   const toggleExportAccount = (accountId: string) => {
     setExportAccountIds((current) => current.includes(accountId)
@@ -116,6 +123,20 @@ export function useMaintenanceController(
     }
   };
 
+  const repairConfigs = async () => {
+    setRepairBusy(true);
+    setRepairResult(null);
+    try {
+      const report = await invokeCommand<ConfigRepairReport>("check_and_repair_configs");
+      setRepairResult(report);
+      if (report.repaired.length > 0) await loadAccounts();
+    } catch (error) {
+      setRepairResult(String(error));
+    } finally {
+      setRepairBusy(false);
+    }
+  };
+
   return {
     accounts,
     exportPickerOpen,
@@ -126,6 +147,9 @@ export function useMaintenanceController(
     setPlaintextRiskAcknowledged,
     transferBusy,
     diagnosticBusy,
+    repairBusy,
+    repairResult,
+    repairConfigs,
     toggleExportAccount,
     exportAccounts,
     importAccounts,

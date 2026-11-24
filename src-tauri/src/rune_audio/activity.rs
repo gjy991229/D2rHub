@@ -29,13 +29,13 @@ impl Activity {
         }
     }
 
-    pub fn mark(&mut self, kind: LocationKind, now: Instant) {
+    pub fn mark(&mut self, kind: LocationKind, now: Instant) -> bool {
         if kind != LocationKind::Frontend
             && self
                 .excluded
                 .is_some_and(|(current, until)| current == LocationKind::Frontend && now < until)
         {
-            return;
+            return false;
         }
         match kind {
             LocationKind::Town | LocationKind::Wilderness => self.entered_game = true,
@@ -43,7 +43,10 @@ impl Activity {
         }
         if matches!(kind, LocationKind::Town | LocationKind::Frontend) {
             self.excluded = Some((kind, now + EXCLUSION_LEASE));
+        } else {
+            self.excluded = None;
         }
+        true
     }
 
     pub fn tick(&mut self, now: Instant, audible: bool) -> bool {

@@ -1,7 +1,6 @@
 import { formatCombatTime } from "../utils/combatTimeFormat";
 import { matchesRecognitionSource } from "../utils/recognitionSource";
 import React, { useEffect, useState, useRef } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useAccounts } from "../store/accounts";
 import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
@@ -102,7 +101,6 @@ function advanceTerrorZones(snapshot: TerrorZoneSnapshot, now = Date.now() / 100
 
 type TerrorZoneStatus = "loading" | "ready" | "empty" | "error";
 type OverlayDisplayMode = "mini" | "expanded";
-type DropScope = "current" | "previous" | "overview";
 
 const OVERLAY_MODE_STORAGE_KEY = "d2rhub-information-overlay-mode";
 const OVERLAY_MINI_SIZE_STORAGE_KEY = "d2rhub-information-overlay-mini-size";
@@ -455,8 +453,6 @@ export function Overlay() {
   const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
   const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
   const [showAllDropGroups, setShowAllDropGroups] = useState(false);
-  const [dropScope, setDropScope] = useState<DropScope>("current");
-  const [dropSlideDirection, setDropSlideDirection] = useState<"previous" | "next">("next");
   const observedDropsRef = useRef(stats.currentDrops);
   const dropHighlightSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
@@ -1705,14 +1701,9 @@ export function Overlay() {
   }, [recentDropHighlights]);
 
   // ── 派生数据 ──
-  const scopedDrops = dropScope === "current"
-    ? stats.currentRunDrops
-    : dropScope === "previous"
-      ? stats.previousRunDrops
-      : stats.currentDrops;
   const aggregatedDrops = React.useMemo(
-    () => aggregateOverlayDrops(scopedDrops),
-    [scopedDrops],
+    () => aggregateOverlayDrops(stats.currentDrops),
+    [stats.currentDrops],
   );
   const displayedDropGroups = showAllDropGroups
     ? aggregatedDrops
@@ -1730,9 +1721,16 @@ export function Overlay() {
   }, [aggregatedDrops.length]);
 
 
+  const showingVisit = Boolean(stats.sceneVisitName);
+  const visitLabel = stats.sceneVisitStart != null
+    ? (useEnglish ? "Current visit" : "本次场景")
+    : (useEnglish ? "Last visit" : "上次场景");
+  const sceneLabel = useEnglish && stats.sceneVisitNameEn
+    ? stats.sceneVisitNameEn : translateOverlaySceneName(stats.sceneVisitName || stats.currentScene, useEnglish);
+  const sceneElapsed = formatCombatTime(stats.sceneVisitElapsedMs, config?.combat_time_format, useEnglish);
   const avgTime = stats.dbAvgTime;
   const currentSessionRuns = stats.sessionRuns[
-    getSessionRunKey(stats.currentRunName || stats.currentScene, stats.currentTz)
+    getSessionRunKey(stats.sceneVisitName || stats.currentRunName || stats.currentScene, stats.currentTz)
   ] || 0;
   const formattedTime = formatCombatTime(stats.elapsedMs, config?.combat_time_format, useEnglish);
   const elapsedDisplay = formattedTime.value;
@@ -1787,9 +1785,6 @@ export function Overlay() {
     : `展开其余 ${hiddenDropGroupCount} 种`;
   const collapseDropsLabel = useEnglish ? "Show latest 5" : "收起至最近 5 种";
   const deleteDropTitle = useEnglish ? "Remove the latest occurrence" : "移除最近一次掉落";
-  const dropScopeLabels: Record<DropScope, string> = useEnglish
-    ? { current: "Current", previous: "Previous", overview: "Overview" }
-    : { current: "当前", previous: "上一把", overview: "总览" };
   const terrorZoneTitle = useEnglish ? "Terror Zone" : "邪恶区域";
   const terrorZoneEmptyMessage = terrorZoneStatus === "error"
     ? (useEnglish ? "Forecast unavailable" : "预报暂不可用")
@@ -1800,15 +1795,6 @@ export function Overlay() {
   function handleDockPointerEnter() {
     pointerInsideDockRef.current = true;
     if (dockStateRef.current) void revealDockedOverlay();
-  }
-
-  function cycleDropScope(direction: "previous" | "next") {
-    const scopes: DropScope[] = ["current", "previous", "overview"];
-    const offset = direction === "next" ? 1 : -1;
-    const nextIndex = (scopes.indexOf(dropScope) + offset + scopes.length) % scopes.length;
-    setDropSlideDirection(direction);
-    setDropScope(scopes[nextIndex]);
-    setShowAllDropGroups(false);
   }
 
   function handleDockPointerLeave() {
@@ -1872,8 +1858,8 @@ export function Overlay() {
         <div
           className="relative flex h-full min-w-0 flex-1 items-center gap-2"
           aria-label={useEnglish
-            ? `${translateOverlaySceneName(stats.currentScene, true)}, ${elapsedDisplay} ${formattedTime.unit}`
-            : `${translateOverlaySceneName(stats.currentScene, false)}，${elapsedDisplay} ${formattedTime.unit}`}
+            ? `${sceneLabel}, ${elapsedDisplay} ${formattedTime.unit}`
+            : `${sceneLabel}，${elapsedDisplay} ${formattedTime.unit}`}
         >
           <div className="flex min-w-0 flex-1 flex-col justify-center leading-none">
             <span className="text-2xs font-medium text-text-muted">
@@ -1884,7 +1870,7 @@ export function Overlay() {
                 stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-primary"
               }`}
             >
-              {translateOverlaySceneName(stats.currentScene, useEnglish)}
+              {sceneLabel}
             </span>
           </div>
           <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
@@ -1896,11 +1882,14 @@ export function Overlay() {
               {elapsedDisplay} {formattedTime.unit}
             </span>
             <span className="mt-1 text-2xs font-medium text-text-muted">
-              {useEnglish ? "Timer" : "计时"}
+              {useEnglish ? "Combat" : "战斗"}
             </span>
           </div>
           <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
           <div className="flex shrink-0 flex-col items-end justify-center leading-none">
+            {showingVisit && <span className="text-xs font-mono tabular-nums text-accent" title={visitLabel}>
+              {sceneElapsed.value} {sceneElapsed.unit}
+            </span>}
             <span className="text-sm font-bold tabular-nums text-accent">{currentSessionRuns}</span>
             <span className="mt-1 text-2xs font-medium text-text-muted">
               {useEnglish ? "Runs" : "场次"}
@@ -1934,7 +1923,7 @@ export function Overlay() {
               stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-secondary"
             }`}
           >
-            {translateOverlaySceneName(stats.currentScene, useEnglish)}
+            {sceneLabel}
           </span>
         </div>
 
@@ -1970,19 +1959,22 @@ export function Overlay() {
           >
             {formattedTime.unit}
           </span>
-          {stats.currentRunKey !== "activity" && avgTime !== null && (
+          {showingVisit && <span className="mt-1.5 text-xs font-mono tabular-nums text-accent">
+            {visitLabel} {sceneElapsed.value} {sceneElapsed.unit}
+          </span>}
+          {(showingVisit || (stats.currentRunKey !== "activity" && avgTime !== null)) && (
             <div className="flex flex-col items-center mt-1.5 gap-0.5">
-              <span
+              {avgTime !== null && <span
                 className="text-xs font-medium select-none"
                 style={{ color: "var(--accent)" }}
               >
                 {averageTimeLabel} {avgTime.toFixed(1)}s
-              </span>
+              </span>}
               <span
                 className="text-2xs font-medium select-none"
                 style={{ color: "var(--text-secondary)", opacity: 0.8 }}
               >
-                {totalRunsLabel} {stats.dbTotalRuns} {runUnitLabel} · {currentSessionRunsLabel} {currentSessionRuns} {runUnitLabel}
+                {totalRunsLabel} {stats.dbTotalRuns ?? 0} {runUnitLabel} · {currentSessionRunsLabel} {currentSessionRuns} {runUnitLabel}
               </span>
             </div>
           )}
@@ -1997,24 +1989,10 @@ export function Overlay() {
         {/* 掉落分组；新识别结果在原胶囊上短时强调 */}
         <div className="flex flex-col gap-1 flex-1 min-h-0">
           <div className="overlay-drop-scope-header flex items-center justify-between gap-2 px-1">
-            <div className="overlay-drop-scope-controls" role="group" aria-label={useEnglish ? "Drop range" : "掉落范围"}>
-              <button
-                type="button"
-                data-overlay-interactive="true"
-                aria-label={useEnglish ? "Previous drop range" : "查看上一种掉落范围"}
-                onClick={(event) => { event.stopPropagation(); cycleDropScope("previous"); }}
-              ><ChevronLeft size={11} /></button>
-              <span>
-                {dropsLabel} · {dropScopeLabels[dropScope]}
-                {scopedDrops.length > 0 && <em>({scopedDrops.length})</em>}
-              </span>
-              <button
-                type="button"
-                data-overlay-interactive="true"
-                aria-label={useEnglish ? "Next drop range" : "查看下一种掉落范围"}
-                onClick={(event) => { event.stopPropagation(); cycleDropScope("next"); }}
-              ><ChevronRight size={11} /></button>
-            </div>
+            <span className="overlay-drop-heading">
+              {dropsLabel}
+              {stats.currentDrops.length > 0 && <em>({stats.currentDrops.length})</em>}
+            </span>
             {aggregatedDrops.length > 0 && (
               <span className="text-2xs text-text-muted tabular-nums">
                 {uniqueDropCountLabel}
@@ -2027,16 +2005,14 @@ export function Overlay() {
           </span>
 
           <div
-            key={dropScope}
-            className="overlay-drop-scope-content flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
-            data-direction={dropSlideDirection}
+            className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
             style={{ flex: 1, scrollbarWidth: "thin" }}
           >
             {displayedDropGroups.length > 0 ? (
               <>
                 {displayedDropGroups.map(({ key, drop, count, latestIndex }) => {
                   const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
-                  const highlightId = dropScope === "previous" ? undefined : recentDropHighlightIds.get(key);
+                  const highlightId = recentDropHighlightIds.get(key);
                   return (
                     <span
                       key={key}
@@ -2055,7 +2031,7 @@ export function Overlay() {
                         <span key={highlightId} className="overlay-drop-pill-flash" aria-hidden="true" />
                       )}
                       <span className="relative z-[1]">{getOverlayDropLabel(drop, useEnglish)}{count > 1 ? ` ×${count}` : ""}</span>
-                      {dropScope === "overview" && <button
+                      <button
                         className="absolute right-0.5 top-0 bottom-0 z-[1] flex items-center justify-center w-3 text-text-muted hover:text-error opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                         aria-label={`${deleteDropTitle}: ${getOverlayDropLabel(drop, useEnglish)}`}
                         onClick={(e) => {
@@ -2065,7 +2041,7 @@ export function Overlay() {
                         title={deleteDropTitle}
                       >
                         ×
-                      </button>}
+                      </button>
                     </span>
                   );
                 })}

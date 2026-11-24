@@ -21,9 +21,9 @@ it("portals notifications outside AppShell with appropriate announcements and na
     expect(notification.closest(".app-shell")).toBeNull();
     expect(notification.parentElement?.parentElement).toBe(document.body);
   }
-  fireEvent.click(within(alert).getByRole("button", { name: "关闭提示" }));
-  expect(screen.queryByRole("alert")).toBeNull();
-  expect(screen.getByRole("status")).toBe(status);
   act(() => vi.advanceTimersByTime(4000));
   expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.getByRole("alert")).toBe(alert);
+  fireEvent.click(within(alert).getByRole("button", { name: "关闭提示" }));
+  expect(screen.queryByRole("alert")).toBeNull();
 });

@@ -142,6 +142,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     setPlaintextRiskAcknowledged: setExportPlaintextRiskAcknowledged,
     transferBusy: accountTransferBusy,
     diagnosticBusy: diagnosticExportBusy,
+    repairBusy,
+    repairResult,
+    repairConfigs,
     toggleExportAccount,
     exportAccounts: handleExportAccounts,
     importAccounts: handleImportAccounts,
@@ -654,6 +657,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                   ? void modFeatures.prepareFeature(accountId, capsuleId, "room-tools", autoStart)
                   : modWorkflow.actions.requestProcessing({ origin: "room-automation", accountId })}
                 onSaveLaunchScheme={modFeatures.saveRoomLaunchScheme}
+                onOpenMaintenance={() => void handleTabChange("advanced")}
               />
             )}
 
@@ -712,6 +716,9 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
                 onOpenLogs={handleOpenLogs}
                 diagnosticBusy={diagnosticExportBusy}
                 onExportDiagnostics={handleExportDiagnostics}
+                repairBusy={repairBusy}
+                repairResult={repairResult}
+                onRepairConfigs={repairConfigs}
                 onRunSetup={() => {
                   onClose();
                   onReconfigure();

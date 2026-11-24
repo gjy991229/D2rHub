@@ -2,6 +2,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+pub const TRAVINCAL_AREA_ID: u32 = 83;
+pub const CHAOS_SANCTUARY_AREA_ID: u32 = 108;
+
+pub fn is_timed_scene(area_id: u32) -> bool {
+    matches!(area_id, TRAVINCAL_AREA_ID | CHAOS_SANCTUARY_AREA_ID)
+}
+
 pub const RUNE_COUNT: u32 = 33;
 /// Gold-code slots 34-127 are reserved for generated, catalog-backed item identities.
 pub const MAX_ITEM_ID: u32 = 94;
@@ -135,7 +142,7 @@ pub fn scene_name_identity(name: &str) -> String {
 
 /// Locations with localized product behavior. Every other valid Area Id is
 /// still decoded and is resolved through the catalog produced with the mod.
-pub const TRACKED_LOCATIONS: [LocationDefinition; 8] = [
+pub const TRACKED_LOCATIONS: [LocationDefinition; 10] = [
     LocationDefinition {
         marker: TelemetryMarker::Area { area_id: 1 },
         file_stem: "a1",
@@ -190,6 +197,22 @@ pub const TRACKED_LOCATIONS: [LocationDefinition; 8] = [
         scene_key: "tower_cellar_5",
         scene_name: "遗忘之塔地牢第5层",
         scene_name_en: "Tower Cellar Level 5",
+        kind: LocationKind::Wilderness,
+    },
+    LocationDefinition {
+        marker: TelemetryMarker::Area { area_id: TRAVINCAL_AREA_ID },
+        file_stem: "a83",
+        scene_key: "travincal",
+        scene_name: "崔凡克",
+        scene_name_en: "Travincal",
+        kind: LocationKind::Wilderness,
+    },
+    LocationDefinition {
+        marker: TelemetryMarker::Area { area_id: CHAOS_SANCTUARY_AREA_ID },
+        file_stem: "a108",
+        scene_key: "chaos_sanctuary",
+        scene_name: "混沌魔殿",
+        scene_name_en: "Chaos Sanctuary",
         kind: LocationKind::Wilderness,
     },
     LocationDefinition {

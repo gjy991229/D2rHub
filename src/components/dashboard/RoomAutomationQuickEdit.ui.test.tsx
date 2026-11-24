@@ -16,6 +16,24 @@ beforeEach(() => {
   mocks.config = { enabled: true, name_prefix: "run-", password: "", next_sequence: 1, sequence_width: 3, primary_account_id: "keep-primary" };
   mocks.save.mockImplementation(async (_generation, config) => ({ snapshot: { generation: 6, config } }));
 });
+it("saves in place, syncs Uber Diablo visibility, and autosaves the next edit on exit", async () => {
+  const user = userEvent.setup();
+  render(<RoomAutomationQuickEdit active onOpenSettings={() => {}} />);
+  await user.click(await screen.findByRole("button", { name: "跟房配置" }));
+  expect(screen.queryByRole("radio", { name: /超级迪亚波罗/ })).toBeNull();
+  act(() => mocks.sync?.({ generation: 5, config: { ...mocks.config, show_uber_diablo_in_quick_settings: true } }));
+  await user.click(screen.getByRole("radio", { name: /超级迪亚波罗/ }));
+  await user.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect((screen.getByRole("button", { name: "保存" }) as HTMLButtonElement).disabled).toBe(true));
+  expect(screen.getByRole("dialog")).toBeTruthy();
+  expect(mocks.save).toHaveBeenCalledWith(5, expect.objectContaining({ collaboration_mode: "uber_diablo" }));
+  await user.type(screen.getByLabelText("房间密码"), "new");
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(mocks.save).toHaveBeenCalledTimes(2);
+  expect(mocks.save).toHaveBeenLastCalledWith(5, expect.objectContaining({ password: "new" }));
+});
+
 it("saves with Escape and returns focus to its trigger", async () => {
   const user = userEvent.setup();
   render(<RoomAutomationQuickEdit active onOpenSettings={() => {}} />);

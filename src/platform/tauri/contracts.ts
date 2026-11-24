@@ -112,6 +112,7 @@ export const TAURI_COMMANDS = [
   "restart_rune_audio_monitor",
   "room_automation_cancel",
   "room_automation_get_config",
+  "check_and_repair_configs",
   "room_automation_get_status",
   "room_automation_retry",
   "room_automation_save_config",
@@ -150,6 +151,7 @@ export const TAURI_COMMANDS = [
   "update_mod_capsule",
   "upgrade_audio_mod",
   "write_log",
+  "take_background_errors",
 ] as const;
 
 export type TauriCommandName = (typeof TAURI_COMMANDS)[number];
@@ -161,6 +163,7 @@ export const TAURI_EVENTS = [
   "mod-mpq-progress",
   "audio-tracking-state",
   "capability-status-updated",
+  "background-errors-available",
   "global-config-updated",
   "global-input-event",
   "pet-wardrobe-updated",

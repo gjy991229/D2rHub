@@ -15,7 +15,8 @@ use crate::domain::mod_processing::{
     validate_runtime_feature_group_entries, validate_upgrade_source_feature_group_entries,
     GeneratorFeatureGroup, GeneratorReport, RequestedFeatureGroups, AUDIO_TELEMETRY_FEATURE_ID,
     AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION, AUTO_EXIT_ON_DEATH_FEATURE_ID,
-    ESC_NEXT_GAME_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID,
+    ESC_NEXT_GAME_FEATURE_ID, IN_GAME_ROOM_TOOLS_FEATURE_ID, JCY_INVENTORY_FEATURE_ID,
+    JCY_INVENTORY_FEATURE_RECIPE_VERSION,
 };
 use crate::rune_audio::{
     catalog::AREA_CATALOG_FILE_NAME, item_catalog::ITEM_CATALOG_FILE_NAME,
@@ -26,6 +27,7 @@ use layouts::{
     validate_esc_next_game_layouts, validate_in_game_room_tool_layouts_for_version,
     validate_lobby_return_hint,
 };
+pub(super) use manifest::LATEST_AUDIO_MOD_RECIPE_VERSION;
 #[cfg(test)]
 pub(super) use manifest::LEGACY_MANIFEST_FILE_NAME;
 pub(super) use manifest::REQUIRED_AUDIO_MOD_RECIPE_VERSION;
@@ -65,8 +67,10 @@ impl ValidatedAudioMod {
     fn update_available(&self) -> bool {
         !self.current_feature_protocol
             || self.feature_groups.iter().any(|group| {
-                group.id == AUDIO_TELEMETRY_FEATURE_ID
-                    && group.recipe_version < AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION
+                (group.id == AUDIO_TELEMETRY_FEATURE_ID
+                    && group.recipe_version < AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION)
+                    || (group.id == JCY_INVENTORY_FEATURE_ID
+                        && group.recipe_version < JCY_INVENTORY_FEATURE_RECIPE_VERSION)
             })
     }
 }
@@ -372,6 +376,17 @@ fn validate_compatible_audio_mod_directory_with_policy(
             }
         }
     }
+    if current_feature_protocol
+        && feature_groups.iter().any(|group| {
+            group.id == JCY_INVENTORY_FEATURE_ID
+                && matches!(
+                    group.recipe_version,
+                    1 | JCY_INVENTORY_FEATURE_RECIPE_VERSION
+                )
+        })
+    {
+        layouts::validate_jcy_inventory(&mod_directory, mod_name)?;
+    }
     if let Some(group) = feature_groups
         .iter()
         .find(|group| current_feature_protocol && group.id == "party_loot")
@@ -629,8 +644,7 @@ fn compatibility_with(
                     "ready".to_string()
                 },
                 message: if update_required {
-                    "当前 Mod 有新版功能模块可用；请在 Mod 管理中更新，声纹 r5 新增地区声纹"
-                        .to_string()
+                    "当前 Mod 有更新可用，可在 Mod 管理中更新。".to_string()
                 } else {
                     "识别 Mod 已准备好".to_string()
                 },

@@ -5,6 +5,33 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::sync::OnceLock;
+use tauri::Emitter;
+
+static ERROR_WINDOW: OnceLock<tauri::AppHandle> = OnceLock::new();
+static BACKGROUND_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub(crate) fn set_error_window(app: tauri::AppHandle) {
+    let _ = ERROR_WINDOW.set(app);
+}
+
+#[tauri::command]
+pub(crate) fn take_background_errors() -> Vec<String> {
+    std::mem::take(&mut *BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner()))
+}
+
+fn report_background_error(module: &str, message: &str) {
+    let entry = format!("{module}：{message}");
+    {
+        let mut pending = BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner());
+        if pending.contains(&entry) {
+            return;
+        }
+        pending.push(entry);
+    }
+    if let Some(app) = ERROR_WINDOW.get() {
+        let _ = app.emit_to("main", "background-errors-available", ());
+    }
+}
 
 static LOG_FILE: OnceLock<Mutex<File>> = OnceLock::new();
 static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -214,6 +241,10 @@ pub fn log_msg(level: &str, module: &str, message: &str) {
 
     // 输出到标准输出
     print!("{}", log_line);
+
+    if level == "ERROR" && module != "Frontend" {
+        report_background_error(module, message);
+    }
 
     // 写入文件
     if let Some(mutex) = LOG_FILE.get() {

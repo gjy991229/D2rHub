@@ -2,6 +2,7 @@
 use crate::domain::mod_processing::{
     RequestedFeatureGroups, AUDIO_TELEMETRY_FEATURE_RECIPE_VERSION,
     AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION, IN_GAME_ROOM_TOOLS_FEATURE_RECIPE_VERSION,
+    JCY_INVENTORY_FEATURE_ID, JCY_INVENTORY_FEATURE_RECIPE_VERSION,
 };
 
 #[derive(Debug, Clone)]
@@ -26,7 +27,7 @@ pub(super) fn recipe(
     requested: RequestedFeatureGroups,
 ) -> Result<(RequestedFeatureGroups, AudioOptions), String> {
     if document["recipe_version"].as_u64().is_some_and(|version| {
-        version > super::validation::REQUIRED_AUDIO_MOD_RECIPE_VERSION as u64
+        version > super::validation::LATEST_AUDIO_MOD_RECIPE_VERSION as u64
     }) {
         return Err("旧 Mod 使用更新的加工配方，请升级 Hub 后重做，旧 Mod 未修改".into());
     }
@@ -38,6 +39,7 @@ pub(super) fn recipe(
             "esc_next_game" => 4,
             "scene_shortcuts" => 7,
             "party_loot" => 4,
+            JCY_INVENTORY_FEATURE_ID => JCY_INVENTORY_FEATURE_RECIPE_VERSION,
             "hostile_auto_restart" => 1,
             "auto_exit_on_death" => AUTO_EXIT_ON_DEATH_FEATURE_RECIPE_VERSION,
             _ => {
@@ -113,6 +115,7 @@ mod tests {
             None,
             None,
             Some(false),
+            None,
         )
         .unwrap();
         for id in [
@@ -136,6 +139,7 @@ mod tests {
             None,
             None,
             Some(false),
+            None,
         )
         .unwrap();
         let doc = serde_json::json!({"feature_groups":[{"id":"audio_telemetry","recipe_version":3,

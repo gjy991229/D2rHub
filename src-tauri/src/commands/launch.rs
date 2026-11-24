@@ -19,7 +19,7 @@ use crate::commands::account::{
 use crate::commands::utils::silent_cmd;
 use crate::domain::account::{AuthMode, ClientEdition};
 use crate::domain::config::GlobalConfig;
-use crate::domain::window_layout::{LayoutRect, WindowLayout};
+use crate::domain::window_layout::{LayoutTarget, WindowLayout};
 use crate::error::AppError;
 use crate::infrastructure::system::{LaunchProgress, SystemGameWindowPort};
 use crate::launch_context::{
@@ -95,7 +95,7 @@ struct LaunchExecutionOptions {
     persist_position_changes: bool,
     preserved_default_mod_args: Option<String>,
     graphics_override: Option<LaunchGraphicsOverride>,
-    layout_rect: Option<LayoutRect>,
+    layout_target: Option<LayoutTarget>,
 }
 
 struct TokenLaunchRequest<'a> {
@@ -104,7 +104,7 @@ struct TokenLaunchRequest<'a> {
     meta: &'a AccountMeta,
     context: &'a LaunchContext,
     graphics_override: Option<&'a LaunchGraphicsOverride>,
-    layout_rect: Option<LayoutRect>,
+    layout_target: Option<LayoutTarget>,
 }
 
 struct TemporarySettingsOverride {
@@ -320,6 +320,7 @@ fn selected_window_layout(config: &GlobalConfig) -> Option<&WindowLayout> {
 struct WindowGeometryRequest {
     accounts_dir: String,
     account_id: String,
+    layout_slot: Option<usize>,
     layout: Option<WindowLayout>,
     position: Option<AccountPositionIdentity>,
     monitors: Vec<crate::domain::window_layout::LayoutMonitor>,
@@ -327,15 +328,16 @@ struct WindowGeometryRequest {
 
 impl WindowGeometryRequest {
     fn capture(config: &GlobalConfig, account_id: &str) -> Self {
+        let account = AccountManager::load_meta(&config.accounts_dir, account_id).ok();
+        let layout = selected_window_layout(config);
         Self {
             accounts_dir: config.accounts_dir.clone(),
             account_id: account_id.into(),
             monitors: crate::commands::window_layout::configured_monitors(Some(config))
                 .unwrap_or_default(),
-            layout: selected_window_layout(config).cloned(),
-            position: AccountManager::load_meta(&config.accounts_dir, account_id)
-                .ok()
-                .map(|account| {
+            layout_slot: account.as_ref().and_then(|account| layout?.slot_index_for_title(&account_window_title(account))),
+            layout: layout.cloned(),
+            position: account.map(|account| {
                     (
                         account.window_x,
                         account.window_y,
@@ -345,7 +347,10 @@ impl WindowGeometryRequest {
         }
     }
 
-    fn calibrated_target(&self, state: &SharedState, original: LayoutRect) -> LayoutRect {
+    fn calibrated_target(&self, state: &SharedState, original: LayoutTarget) -> LayoutTarget {
+        if original.fullscreen {
+            return original;
+        }
         let Some(layout) = &self.layout else {
             return original;
         };
@@ -353,19 +358,22 @@ impl WindowGeometryRequest {
             return original;
         };
         let resolved = (|| {
-            let before = layout.resolve(&self.monitors).ok()?;
-            let index = before.iter().position(|rect| *rect == original)?;
+            let index = self.layout_slot?;
             let monitors = crate::infrastructure::game_layout_windows::with_frame_profiles(
                 self.monitors.clone(),
                 &config.window_frame_profiles,
             );
-            layout.resolve(&monitors).ok()?.get(index).copied()
+            layout.resolve_targets(&monitors).ok()?.get(index).copied()
         })();
         resolved.unwrap_or(original)
     }
 
     fn matches(&self, config: &GlobalConfig, account: &AccountMeta) -> bool {
         selected_window_layout(config) == self.layout.as_ref()
+            && self.layout_slot
+                == self.layout.as_ref().and_then(|layout| {
+                    layout.slot_index_for_title(&account_window_title(account))
+                })
             && self.position.as_ref().is_some_and(|position| {
                 position
                     == &(
@@ -647,15 +655,15 @@ fn preflight_launch_graphics(
 fn apply_temporary_graphics_override(
     context: &LaunchContext,
     graphics: Option<&LaunchGraphicsOverride>,
-    layout_rect: Option<LayoutRect>,
+    layout_target: Option<LayoutTarget>,
 ) -> Result<Option<TemporarySettingsOverride>, AppError> {
-    if graphics.is_none() && layout_rect.is_none() {
+    if graphics.is_none() && layout_target.is_none() {
         return Ok(None);
     }
     let path = context
         .required_saved_games_directory()?
         .join("Settings.json");
-    apply_temporary_window_settings_at_path(path, graphics, layout_rect).map(Some)
+    apply_temporary_window_settings_at_path(path, graphics, layout_target).map(Some)
 }
 
 #[cfg(test)]
@@ -669,7 +677,7 @@ fn apply_temporary_graphics_override_at_path(
 fn apply_temporary_window_settings_at_path(
     path: PathBuf,
     graphics: Option<&LaunchGraphicsOverride>,
-    layout_rect: Option<LayoutRect>,
+    layout_target: Option<LayoutTarget>,
 ) -> Result<TemporarySettingsOverride, AppError> {
     let original = std::fs::read(&path).map_err(|error| {
         AppError::FileError(format!(
@@ -709,14 +717,18 @@ fn apply_temporary_window_settings_at_path(
             );
         }
     }
-    if let Some(rect) = layout_rect {
-        // Layout dimensions have the same meaning as account resolution.
-        // Native placement must not resize the outer window to these values.
-        settings.insert("Window Mode".into(), serde_json::json!(0));
+    if let Some(target) = layout_target {
         settings.insert(
-            "Screen Resolution (Windowed)".into(),
-            serde_json::json!(format!("{}x{}", rect.width, rect.height)),
+            "Window Mode".into(),
+            serde_json::json!(u8::from(target.fullscreen)),
         );
+        if !target.fullscreen {
+            let rect = target.rect;
+            settings.insert(
+                "Screen Resolution (Windowed)".into(),
+                serde_json::json!(format!("{}x{}", rect.width, rect.height)),
+            );
+        }
     }
     let content = serde_json::to_vec_pretty(&settings)?;
     std::fs::write(&path, content).map_err(|error| {
@@ -824,7 +836,7 @@ fn account_path_error(account_id: &str, err: AppError) -> LaunchResult {
     }
 }
 
-fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String {
+pub(crate) fn account_window_title(meta: &crate::commands::account::AccountMeta) -> String {
     if meta.display_name.trim().is_empty() {
         meta.id.clone()
     } else {
@@ -2004,10 +2016,15 @@ pub(crate) fn preflight_scheme_entries(
     if plan.is_empty() {
         return Err(AppError::ConfigReadError("方案至少需要一个账号".into()));
     }
-    crate::commands::window_layout::prepare_launch_layout(config, state, plan.account_ids())?;
+    let layout_plan =
+        crate::commands::window_layout::prepare_launch_layout(config, state, plan.account_ids())?;
     for id in plan.account_ids() {
         let account = AccountManager::load_meta(&config.accounts_dir, id)?;
-        let (account, graphics) = plan.apply_for(id, account, config.window_layout_enabled)?;
+        let has_layout_target = layout_plan
+            .as_ref()
+            .and_then(|layout| layout.target(&account))
+            .is_some();
+        let (account, graphics) = plan.apply_for(id, account, has_layout_target)?;
         preflight_account_meta(config, &account, ContextPurpose::LaunchGame)?;
         let context = LaunchContext::for_account(config, &account, ContextPurpose::LaunchGame)?;
         preflight_scheme_mod(&account, &context)?;
@@ -2016,7 +2033,7 @@ pub(crate) fn preflight_scheme_entries(
             &account,
             &context,
             graphics.as_ref(),
-            config.window_layout_enabled,
+            has_layout_target,
         )?;
     }
     Ok(())
@@ -2163,7 +2180,7 @@ async fn launch_accounts_impl(
     let layout_config = config.clone();
     let layout_state = state.inner().clone();
     let layout_ids = account_ids.to_vec();
-    let mut layout_plan = tokio::task::spawn_blocking(move || {
+    let layout_plan = tokio::task::spawn_blocking(move || {
         crate::commands::window_layout::prepare_launch_layout(
             &layout_config,
             &layout_state,
@@ -2182,8 +2199,12 @@ async fn launch_accounts_impl(
                 continue;
             }
             let meta = AccountManager::load_meta(&config.accounts_dir, account_id)?;
+            let has_layout_target = layout_plan
+                .as_ref()
+                .and_then(|layout| layout.target(&meta))
+                .is_some();
             let (effective_meta, graphics) =
-                plan.apply_for(account_id, meta, layout_plan.is_some())?;
+                plan.apply_for(account_id, meta, has_layout_target)?;
             preflight_account_meta(&config, &effective_meta, ContextPurpose::LaunchGame)?;
             let context =
                 LaunchContext::for_account(&config, &effective_meta, ContextPurpose::LaunchGame)?;
@@ -2195,7 +2216,7 @@ async fn launch_accounts_impl(
                 &effective_meta,
                 &context,
                 graphics.as_ref(),
-                layout_plan.is_some(),
+                has_layout_target,
             )?;
         }
     }
@@ -2257,8 +2278,9 @@ async fn launch_accounts_impl(
         };
         let preserved_default_mod_args =
             plan.override_for(account_id).map(|_| meta.mod_args.clone());
+        let layout_target = layout_plan.as_ref().and_then(|layout| layout.target(&meta));
         let (meta, graphics_override) =
-            match plan.apply_for(account_id, meta, layout_plan.is_some()) {
+            match plan.apply_for(account_id, meta, layout_target.is_some()) {
                 Ok(effective) => effective,
                 Err(error) => {
                     results.push(account_path_error(account_id, error));
@@ -2301,7 +2323,7 @@ async fn launch_accounts_impl(
             &meta,
             &preflight_context,
             graphics_override.as_ref(),
-            layout_plan.is_some(),
+            layout_target.is_some(),
         ) {
             results.push(account_path_error(account_id, error));
             continue;
@@ -2364,11 +2386,8 @@ async fn launch_accounts_impl(
 
         // 当前账号的生命周期租约保证本次启动期间元数据稳定。
         // 只有默认启动且明确选择了位置胶囊时，才把用户后续拖动写回该胶囊。
-        let layout_rect = layout_plan
-            .as_ref()
-            .and_then(|layout| layout.target(account_id));
         let persist_position_changes =
-            layout_rect.is_none() && plan.should_persist_position_changes_for(account_id, &meta);
+            layout_target.is_none() && plan.should_persist_position_changes_for(account_id, &meta);
         let result = launch_single(
             &app,
             &config,
@@ -2380,17 +2399,12 @@ async fn launch_accounts_impl(
                 persist_position_changes,
                 preserved_default_mod_args,
                 graphics_override,
-                layout_rect,
+                layout_target,
             },
             #[cfg(target_os = "windows")]
             &mut memory_trim,
         )
         .await;
-        if result.d2r_pid.is_some() {
-            if let Some(layout) = &mut layout_plan {
-                layout.record_started(account_id);
-            }
-        }
         let killed = result.mutex_killed;
         let success = result.success;
         let can_continue = launch_queue_can_continue(success, killed);
@@ -2546,7 +2560,7 @@ async fn launch_single(
         persist_position_changes,
         preserved_default_mod_args,
         graphics_override,
-        layout_rect,
+        layout_target,
     } = options;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -2577,7 +2591,7 @@ async fn launch_single(
                 meta: &meta,
                 context: &preflight_context,
                 graphics_override: graphics_override.as_ref(),
-                layout_rect,
+                layout_target,
             },
             #[cfg(target_os = "windows")]
             memory_trim,
@@ -2595,7 +2609,7 @@ async fn launch_single(
         BnetPreparationOptions {
             meta_override: Some(&meta),
             preserved_default_mod_args: preserved_default_mod_args.as_deref(),
-            require_settings_copy: graphics_override.is_some() || layout_rect.is_some(),
+            require_settings_copy: graphics_override.is_some() || layout_target.is_some(),
         },
     )
     .await
@@ -2606,7 +2620,7 @@ async fn launch_single(
     let _settings_override = match apply_temporary_graphics_override(
         &context,
         graphics_override.as_ref(),
-        layout_rect,
+        layout_target,
     ) {
         Ok(settings_override) => settings_override,
         Err(error) => return account_path_error(account_id, error),
@@ -2945,7 +2959,7 @@ async fn launch_single(
                                 Err(error) => taskbar_error = Some(error),
                             }
                         }
-                        if (layout_rect.is_none() && (win_x.is_none() || win_y.is_none()))
+                        if (layout_target.is_none() && (win_x.is_none() || win_y.is_none()))
                             || state_for_position
                                 .multi_instance()
                                 .instances()
@@ -2954,14 +2968,14 @@ async fn launch_single(
                         {
                             continue;
                         }
-                        let calibrated_rect = layout_rect.map(|rect| {
+                        let calibrated_target = layout_target.map(|rect| {
                             geometry_request.calibrated_target(&state_for_position, rect)
                         });
                         state_for_position
                             .multi_instance()
                             .instances()
                             .apply_initial_window_geometry(&account_id_owned, pid_copy, || {
-                                if let Some(rect) = calibrated_rect {
+                                if let Some(rect) = calibrated_target {
                                     crate::infrastructure::game_layout_windows::apply_for_pid(
                                         pid_copy,
                                         &layout_executable,
@@ -3293,7 +3307,7 @@ async fn launch_single_token(
         meta,
         context,
         graphics_override,
-        layout_rect,
+        layout_target,
     } = request;
     let emit = |step: &str, status: &str, msg: &str| {
         crate::logger::log_msg(
@@ -3336,7 +3350,7 @@ async fn launch_single_token(
                 if let Err(error) =
                     copy_account_settings_to_system(&account_dir, saved_games_directory)
                 {
-                    if graphics_override.is_some() || layout_rect.is_some() {
+                    if graphics_override.is_some() || layout_target.is_some() {
                         return account_path_error(account_id, error);
                     }
                     emit(
@@ -3364,7 +3378,7 @@ async fn launch_single_token(
     }
 
     let _settings_override =
-        match apply_temporary_graphics_override(context, graphics_override, layout_rect) {
+        match apply_temporary_graphics_override(context, graphics_override, layout_target) {
             Ok(settings_override) => settings_override,
             Err(error) => return account_path_error(account_id, error),
         };
@@ -3597,7 +3611,7 @@ async fn launch_single_token(
                             Err(error) => taskbar_error = Some(error),
                         }
                     }
-                    if (layout_rect.is_none() && (win_x.is_none() || win_y.is_none()))
+                    if (layout_target.is_none() && (win_x.is_none() || win_y.is_none()))
                         || state_for_geometry
                             .multi_instance()
                             .instances()
@@ -3606,13 +3620,13 @@ async fn launch_single_token(
                     {
                         continue;
                     }
-                    let calibrated_rect = layout_rect
+                    let calibrated_target = layout_target
                         .map(|rect| geometry_request.calibrated_target(&state_for_geometry, rect));
                     state_for_geometry
                         .multi_instance()
                         .instances()
                         .apply_initial_window_geometry(&account_id_for_window, pid_copy, || {
-                            if let Some(rect) = calibrated_rect {
+                            if let Some(rect) = calibrated_target {
                                 crate::infrastructure::game_layout_windows::apply_for_pid(
                                     pid_copy,
                                     &layout_executable,
@@ -4053,7 +4067,10 @@ mod tests {
                 let _guard = super::apply_temporary_window_settings_at_path(
                     path.clone(),
                     override_graphics,
-                    Some(rect),
+                    Some(super::LayoutTarget {
+                        rect,
+                        fullscreen: false,
+                    }),
                 )
                 .unwrap();
                 let temporary: serde_json::Value =
@@ -4068,6 +4085,22 @@ mod tests {
             }
             assert_eq!(std::fs::read(&path).unwrap(), original);
         }
+        {
+            let _guard = super::apply_temporary_window_settings_at_path(
+                path.clone(),
+                None,
+                Some(super::LayoutTarget {
+                    rect,
+                    fullscreen: true,
+                }),
+            )
+            .unwrap();
+            let temporary: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(temporary["Window Mode"], 1);
+            assert_eq!(temporary["Screen Resolution (Windowed)"], "2560x1440");
+        }
+        assert_eq!(std::fs::read(&path).unwrap(), original);
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -4082,6 +4115,7 @@ mod tests {
             monitors: Vec::new(),
             accounts_dir: String::new(),
             account_id: account.id.clone(),
+            layout_slot: None,
             layout: None,
             position: Some((
                 account.window_x,

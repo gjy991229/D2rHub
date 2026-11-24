@@ -61,6 +61,7 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
     (event.currentTarget.closest("g[role='button']") as SVGElement | null)?.focus({ preventScroll: true });
     const start = point(event);
     onSelect(index);
+    if (layout.windows[index].fullscreen) return;
     drag.current = { index, pointer: event.pointerId, ...start, layout, handle };
     setDragging(true);
     svg.current?.setPointerCapture(event.pointerId);
@@ -108,12 +109,13 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
     </g>)}
     {visibleSlots.map(({ slot, index }) => {
       const rect = visibleSlotRect(slot, layout.monitors);
-      const edge = visibleInsets(layout.monitors.find(monitor => monitor.id === slot.monitor_id));
+      const edge = visibleInsets(layout.monitors.find(monitor => monitor.id === slot.monitor_id), slot.fullscreen);
+      const client = slotRect(slot, layout.monitors);
       const active = index === selected;
       const padding = 12 / scale;
       const handleSize = 9 / scale;
       return <g key={index} className="layout-window" data-selected={active} data-primary={index === 0} role="button" tabIndex={disabled ? -1 : 0} aria-disabled={disabled || undefined}
-        aria-label={english ? `${labels[index]}, ${slot.width} by ${slot.height}` : `${labels[index]}，${slot.width} × ${slot.height}`}
+        aria-label={english ? `${labels[index]}, ${client.width} by ${client.height}` : `${labels[index]}，${client.width} × ${client.height}`}
         aria-pressed={active} onFocus={() => onSelect(index)} onPointerDown={event => begin(event, index)}
         onKeyDown={event => {
           if (disabled) return;
@@ -124,7 +126,7 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
             frame.current = 0; pending.current = null; onChange(drag.current.layout.windows); drag.current = null; setDragging(false);
             return;
           }
-          if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+          if (slot.fullscreen || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
           event.preventDefault();
           const delta = event.ctrlKey || event.metaKey ? 1 : 10;
           const dx = event.key === "ArrowLeft" ? -delta : event.key === "ArrowRight" ? delta : 0;
@@ -133,17 +135,17 @@ export function LayoutCanvas({ layout, labels, selected, onSelect, onChange, foc
             : moveSlot(layout, index, { ...slotRect(slot, layout.monitors), x: rect.x + dx, y: rect.y + dy });
           onChange(layout.windows.map((candidate, at) => at === index ? next : candidate));
         }}>
-        <rect className="layout-window-body" x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx={5 / scale} vectorEffect="non-scaling-stroke" />
+        <rect className="layout-window-body" x={rect.x} y={rect.y} width={rect.width} height={rect.height} rx={slot.fullscreen ? 0 : 5 / scale} vectorEffect="non-scaling-stroke" />
         {edge.top > 0 && <g className="layout-window-caption" aria-hidden="true">
           <rect x={rect.x} y={rect.y} width={rect.width} height={edge.top} />
           <path d={`M ${rect.x + rect.width - edge.top * 0.8} ${rect.y + edge.top * 0.35} l ${edge.top * 0.3} ${edge.top * 0.3} m 0 ${-edge.top * 0.3} l ${-edge.top * 0.3} ${edge.top * 0.3}`} />
         </g>}
-        <rect className="layout-window-client" x={rect.x + edge.left} y={rect.y + edge.top} width={slot.width} height={slot.height} />
-        <title>{labels[index]} · {english ? "Launch position" : "启动顺序"} {index + 1}</title>
+        <rect className="layout-window-client" x={rect.x + edge.left} y={rect.y + edge.top} width={client.width} height={client.height} />
+        <title>{labels[index]} · {english ? "Position" : "位置"} {index + 1}</title>
         <defs><clipPath id={`${clipId}-${index}`}><rect x={rect.x + padding} y={rect.y} width={Math.max(0, rect.width - 2 * padding)} height={rect.height} /></clipPath></defs>
         <text className="layout-window-name" x={rect.x + padding} y={rect.y + edge.top + 27 / scale} clipPath={`url(#${clipId}-${index})`}>{labels[index]}</text>
-        {rect.width * scale >= 110 && rect.height * scale >= 65 && <text className="layout-window-size" x={rect.x + padding} y={rect.y + edge.top + 45 / scale}>{slot.width} × {slot.height}</text>}
-        {active && handles.map(handle => {
+        {rect.width * scale >= 110 && rect.height * scale >= 65 && <text className="layout-window-size" x={rect.x + padding} y={rect.y + edge.top + 45 / scale}>{client.width} × {client.height}</text>}
+        {active && !slot.fullscreen && handles.map(handle => {
           const x = handle.includes("w") ? rect.x : handle.includes("e") ? rect.x + rect.width : rect.x + rect.width / 2;
           const y = handle.includes("n") ? rect.y : handle.includes("s") ? rect.y + rect.height : rect.y + rect.height / 2;
           return <rect key={handle} className={`layout-resize-handle layout-resize-${handle}`} x={x - handleSize / 2} y={y - handleSize / 2}

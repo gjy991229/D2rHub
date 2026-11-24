@@ -7,6 +7,7 @@ pub(in crate::audio_mod) const LEGACY_MANIFEST_FILE_NAME: &str = "audio-telemetr
 pub(in crate::audio_mod) const MANIFEST_FORMAT: &str = "d2r-audio-telemetry-mod";
 pub(in crate::audio_mod) const PRODUCER_NAME: &str = "d2r-audio-mod";
 pub(in crate::audio_mod) const REQUIRED_AUDIO_MOD_RECIPE_VERSION: u32 = 26;
+pub(in crate::audio_mod) const LATEST_AUDIO_MOD_RECIPE_VERSION: u32 = 27;
 pub(in crate::audio_mod) const FEATURE_GROUP_PROTOCOL_RECIPE_VERSION: u32 = 22;
 #[derive(Debug)]
 pub(super) struct OfficialUpdateMetadata {

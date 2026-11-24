@@ -20,11 +20,12 @@ export function defaultPresetResolution(monitor?: LayoutMonitor): PresetResoluti
   return (monitor?.bounds.width ?? 0) >= 3840 ? "4k" : (monitor?.bounds.width ?? 0) >= 2560 ? "2k" : "1080p";
 }
 
-export function visibleInsets(monitor?: LayoutMonitor) {
-  return monitor?.frame?.visible ?? { left: 0, top: 0, right: 0, bottom: 0 };
+export function visibleInsets(monitor?: LayoutMonitor, fullscreen = false) {
+  return (!fullscreen && monitor?.frame?.visible) || { left: 0, top: 0, right: 0, bottom: 0 };
 }
 
-export function visibleSize(slot: Pick<LayoutSlot, "width" | "height">, monitor?: LayoutMonitor) {
+export function visibleSize(slot: Pick<LayoutSlot, "width" | "height" | "fullscreen">, monitor?: LayoutMonitor) {
+  if (slot.fullscreen && monitor) return { width: monitor.bounds.width, height: monitor.bounds.height };
   const edge = visibleInsets(monitor);
   return { width: slot.width + edge.left + edge.right, height: slot.height + edge.top + edge.bottom };
 }
@@ -35,6 +36,7 @@ export function visibleSlotRect(slot: LayoutSlot, monitors: readonly LayoutMonit
 }
 
 export function constrainSlot(slot: LayoutSlot, monitor: LayoutMonitor): LayoutSlot {
+  if (slot.fullscreen) return { ...slot, monitor_id: monitor.id };
   const work = monitor.work_area;
   const width = clamp(slot.width, MIN_LAYOUT_WIDTH, MAX_LAYOUT_WIDTH);
   const height = clamp(slot.height, MIN_LAYOUT_HEIGHT, MAX_LAYOUT_HEIGHT);
@@ -46,6 +48,7 @@ export function constrainSlot(slot: LayoutSlot, monitor: LayoutMonitor): LayoutS
 
 export function slotRect(slot: LayoutSlot, monitors: readonly LayoutMonitor[]): LayoutRect {
   const monitor = monitors.find(monitor => monitor.id === slot.monitor_id) ?? primaryMonitor(monitors);
+  if (slot.fullscreen && monitor) return monitor.bounds;
   return { x: slot.x + (monitor?.work_area.x ?? 0), y: slot.y + (monitor?.work_area.y ?? 0), width: slot.width, height: slot.height };
 }
 
@@ -68,6 +71,7 @@ export function adaptLayout(layout: WindowLayout, monitors: LayoutMonitor[]): Wi
       ?? (legacy ? monitors.find(monitor => monitor.bounds.x === saved.bounds.x && monitor.bounds.y === saved.bounds.y
         && monitor.bounds.width === saved.bounds.width && monitor.bounds.height === saved.bounds.height)
         ?? monitors.find(monitor => monitor.name === saved.name) : undefined) ?? primary;
+    if (slot.fullscreen) return { ...slot, monitor_id: current.id };
     const { width, height } = slot;
     const before = visibleSize(slot, saved), after = visibleSize(slot, current);
     return constrainSlot({ ...slot, monitor_id: current.id, width, height,
@@ -121,7 +125,7 @@ function snapTargets(layout: WindowLayout, index: number, monitor: LayoutMonitor
   const xs = [0, monitor.work_area.width];
   const ys = [0, monitor.work_area.height];
   layout.windows.forEach((slot, candidate) => {
-    if (candidate === index || slot.monitor_id !== monitor.id) return;
+    if (candidate === index || slot.fullscreen || slot.monitor_id !== monitor.id) return;
     const visible = visibleSize(slot, monitor);
     xs.push(slot.x, slot.x + visible.width);
     ys.push(slot.y, slot.y + visible.height);
@@ -141,8 +145,9 @@ function monitorForRect(monitors: LayoutMonitor[], rect: LayoutRect): LayoutMoni
 }
 
 export function moveSlot(layout: WindowLayout, index: number, rect: LayoutRect, tolerance = 0): LayoutSlot {
+  if (layout.windows[index].fullscreen) return layout.windows[index];
   const monitor = monitorForRect(layout.monitors, rect) ?? primaryMonitor(layout.monitors)!;
-  let slot = constrainSlot({ ...rect, monitor_id: monitor.id, x: rect.x - monitor.work_area.x, y: rect.y - monitor.work_area.y }, monitor);
+  let slot = constrainSlot({ ...layout.windows[index], ...rect, monitor_id: monitor.id, x: rect.x - monitor.work_area.x, y: rect.y - monitor.work_area.y }, monitor);
   const { xs, ys } = snapTargets(layout, index, monitor);
   const visible = visibleSize(slot, monitor);
   slot = { ...slot, x: slot.x + closestDelta([slot.x, slot.x + visible.width], xs, tolerance),
@@ -151,6 +156,7 @@ export function moveSlot(layout: WindowLayout, index: number, rect: LayoutRect, 
 }
 
 export function resizeSlot(layout: WindowLayout, index: number, start: LayoutSlot, dx: number, dy: number, handle: ResizeHandle, tolerance = 0): LayoutSlot {
+  if (start.fullscreen) return start;
   const monitor = layout.monitors.find(monitor => monitor.id === start.monitor_id)!;
   const { xs, ys } = snapTargets(layout, index, monitor);
   const edge = visibleInsets(monitor);
@@ -170,16 +176,21 @@ export function resizeSlot(layout: WindowLayout, index: number, start: LayoutSlo
   right = clamp(right, left + minWidth, left + maxWidth);
   top = clamp(top, bottom - maxHeight, bottom - minHeight);
   bottom = clamp(bottom, top + minHeight, top + maxHeight);
-  return constrainSlot({ monitor_id: monitor.id, x: left, y: top, width: right - left - extraWidth, height: bottom - top - extraHeight }, monitor);
+  return constrainSlot({ ...start, monitor_id: monitor.id, x: left, y: top, width: right - left - extraWidth, height: bottom - top - extraHeight }, monitor);
 }
 
 
 export function validateLayout(layout: WindowLayout): string | null {
   if (!layout.name.trim() || layout.name.trim().length > 40) return "请输入布局名称（最多 40 字）";
   if (layout.windows.length < 1 || layout.windows.length > MAX_LAYOUT_WINDOWS) return "窗口数量须在 1 到 32 之间";
+  const titles = new Set<string>();
   for (const slot of layout.windows) {
+    const title = slot.window_title?.trim().toLowerCase();
+    if (title && titles.has(title)) return "窗口名称不能重复";
+    if (title) titles.add(title);
     const monitor = layout.monitors.find(monitor => monitor.id === slot.monitor_id);
     if (!monitor || ![slot.x, slot.y, slot.width, slot.height].every(Number.isInteger)) return "窗口坐标和尺寸必须为整数";
+    if (slot.fullscreen) continue;
     if (slot.width < MIN_LAYOUT_WIDTH || slot.height < MIN_LAYOUT_HEIGHT || slot.width > MAX_LAYOUT_WIDTH || slot.height > MAX_LAYOUT_HEIGHT) return "游戏分辨率须在 800 × 600 到 7680 × 4320 之间";
     const visible = visibleSize(slot, monitor);
     if (slot.x < MIN_VISIBLE_PIXELS - visible.width || slot.y < MIN_VISIBLE_PIXELS - visible.height || slot.x > Math.max(0, monitor.work_area.width - visible.width) || slot.y > Math.max(0, monitor.work_area.height - visible.height)) return "窗口坐标超出显示器工作区";

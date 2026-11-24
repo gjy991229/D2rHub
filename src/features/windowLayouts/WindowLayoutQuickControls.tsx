@@ -71,7 +71,7 @@ export function WindowLayoutQuickControls({ onOpenSettings, disabled = false }: 
         <div className="layout-quick-summary">
           <span className="layout-status-dot" data-active={active} aria-hidden="true" />
           <div><strong>{active ? selected.name : enabled ? (english ? "Choose a layout" : "尚未选用布局") : (english ? "Layouts are off" : "布局已关闭")}</strong>
-            <p>{active ? (english ? "Resolution applies on the next launch. Restore moves running windows only." : "分辨率在下次启动时生效，恢复布局仅调整运行窗口的位置。")
+            <p>{active ? (english ? "Window mode and windowed resolution apply on the next launch." : "窗口模式和窗口化分辨率在下次启动时生效。")
               : (english ? "Using individual account positions." : "当前使用各账号的窗口坐标。")}</p></div>
         </div>
         <div className="layout-capsules" role="group" aria-label={english ? "Choose a layout" : "选择布局"}>
@@ -80,7 +80,7 @@ export function WindowLayoutQuickControls({ onOpenSettings, disabled = false }: 
           {layouts.map(layout => <button type="button" key={layout.id} className="layout-capsule" disabled={locked}
             aria-pressed={layout.id === selected?.id} onClick={() => select(layout.id)}>
             {layout.id === selected?.id && <Check size={12} aria-hidden="true" />}
-            <span>{layout.name}</span><small>{layout.windows.length}{english ? " windows" : " 开"}</small>
+            <span>{layout.name}</span><small>{layout.windows.length}{english ? " windows" : " 开"}{layout.windows.some(slot => slot.fullscreen) && (english ? " · Fullscreen" : " · 全屏")}</small>
           </button>)}
         </div>
         {!layouts.length && <p className="layout-helper">{english ? "Create and save a layout in settings to choose it here." : "新建并保存布局后，就能在这里快速切换。"}</p>}
@@ -91,7 +91,7 @@ export function WindowLayoutQuickControls({ onOpenSettings, disabled = false }: 
           <button type="button" className="room-automation-quick-settings" disabled={busy}
             onClick={() => { setOpen(false); onOpenSettings(); }}><Settings2 size={12} />{english ? "Manage layouts" : "管理布局"}</button>
           <button type="button" className="control-btn" disabled={locked || !active} onClick={() => void run(() => restore())}
-            title={english ? "Restore window positions in launch order" : "按启动顺序恢复运行窗口的位置"}>
+            title={english ? "Restore positions by window title" : "按窗口名称恢复运行窗口的位置"}>
             {busy ? <LoaderCircle className="animate-spin" size={13} /> : <RotateCcw size={13} />}
             {busy ? (english ? "Applying…" : "调整中…") : (english ? "Restore layout" : "恢复布局")}</button>
         </footer>

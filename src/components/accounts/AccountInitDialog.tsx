@@ -612,6 +612,7 @@ export function AccountInitDialog({ open, onClose, onDone, updateAccount, reinit
 
   return (
     <Modal open={open} onClose={handleClose} dismissible={!tokenSubmitting && currentStep !== "done"}
+      closeOnContextMenu closeOnBackdropClick={false}
       initialFocusRef={existingAccount ? headingRef : nicknameRef}
       title={migratingToToken ? copy.migrateTitle : updateAccount ? copy.updateTitle : reinitializeAccount ? copy.reinitTitle : copy.title}
       width="max-w-xl"

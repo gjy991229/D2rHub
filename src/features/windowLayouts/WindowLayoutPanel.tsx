@@ -5,11 +5,10 @@ import { Toggle } from "../../components/ui/Toggle";
 import { Button } from "../../components/ui/Button";
 import { ResolutionInput } from "../../components/ui/ResolutionInput";
 import { useAccounts } from "../../store/accounts";
-import { layoutAccountLabels } from "./accountLabels";
 import { useLaunch } from "../../store/launch";
 import { showToast } from "../../components/ui/Toast";
 import { LayoutCanvas } from "./LayoutCanvas";
-import { captureGameLayout, getLayoutAccountOrder, getLayoutMonitors, restoreGameLayout } from "./gateway";
+import { captureGameLayout, getLayoutMonitors, restoreGameLayout } from "./gateway";
 import { adaptLayout, changeSlotCount, constrainSlot, defaultPresetResolution, MAX_LAYOUT_WINDOWS, MIN_VISIBLE_PIXELS, MIN_LAYOUT_HEIGHT, MIN_LAYOUT_WIDTH, moveSlot, presetSlots, primaryMonitor, resizeSlot, slotRect, visibleSize, visibleInsets, validateLayout, type PresetResolution } from "./model";
 import "./windowLayouts.css";
 
@@ -61,8 +60,6 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   const accounts = useAccounts(state => state.accounts);
   const [monitors, setMonitors] = useState<LayoutMonitor[]>([]);
   const [monitorError, setMonitorError] = useState<string | null>(null);
-  const [accountOrder, setAccountOrder] = useState<string[] | undefined>();
-  const [accountOrderError, setAccountOrderError] = useState("");
   const [monitorLoading, setMonitorLoading] = useState(true);
   const [detecting, setDetecting] = useState(false);
   const [monitorFeedback, setMonitorFeedback] = useState(false);
@@ -85,18 +82,11 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
     loading.current = true;
     if (explicit) { setDetecting(true); setMonitorFeedback(false); }
     try {
-      const [displayResult, orderResult] = await Promise.allSettled([getLayoutMonitors(), getLayoutAccountOrder()]);
+      const current = await getLayoutMonitors();
       if (mounted.current) {
-        if (orderResult.status === "fulfilled") {
-          setAccountOrder(previous => JSON.stringify(previous) === JSON.stringify(orderResult.value) ? previous : orderResult.value);
-          setAccountOrderError("");
-        } else { setAccountOrder(undefined); setAccountOrderError(String(orderResult.reason)); }
-        if (displayResult.status === "fulfilled") {
-          const current = displayResult.value;
-          setMonitors(previous => JSON.stringify(previous) === JSON.stringify(current) ? previous : current);
-          setMonitorError(null);
-          if (explicit) setMonitorFeedback(true);
-        } else { setMonitorError(String(displayResult.reason)); setMonitorFeedback(false); }
+        setMonitors(previous => JSON.stringify(previous) === JSON.stringify(current) ? previous : current);
+        setMonitorError(null);
+        if (explicit) setMonitorFeedback(true);
       }
     } catch (error) { if (mounted.current) { setMonitorError(String(error)); setMonitorFeedback(false); } }
     finally { loading.current = false; if (mounted.current) { setMonitorLoading(false); setDetecting(false); } }
@@ -129,7 +119,9 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   useEffect(() => { onDraftChange?.(dirty); }, [dirty, onDraftChange]);
   useEffect(() => () => { onDraftChange?.(false); }, [onDraftChange]);
   useEffect(() => () => { onSavingChange?.(false); }, [onSavingChange]);
-  const labels = layoutAccountLabels(accounts, layout?.windows.length ?? 0, english, accountOrder);
+  const labels = layout?.windows.map((slot, index) => slot.window_title || (english ? `Unbound ${index + 1}` : `未绑定 ${index + 1}`)) ?? [];
+  const windowTitles = [...new Set(accounts.map(account => account.display_name.trim() ? account.display_name : account.id))].sort();
+  const titleSuggestionsId = useId();
   const replace = (next: WindowLayout) => { setEditor(current => current ? { ...current, draft: next } : current); setFeedback(null); setConfirmDelete(false); };
   const changeWindows = (windows: LayoutSlot[]) => { if (layout) replace({ ...layout, windows }); };
   const changeSlot = (patch: Partial<LayoutSlot>) => {
@@ -183,7 +175,8 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   };
   const save = (apply = false) => void run(async () => {
     if (!layout) return;
-    const candidate = { ...layout, name: layout.name.trim() };
+    const candidate = { ...layout, name: layout.name.trim(), windows: layout.windows.map(({ window_title, ...slot }) => window_title?.trim()
+      ? { ...slot, window_title: window_title.trim() } : slot) };
     const error = validateLayout(candidate);
     if (error) throw new Error(error);
     const current = readDraft() ?? config;
@@ -225,8 +218,6 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
     while (existing.some(item => item.name.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) name = `${base} ${suffix++}`;
     setMonitors(result.layout.monitors);
     setMonitorError(null);
-    setAccountOrder(result.account_ids);
-    setAccountOrderError("");
     openEditor({ ...result.layout, name }, null);
     setFeedback({ text: english
       ? `Captured ${result.layout.windows.length} windows. Review the preview, then save the layout.`
@@ -273,7 +264,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             <Button type="button" size="sm" onClick={capture} loading={busy} disabled={monitorLoading || layouts.length >= 64}><Camera size={14} />{english ? "Capture current layout" : "捕获当前布局"}</Button>
             <Button type="button" size="sm" onClick={create} disabled={!capable || monitorLoading || layouts.length >= 64}><Plus size={14} />{english ? "New layout" : "新建布局"}</Button>
           </div></div>
-        <p className="layout-helper">{english ? "Arrange your game windows, then capture their positions and resolutions. Restore minimized or maximized windows first." : "摆好游戏窗口后，可捕获实际位置和分辨率；请先将最小化、最大化或全屏窗口还原为普通窗口。"}</p>
+        <p className="layout-helper">{english ? "Capture normal windows or borderless fullscreen windows. Restore minimized or maximized windows first." : "支持捕获普通窗口和无边框全屏窗口；请先还原最小化或普通最大化窗口。"}</p>
         {layouts.length >= 64 && <p className="layout-helper" role="status">{english ? "You have reached the limit of 64 layouts. Delete one before adding another." : "已达到 64 个布局上限，删除不需要的布局后即可继续添加。"}</p>}
         {layouts.length ? <div className="layout-capsules layout-library-capsules">
           {layouts.map(saved => <button key={saved.id} type="button" className="layout-capsule" data-saved={saved.id === savedId}
@@ -317,7 +308,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             </div>
           </div>
           <div className="layout-presets">{[2, 3, 4, 5, 6, 7, 8].map(count => <button type="button" key={count} disabled={!capable} className="layout-preset"
-            onClick={() => { replace({ ...layout, windows: presetSlots(monitors, count, resolution) }); setSelected(0); setPresetsOpen(false); }}
+            onClick={() => { replace({ ...layout, windows: presetSlots(monitors, count, resolution).map((slot, index) => ({ ...slot, window_title: layout.windows[index]?.window_title })) }); setSelected(0); setPresetsOpen(false); }}
             aria-label={english ? `Fill ${resolution} ${count}-window preset` : `填充 ${resolution.toUpperCase()} ${count} 开预设`}>
             <PresetThumbnail monitors={monitors} count={count} resolution={resolution} /><span>{english ? `${count} windows` : ["", "", "双开", "三开", "四开", "五开", "六开", "七开", "八开"][count]}</span>
           </button>)}</div>
@@ -337,10 +328,10 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           <div className="layout-stage-hint"><span>{english ? "Overlap allowed · magnetic edges" : "允许重叠 · 边缘磁吸"}</span>
             <span>{english ? "Shift-drag bypasses snap · arrows move · Shift+arrows change resolution" : "Shift 拖动关闭吸附 · 方向键移动 · Shift＋方向键调整分辨率"}</span></div>
         </div>
-        <div className="layout-slot-list" role="group" aria-label={english ? "Accounts in launch order" : "启动顺序对应账号"}>
+        <div className="layout-slot-list" role="group" aria-label={english ? "Window titles" : "窗口名称"}>
           {layout.windows.map((slot, index) => <button key={index} type="button" aria-pressed={index === selectedIndex}
             onKeyDown={event => {
-              if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+              if (slot.fullscreen || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
               event.preventDefault(); setSelected(index);
               const step = event.ctrlKey || event.metaKey ? 1 : 10;
               const dx = event.key === "ArrowLeft" ? -step : event.key === "ArrowRight" ? step : 0;
@@ -349,18 +340,30 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
               const next = event.shiftKey ? resizeSlot(layout, index, slot, dx, dy, "se") : moveSlot(layout, index, { ...current, x: current.x + dx, y: current.y + dy });
               changeWindows(layout.windows.map((slot, at) => at === index ? next : slot));
             }}
-            title={`${english ? "Launch position" : "启动顺序"} ${index + 1} · ${slot.width} × ${slot.height}`}
+            title={`${english ? "Position" : "位置"} ${index + 1} · ${slot.fullscreen ? (english ? "Borderless fullscreen" : "无边框全屏") : `${slot.width} × ${slot.height}`}`}
             onClick={() => { setSelected(index); if (focusedMonitor && focusedMonitor !== slot.monitor_id) setFocusedMonitor(slot.monitor_id); }}>
             <span>{labels[index]}</span>{index === 0 && <small>{english ? "Primary" : "主窗口"}</small>}
           </button>)}
         </div>
         {slot && monitor && rect && <div className="layout-inspector">
+          <label className="layout-monitor-field"><span>{english ? "Window title" : "窗口名称"}</span>
+            <input className="settings-input" list={titleSuggestionsId} value={slot.window_title ?? ""}
+              placeholder={english ? "Select or enter a title" : "选择或输入窗口名称"}
+              onChange={event => changeSlot({ window_title: event.target.value || undefined })} />
+          </label>
+          <datalist id={titleSuggestionsId}>{windowTitles.map(title => <option key={title} value={title} />)}</datalist>
           <div className="layout-inspector-heading"><strong>{labels[selectedIndex]}</strong><span>{english ? "Window position and game resolution" : "窗口位置与游戏分辨率"}</span></div>
+          <label className="layout-monitor-field layout-mode-field"><span>{english ? "Window mode" : "窗口模式"}</span><select className="settings-input"
+            value={slot.fullscreen ? "fullscreen" : "windowed"} onChange={event => changeSlot({ fullscreen: event.target.value === "fullscreen" || undefined })}>
+            <option value="windowed">{english ? "Windowed" : "窗口化"}</option>
+            <option value="fullscreen">{english ? "Borderless fullscreen" : "无边框全屏"}</option>
+          </select></label>
           <label className="layout-monitor-field"><span>{english ? "Display" : "所在显示器"}</span><select className="settings-input" value={slot.monitor_id}
             onChange={event => changeSlot({ monitor_id: event.target.value })}>
-            {monitors.map(monitor => <option key={monitor.id} value={monitor.id} disabled={monitor.work_area.width < MIN_LAYOUT_WIDTH || monitor.work_area.height < MIN_LAYOUT_HEIGHT}>
+            {monitors.map(monitor => <option key={monitor.id} value={monitor.id} disabled={!slot.fullscreen && (monitor.work_area.width < MIN_LAYOUT_WIDTH || monitor.work_area.height < MIN_LAYOUT_HEIGHT)}>
               {monitor.name}{monitor.primary ? (english ? " · Primary" : " · 主屏") : ""}</option>)}
           </select></label>
+          {slot.fullscreen ? <p className="layout-visible-size">{english ? `Covers the entire display: ${rect.width} × ${rect.height}` : `覆盖整个显示器：${rect.width} × ${rect.height}`}</p> : <>
           <GeometryField label="X" value={rect.x} min={monitor.work_area.x + MIN_VISIBLE_PIXELS - visible!.width} max={monitor.work_area.x + Math.max(0, monitor.work_area.width - visible!.width)} onChange={value => changeSlot({ x: value - monitor.work_area.x })} />
           <GeometryField label="Y" value={rect.y} min={monitor.work_area.y + MIN_VISIBLE_PIXELS - visible!.height} max={monitor.work_area.y + Math.max(0, monitor.work_area.height - visible!.height)} onChange={value => changeSlot({ y: value - monitor.work_area.y })} />
           <div className="layout-resolution-field"><span>{english ? "Game resolution" : "游戏分辨率"}</span>
@@ -374,8 +377,10 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
             <Button type="button" size="sm" onClick={() => changeSlot({ x: 0, y: 0, width: monitor.bounds.width, height: monitor.bounds.height })}
               title={english ? "Use display resolution" : "使用显示器分辨率"}><Maximize size={14} /><span>{english ? "Match display" : "匹配显示器"}</span></Button>
           </div>
+          </>}
         </div>}
-        <div className="layout-panel-footer"><p>{english ? "Resolution has the same meaning as account resolution and takes effect on the next launch. Restoring a layout moves existing windows without resizing them. Coordinates align the visible window edge. The preview includes the title bar and visible borders; measurements are calibrated after launch." : "分辨率与账号分辨率含义相同，下次启动时生效。恢复布局仅移动运行中的窗口，不改变其大小。坐标对齐窗口可见边缘，画布包含标题栏和可见边框，启动后自动校准。"}</p>
+        {layout.windows.some(slot => !slot.window_title?.trim()) && <p className="layout-helper">{english ? "Assign a window title to each position you want to apply." : "为需要应用的位置填写窗口名称。"}</p>}
+        <div className="layout-panel-footer"><p>{english ? "Window mode and windowed resolution take effect on the next launch. Restore moves matching windowed games and fits matching fullscreen games to their displays." : "窗口模式和窗口化分辨率下次启动时生效。恢复布局只调整模式相符的窗口：普通窗口只移动，无边框全屏铺满所选显示器。"}</p>
           <div>{confirmDelete && <Button type="button" size="sm" variant="ghost" onClick={() => setConfirmDelete(false)}>{english ? "Keep layout" : "保留布局"}</Button>}
             {editor.baseline && <Button type="button" size="sm" variant="danger" onClick={remove}><Trash2 size={13} />{confirmDelete ? (english ? "Confirm delete" : "确认删除") : (english ? "Delete layout" : "删除布局")}</Button>}
             <Button type="button" size="sm" onClick={() => save(true)}><Check size={14} />{english ? "Save & use layout" : "保存并使用布局"}</Button></div>
@@ -383,7 +388,6 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
       </>}
     </>}
     {monitorError && <p className="layout-error" role="alert">{monitorError}</p>}
-    {accountOrderError && <p className="layout-helper" role="status">{english ? "Unable to read live window order; nicknames use launch records for this preview." : "暂未读取到实际窗口顺序，昵称按启动记录预览。"} {accountOrderError}</p>}
     {!monitorLoading && !capable && !monitorError && <p className="layout-error" role="alert">{english ? "The primary work area must be at least 800 × 600." : "主显示器工作区需要至少 800 × 600。"}</p>}
   </fieldset>;
 }

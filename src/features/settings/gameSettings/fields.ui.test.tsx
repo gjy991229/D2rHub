@@ -19,7 +19,7 @@ it("does not invent missing switches or interpret unexpected enum values", () =>
 it("names non-toggle game controls and commits a complete numeric edit on blur", () => {
   const update = vi.fn();
   const view = render(<DisplaySection settings={{}} update={update} />);
-  expect(screen.getByRole("combobox", { name: "窗口模式" })).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "窗口模式" })).toBeNull();
   expect(screen.getByRole("slider", { name: "亮度" })).toBeTruthy();
   view.rerender(<GraphicsSection settings={{ "Framerate Cap": 30 }} update={update} />);
   const input = screen.getByRole("spinbutton", { name: "帧数上限" });

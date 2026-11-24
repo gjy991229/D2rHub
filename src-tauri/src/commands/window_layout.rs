@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::Serialize;
@@ -7,7 +7,7 @@ use crate::commands::account::{AccountManager, AccountMeta};
 use crate::domain::account::WindowPositionPreset;
 use crate::domain::config::GlobalConfig;
 use crate::domain::window_layout::{
-    LayoutMonitor, LayoutRect, LayoutSlot, WindowFrameProfile, WindowLayout,
+    window_title_key, LayoutMonitor, LayoutRect, LayoutSlot, LayoutTarget, WindowFrameProfile, WindowLayout,
 };
 use crate::error::AppError;
 use crate::infrastructure::game_layout_windows::{self as windows, GameLayoutWindow};
@@ -28,11 +28,7 @@ fn identities(config: &GlobalConfig, state: &SharedState) -> Vec<AccountWindowId
             let account = AccountManager::load_meta(&config.accounts_dir, &id).ok()?;
             Some(AccountWindowIdentity {
                 executable: account_game_executable_identity(config, &account).ok()?,
-                title: if account.display_name.trim().is_empty() {
-                    id.clone()
-                } else {
-                    account.display_name
-                },
+                title: crate::commands::launch::account_window_title(&account),
                 pid: state.multi_instance().instances().pid_for(&id),
                 id,
             })
@@ -66,7 +62,7 @@ fn match_accounts<'a>(
         if accounts
             .iter()
             .filter(|other| {
-                other.title.eq_ignore_ascii_case(&account.title)
+                window_title_key(&other.title) == window_title_key(&account.title)
                     && same_path(&other.executable, &account.executable)
             })
             .count()
@@ -78,7 +74,7 @@ fn match_accounts<'a>(
             .iter()
             .filter(|window| {
                 !claimed.contains(&window.pid)
-                    && window.title.eq_ignore_ascii_case(&account.title)
+                    && window_title_key(&window.title) == window_title_key(&account.title)
                     && same_path(&window.executable, &account.executable)
             })
             .collect();
@@ -88,7 +84,7 @@ fn match_accounts<'a>(
             matches.push((account.id.clone(), window));
         }
     }
-    matches.sort_by_key(|(_, window)| (window.started_at, window.pid));
+    matches.sort_by_key(|(_, window)| window_title_key(&window.title));
     matches
 }
 
@@ -184,11 +180,13 @@ pub(crate) fn calibrate_game_frame(
         return Ok(());
     }
     let observed = windows::snapshot()?;
-    for (index, (id, window)) in match_accounts(&identities(&config, state), &observed)
-        .into_iter()
-        .enumerate()
-    {
-        let index = layout_slot_index(&config, &id, index);
+    for (id, window) in match_accounts(&identities(&config, state), &observed) {
+        let Some(index) = layout.slot_index_for_title(&window.title) else {
+            continue;
+        };
+        if !unique_observed_title(&observed, &window.title) {
+            continue;
+        }
         let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
             continue;
         };
@@ -207,13 +205,21 @@ pub(crate) fn calibrate_game_frame(
         state
             .multi_instance()
             .instances()
-            .apply_initial_window_geometry(&id, window.pid, || windows::apply(window, *new, false));
+            .apply_initial_window_geometry(&id, window.pid, || {
+                windows::apply(
+                    window,
+                    LayoutTarget {
+                        rect: *new,
+                        fullscreen: false,
+                    },
+                    false,
+                )
+            });
     }
     Ok(())
 }
 
-/// The editor and restore operation share the same PID/title matching and
-/// process-creation order, including windows discovered after an app restart.
+/// List identified accounts by window title, including after an app restart.
 #[tauri::command]
 pub async fn get_game_layout_account_order(
     state: tauri::State<'_, SharedState>,
@@ -258,6 +264,27 @@ pub async fn capture_game_window_layout(
         let mut slots = Vec::new();
         let mut account_ids = Vec::new();
         for (id, window) in matched {
+            if window.title.trim().is_empty() || !unique_observed_title(&observed, &window.title) {
+                return Err(AppError::FileError(format!("窗口名称为空或重复：{}", window.title)));
+            }
+            if let Some(monitor) = monitors.iter().find(|monitor| {
+                !window.minimized
+                    && monitor.bounds == window.rect
+                    && windows::is_borderless(window.handle)
+                    && windows::visible_window_rect(window.handle) == Some(monitor.bounds)
+            }) {
+                slots.push(LayoutSlot {
+                    monitor_id: monitor.id.clone(),
+                    window_title: Some(window.title.clone()),
+                    fullscreen: true,
+                    x: monitor.bounds.x - monitor.work_area.x,
+                    y: monitor.bounds.y - monitor.work_area.y,
+                    width: monitor.bounds.width,
+                    height: monitor.bounds.height,
+                });
+                account_ids.push(id);
+                continue;
+            }
             let sample = windows::frame_target(window.pid, &window.executable)
                 .filter(|target| target.handle == window.handle)
                 .and_then(|target| {
@@ -267,11 +294,13 @@ pub async fn capture_game_window_layout(
                 })
                 .ok_or_else(|| {
                     AppError::FileError(format!(
-                        "{}：请还原为普通窗口（非最小化、最大化或全屏），停止拖动后重试",
+                        "{}：请使用普通窗口或覆盖整个显示器的无边框全屏，停止拖动后重试",
                         window.title
                     ))
                 })?;
-            slots.push(captured_slot(&monitors, &sample)?);
+            let mut slot = captured_slot(&monitors, &sample)?;
+            slot.window_title = Some(window.title.clone());
+            slots.push(slot);
             account_ids.push(id);
         }
         let layout = WindowLayout {
@@ -313,6 +342,8 @@ fn captured_slot(
         .ok_or_else(|| AppError::FileError("显示器配置已变化，请重新捕获布局".into()))?;
     Ok(LayoutSlot {
         monitor_id: monitor.id.clone(),
+        window_title: None,
+        fullscreen: false,
         x: sample.visible_rect.x - monitor.work_area.x,
         y: sample.visible_rect.y - monitor.work_area.y,
         width: sample.client_width,
@@ -392,45 +423,25 @@ pub async fn capture_account_window_position(
 }
 
 pub(crate) struct LaunchLayoutPlan {
-    rectangles: Vec<LayoutRect>,
-    existing: Vec<String>,
-    next: usize,
-    fixed_order: Vec<String>,
+    targets: HashMap<String, (String, LayoutTarget)>,
+    existing: HashSet<String>,
 }
 
 impl LaunchLayoutPlan {
     pub fn is_existing(&self, account_id: &str) -> bool {
-        self.existing
-            .iter()
-            .any(|id| id.eq_ignore_ascii_case(account_id))
-    }
-    pub fn target(&self, account_id: &str) -> Option<LayoutRect> {
-        if !self.fixed_order.is_empty() {
-            return self
-                .fixed_order
-                .iter()
-                .position(|id| id.eq_ignore_ascii_case(account_id))
-                .and_then(|index| self.rectangles.get(index))
-                .copied();
-        }
-        let index = self
-            .existing
-            .iter()
-            .position(|id| id.eq_ignore_ascii_case(account_id))
-            .unwrap_or(self.next);
-        self.rectangles.get(index).copied()
+        self.existing.contains(&account_id.to_ascii_lowercase())
     }
 
-    pub fn record_started(&mut self, account_id: &str) {
-        if !self
-            .existing
-            .iter()
-            .any(|id| id.eq_ignore_ascii_case(account_id))
-        {
-            self.existing.push(account_id.to_string());
-            self.next += 1;
-        }
+    pub fn target(&self, account: &AccountMeta) -> Option<LayoutTarget> {
+        let (title, target) = self.targets.get(&account.id.to_ascii_lowercase())?;
+        let current_title = crate::commands::launch::account_window_title(account);
+        (window_title_key(&current_title) == *title).then_some(*target)
     }
+}
+
+fn unique_observed_title(observed: &[GameLayoutWindow], title: &str) -> bool {
+    let key = window_title_key(title);
+    observed.iter().filter(|window| window_title_key(&window.title) == key).count() == 1
 }
 
 pub(crate) fn prepare_launch_layout(
@@ -449,30 +460,33 @@ pub(crate) fn prepare_launch_layout(
         .iter()
         .find(|layout| layout.id == id)
         .ok_or_else(|| AppError::ConfigReadError("所选窗口布局不存在，请重新选择".into()))?;
-    let rectangles = layout.resolve(&configured_monitors(Some(config))?)?;
+    let positions = layout.resolve_targets(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
-    let existing: Vec<_> = match_accounts(&identities(config, state), &observed)
+    let accounts = identities(config, state);
+    let existing = match_accounts(&accounts, &observed)
         .into_iter()
-        .map(|(id, _)| id)
+        .map(|(id, _)| id.to_ascii_lowercase())
         .collect();
-    let _ = requested;
-    let fixed_order = Vec::new();
-    Ok(Some(LaunchLayoutPlan {
-        fixed_order,
-        next: existing.len(),
-        existing,
-        rectangles,
-    }))
+    let mut targets = HashMap::new();
+    for account in &accounts {
+        if !requested.iter().any(|id| id.eq_ignore_ascii_case(&account.id)) {
+            continue;
+        }
+        let Some(index) = layout.slot_index_for_title(&account.title) else {
+            continue;
+        };
+        let key = window_title_key(&account.title);
+        if accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
+            targets.insert(account.id.to_ascii_lowercase(), (key, positions[index]));
+        }
+    }
+    Ok(Some(LaunchLayoutPlan { targets, existing }))
 }
 
 #[derive(Serialize)]
 pub struct LayoutRestoreResult {
     pub applied: Vec<String>,
     pub failures: Vec<String>,
-}
-
-fn layout_slot_index(_config: &GlobalConfig, _id: &str, fallback: usize) -> usize {
-    fallback
 }
 
 pub(crate) fn restore_layout(
@@ -487,28 +501,35 @@ pub(crate) fn restore_layout(
         .as_ref()
         .and_then(|id| config.window_layouts.iter().find(|layout| &layout.id == id))
         .ok_or_else(|| AppError::FileError("请先选择一个已保存的窗口布局".into()))?;
-    let rectangles = layout.resolve(&configured_monitors(Some(config))?)?;
+    let targets = layout.resolve_targets(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
     let matched = match_accounts(&identities(config, state), &observed);
     let mut result = LayoutRestoreResult {
         applied: Vec::new(),
         failures: Vec::new(),
     };
-    // Back-to-front: the first-launched primary window remains on top, without
-    // stealing focus. Enumeration and executable matching happen only once.
-    for (ordinal, (id, window)) in matched.iter().enumerate().rev() {
-        let index = layout_slot_index(config, id, ordinal);
-        let Some(rectangle) = rectangles.get(index).copied() else {
+    let mut placements = Vec::new();
+    for (id, window) in matched {
+        let Some(index) = layout.slot_index_for_title(&window.title) else {
             continue;
         };
+        if !unique_observed_title(&observed, &window.title) {
+            result.failures.push(format!("{}：窗口名称重复", window.title));
+            continue;
+        }
+        placements.push((index, id, window));
+    }
+    placements.sort_by_key(|(index, _, _)| std::cmp::Reverse(*index));
+    for (index, id, window) in placements {
+        let target = targets[index];
         let registry = state.multi_instance().instances();
-        registry.record_discovered(id, window.pid);
+        registry.record_discovered(&id, window.pid);
         let applied = registry
-            .override_window_geometry(id, window.pid, || windows::apply(window, rectangle, true))
+            .override_window_geometry(&id, window.pid, || windows::apply(window, target, true))
             .unwrap_or_else(|| Err(AppError::FileError("账号窗口状态已变化，请重试".into())));
         match applied {
             Ok(()) => {
-                result.applied.push(id.clone());
+                result.applied.push(id);
             }
             Err(error) => result.failures.push(format!("{}：{error}", window.title)),
         }
@@ -738,7 +759,7 @@ mod tests {
         }
     }
     #[test]
-    fn pid_precedes_titles_and_process_creation_decides_order() {
+    fn pid_identifies_accounts_and_titles_decide_presentation_order() {
         let accounts = [
             account("acount1", "renamed", Some(10)),
             account("acount2", "second", None),
@@ -750,7 +771,7 @@ mod tests {
                 .iter()
                 .map(|(id, _)| id.as_str())
                 .collect::<Vec<_>>(),
-            ["acount2", "acount1"]
+            ["acount1", "acount2"]
         );
     }
     #[test]
@@ -770,45 +791,15 @@ mod tests {
         .is_empty());
     }
     #[test]
-    fn failed_launches_do_not_consume_an_ordinal() {
-        let rect = LayoutRect {
-            x: 0,
-            y: 0,
-            width: 1280,
-            height: 720,
-        };
-        let mut plan = LaunchLayoutPlan {
-            rectangles: vec![rect, LayoutRect { x: 640, ..rect }],
-            existing: vec![],
-            next: 0,
-            fixed_order: Vec::new(),
-        };
-        assert_eq!(plan.target("acount1"), Some(rect));
-        assert_eq!(plan.target("acount2"), Some(rect));
-        plan.record_started("acount2");
-        assert_eq!(plan.target("acount1").unwrap().x, 640);
-        assert_eq!(plan.target("acount2"), Some(rect));
-    }
-
-    #[test]
-    fn scheme_slots_do_not_shift_when_an_earlier_account_fails_or_retries() {
-        let first = LayoutRect {
-            x: 0,
-            y: 0,
-            width: 1280,
-            height: 720,
-        };
-        let second = LayoutRect { x: 1280, ..first };
-        let mut plan = LaunchLayoutPlan {
-            rectangles: vec![first, second],
-            existing: vec![],
-            next: 0,
-            fixed_order: vec!["primary".into(), "follower".into()],
-        };
-        assert_eq!(plan.target("follower"), Some(second));
-        plan.record_started("follower");
-        assert_eq!(plan.target("primary"), Some(first));
-        assert_eq!(plan.target("follower"), Some(second));
-        assert_eq!(plan.target("unrelated"), None);
+    fn saved_titles_match_independently_of_process_order() {
+        let accounts = [account("a", "Alpha", Some(10)), account("b", "Beta", Some(20))];
+        for windows in [
+            [window(10, "Alpha", 1), window(20, "Beta", 2)],
+            [window(20, "Beta", 1), window(10, "Alpha", 2)],
+        ] {
+            let matched = match_accounts(&accounts, &windows);
+            assert_eq!(matched.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+            assert!(unique_observed_title(&windows, " alpha "));
+        }
     }
 }

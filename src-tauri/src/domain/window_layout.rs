@@ -81,6 +81,10 @@ impl LayoutMonitor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutSlot {
     pub monitor_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window_title: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fullscreen: bool,
     /// Visible frame origin relative to this monitor's work area, in physical pixels.
     pub x: i32,
     pub y: i32,
@@ -89,16 +93,34 @@ pub struct LayoutSlot {
     pub height: u32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LayoutTarget {
+    pub rect: LayoutRect,
+    pub fullscreen: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WindowLayout {
     pub id: String,
     pub name: String,
     pub monitors: Vec<LayoutMonitor>,
-    /// Array order is launch order. Overlap is intentional and unrestricted.
+    /// Array order controls presentation and stacking. Slots match window titles.
     pub windows: Vec<LayoutSlot>,
 }
 
 impl WindowLayout {
+    pub fn slot_index_for_title(&self, title: &str) -> Option<usize> {
+        let key = window_title_key(title);
+        if key.is_empty() {
+            return None;
+        }
+        self.windows.iter().position(|slot| {
+            slot.window_title
+                .as_deref()
+                .is_some_and(|name| window_title_key(name) == key)
+        })
+    }
+
     pub fn validate(&self) -> Result<(), AppError> {
         let invalid = |message: &str| AppError::ConfigWriteError(format!("窗口布局：{message}"));
         if self.id.trim().is_empty()
@@ -148,12 +170,22 @@ impl WindowLayout {
         if self.windows.is_empty() || self.windows.len() > MAX_LAYOUT_WINDOWS {
             return Err(invalid("窗口数量须在 1 到 32 之间"));
         }
+        let mut titles = HashSet::new();
         for slot in &self.windows {
+            if let Some(title) = &slot.window_title {
+                let key = window_title_key(title);
+                if key.is_empty() || !titles.insert(key) {
+                    return Err(invalid("窗口名称不能为空或重复"));
+                }
+            }
             let monitor = self
                 .monitors
                 .iter()
                 .find(|monitor| monitor.id == slot.monitor_id)
                 .ok_or_else(|| invalid("窗口引用了不存在的显示器"))?;
+            if slot.fullscreen {
+                continue;
+            }
             if !(MIN_WINDOW_WIDTH..=7680).contains(&slot.width)
                 || !(MIN_WINDOW_HEIGHT..=4320).contains(&slot.height)
             {
@@ -208,6 +240,9 @@ impl WindowLayout {
                         }
                     })
                     .unwrap_or(primary);
+                if slot.fullscreen {
+                    return Ok(current.bounds);
+                }
                 let work = current.work_area;
                 if work.width < MIN_WINDOW_WIDTH || work.height < MIN_WINDOW_HEIGHT {
                     return Err(AppError::FileError(format!(
@@ -242,6 +277,25 @@ impl WindowLayout {
             })
             .collect()
     }
+
+    pub fn resolve_targets(
+        &self,
+        monitors: &[LayoutMonitor],
+    ) -> Result<Vec<LayoutTarget>, AppError> {
+        Ok(self
+            .resolve(monitors)?
+            .into_iter()
+            .zip(&self.windows)
+            .map(|(rect, slot)| LayoutTarget {
+                rect,
+                fullscreen: slot.fullscreen,
+            })
+            .collect())
+    }
+}
+
+pub(crate) fn window_title_key(title: &str) -> String {
+    title.trim().to_lowercase()
 }
 
 fn adapt_axis(offset: i32, size: u32, previous: u32, next_size: u32, next: u32) -> i32 {
@@ -321,12 +375,35 @@ mod tests {
             ],
             windows: vec![LayoutSlot {
                 monitor_id: "left".into(),
+            window_title: None,
+                fullscreen: false,
                 x: 640,
                 y: 340,
                 width: 1280,
                 height: 720,
             }],
         }
+    }
+
+    #[test]
+    fn fullscreen_uses_display_bounds_instead_of_work_area_or_window_frame() {
+        let mut value = layout();
+        value.windows[0].fullscreen = true;
+        let mut monitors = value.monitors.clone();
+        monitors[1].bounds.height = 1440;
+        monitors[1].work_area.y = 40;
+
+        assert_eq!(
+            value.resolve_targets(&monitors).unwrap(),
+            vec![LayoutTarget {
+                rect: monitors[1].bounds,
+                fullscreen: true,
+            }]
+        );
+        assert_eq!(
+            value.resolve(&monitors[..1]).unwrap(),
+            vec![monitors[0].bounds]
+        );
     }
 
     #[test]
@@ -437,6 +514,8 @@ mod tests {
         let mut value = layout();
         value.windows.push(LayoutSlot {
             monitor_id: "left".into(),
+            window_title: None,
+            fullscreen: false,
             x: 1280,
             y: 680,
             width: 1280,

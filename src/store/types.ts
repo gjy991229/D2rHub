@@ -79,15 +79,17 @@ export interface LayoutMonitor {
 }
 
 export interface LayoutSlot extends LayoutRect {
+  window_title?: string | null;
   /** width/height are Settings.json game resolution, not native window size. */
   monitor_id: string;
+  fullscreen?: boolean;
 }
 
 export interface WindowLayout {
   id: string;
   name: string;
   monitors: LayoutMonitor[];
-  /** 1-based launch order is the array index + 1. Overlap is allowed. */
+  /** Positions are matched by window title. Overlap is allowed. */
   windows: LayoutSlot[];
 }
 
@@ -213,6 +215,7 @@ export interface PersistedDropEntry {
 }
 
 export interface SceneRecord {
+  scene_visit?: boolean;
   source_id?: string | null;
   id?: number;
   absolute_time: string;
@@ -305,6 +308,8 @@ export interface TrackingSnapshot {
   is_town: boolean;
   is_frontend: boolean;
   accumulated_ms?: number | null;
+  scene_visit_started_at_ms?: number | null;
+  finished_visit_display?: { name: string; name_en: string; elapsed_ms: number } | null;
   is_timing: boolean;
   timer_started_at_ms: number | null;
   current_run_key: string | null;

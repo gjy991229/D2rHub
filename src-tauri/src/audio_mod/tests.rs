@@ -596,6 +596,7 @@ fn death_auto_exit_is_an_independent_verified_feature_group() {
         None,
         None,
         Some(true),
+        None,
     )
     .unwrap();
     assert_eq!(requested.generator_value(), "death-exit");
@@ -644,6 +645,7 @@ fn death_auto_exit_is_an_independent_verified_feature_group() {
         None,
         None,
         Some(true),
+        None,
     )
     .unwrap();
     assert!(disabled_request.all_present(&disabled.feature_groups));
@@ -1084,6 +1086,7 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             esc_next_game: false,
             scene_shortcuts: false,
             party_loot: false,
+            jcy_inventory: false,
             hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
@@ -1108,6 +1111,7 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             esc_next_game: false,
             scene_shortcuts: false,
             party_loot: false,
+            jcy_inventory: false,
             hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
@@ -1126,6 +1130,7 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             esc_next_game: false,
             scene_shortcuts: false,
             party_loot: false,
+            jcy_inventory: false,
             hostile_auto_restart: false,
             auto_exit_on_death: false,
         },
@@ -1150,6 +1155,7 @@ fn generator_report_must_match_requested_and_persisted_groups() {
             esc_next_game: false,
             scene_shortcuts: false,
             party_loot: false,
+            jcy_inventory: false,
             hostile_auto_restart: false,
             auto_exit_on_death: false,
         },

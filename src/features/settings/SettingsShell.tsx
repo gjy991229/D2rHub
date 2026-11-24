@@ -78,6 +78,7 @@ export function SettingsShell({
       title={title}
       width="settings-modal-size"
       closeOnContextMenu
+      closeOnBackdropClick={false}
       dismissible={dismissible}
     >
       <div className="settings-center-shell settings-workspace flex flex-col">

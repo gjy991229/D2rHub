@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 use crate::application::multi_instance::FrameCalibrationKey;
 use crate::domain::window_layout::{
-    FrameInsets, LayoutMonitor, LayoutRect, WindowFrameMetrics, WindowFrameProfile,
+    FrameInsets, LayoutMonitor, LayoutRect, LayoutTarget, WindowFrameMetrics, WindowFrameProfile,
 };
 use crate::error::AppError;
 
@@ -194,7 +194,7 @@ mod native {
         GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, IsZoomed, SetWindowPos,
         ShowWindowAsync, GWL_EXSTYLE, GWL_STYLE, GW_OWNER, HWND_TOP, MONITORINFOF_PRIMARY,
         SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER,
-        SW_RESTORE, WINDOW_EX_STYLE, WS_CAPTION, WS_OVERLAPPEDWINDOW,
+        SW_RESTORE, WINDOW_EX_STYLE, WS_CAPTION, WS_OVERLAPPEDWINDOW, WS_THICKFRAME,
     };
 
     use super::*;
@@ -640,7 +640,58 @@ mod native {
         }
     }
 
-    pub fn apply(window: &GameLayoutWindow, rect: LayoutRect, raise: bool) -> Result<(), AppError> {
+    pub fn is_borderless(handle: isize) -> bool {
+        let hwnd = HWND(handle as *mut _);
+        unsafe {
+            IsWindow(hwnd).as_bool()
+                && GetWindowLongW(hwnd, GWL_STYLE) as u32 & (WS_CAPTION.0 | WS_THICKFRAME.0) == 0
+        }
+    }
+
+    fn apply_layout(hwnd: HWND, target: LayoutTarget, raise: bool) -> Result<(), AppError> {
+        if is_borderless(hwnd.0 as isize) != target.fullscreen {
+            return Err(AppError::FileError(
+                "布局的窗口模式将在下次启动时生效".into(),
+            ));
+        }
+        let rect = target.rect;
+        if !target.fullscreen {
+            return apply_handle(hwnd, rect, raise);
+        }
+        let _dpi = PhysicalDpiScope::enter();
+        if unsafe { IsIconic(hwnd) }.as_bool() {
+            return Err(AppError::FileError("请先还原最小化的全屏窗口".into()));
+        }
+        let flags = SWP_NOACTIVATE
+            | SWP_NOOWNERZORDER
+            | SWP_ASYNCWINDOWPOS
+            | if raise {
+                Default::default()
+            } else {
+                SWP_NOZORDER
+            };
+        if !raise && visible_bounds(hwnd).map(rectangle) == Some(rect) {
+            return Ok(());
+        }
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                HWND_TOP,
+                rect.x,
+                rect.y,
+                rect.width as i32,
+                rect.height as i32,
+                flags,
+            )
+        }
+        .map_err(|error| AppError::FileError(format!("调整全屏游戏窗口失败：{error}")))
+    }
+
+    pub fn apply(
+        window: &GameLayoutWindow,
+        target: LayoutTarget,
+        raise: bool,
+    ) -> Result<(), AppError> {
         let hwnd = HWND(window.handle as *mut _);
         let mut pid = 0;
         unsafe {
@@ -655,17 +706,17 @@ mod native {
         }) {
             return Err(AppError::FileError("游戏进程已变化，请重试".into()));
         }
-        apply_handle(hwnd, rect, raise)
+        apply_layout(hwnd, target, raise)
     }
 
-    pub fn apply_for_pid(pid: u32, executable: &std::path::Path, rect: LayoutRect) -> bool {
+    pub fn apply_for_pid(pid: u32, executable: &std::path::Path, target: LayoutTarget) -> bool {
         if process_identity(pid).is_none_or(|(path, _)| {
             !crate::infrastructure::system::executable_paths_match(&path, executable)
         }) {
             return false;
         }
         crate::infrastructure::system::find_game_hwnd(pid)
-            .is_some_and(|handle| apply_handle(HWND(handle as *mut _), rect, false).is_ok())
+            .is_some_and(|handle| apply_layout(HWND(handle as *mut _), target, false).is_ok())
     }
 }
 
@@ -673,8 +724,8 @@ mod native {
 pub(crate) use native::PhysicalDpiScope;
 #[cfg(target_os = "windows")]
 pub use native::{
-    apply, apply_for_pid, frame_target, monitors, move_visible_window, sample_target, snapshot,
-    visible_window_rect,
+    apply, apply_for_pid, frame_target, is_borderless, monitors, move_visible_window,
+    sample_target, snapshot, visible_window_rect,
 };
 
 #[cfg(not(target_os = "windows"))]
@@ -705,11 +756,16 @@ pub fn snapshot() -> Result<Vec<GameLayoutWindow>, AppError> {
     Err(AppError::FileError("窗口布局仅支持 Windows".into()))
 }
 #[cfg(not(target_os = "windows"))]
-pub fn apply(_: &GameLayoutWindow, _: LayoutRect, _: bool) -> Result<(), AppError> {
+pub fn is_borderless(_: isize) -> bool {
+    false
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn apply(_: &GameLayoutWindow, _: LayoutTarget, _: bool) -> Result<(), AppError> {
     Err(AppError::FileError("窗口布局仅支持 Windows".into()))
 }
 #[cfg(not(target_os = "windows"))]
-pub fn apply_for_pid(_: u32, _: &std::path::Path, _: LayoutRect) -> bool {
+pub fn apply_for_pid(_: u32, _: &std::path::Path, _: LayoutTarget) -> bool {
     false
 }
 

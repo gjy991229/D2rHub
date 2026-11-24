@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type ReactNode } from "react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { CheckCircle, AlertCircle, XCircle, Info, X } from "lucide-react";
 import { createPortal } from "react-dom";
 import { useI18n } from "../../i18n";
@@ -12,12 +12,30 @@ interface ToastItem {
 }
 
 let nextId = 0;
-type Listener = (toast: ToastItem) => void;
-const listeners = new Set<Listener>();
+const listeners = new Set<() => void>();
+let toasts: ToastItem[] = [];
+
+function setToasts(next: ToastItem[]) {
+  toasts = next;
+  listeners.forEach(listener => listener());
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function getSnapshot() { return toasts; }
+
+function dismissToast(id: number) {
+  if (toasts.some(toast => toast.id === id)) setToasts(toasts.filter(toast => toast.id !== id));
+}
 
 export function showToast(type: ToastType, message: string) {
+  if (type === "error" && toasts.some(toast => toast.type === type && toast.message === message)) return;
   const toast: ToastItem = { id: nextId++, type, message };
-  listeners.forEach((fn) => fn(toast));
+  setToasts([...toasts, toast]);
+  if (type !== "error") setTimeout(() => dismissToast(toast.id), 4000);
 }
 
 const iconMap: Record<ToastType, ReactNode> = {
@@ -29,26 +47,12 @@ const iconMap: Record<ToastType, ReactNode> = {
 
 export function ToastContainer() {
   const { language } = useI18n();
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
-
-  const addToast = useCallback((toast: ToastItem) => {
-    setToasts((prev) => [...prev, toast]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== toast.id));
-    }, 4000);
-  }, []);
-
-  useEffect(() => {
-    listeners.add(addToast);
-    return () => {
-      listeners.delete(addToast);
-    };
-  }, [addToast]);
+  const toasts = useSyncExternalStore(subscribe, getSnapshot);
 
   if (toasts.length === 0) return null;
 
   return createPortal(
-    <div className="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-xs" style={{ maxWidth: "min(320px, calc(100vw - 32px))" }}>
+    <div className="fixed bottom-4 right-4 z-[100] flex flex-col-reverse gap-2 max-w-xs" style={{ maxWidth: "min(320px, calc(100vw - 32px))", maxHeight: "calc(100vh - 32px)", overflowY: "auto" }}>
       {toasts.map((toast) => (
         <div
           key={toast.id}
@@ -62,9 +66,7 @@ export function ToastContainer() {
           <button
             type="button"
             aria-label={language === "en-US" ? "Dismiss notification" : "关闭提示"}
-            onClick={() =>
-              setToasts((prev) => prev.filter((t) => t.id !== toast.id))
-            }
+            onClick={() => dismissToast(toast.id)}
             className="toast-close-btn"
           >
             <X size={14} />

@@ -2622,64 +2622,17 @@ html, body, #root {
   animation: overlay-drop-pill-sheen 1250ms var(--ease-out-expo) both;
 }
 
-.overlay-drop-scope-controls {
-  display: inline-flex;
-  min-width: 0;
-  align-items: center;
-  gap: 3px;
-}
-
-.overlay-drop-scope-controls button {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.overlay-drop-scope-controls button:hover,
-.overlay-drop-scope-controls button:focus-visible {
-  background: var(--surface-hover);
-  color: var(--text-primary);
-}
-
-.overlay-drop-scope-controls > span {
-  min-width: 82px;
+.overlay-drop-heading {
   color: var(--text-muted);
   font-size: var(--text-2xs);
   font-weight: 650;
-  text-align: center;
   white-space: nowrap;
 }
 
-.overlay-drop-scope-controls em {
+.overlay-drop-heading em {
   margin-left: 3px;
   color: var(--accent);
   font-style: normal;
-}
-
-.overlay-drop-scope-content[data-direction="next"] {
-  animation: overlay-drop-scope-next 190ms var(--ease-out-expo);
-}
-
-.overlay-drop-scope-content[data-direction="previous"] {
-  animation: overlay-drop-scope-previous 190ms var(--ease-out-expo);
-}
-
-@keyframes overlay-drop-scope-next {
-  from { opacity: 0.25; transform: translateX(8px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@keyframes overlay-drop-scope-previous {
-  from { opacity: 0.25; transform: translateX(-8px); }
-  to { opacity: 1; transform: translateX(0); }
 }
 
 .tz-forecast-divider {

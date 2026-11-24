@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
+import { invokeCommand } from "../../platform/tauri";
 import type { GlobalConfig } from "../../store/types";
 import type { GlobalConfigPatch } from "../../utils/globalConfigPatch";
 import type { SettingsTabId } from "../../features/settings/settingsRegistry";
@@ -59,10 +60,37 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 
-function mount(onClose = vi.fn()) {
-  return render(<SettingsCenter open initialTab="paths" onClose={onClose}
+function mount(onClose = vi.fn(), initialTab: SettingsTabId = "paths") {
+  return render(<SettingsCenter open initialTab={initialTab} onClose={onClose}
     onReconfigure={vi.fn()} onInitializeAccount={vi.fn()} />);
 }
+
+it("can repair supported configs from maintenance in Pure mode without an installed module", async () => {
+  useGlobalConfig.setState({ config: { ...initial, feature_profile: "minimal" } });
+  const reloadAccounts = vi.fn(async () => undefined);
+  const originalLoadAccounts = useAccounts.getState().loadAccounts;
+  useAccounts.setState({ loadAccounts: reloadAccounts });
+  const report = {
+    repaired: ["acount1/account.json.corrupt-test"],
+    issues: ["acount2/account.json: 没有有效备份"],
+  };
+  try {
+    await vi.mocked(invokeCommand).withImplementation(
+      async command => command === "check_and_repair_configs" ? report : null,
+      async () => {
+        mount(vi.fn(), "advanced");
+        expect(screen.getByLabelText("Current section").textContent).toBe("advanced");
+        fireEvent.click(await screen.findByRole("button", { name: "检查并修复配置" }));
+        expect(await screen.findByText(report.repaired[0])).toBeTruthy();
+        expect(screen.getByText(report.issues[0])).toBeTruthy();
+        expect(invokeCommand).toHaveBeenCalledWith("check_and_repair_configs");
+        expect(reloadAccounts).toHaveBeenCalledOnce();
+      },
+    );
+  } finally {
+    useAccounts.setState({ loadAccounts: originalLoadAccounts });
+  }
+});
 
 it("keeps navigation pending until the isolated draft is committed", async () => {
   let complete!: (config: GlobalConfig) => void;

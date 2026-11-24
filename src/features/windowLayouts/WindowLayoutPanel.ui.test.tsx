@@ -14,7 +14,7 @@ const displays: LayoutMonitor[] = [
   { id: "main", name: "Main", primary: true, scale_factor: 1.5, bounds: { x: 0, y: 0, width: 2560, height: 1440 }, work_area: { x: 0, y: 0, width: 2560, height: 1400 } },
   { id: "left", name: "Left", primary: false, scale_factor: 1, bounds: { x: -1920, y: 0, width: 1920, height: 1080 }, work_area: { x: -1920, y: 0, width: 1920, height: 1040 } },
 ];
-const saved: WindowLayout = { id: "desk", name: "日常三开", monitors: displays, windows: presetSlots(displays, 3, "2k") };
+const saved: WindowLayout = { id: "desk", name: "日常三开", monitors: displays, windows: presetSlots(displays, 3, "2k").map((slot, index) => ({ ...slot, window_title: ["雷董2", "立山", "山鬼"][index] })) };
 let latest: GlobalConfig;
 function Harness({ layouts = [] as WindowLayout[], enabled = false }) {
   const draft = useRef({ window_layouts: layouts, active_window_layout_id: layouts[0]?.id ?? null, window_layout_enabled: enabled, app_language: "zh-CN" } as unknown as GlobalConfig);
@@ -42,6 +42,18 @@ const create = async () => {
   fireEvent.click(screen.getByRole("button", { name: "新建布局" }));
 };
 describe("window layout library and editor", () => {
+  it("saves a borderless fullscreen slot and previews the entire chosen display", async () => {
+    render(<Harness layouts={[saved]} />);
+    fireEvent.click(screen.getByRole("button", { name: "编辑布局：日常三开" }));
+    fireEvent.change(await screen.findByRole("combobox", { name: "窗口模式" }), { target: { value: "fullscreen" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "所在显示器" }), { target: { value: "left" } });
+    expect(screen.getByText("覆盖整个显示器：1920 × 1080")).toBeTruthy();
+    expect(screen.queryByRole("spinbutton", { name: "X" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
+    await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ fullscreen: true, monitor_id: "left" }));
+    expect(latest.window_layouts?.[0].windows[1].fullscreen).toBeUndefined();
+  });
+
   it("lets the user leave delete confirmation while keeping the saved layout", async () => {
     render(<Harness layouts={[saved]} />);
     fireEvent.click(screen.getByRole("button", { name: "编辑布局：日常三开" }));
@@ -55,8 +67,8 @@ describe("window layout library and editor", () => {
 
   it("captures physical positions into a named draft and persists them without moving windows", async () => {
     const captured: WindowLayout = { ...saved, id: "capture", windows: [
-      { monitor_id: "left", x: 120, y: 90, width: 1280, height: 720 },
-      { monitor_id: "main", x: 180, y: 140, width: 1600, height: 900 },
+      { monitor_id: "left", window_title: "立山", x: 120, y: 90, width: 1280, height: 720 },
+      { monitor_id: "main", window_title: "雷董2", x: 180, y: 140, width: 1600, height: 900 },
     ] };
     mocks.capture.mockResolvedValue({ layout: captured, account_ids: ["second", "first"] });
     render(<Harness layouts={[{ ...saved, name: "当前窗口布局" }]} />);
@@ -114,7 +126,7 @@ describe("window layout library and editor", () => {
     expect(screen.queryByRole("textbox", { name: "布局名称" })).toBeNull();
     expect(mocks.restore).not.toHaveBeenCalled();
   });
-  it("labels live slots in launch order before previewing idle accounts in card order", async () => {
+  it("keeps saved window title bindings when accounts start in another order", async () => {
     mocks.order.mockResolvedValue(["first", "later"]);
     useAccounts.setState({ accounts: [
       { id: "idle", display_name: "白可鉴", initialized: true, is_running: false, order: 0 },
@@ -123,8 +135,8 @@ describe("window layout library and editor", () => {
     ] as AccountMeta[] });
     render(<Harness layouts={[saved]} />);
     fireEvent.click(screen.getByRole("button", { name: "编辑布局：日常三开" }));
-    const order = await screen.findByRole("group", { name: "启动顺序对应账号" });
-    expect(Array.from(order.querySelectorAll("button > span")).map(label => label.textContent)).toEqual(["山鬼", "立山", "白可鉴"]);
+    const order = await screen.findByRole("group", { name: "窗口名称" });
+    expect(Array.from(order.querySelectorAll("button > span")).map(label => label.textContent)).toEqual(["雷董2", "立山", "山鬼"]);
   });
   it("discards new and edited local drafts when returning without saving", async () => {
     render(<Harness layouts={[saved]} />);
@@ -156,10 +168,11 @@ describe("window layout library and editor", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "所在显示器" }), { target: { value: "left" } });
     fireEvent.change(screen.getByRole("spinbutton", { name: "X" }), { target: { value: "-1800" } });
     fireEvent.blur(screen.getByRole("spinbutton", { name: "X" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "窗口名称" }), { target: { value: "雷董2" } });
     fireEvent.keyDown(screen.getByRole("button", { name: "雷董2，800 × 600" }), { key: "ArrowRight", ctrlKey: true });
     fireEvent.keyDown(screen.getByRole("button", { name: "雷董2，800 × 600" }), { key: "ArrowDown", shiftKey: true });
     fireEvent.click(screen.getByRole("button", { name: "保存布局" }));
-    await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ monitor_id: "left", x: 121, width: 800, height: 610 }));
+    await waitFor(() => expect(latest.window_layouts?.[0].windows[0]).toMatchObject({ monitor_id: "left", window_title: "雷董2", x: 121, width: 800, height: 610 }));
   });
   it("saves and reopens negative border offsets on the primary monitor", async () => {
     render(<Harness />);

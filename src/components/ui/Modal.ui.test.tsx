@@ -40,6 +40,17 @@ describe("Modal focus management", () => {
     expect(closeSettings).not.toHaveBeenCalled();
   });
 
+  it("ignores backdrop click while supporting right click and Escape", () => {
+    const close = vi.fn();
+    render(<Modal open onClose={close} title="Settings" closeOnContextMenu closeOnBackdropClick={false}>Settings</Modal>);
+    const dialog = screen.getByRole("dialog");
+    fireEvent.click(dialog);
+    expect(close).not.toHaveBeenCalled();
+    fireEvent.contextMenu(dialog);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(close).toHaveBeenCalledTimes(2);
+  });
+
   it("skips hidden sections when wrapping keyboard focus", () => {
     render(<Modal open onClose={() => {}} title="Settings">
       <button type="button">Visible action</button>

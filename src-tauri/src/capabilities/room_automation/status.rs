@@ -257,6 +257,16 @@ impl WorkflowTaskState {
         })
     }
 
+    pub fn complete_primary_only(
+        &mut self,
+        task_id: WorkflowTaskId,
+    ) -> Result<WorkflowStatus, WorkflowStateError> {
+        self.require_task_phase(task_id, WorkflowPhase::Primary, "complete primary")?;
+        self.status.revision = self.next_revision()?;
+        self.finish_complete();
+        Ok(self.snapshot())
+    }
+
     /// Commits the room produced by the primary task and enters the waiting
     /// phase. Manual waiting is observable but not actively running.
     pub fn primary_ready(

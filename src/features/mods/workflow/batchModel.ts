@@ -1,6 +1,6 @@
 import type { InstalledAudioMod } from "../../../store/types";
 import { validateAudioModName } from "../../../utils/audioModName";
-import { hasSelectedAudioModFeature, selectedAudioModFeatureAddsCapability, type AudioModFeatureSelection } from "../featureContract";
+import { JCY_INVENTORY_FEATURE_ID, hasSelectedAudioModFeature, selectedAudioModFeatureAddsCapability, type AudioModFeatureSelection } from "../featureContract";
 
 export type BatchMode = "create" | "replace-source" | "augment" | "rebuild";
 export interface BatchRow {
@@ -28,6 +28,7 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
       roomToolsDefaultHell,
       includeAudioTelemetry: groups.includes("audio_telemetry") || (!groups.length && !!mod?.update_required),
       includeRoomTools: groups.includes("in_game_room_tools"),
+      includeJcyInventory: groups.includes(JCY_INVENTORY_FEATURE_ID),
       includeSceneShortcuts: groups.includes("scene_shortcuts"),
       includePartyLoot: groups.includes("party_loot"),
       includeHostileAutoRestart: groups.includes("hostile_auto_restart"),
@@ -37,6 +38,7 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
       roomToolsDefaultHell,
       includeAudioTelemetry: features.includeAudioTelemetry || groups.includes("audio_telemetry") || (!!mod?.update_required && !groups.length),
       includeRoomTools: features.includeRoomTools || groups.includes("in_game_room_tools"),
+      includeJcyInventory: features.includeJcyInventory || groups.includes(JCY_INVENTORY_FEATURE_ID),
       includeSceneShortcuts: features.includeSceneShortcuts || groups.includes("scene_shortcuts"),
       includePartyLoot: features.includePartyLoot || groups.includes("party_loot"),
       includeHostileAutoRestart: features.includeHostileAutoRestart || groups.includes("hostile_auto_restart"),
@@ -45,7 +47,7 @@ export function batchPlan(mods: InstalledAudioMod[], selected: string[], mode: B
     };
     let message = !mod ? (en ? "Source no longer exists" : "来源已不存在")
       : mod.requires_unpack ? (en ? "Unpack this MPQ first" : "请先解压 MPQ")
-      : effectiveMode === "rebuild" && groups.some(id => !["party_loot", "scene_shortcuts", "audio_telemetry", "in_game_room_tools", "esc_next_game", "auto_exit_on_death"].includes(id))
+      : effectiveMode === "rebuild" && groups.some(id => ![JCY_INVENTORY_FEATURE_ID, "party_loot", "scene_shortcuts", "audio_telemetry", "in_game_room_tools", "esc_next_game", "auto_exit_on_death"].includes(id))
         ? (en ? "Unknown module cannot be rebuilt by this Hub" : "包含当前 Hub 无法重做的未知模块")
       : (mode === "create" || mode === "replace-source") && !mod.source_eligible ? (en ? "Source is unavailable" : "该 Mod 不能作为加工来源")
       : mode !== "create" && mode !== "replace-source" && !groups.length && !mod.update_required ? (en ? "Not a processed Mod" : "不是已加工 Mod")

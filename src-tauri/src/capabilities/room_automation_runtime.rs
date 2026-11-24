@@ -143,6 +143,9 @@ trait RuntimeHost: Send + Sync {
         config: &mut RoomAutomationConfig,
     ) -> Result<(), String>;
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String>;
+    fn room_creation_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
+        self.running_instance(account_id)
+    }
     fn foreground_is_game(&self) -> bool;
 
     fn validate_prepared_follower(&self, account_id: &str, room_name: &str) -> Result<(), String>;
@@ -169,10 +172,18 @@ impl WindowsRuntimeHost {
             .ok_or_else(|| "尚未加载全局配置".to_string())
     }
 
-    fn account_map(&self) -> Result<BTreeMap<String, crate::domain::account::AccountMeta>, String> {
+    fn account_map<'a>(
+        &self,
+        requested: impl IntoIterator<Item = &'a str>,
+    ) -> Result<BTreeMap<String, crate::domain::account::AccountMeta>, String> {
         let config = self.global_config()?;
+        let requested: BTreeSet<_> = requested.into_iter().map(str::to_ascii_lowercase).collect();
         let mut accounts = BTreeMap::new();
         for id in AccountManager::list_ids(&config.accounts_dir) {
+            let key = id.to_ascii_lowercase();
+            if !requested.contains(&key) {
+                continue;
+            }
             let account = match AccountManager::load_meta(&config.accounts_dir, &id) {
                 Ok(account) => account,
                 Err(AppError::AccountNotFound(_)) => {
@@ -183,9 +194,9 @@ impl WindowsRuntimeHost {
                     );
                     continue;
                 }
-                Err(error) => return Err(error.to_string()),
+                Err(error) => return Err(format!("读取账号 {id}/account.json 失败：{error}")),
             };
-            accounts.insert(id.to_ascii_lowercase(), account);
+            accounts.insert(key, account);
         }
         Ok(accounts)
     }
@@ -247,10 +258,15 @@ impl RuntimeHost for WindowsRuntimeHost {
     }
 
     fn existing_account_ids(&self) -> Result<Vec<String>, String> {
-        Ok(self
-            .account_map()?
-            .into_values()
-            .map(|account| account.id)
+        let config = self.global_config()?;
+        let root = std::path::Path::new(&config.accounts_dir);
+        Ok(AccountManager::list_ids(&config.accounts_dir)
+            .into_iter()
+            .filter(|id| {
+                let directory = root.join(id);
+                directory.join("account.json").exists()
+                    || directory.join("account.json.bak").exists()
+            })
             .collect())
     }
 
@@ -258,7 +274,10 @@ impl RuntimeHost for WindowsRuntimeHost {
         &self,
         config: &mut RoomAutomationConfig,
     ) -> Result<(), String> {
-        let accounts = self.account_map()?;
+        let accounts = self.account_map(
+            std::iter::once(config.primary_account_id.as_str())
+                .chain(config.follower_account_ids.iter().map(String::as_str)),
+        )?;
         canonicalize_account_references(config, &accounts)?;
         let shortcuts = self.account_shortcuts()?;
         config
@@ -268,7 +287,7 @@ impl RuntimeHost for WindowsRuntimeHost {
 
     fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
         let account = self
-            .account_map()?
+            .account_map([account_id])?
             .remove(&account_id.to_ascii_lowercase())
             .ok_or_else(|| format!("账号“{account_id}”不存在"))?;
         if let Some(instance) = self
@@ -317,6 +336,13 @@ impl RuntimeHost for WindowsRuntimeHost {
         {
             false
         }
+    }
+
+    fn room_creation_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
+        let instance = self.running_instance(account_id)?;
+        #[cfg(target_os = "windows")]
+        windows::validate_room_window(instance.pid)?;
+        Ok(instance)
     }
 
     fn run_follower(
@@ -572,10 +598,11 @@ pub(crate) struct RoomAutomationManager {
 }
 
 /// A shared, lazy manager slot. Registering an uninstalled module performs no I/O.
-/// OnceLock serializes initialization across IPC and the lifecycle supervisor.
+/// Initialization and explicit retry share one slot across IPC and the supervisor.
 #[derive(Clone, Default)]
 pub(crate) struct RoomAutomationCommandState {
-    manager: Arc<std::sync::OnceLock<Result<Arc<RoomAutomationManager>, CapabilityFailure>>>,
+    initialization: Arc<Mutex<()>>,
+    manager: Arc<RwLock<Option<Result<Arc<RoomAutomationManager>, CapabilityFailure>>>>,
 }
 
 /// A successful save means the sidecar commit is durable. Runtime application
@@ -591,12 +618,18 @@ impl RoomAutomationCommandState {
     fn initialize_with(
         &self,
         initialize: impl FnOnce() -> Result<Arc<RoomAutomationManager>, CapabilityFailure>,
-    ) -> &Result<Arc<RoomAutomationManager>, CapabilityFailure> {
-        self.manager.get_or_init(initialize)
+    ) -> Result<Arc<RoomAutomationManager>, CapabilityFailure> {
+        let _initialization = self.initialization.lock();
+        if let Some(result) = self.manager.read().as_ref() {
+            return result.clone();
+        }
+        let result = initialize();
+        *self.manager.write() = Some(result.clone());
+        result
     }
 
     pub(crate) fn initialize(&self, app: &tauri::AppHandle) {
-        self.initialize_with(|| {
+        let _ = self.initialize_with(|| {
             RoomAutomationManager::install(app).inspect_err(|failure| {
                 crate::logger::log_msg(
                     "ERROR",
@@ -608,12 +641,20 @@ impl RoomAutomationCommandState {
     }
 
     pub(crate) fn is_initialized(&self) -> bool {
-        self.manager.get().is_some()
+        self.manager.read().is_some()
     }
 
-    pub(crate) fn manager(&self) -> Result<&Arc<RoomAutomationManager>, String> {
-        match self.manager.get() {
-            Some(Ok(manager)) => Ok(manager),
+    pub(crate) fn clear_initialization_failure(&self) {
+        let _initialization = self.initialization.lock();
+        let mut slot = self.manager.write();
+        if matches!(slot.as_ref(), Some(Err(_))) {
+            *slot = None;
+        }
+    }
+
+    pub(crate) fn manager(&self) -> Result<Arc<RoomAutomationManager>, String> {
+        match self.manager.read().as_ref() {
+            Some(Ok(manager)) => Ok(manager.clone()),
             Some(Err(failure)) => Err(failure.message.clone()),
             None => Err("自动跟房模块尚未加载".to_string()),
         }
@@ -622,9 +663,10 @@ impl RoomAutomationCommandState {
 
 impl CapabilityDriver for RoomAutomationCommandState {
     fn start(&self) -> Result<(), CapabilityFailure> {
-        match self.manager.get() {
+        let slot = self.manager.read().clone();
+        match slot {
             Some(Ok(manager)) => manager.start(),
-            Some(Err(failure)) => Err(failure.clone()),
+            Some(Err(failure)) => Err(failure),
             None => Err(CapabilityFailure::new(
                 "module-not-loaded",
                 "自动跟房模块尚未加载",
@@ -633,22 +675,25 @@ impl CapabilityDriver for RoomAutomationCommandState {
     }
 
     fn stop(&self) -> Result<(), CapabilityFailure> {
-        match self.manager.get() {
+        let slot = self.manager.read().clone();
+        match slot {
             Some(Ok(manager)) => manager.stop(),
             _ => Ok(()),
         }
     }
 
     fn health(&self) -> CapabilityHealth {
-        match self.manager.get() {
+        let slot = self.manager.read().clone();
+        match slot {
             Some(Ok(manager)) => manager.health(),
-            Some(Err(failure)) => CapabilityHealth::Failed(failure.clone()),
+            Some(Err(failure)) => CapabilityHealth::Failed(failure),
             None => CapabilityHealth::Healthy,
         }
     }
 
     fn account_removed(&self, account_id: &str) -> Result<(), CapabilityFailure> {
-        match self.manager.get() {
+        let slot = self.manager.read().clone();
+        match slot {
             Some(Ok(manager)) => manager.account_removed(account_id),
             // Initialization prunes persisted references before the module can start.
             _ => Ok(()),
@@ -937,18 +982,9 @@ impl RoomAutomationManager {
             return Err("检测到尚未释放的自动跟房账号租约，已拒绝启动".to_string());
         }
         let mut raw_config = self.workflow_config_snapshot()?;
-        if raw_config.collaboration_mode == CollaborationMode::UberDiablo {
-            if join_only {
-                return Err("超级迪亚波罗模式请使用创建快捷键".into());
-            }
-            let last = raw_config
-                .next_sequence
-                .checked_add(raw_config.follower_account_ids.len() as u32)
-                .filter(|last| *last < u32::MAX)
-                .ok_or("房间序号不足以分配全部账号")?;
-            raw_config
-                .generate_room_name(last)
-                .map_err(|error| error.to_string())?;
+        let independent_rooms = raw_config.collaboration_mode == CollaborationMode::UberDiablo;
+        if independent_rooms && join_only {
+            return Err("超级迪亚波罗模式请使用创建快捷键".into());
         }
         let shared_follower = raw_config.collaboration_mode == CollaborationMode::Follower;
         let join_only = join_only || shared_follower;
@@ -965,7 +1001,7 @@ impl RoomAutomationManager {
         raw_config.join_only = join_only;
         if join_only {
             raw_config.primary_account_id.clear();
-        } else if raw_config.primary_account_id.is_empty() {
+        } else if raw_config.primary_account_id.is_empty() && !independent_rooms {
             return Err("创建房间前请选择主账号；直接跟房无需主账号".into());
         }
         if raw_config.join_only && raw_config.next_sequence == u32::MAX {
@@ -974,9 +1010,12 @@ impl RoomAutomationManager {
         // Prepare all participating forms before submitting the primary.
         let ((config, primary, followers), primary_lease) = self.prepare_and_reserve_workflow(
             raw_config.clone(),
-            !raw_config.join_only,
+            !raw_config.join_only && !independent_rooms,
             raw_config.join_only,
         )?;
+        if independent_rooms {
+            independent_room_last_sequence(&config, config.next_sequence, followers.len())?;
+        }
         let task = self
             .workflow
             .lock()
@@ -1275,6 +1314,9 @@ impl RoomAutomationManager {
         require_game_foreground: bool,
         require_followers: bool,
     ) -> Result<PreparedWorkflow, String> {
+        if config.collaboration_mode == CollaborationMode::UberDiablo {
+            return self.prepare_independent_rooms(config);
+        }
         let (config, primary) = self.prepare_primary_workflow(config, require_game_foreground)?;
         let mut config = config;
         let mut followers = Vec::with_capacity(config.follower_account_ids.len());
@@ -1284,9 +1326,6 @@ impl RoomAutomationManager {
             match prepared {
                 Ok(instance) => followers.push((account_id.clone(), instance)),
                 Err(error) => {
-                    if config.collaboration_mode == CollaborationMode::UberDiablo {
-                        return Err(error);
-                    }
                     skipped.push(format!("{account_id}: {error}"));
                     crate::logger::log_msg(
                         "WARN",
@@ -1310,6 +1349,36 @@ impl RoomAutomationManager {
                 .map(|(account_id, _)| account_id.clone())
                 .collect();
         }
+        Ok((config, primary, followers))
+    }
+
+    fn prepare_independent_rooms(
+        &self,
+        mut config: RoomAutomationConfig,
+    ) -> Result<PreparedWorkflow, String> {
+        let mut accounts = std::iter::once(config.primary_account_id.as_str())
+            .chain(config.follower_account_ids.iter().map(String::as_str))
+            .filter(|id| !id.is_empty())
+            .filter_map(|id| match self.host.room_creation_instance(id) {
+                Ok(instance) => Some((instance.account_id.clone(), instance)),
+                Err(error) => {
+                    crate::logger::log_msg(
+                        "WARN",
+                        "RoomAutomation",
+                        &format!("跳过不可用的账号“{id}”：{error}"),
+                    );
+                    None
+                }
+            });
+        let (account, primary) = accounts
+            .next()
+            .ok_or("超级迪亚波罗模式没有可用的游戏窗口")?;
+        let followers: Vec<_> = accounts.collect();
+        config.primary_account_id = account;
+        config.follower_account_ids = followers
+            .iter()
+            .map(|(account, _)| account.clone())
+            .collect();
         Ok((config, primary, followers))
     }
 
@@ -1342,7 +1411,8 @@ impl RoomAutomationManager {
             .map(|(account_id, _)| account_id.clone())
             .collect();
         let leases = self.acquire_participant_leases(&leased_config)?;
-        if followers.is_empty() {
+        if followers.is_empty() && leased_config.collaboration_mode != CollaborationMode::UberDiablo
+        {
             let (config, primary) =
                 self.prepare_primary_workflow(candidate_config, require_game_foreground)?;
             return Ok(((config, primary, Vec::new()), leases));
@@ -1369,13 +1439,7 @@ impl RoomAutomationManager {
         if config.collaboration_mode == CollaborationMode::UberDiablo {
             let result = (|| -> Result<(), String> {
                 cancel.check_active()?;
-                let last = sequence
-                    .checked_add(followers.len() as u32)
-                    .filter(|last| *last < u32::MAX)
-                    .ok_or("房间序号不足以分配全部账号")?;
-                config
-                    .generate_room_name(last)
-                    .map_err(|error| error.to_string())?;
+                let last = independent_room_last_sequence(&config, sequence, followers.len())?;
                 self.persist_used_sequence(task_id, last)?;
                 let mut create_config = config.clone();
                 create_config.follower_account_ids.clear();
@@ -1387,6 +1451,15 @@ impl RoomAutomationManager {
                     &room_name,
                     &cancel,
                 )?;
+                if followers.is_empty() {
+                    let status = self
+                        .workflow
+                        .lock()
+                        .complete_primary_only(task_id)
+                        .map_err(|error| error.to_string())?;
+                    self.bridge.publish_status(&status);
+                    return Ok(());
+                }
                 self.workflow
                     .lock()
                     .primary_ready(task_id, WaitingMode::Automatic { delay_secs: 0.0 })
@@ -2111,6 +2184,21 @@ fn config_failure(error: RoomAutomationConfigControllerError) -> CapabilityFailu
     CapabilityFailure::new("module-config-invalid", error.to_string())
 }
 
+fn independent_room_last_sequence(
+    config: &RoomAutomationConfig,
+    first: u32,
+    additional_accounts: usize,
+) -> Result<u32, String> {
+    let last = first
+        .checked_add(additional_accounts as u32)
+        .filter(|last| *last < u32::MAX)
+        .ok_or("房间序号不足以分配运行中的账号")?;
+    config
+        .generate_room_name(last)
+        .map_err(|error| error.to_string())?;
+    Ok(last)
+}
+
 fn prune_missing_accounts(
     controller: &RoomAutomationConfigController,
     mut snapshot: RoomAutomationConfigSnapshot,
@@ -2169,6 +2257,7 @@ mod tests {
 
     struct FakeHost {
         foreground_game: AtomicBool,
+        offline_accounts: Mutex<BTreeSet<String>>,
         fail_primary: AtomicBool,
         panic_primary: AtomicBool,
         fail_follower_once: AtomicBool,
@@ -2184,6 +2273,7 @@ mod tests {
         fn new(fail_primary: bool) -> Self {
             Self {
                 foreground_game: AtomicBool::new(true),
+                offline_accounts: Mutex::new(BTreeSet::new()),
                 fail_primary: AtomicBool::new(fail_primary),
                 panic_primary: AtomicBool::new(false),
                 fail_follower_once: AtomicBool::new(false),
@@ -2252,6 +2342,9 @@ mod tests {
         }
 
         fn running_instance(&self, account_id: &str) -> Result<RunningInstance, String> {
+            if self.offline_accounts.lock().contains(account_id) {
+                return Err("没有可用的游戏窗口".into());
+            }
             Ok(Self::instance(account_id))
         }
 
@@ -2478,6 +2571,43 @@ mod tests {
     }
 
     #[test]
+    fn uber_diablo_creates_for_only_available_window_without_changing_configured_roles() {
+        let _serial = TEST_SERIAL.lock().unwrap();
+        let (_root, manager, leases, host) = manager("uber_diablo_offline", false, false);
+        let original = manager.get_config();
+        let mut config = original.config.clone();
+        config.collaboration_mode = CollaborationMode::UberDiablo;
+        config.follower_account_ids.push("follower-b".into());
+        config.next_sequence = u32::MAX - 1;
+        config.sequence_width = 1;
+        config.name_prefix = "r".into();
+        manager.save_config(original.generation, config).unwrap();
+        manager.start().unwrap();
+        host.offline_accounts
+            .lock()
+            .extend(["main".into(), "follower".into()]);
+        host.foreground_game.store(false, Ordering::Release);
+        let _offline_lease = leases.try_acquire("main").unwrap();
+
+        let started = manager.start_primary().unwrap();
+        assert_eq!(started.primary_account_id.as_deref(), Some("follower-b"));
+        assert!(started.follower_account_ids.is_empty());
+        wait_for_phase(&manager, WorkflowPhase::Complete);
+        manager.join_previous_workflow(started.task_id).unwrap();
+        assert_eq!(*host.primary_calls.lock(), [format!("r{}", u32::MAX - 1)]);
+        let saved = manager.get_config().config;
+        assert_eq!(saved.primary_account_id, "main");
+        assert_eq!(saved.follower_account_ids, ["follower", "follower-b"]);
+        assert_eq!(saved.next_sequence, u32::MAX);
+        host.offline_accounts.lock().insert("follower-b".into());
+        assert!(manager
+            .start_primary()
+            .unwrap_err()
+            .contains("没有可用的游戏窗口"));
+        assert_eq!(manager.get_config().config.next_sequence, u32::MAX);
+    }
+
+    #[test]
     fn uber_diablo_failed_creation_consumes_reserved_names() {
         let _serial = TEST_SERIAL.lock().unwrap();
         let (_root, manager, _leases, _host) = manager("uber_diablo_failure", false, true);
@@ -2692,9 +2822,8 @@ mod tests {
                             calls.fetch_add(1, Ordering::SeqCst);
                             Ok(manager.clone())
                         })
-                        .as_ref()
                         .unwrap();
-                    assert!(Arc::ptr_eq(initialized, &manager));
+                    assert!(Arc::ptr_eq(&initialized, &manager));
                 });
             }
         });
@@ -2734,6 +2863,12 @@ mod tests {
             Some("unreadable configuration")
         );
         deferred.stop().unwrap();
+        deferred.clear_initialization_failure();
+        assert!(!deferred.is_initialized());
+        assert!(deferred
+            .initialize_with(|| Err(CapabilityFailure::new("still-invalid", "second attempt")))
+            .is_err());
+        assert_eq!(deferred.manager().err().as_deref(), Some("second attempt"));
     }
 
     #[test]

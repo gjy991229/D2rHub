@@ -136,6 +136,17 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ readText: vi.fn(), writ
 afterEach(cleanup);
 
 describe("RoomAutomationPanel", () => {
+  it("links to maintenance instead of repairing from the unavailable screen", async () => {
+    const { gateway } = makeGateway();
+    vi.mocked(gateway.startSync).mockRejectedValueOnce("invalid JSON");
+    const onOpenMaintenance = vi.fn();
+    render(<RoomAutomationPanel accounts={accounts} gateway={gateway} onOpenMaintenance={onOpenMaintenance} />);
+    expect(await screen.findByText(/invalid JSON/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "检查并修复配置" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "前往维护与迁移" }));
+    expect(onOpenMaintenance).toHaveBeenCalledOnce();
+  });
+
   it("does not expose a join-only setting", async () => {
     const { gateway } = makeGateway();
     render(<RoomAutomationPanel accounts={accounts} gateway={gateway} />);

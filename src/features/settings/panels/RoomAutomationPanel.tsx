@@ -54,6 +54,7 @@ interface RoomAutomationPanelProps {
   recognitionAccountId?: string;
   onRequireRoomTools?: (accountId: string, capsuleId?: string, autoStart?: boolean) => void;
   onSaveLaunchScheme?: (accountIds: string[]) => Promise<void> | void;
+  onOpenMaintenance?: () => void;
 }
 
 type Operation = "save";
@@ -95,6 +96,7 @@ export function RoomAutomationPanel({
   language,
   gateway = roomAutomationGateway,
   onSaveLaunchScheme,
+  onOpenMaintenance,
 }: RoomAutomationPanelProps) {
   const locale = normalizeSettingsLanguage(language);
   const copy = ROOM_AUTOMATION_COPY[locale];
@@ -359,6 +361,7 @@ export function RoomAutomationPanel({
           <strong>{copy.unavailable}</strong>
           <p>{unavailable ? `${copy.loadFailed}: ${unavailable}` : copy.loadFailed}</p>
         </div>
+        {onOpenMaintenance && <Button size="sm" variant="ghost" onClick={onOpenMaintenance}>{copy.openMaintenance}</Button>}
         <Button size="sm" onClick={reload}>{copy.retryLoad}</Button>
       </div>
     );
@@ -575,6 +578,14 @@ export function RoomAutomationPanel({
           <span>{locale === "en-US" ? "Followers" : "跟随"} · {copy.followersSelected(draft.follower_account_ids.length)}</span><span className="settings-context-action">{locale === "en-US" ? "Configure" : "配置账号"} →</span>
         </button>
       <RoomCollaborationMode compact value={draft.collaboration_mode} onChange={collaboration_mode => updateDraft(current => ({ ...current, collaboration_mode }))} disabled={editorDisabled} en={locale === "en-US"} />
+      <label className="feature-help">
+        <input type="checkbox" checked={!!draft.show_uber_diablo_in_quick_settings} disabled={editorDisabled}
+          onChange={event => {
+            const checked = event.target.checked;
+            updateDraft(current => ({ ...current, show_uber_diablo_in_quick_settings: checked }));
+          }} />
+        {" "}{locale === "en-US" ? "Show Uber Diablo in room quick settings" : "在跟房快捷设置中显示超级迪亚波罗"}
+      </label>
       <section className="spatial-panel room-automation-pane room-automation-section" aria-labelledby="room-mode-title">
         <div className="room-automation-section-heading">
           <KeyRound size={16} aria-hidden="true" />

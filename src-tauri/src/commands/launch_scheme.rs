@@ -140,7 +140,7 @@ pub(crate) fn room_manager(
 ) -> Option<std::sync::Arc<crate::capabilities::room_automation_runtime::RoomAutomationManager>> {
     crate::capabilities::initialize_room_automation_if_installed(app);
     app.try_state::<crate::capabilities::room_automation_runtime::RoomAutomationCommandState>()
-        .and_then(|slot| slot.manager().ok().cloned())
+        .and_then(|slot| slot.manager().ok())
 }
 
 #[tauri::command]

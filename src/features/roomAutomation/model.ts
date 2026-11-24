@@ -184,7 +184,8 @@ export function validateRoomAutomationConfig(
   const participantKeys = [config.primary_account_id, ...followers].map((id) => id.trim().toLowerCase());
 
   if (config.collaboration_mode === "follower" && !config.primary_account_id) fieldErrors.primary = copy.primaryRequired;
-  if (followers.length === 0 && config.collaboration_mode !== "follower") fieldErrors.followers = copy.followersRequired;
+  if (followers.length === 0 && config.collaboration_mode !== "follower" &&
+    (config.collaboration_mode !== "uber_diablo" || !config.primary_account_id.trim())) fieldErrors.followers = copy.followersRequired;
   if (knownAccountIds) {
     const known = new Set(knownAccountIds.map((id) => id.toLowerCase()));
     if (config.primary_account_id && !known.has(config.primary_account_id.toLowerCase())) {

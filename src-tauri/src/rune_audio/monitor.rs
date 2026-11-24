@@ -821,15 +821,31 @@ fn capture_loop(
     let mut hostile_gate = super::hostile::TriggerGate::default();
     let mut process_check_ticks = 0u8;
     let mut last_checkpoint = std::time::Instant::now();
+    let mut pending_visits = std::collections::VecDeque::new();
+    let flush_visits = |pending: &mut std::collections::VecDeque<super::tracking::CompletedSegment>| {
+        let state = app.state::<crate::state::SharedState>();
+        while let Some(visit) = pending.front() {
+            crate::stats::save_completed_segment(&state, visit)?;
+            pending.pop_front();
+        }
+        Ok::<(), String>(())
+    };
 
     let capture_result = (|| -> Result<(), String> {
         while RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation {
             if tracker.tick_activity(false) {
+                pending_visits.extend(tracker.take_completed_visits());
+                if let Err(error) = flush_visits(&mut pending_visits) {
+                    crate::logger::log_msg("ERROR", "CombatTime", &error);
+                }
                 emit_tracking_snapshot(&app, &tracker.snapshot());
             }
             if config.tracking_enabled
                 && last_checkpoint.elapsed() >= std::time::Duration::from_secs(30)
             {
+                if let Err(error) = flush_visits(&mut pending_visits) {
+                    crate::logger::log_msg("ERROR", "CombatTime", &error);
+                }
                 let outcome = tracker
                     .clone()
                     .finish_session(chrono::Local::now().timestamp_millis());
@@ -939,15 +955,24 @@ fn capture_loop(
             {
                 break;
             }
-            let detections = detector.push(&chunk);
-            for detection in &detections {
-                if let Some(location) = catalog.resolve(detection.marker) {
-                    tracker.observe_activity_marker(location.kind);
+            let mut detections = detector.push(&chunk);
+            detections.sort_by_key(|detection| detection.start_frame);
+            let was_timing = tracker.snapshot().is_timing;
+            let mut location_changed = false;
+            if config.tracking_enabled {
+                for detection in &detections {
+                    if let Some(location) = catalog.resolve(detection.marker) {
+                        location_changed |= tracker.observe_activity_marker(location, std::time::Instant::now());
+                    }
                 }
             }
-            let was_timing = tracker.snapshot().is_timing;
-            if tracker.tick_activity(peak > 0.0001 && runtime.rune_audio_enabled) {
-                if was_timing && !tracker.snapshot().is_timing {
+            let activity_changed = tracker.tick_activity(peak > 0.0001 && runtime.rune_audio_enabled);
+            if activity_changed || location_changed {
+                pending_visits.extend(tracker.take_completed_visits());
+                if let Err(error) = flush_visits(&mut pending_visits) {
+                    crate::logger::log_msg("ERROR", "CombatTime", &error);
+                }
+                if location_changed || (was_timing && !tracker.snapshot().is_timing) {
                     drop_gate.clear();
                 }
                 emit_tracking_snapshot(&app, &tracker.snapshot());
@@ -1061,6 +1086,8 @@ fn capture_loop(
                 segment,
             )?;
         }
+        pending_visits.extend(tracker.take_completed_visits());
+        flush_visits(&mut pending_visits)?;
         emit_tracking_snapshot(&app, &outcome.snapshot);
     }
     capture_result

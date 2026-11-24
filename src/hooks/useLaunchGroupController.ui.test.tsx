@@ -37,17 +37,17 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("independent launch scheme drafts", () => {
-  it("identifies saved overrides and keeps account fields available beyond layout slots", async () => {
+  it("uses the bound window title and keeps position fields available for unmatched accounts", async () => {
     const { result } = renderHook(() => useLaunchGroupController());
     await act(async () => result.current.edit(scheme));
     act(() => result.current.updateEnvironment(env => { env.layout = {
       id: "layout", name: "One slot", monitors: [],
-      windows: [{ monitor_id: "display", x: 0, y: 0, width: 1600, height: 900 }],
+      windows: [{ monitor_id: "display", window_title: "a", x: 0, y: 0, width: 1600, height: 900 }],
     }; }));
     const view = render(<LaunchGroupEditor launchGroups={result.current} />);
     expect(screen.getByText(/方案布局 · 位置 1/)).toBeTruthy();
-    expect(screen.queryByRole("textbox", { name: "b 分辨率" })).toBeNull();
-    expect((screen.getByRole("textbox", { name: "a 分辨率" }) as HTMLInputElement).disabled).toBe(false);
+    expect(screen.queryByRole("textbox", { name: "a 分辨率" })).toBeNull();
+    expect((screen.getByRole("textbox", { name: "b 分辨率" }) as HTMLInputElement).disabled).toBe(false);
     act(() => result.current.updateMember("a", { snapshot: { ...result.current.draft!.members[1].snapshot!, game_settings: {} } }));
     view.rerender(<LaunchGroupEditor launchGroups={result.current} />);
     expect(mutatingCalls()).toEqual([]);

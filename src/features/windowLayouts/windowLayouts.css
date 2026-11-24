@@ -53,6 +53,7 @@
 .layout-inspector { display: grid; grid-template-columns: minmax(155px, 1.6fr) repeat(4, minmax(70px, 1fr)); align-items: end; gap: 14px 10px; padding: 18px 0; border-top: 1px solid var(--border-default); }
 .layout-inspector .layout-monitor-field, .layout-inspector .layout-geometry-field { width: 100%; min-width: 0; }
 .layout-monitor-field select { width: 100%; }
+.layout-inspector .layout-mode-field { grid-column: 1 / -1; max-width: 240px; }
 .layout-inspector-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .layout-panel-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding: 3px 0; }
 .layout-panel-footer p { margin: 0; flex: 1; min-width: 200px; color: var(--text-secondary); font-size: var(--text-xs); line-height: 1.65; }

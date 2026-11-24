@@ -1,9 +1,10 @@
-import { Download, FileArchive, FolderOpen, Layers3, Minimize2, Settings, ShieldAlert, Upload } from "lucide-react";
+import { Download, FileArchive, FolderOpen, Layers3, Minimize2, Settings, ShieldAlert, Upload, Wrench } from "lucide-react";
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
 import type { FeatureProfile } from "../../profile/featureProfile";
 import type { AccountMeta } from "../../../store/types";
+import type { ConfigRepairReport } from "../useMaintenanceController";
 import "./corePanels.css";
 
 interface MaintenancePanelProps {
@@ -25,6 +26,9 @@ interface MaintenancePanelProps {
   onOpenLogs: () => void | Promise<void>;
   diagnosticBusy: boolean;
   onExportDiagnostics: () => void | Promise<void>;
+  repairBusy: boolean;
+  repairResult: ConfigRepairReport | string | null;
+  onRepairConfigs: () => void | Promise<void>;
   onRunSetup: () => void;
 }
 export function MaintenancePanel({
@@ -46,6 +50,9 @@ export function MaintenancePanel({
   onOpenLogs,
   diagnosticBusy,
   onExportDiagnostics,
+  repairBusy,
+  repairResult,
+  onRepairConfigs,
   onRunSetup,
 }: MaintenancePanelProps) {
   const [pendingProfile, setPendingProfile] = useState<FeatureProfile | null>(null);
@@ -102,6 +109,35 @@ export function MaintenancePanel({
       <section className="spatial-panel p-3 space-y-2 settings-span-full" aria-labelledby="maintenance-title">
         <h2 id="maintenance-title" className="text-xs font-bold text-text-primary">应用维护</h2>
         <div className="maintenance-action-row">
+          <div>
+            <span className="text-sm font-semibold text-text-secondary">配置检查与修复</span>
+            <p className="text-2xs text-text-muted">检查账号配置文件。修复前保留原件，检查结果会列出需要手动处理的文件。</p>
+          </div>
+          <Button size="sm" loading={repairBusy} onClick={onRepairConfigs}>
+            <Wrench size={14} aria-hidden="true" />
+            {repairBusy ? "正在检查配置…" : "检查并修复配置"}
+          </Button>
+        </div>
+        {typeof repairResult === "string" ? (
+          <p className="text-xs break-all text-text-secondary" role="alert">检查失败：{repairResult}</p>
+        ) : repairResult && (
+          <div className="space-y-2 text-xs break-all text-text-secondary" role="status">
+            {repairResult.repaired.length > 0 && (
+              <div>
+                <p>已修复 {repairResult.repaired.length} 个文件，原件保留在：</p>
+                <ul className="list-disc pl-4">{repairResult.repaired.map(path => <li key={path}>{path}</li>)}</ul>
+              </div>
+            )}
+            {repairResult.issues.length > 0 && (
+              <div>
+                <p>仍需处理 {repairResult.issues.length} 项：</p>
+                <ul className="list-disc pl-4">{repairResult.issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
+              </div>
+            )}
+            {repairResult.repaired.length === 0 && repairResult.issues.length === 0 && <p>检查完成，未发现需要修复的配置。</p>}
+          </div>
+        )}
+        <div className="maintenance-action-row border-t border-border-default/50">
           <div>
             <span className="text-sm font-semibold text-text-secondary">打开系统运行日志</span>
             <p className="text-2xs text-text-muted">查看当前多开工具的底层系统日志以供排查故障</p>
