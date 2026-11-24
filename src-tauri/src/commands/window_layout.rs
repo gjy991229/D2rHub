@@ -184,7 +184,7 @@ pub(crate) fn calibrate_game_frame(
         let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
             continue;
         };
-        if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID && !unique_observed_title(&observed, &window.title) {
+        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title) {
             continue;
         }
         let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
@@ -425,7 +425,7 @@ pub async fn capture_account_window_position(
 }
 
 pub(crate) struct LaunchLayoutPlan {
-    targets: HashMap<String, (String, LayoutTarget)>,
+    targets: HashMap<String, (Option<String>, LayoutTarget)>,
     existing: HashSet<String>,
 }
 
@@ -435,9 +435,10 @@ impl LaunchLayoutPlan {
     }
 
     pub fn target(&self, account: &AccountMeta) -> Option<LayoutTarget> {
-        let (title, target) = self.targets.get(&account.id.to_ascii_lowercase())?;
-        let current_title = crate::commands::launch::account_window_title(account);
-        (window_title_key(&current_title) == *title).then_some(*target)
+        let (required_title, target) = self.targets.get(&account.id.to_ascii_lowercase())?;
+        required_title.as_ref().is_none_or(|expected| {
+            window_title_key(&crate::commands::launch::account_window_title(account)) == *expected
+        }).then_some(*target)
     }
 }
 
@@ -452,6 +453,11 @@ pub(super) fn slot_for_account(layout: &WindowLayout, config: &GlobalConfig, id:
         }
     }
     layout.slot_index_for_title(title)
+}
+
+fn uses_account_binding(layout: &WindowLayout, index: usize) -> bool {
+    layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
+        && (layout.windows[index].account_id.is_some() || layout.windows[index].window_title.is_none())
 }
 
 fn unique_observed_title(observed: &[GameLayoutWindow], title: &str) -> bool {
@@ -496,8 +502,9 @@ pub(crate) fn prepare_launch_layout(
             continue;
         };
         let key = window_title_key(&account.title);
-        if layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID || accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
-            targets.insert(account.id.to_ascii_lowercase(), (key, positions[index]));
+        let bound_by_id = uses_account_binding(layout, index);
+        if bound_by_id || accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
+            targets.insert(account.id.to_ascii_lowercase(), ((!bound_by_id).then_some(key), positions[index]));
         }
     }
     Ok(Some(LaunchLayoutPlan { targets, existing }))
@@ -533,7 +540,7 @@ pub(crate) fn restore_layout(
         let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
             continue;
         };
-        if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID && !unique_observed_title(&observed, &window.title) {
+        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title) {
             result.failures.push(format!("{}：窗口名称重复", window.title));
             continue;
         }
@@ -576,6 +583,20 @@ pub async fn restore_game_window_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rename_after_preflight_only_invalidates_title_based_placement() {
+        let target = LayoutTarget { rect: LayoutRect { x: 12, y: 34, width: 1280, height: 720 }, fullscreen: false };
+        let mut account = AccountMeta::new("acount1");
+        account.display_name = "Renamed".into();
+        for (required_title, expected) in [(None, Some(target)), (Some("previous".into()), None)] {
+            let plan = LaunchLayoutPlan {
+                targets: HashMap::from([(account.id.clone(), (required_title, target))]),
+                existing: HashSet::new(),
+            };
+            assert_eq!(plan.target(&account), expected);
+        }
+    }
 
     #[test]
     fn capture_preserves_physical_origin_and_client_resolution_on_negative_monitor() {

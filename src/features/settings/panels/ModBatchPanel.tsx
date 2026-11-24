@@ -51,7 +51,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
           </select>
         </label>
         {!batch.accounts.length && <p className="mod-empty-state" role="status">{en ? "Initialize an account for this game edition before processing Mods." : "请先初始化当前游戏版本的账号，再加工 Mod。"}</p>}
-        <div className="mod-batch-modes" role="group" aria-label={en ? "Batch operation" : "批量操作"}>
+        <div className="section-nav" role="group" aria-label={en ? "Batch operation" : "批量操作"}>
           {(["create", "replace-source", "augment", "rebuild"] as const).map(mode => <button type="button" key={mode} aria-pressed={batch.mode === mode} onClick={() => batch.changeMode(mode)}>{labels[mode]}</button>)}
         </div>
         <p className="mod-section-description">{description}</p>

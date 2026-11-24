@@ -10,37 +10,55 @@ pub struct ProcessorStatus {
     blocking_reason: Option<String>,
 }
 
-pub(crate) async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+#[derive(serde::Deserialize)]
+struct ProcessorManifest {
+    sha256: String,
+    #[serde(default)]
+    capabilities: Vec<String>,
+}
+
+async fn verified_processor(
+    app: &tauri::AppHandle,
+) -> Result<(PathBuf, ProcessorManifest), String> {
     let path = app
         .path()
         .resource_dir()
         .map_err(|e| e.to_string())?
         .join("processor/d2r-audio-mod.exe");
-    let bytes = std::fs::read(&path).map_err(|_| "内置 Mod 加工器缺失，请修复或重新安装 D2RHub")?;
-    let manifest: serde_json::Value =
-        serde_json::from_str(include_str!("../processor/d2r-audio-mod.json"))
-            .map_err(|_| "内置 Mod 加工器构建清单无效，请修复 D2RHub")?;
-    if manifest["sha256"].as_str() != Some(format!("{:x}", Sha256::digest(&bytes)).as_str()) {
-        return Err("内置 Mod 加工器文件损坏，请修复或重新安装 D2RHub".into());
-    }
-    Ok(path)
+    tokio::task::spawn_blocking(move || {
+        let manifest: ProcessorManifest =
+            serde_json::from_str(include_str!("../processor/d2r-audio-mod.json"))
+                .map_err(|_| "内置 Mod 加工器构建清单无效，请修复 D2RHub")?;
+        let mut file = std::fs::File::open(&path)
+            .map_err(|_| "内置 Mod 加工器缺失，请修复或重新安装 D2RHub")?;
+        let mut hash = Sha256::new();
+        std::io::copy(&mut file, &mut hash)
+            .map_err(|error| format!("读取内置 Mod 加工器失败：{error}"))?;
+        if manifest.sha256 != format!("{:x}", hash.finalize()) {
+            return Err("内置 Mod 加工器文件损坏，请修复或重新安装 D2RHub".into());
+        }
+        Ok((path, manifest))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+pub(crate) async fn resolve_processor(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    verified_processor(app).await.map(|(path, _)| path)
 }
 
 #[tauri::command]
 pub async fn get_bundled_processor_status(app: tauri::AppHandle) -> ProcessorStatus {
-    let error = resolve_processor(&app).await.err();
-    ProcessorStatus {
-        ready: error.is_none(),
-        capabilities: if error.is_none() {
-            serde_json::from_str::<serde_json::Value>(include_str!(
-                "../processor/d2r-audio-mod.json"
-            ))
-            .ok()
-            .and_then(|value| serde_json::from_value(value["capabilities"].clone()).ok())
-            .unwrap_or_default()
-        } else {
-            Vec::new()
+    match verified_processor(&app).await {
+        Ok((_, manifest)) => ProcessorStatus {
+            ready: true,
+            capabilities: manifest.capabilities,
+            blocking_reason: None,
         },
-        blocking_reason: error,
+        Err(error) => ProcessorStatus {
+            ready: false,
+            capabilities: Vec::new(),
+            blocking_reason: Some(error),
+        },
     }
 }

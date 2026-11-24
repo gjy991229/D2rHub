@@ -440,7 +440,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
       ? (settingsLanguage === "en-US" ? "Layout draft unsaved" : "布局草稿未保存")
       : hasAnyUnsavedChanges
       ? "有未保存改动"
-      : "已保存";
+      : "";
 
   const handleTabChange = async (nextTab: SettingsTabId): Promise<boolean> => {
     if (layoutSaving || navigationSaveRef.current) return false;
@@ -491,7 +491,7 @@ export function SettingsCenter({ open, onClose, onReconfigure, onInitializeAccou
     <>
       <SettingsShell
       open={open}
-      title={`设置中心 · ${saveStatusText}`}
+      title={saveStatusText ? `设置中心 · ${saveStatusText}` : "设置中心"}
       activeTab={activeTab}
       config={config}
       installedModules={installedModules}

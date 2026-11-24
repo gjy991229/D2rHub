@@ -55,7 +55,7 @@
   .ui-button, .ui-input { transition: none; }
 }
 .configuration-source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px; margin-top: 8px; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }
-.configuration-source > span:first-child, .configuration-origin-tag { flex-shrink: 0; padding: 2px 6px; border-radius: 5px; background: var(--surface-hover); color: var(--text-secondary); font-size: var(--text-2xs); font-weight: 600; }
+.configuration-source > span:first-child { flex-shrink: 0; padding: 2px 6px; border-radius: 5px; background: var(--surface-hover); color: var(--text-secondary); font-size: var(--text-2xs); font-weight: 600; }
 
 .runtime-state { display:inline-flex; align-items:center; gap:6px; font-size:var(--text-xs); font-weight:500; color:var(--text-muted); line-height:1.5; }
 .runtime-state[data-state="running"], .runtime-state[data-state="succeeded"] { color:var(--success); }
@@ -63,3 +63,14 @@
 .runtime-state[data-state="attention"] { color:var(--warning); }
 .task-runtime-next-step { color:var(--text-secondary); font-size:var(--text-xs); margin-top:4px; }
 .task-runtime-reason { overflow-wrap:anywhere; }
+
+/* Navigation within a work area. The underline marks the current view. */
+.section-nav { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 18px; border-bottom: 1px solid var(--border-default); }
+.section-nav > button {
+  min-height: 36px; padding: 6px 2px; border: 0; border-bottom: 2px solid transparent;
+  background: transparent; color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500;
+}
+.section-nav > button:hover { color: var(--text-primary); }
+.section-nav > button:is([aria-selected=true], [aria-pressed=true]) { color: var(--text-primary); border-bottom-color: currentColor; font-weight: 600; }
+.section-nav > button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
+.mod-library-navigation > .section-nav { border-bottom: 0; }

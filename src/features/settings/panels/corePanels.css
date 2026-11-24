@@ -1,6 +1,5 @@
 .accounts-settings-panel .account-option-custom { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--border-default); min-height: 32px; color: var(--text-secondary); font-size: var(--text-xs); }
 .accounts-settings-panel .account-option-custom:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 3px; border-radius: 4px; }
-.accounts-settings-panel .account-option-name { padding-right: 14px; }
 .accounts-settings-panel fieldset:disabled :is(input, select) { opacity: .55; cursor: wait; }
 .shortcut-settings-panel .shortcut-setting-row { display: grid; grid-template-columns: minmax(0, 1fr) 218px; align-items: center; gap: 14px 24px; min-height: 62px; padding: 12px 0; }
 .shortcut-setting-row + .shortcut-setting-row { border-top: 1px solid var(--border-default); }

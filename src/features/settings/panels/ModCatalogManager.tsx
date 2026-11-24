@@ -144,7 +144,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       </ModPageHeader>
 
       <div className="mod-library-navigation">
-        <div className="mod-library-views" role="group" aria-label={isEnglish ? "Mod library views" : "Mod 库视图"}>
+        <div className="section-nav" role="group" aria-label={isEnglish ? "Mod library views" : "Mod 库视图"}>
           <button type="button" aria-pressed={!generateOpen} onClick={() => setGenerateOpen(false)}>{isEnglish ? "Installed" : "已安装"}</button>
           <button type="button" aria-pressed={generateOpen} onClick={() => setGenerateOpen(true)}>{isEnglish ? "Downloads & updates" : "下载与更新"}</button>
         </div>
@@ -158,7 +158,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
       </div>
 
       {!generateOpen && <div className="mod-library-custom-actions">
-        {onCreate && <Button size="sm" variant="primary" disabled={busy} onClick={() => void onCreate(edition)}>
+        {onCreate && <Button size="sm" variant={capsules.length ? "primary" : "secondary"} disabled={busy} onClick={() => void onCreate(edition)}>
           <PackagePlus size={13} />{isEnglish ? "Process a new Mod" : "加工新 Mod"}
         </Button>}
         {onBatch && <Button size="sm" disabled={busy} onClick={() => onBatch(edition)}><Layers3 size={13} />{isEnglish ? "Batch process / update" : "批量加工／更新"}</Button>}

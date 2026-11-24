@@ -118,14 +118,14 @@ export function AccountsPanel({
   const copy = en ? {
     empty: "Choose Add account on the dashboard to create an account first.", select: "Select account", override: "Override game settings",
     overrideHint: "Use this account's saved game settings at launch", token: "Web Token", bnet: "Battle.net", uninitialized: "Not initialized",
-    title: "Graphics & launch", description: "Manage account details, launch options, and in-game settings here.", categories: "Account settings categories",
+    title: "Graphics & launch", categories: "Account settings categories",
     snapshot: "Capture system settings", nickname: "Nickname", currentMod: "Current Mod", vanilla: "Original game", mods: "Manage Mods",
     windowX: "Window X", windowY: "Window Y", default: "Default", resolution: "Resolution", unlimited: "Unlimited",
     positionHint: "Saved as a new account position preset", loading: "Loading game settings. Resolution and FPS will be available shortly…", reload: "Reload settings",
   } : {
     empty: "请先在主界面点击“添加账号”创建新账号", select: "选择账号", override: "覆盖游戏配置",
     overrideHint: "启动时使用此账号保存的游戏配置", token: "网页 Token", bnet: "战网认证", uninitialized: "未初始化",
-    title: "画质与启动", description: "账号字段、启动参数和游戏内配置在这里完成。", categories: "账号设置分类",
+    title: "画质与启动", categories: "账号设置分类",
     snapshot: "快照系统配置", nickname: "昵称", currentMod: "当前 Mod", vanilla: "原版游戏", mods: "Mod 管理",
     windowX: "窗口 X", windowY: "窗口 Y", default: "默认", resolution: "分辨率", unlimited: "无限制",
     positionHint: "保存为新的账号位置配置", loading: "正在读取游戏配置，分辨率和帧数稍后可调整…", reload: "重新读取",
@@ -141,7 +141,7 @@ export function AccountsPanel({
   ) : (
     <div className="grid grid-cols-[230px_minmax(0,1fr)] max-[880px]:grid-cols-1 gap-4">
       <div className="space-y-2 max-[880px]:flex max-[880px]:gap-2 max-[880px]:space-y-0 max-[880px]:overflow-x-auto">
-        {accounts.map((a, idx) => {
+        {accounts.map(a => {
           const active = a.id === selectedAccountId;
           const overrideEnabled = !!a.has_customized_settings;
           return (
@@ -163,13 +163,7 @@ export function AccountsPanel({
                 }}
                 className="absolute inset-0 z-0 rounded-[inherit] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               />
-              <div className="account-option-top pointer-events-none relative z-[1]">
-                <div className="min-w-0">
-                  <span className="tile-index">{String(idx + 1).padStart(2, "0")}</span>
-                  <div className="account-option-name truncate">{a.display_name || a.id}</div>
-                </div>
-                <span className={`${a.initialized ? "account-state-dot" : "account-state-dot warn"} absolute right-0 top-0`} aria-hidden="true" />
-              </div>
+              <div className="account-option-name truncate pointer-events-none relative z-[1]">{a.display_name || a.id}</div>
               <div className="account-option-meta pointer-events-none relative z-[1]">
                 <span className="hig-badge hig-badge-neutral">{en ? ({ CN: "China", KR: "Asia", NA: "Americas", EU: "Europe", Global: "Global" } as Record<string, string>)[a.region || "CN"] || a.region : accountRegionLabel(a.region)}</span>
                 <span className={a.auth_mode === "token" ? "hig-badge hig-badge-violet" : "hig-badge hig-badge-blue"}>
@@ -191,13 +185,12 @@ export function AccountsPanel({
 
       {selectedAccountId && selectedAccount && (
         <div className="setting-card min-h-[340px]">
-          <div className="mb-3 border-b border-border-default pb-3" data-i18n-skip>
+          <div className="mb-3" data-i18n-skip>
             <div className="min-w-0">
               <p className="text-sm font-bold text-text-primary">{selectedAccount.display_name || selectedAccount.id} · {copy.title}</p>
-              <p className="micro-meta mt-1">{copy.description}</p>
             </div>
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-              <div className="settings-subnav" role="tablist" aria-label={copy.categories}>
+              <div className="section-nav" role="tablist" aria-label={copy.categories}>
                 {gameSubTabs.map((tab, index) => {
                   const active = gameSettingsTab === tab.id;
                   return (
@@ -226,8 +219,7 @@ export function AccountsPanel({
                         document.getElementById(`account-settings-tab-${next.id}`)?.focus();
                       });
                     }}
-                    className="control-btn h-8 px-3"
-                    data-active={active ? "true" : "false"}
+
                   >
                     {en ? tab.enLabel : tab.label}
                   </button>

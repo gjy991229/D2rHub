@@ -14,6 +14,7 @@ import { presetSlots, validateLayout } from "../../features/windowLayouts/model"
 import type { RoomAutomationConfigSnapshot } from "../../features/roomAutomation/types";
 import { showToast } from "../ui/Toast";
 import "./launchSchemeEditor.css";
+import { Button } from "../ui/Button";
 import { SchemeLayoutPreview } from "./SchemeLayoutPreview";
 
 export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, onOpenSettings, hidden = false }: {
@@ -93,12 +94,12 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     onClose={controller.cancelDraft} dismissible={!controller.busy && !layoutBusy} footer={<>
       {draft.id && <button className="control-btn" disabled={controller.busy} onClick={controller.duplicate}><Copy size={14} />复制为新方案</button>}
       <button className="control-btn" disabled={controller.busy || layoutBusy} onClick={controller.cancelDraft}>取消</button>
-      <button className="primary-cta" disabled={!ready || controller.busy || layoutBusy} onClick={() => void controller.saveDraft()}>{controller.busy ? "正在保存…" : "保存方案"}</button>
+      <Button variant="primary" size="sm" disabled={!ready || controller.busy || layoutBusy} onClick={() => void controller.saveDraft()}>{controller.busy ? "正在保存…" : "保存方案"}</Button>
     </>}>
     <div className="scheme-form">
       <label>方案名称<input autoFocus maxLength={32} value={draft.name} disabled={controller.busy} onChange={event => controller.renameDraft(event.target.value)} /></label>
       <p className="scheme-note" data-i18n-skip>{en ? "Save to use these values on future scheme launches. Running games and account defaults stay unchanged." : "保存后在下次按此方案启动时使用，当前游戏与账号默认配置保持不变。"}</p>
-      <nav className="scheme-tabs" aria-label="方案设置">{[["accounts", "账号与启动"], ["room", "跟房"], ["recognition", "识别"], ["layout", "窗口布局"]].map(([id, label]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
+      <nav className="section-nav" aria-label="方案设置">{[["accounts", "账号与启动"], ["room", "跟房"], ["recognition", "识别"], ["layout", "窗口布局"]].map(([id, label]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
       <fieldset disabled={controller.busy || layoutBusy} className="scheme-body">
         {tab === "accounts" && <>
           <div className="scheme-account-picker" aria-label="选择方案账号">{accounts.map(account => <label key={account.id}><input type="checkbox" disabled={!account.initialized} checked={draft.members.some(member => member.account_id === account.id)} onChange={() => controller.toggleAccount(account.id)} />{name(account.id)}{!account.initialized && "（未初始化）"}</label>)}</div>
@@ -111,7 +112,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
             const edition = modCapsulePool?.accounts.find(account => account.account_id === member.account_id)?.edition;
             const mods = modCapsulePool?.capsules.filter(capsule => capsule.edition === edition && capsule.ready) ?? [];
             return <section className="scheme-account" key={member.account_id}>
-              <div className="scheme-row"><strong>{index + 1}. {name(member.account_id)}</strong><span className="configuration-origin-tag" data-i18n-skip>{en ? "Scheme values" : "方案值"}</span><span className="scheme-spacer" />
+              <div className="scheme-row"><strong>{index + 1}. {name(member.account_id)}</strong><span className="scheme-spacer" />
                 <button className="icon-btn" aria-label={`上移 ${name(member.account_id)}`} disabled={index === 0} onClick={() => controller.moveMember(member.account_id, -1)}><ArrowUp size={14}/></button>
                 <button className="icon-btn" aria-label={`下移 ${name(member.account_id)}`} disabled={index === draft.members.length - 1} onClick={() => controller.moveMember(member.account_id, 1)}><ArrowDown size={14}/></button>
                 <button className="icon-btn" aria-label={`移除 ${name(member.account_id)}`} onClick={() => controller.toggleAccount(member.account_id)}><Trash2 size={14}/></button>

@@ -92,10 +92,10 @@
 
 /* Library navigation matches Settings' underlined tabs and compact edition picker. */
 .mod-library-navigation { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; border-bottom: 1px solid var(--border-default); }
-.mod-library-views { display: flex; gap: 20px; }
-.mod-library-views button, .mod-batch-modes button { min-height: 36px; padding: 6px 2px 10px; border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; }
-.mod-library-views button[aria-pressed="true"], .mod-batch-modes button[aria-pressed="true"] { border-bottom-color: var(--text-primary); color: var(--text-primary); font-weight: 600; }
-.mod-library-views button:hover, .mod-batch-modes button:hover { color: var(--text-primary); }
+
+
+
+
 .mod-catalog-editions { display: inline-flex; gap: 2px; padding: 3px; margin-bottom: 6px; border-radius: 7px; background: var(--surface-hover); }
 .mod-catalog-editions button { min-height: 28px; padding: 4px 12px; border: 0; border-radius: 5px; background: transparent; color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; }
 .mod-catalog-editions button[aria-selected="true"] { background: var(--surface-card); color: var(--text-primary); }
@@ -149,7 +149,7 @@
 
 .mod-batch-account { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; color: var(--text-secondary); font-size: var(--text-xs); }
 .mod-batch-account select { width: min(100%, 360px); }
-.mod-batch-modes { display: flex; flex-wrap: wrap; gap: 24px; border-bottom: 1px solid var(--border-default); margin-top: 4px; }
+
 .mod-batch-features { padding: 0; border: 0; margin: 0; }
 .mod-batch-features legend { margin-bottom: 12px; }
 .mod-count { margin-left: 5px; color: var(--text-muted); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
@@ -190,7 +190,7 @@
   .mod-batch-columns { display: none; }
   .mod-batch-source { grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 12px; }
   .mod-batch-source .settings-input { margin-left: 26px; width: calc(100% - 26px); }
-  .mod-batch-modes { gap: 16px; }
+
   .mod-library-entry { padding: 12px; }
   .mod-library-entry-summary { gap: 8px; }
 }
