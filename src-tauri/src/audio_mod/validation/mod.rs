@@ -27,14 +27,14 @@ use layouts::{
     validate_esc_next_game_layouts, validate_in_game_room_tool_layouts_for_version,
     validate_lobby_return_hint,
 };
+pub(super) use manifest::processing_manifest_path;
 pub(super) use manifest::LATEST_AUDIO_MOD_RECIPE_VERSION;
 #[cfg(test)]
 pub(super) use manifest::LEGACY_MANIFEST_FILE_NAME;
 pub(super) use manifest::REQUIRED_AUDIO_MOD_RECIPE_VERSION;
 use manifest::{
-    official_update_metadata, processing_manifest_path, read_protocol_version,
-    source_mod_name_from_manifest, FEATURE_GROUP_PROTOCOL_RECIPE_VERSION, MANIFEST_FORMAT,
-    PRODUCER_NAME,
+    official_update_metadata, read_protocol_version, source_mod_name_from_manifest,
+    FEATURE_GROUP_PROTOCOL_RECIPE_VERSION, MANIFEST_FORMAT, PRODUCER_NAME,
 };
 use std::path::{Path, PathBuf};
 

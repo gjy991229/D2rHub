@@ -51,7 +51,7 @@
 .modal-footer { flex-wrap: wrap; }
 .modal-footer > div { min-width: 0; flex: 1 1 auto; }
 
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   .ui-button, .ui-input { transition: none; }
 }
 .configuration-source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px; margin-top: 8px; color: var(--text-muted); font-size: var(--text-xs); line-height: 1.5; }

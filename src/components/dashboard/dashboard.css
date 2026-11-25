@@ -16,4 +16,4 @@
 .account-quick-popover .scheme-settings-error { white-space: normal; line-height: 1.6; }
 .account-quick-popover .position-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--text-primary); }
 .launch-group-panel-favorite[aria-pressed="true"] { color: var(--accent); }
-@media (prefers-reduced-motion: reduce) { .dashboard-surface .animate-card-in { animation: none; } }
+@scope (:root[data-motion="reduced"]) { .dashboard-surface .animate-card-in { animation: none; } }

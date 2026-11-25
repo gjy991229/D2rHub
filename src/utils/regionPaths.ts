@@ -79,10 +79,8 @@ export function hasConfiguredPathsForRegion(
   if (!knownRegion) return false;
 
   const gamePath = isCnRegion(region) ? config.cn_game_path : config.global_game_path;
-  const hasGame = Boolean(gamePath?.trim());
-  return authMode === "token"
-    ? hasGame
-    : Boolean(isCnRegion(region) && config.cn_battle_net_path?.trim() && hasGame);
+  if (!gamePath?.trim()) return false;
+  return isCnRegion(region) ? Boolean(config.cn_battle_net_path?.trim()) : authMode === "token";
 }
 
 export function firstConfiguredRegion(

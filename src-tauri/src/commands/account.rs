@@ -438,15 +438,15 @@ impl AccountCreationRepository for AccountCreationAdapter<'_> {
         let backup = sibling_with_suffix(&dir, ".bak")?;
         remove_path_if_exists(&staged)?;
         std::fs::create_dir_all(&staged)?;
+        let mut account = account.clone();
         if let Some(saved_games_directory) = context.installation.saved_games_directory.as_deref() {
-            if let Err(error) =
-                copy_system_settings_to_account_if_available(saved_games_directory, &staged)
-            {
-                crate::logger::log_msg(
+            match copy_system_settings_to_account_if_available(saved_games_directory, &staged) {
+                Ok(copied) => account.has_customized_settings = copied,
+                Err(error) => crate::logger::log_msg(
                     "WARN",
                     "Account",
                     &format!("创建账号时跳过可选 Settings.json 快照: {error}"),
-                );
+                ),
             }
         } else {
             crate::logger::log_msg(
@@ -458,7 +458,7 @@ impl AccountCreationRepository for AccountCreationAdapter<'_> {
                 ),
             );
         }
-        if let Err(error) = write_account_meta_to_directory(&staged, account) {
+        if let Err(error) = write_account_meta_to_directory(&staged, &account) {
             let _ = remove_path_if_exists(&staged);
             return Err(error);
         }
@@ -699,12 +699,16 @@ pub(crate) fn copy_system_settings_to_account_if_available(
         return Ok(false);
     }
 
-    if !account_dir.exists() {
-        std::fs::create_dir_all(account_dir)?;
+    let content = std::fs::read_to_string(&src)?;
+    let settings: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&content)?;
+    if settings.is_empty() {
+        return Err(AppError::ConfigReadError(format!(
+            "系统 Settings.json 为空: {}",
+            src.display()
+        )));
     }
-
-    std::fs::copy(&src, account_dir.join("Settings.json"))
-        .map_err(|e| AppError::FileError(format!("复制 Settings.json 失败: {}", e)))?;
+    std::fs::create_dir_all(account_dir)?;
+    std::fs::write(account_dir.join("Settings.json"), content)?;
     Ok(true)
 }
 
@@ -957,6 +961,7 @@ pub fn get_account(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub fn create_account(
+    app: tauri::AppHandle,
     state: tauri::State<'_, SharedState>,
     nickname: String,
     auth_mode: Option<String>,
@@ -970,6 +975,61 @@ pub fn create_account(
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("尚未完成首次配置".to_string()))?;
+
+    let edition = LaunchContext::for_draft(
+        &cfg,
+        region.as_deref(),
+        auth_mode.as_deref(),
+        ContextPurpose::LaunchGame,
+    )?
+    .installation
+    .edition;
+    let cn = edition == crate::domain::account::ClientEdition::Cn;
+    if cn {
+        if cfg.cn_battle_net_path.trim().is_empty() {
+            return Err(AppError::ConfigReadError(
+                "新增国服账号前请先配置国服战网客户端 Battle.net.exe".into(),
+            ));
+        }
+        super::global_config::validate_config_path_selection(
+            "cn_battle_net_path".into(),
+            cfg.cn_battle_net_path.clone(),
+        )?;
+    }
+    let saved = if cn {
+        &cfg.cn_saved_games_path
+    } else {
+        &cfg.global_saved_games_path
+    };
+    let cfg = if saved.trim().is_empty() {
+        let detected = if cn {
+            super::global_config::detection::detect_saved_games_path()
+        } else {
+            super::global_config::detection::detect_global_saved_games_path()
+        };
+        if let Some(path) = detected {
+            super::global_config::mutate_loaded_global_config(state.inner(), &app, |current| {
+                let saved = if cn {
+                    &mut current.cn_saved_games_path
+                } else {
+                    &mut current.global_saved_games_path
+                };
+                if !saved.trim().is_empty() {
+                    return Ok(false);
+                }
+                *saved = path;
+                Ok(true)
+            })?;
+            state
+                .configuration()
+                .snapshot()
+                .ok_or_else(|| AppError::ConfigReadError("全局配置尚未加载".into()))?
+        } else {
+            cfg
+        }
+    } else {
+        cfg
+    };
 
     let repository = AccountCreationAdapter {
         config: &cfg,
@@ -1526,6 +1586,21 @@ mod settings_json_tests {
             std::fs::read_to_string(account_dir.join("Settings.json")).unwrap(),
             r#"{"VSync":1}"#
         );
+        let _ = std::fs::remove_dir_all(saved_games);
+        let _ = std::fs::remove_dir_all(account_dir);
+    }
+
+    #[test]
+    fn invalid_system_settings_does_not_create_an_account_override_snapshot() {
+        let saved_games = temp_dir("invalid_system_settings");
+        let account_dir = temp_dir("account_without_valid_settings");
+        for content in ["{}", "[]", "invalid JSON"] {
+            std::fs::write(saved_games.join("Settings.json"), content).unwrap();
+            assert!(
+                copy_system_settings_to_account_if_available(&saved_games, &account_dir).is_err()
+            );
+            assert!(!account_dir.join("Settings.json").exists());
+        }
         let _ = std::fs::remove_dir_all(saved_games);
         let _ = std::fs::remove_dir_all(account_dir);
     }

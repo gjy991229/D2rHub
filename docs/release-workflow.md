@@ -73,6 +73,18 @@ gh auth login
 
 **生成记录不能代替游戏内验收。** 当前成品会重新核对 `enhancement-manifest.json` 中的文件摘要；旧生成格式仍只能证明生成时的声明。工作流会拦截可识别的加工记录并保存准确摘要，保留原有 `runtime_verified` 状态；不会把 `verified_output_integrity` 当作运行行为的证明。
 
+## 发布 JCY 背包与仓库预设
+
+预设通过 GitHub 和 Gitee 的 `jcy-inventory-v1` 资源附件分发。安装包只包含资源的大小、SHA-256 和镜像地址。Hub 仅在加工需要该预设时下载，已有有效缓存或可直接复用的当前配方无需联网。
+
+```powershell
+python scripts/publish-jcy-inventory.py --source ..\d2r-audio-mod\resources\private-inventory.preset.gz --output artifacts\jcy-inventory-v1
+```
+
+来源文件必须匹配 `resources/jcy-inventory-v1.json`。确认有权公开分发预设素材后，添加 `--publish` 上传并按客户端使用的地址匿名下载校验。重复执行会复用并校验已有同名附件，验证结果写入输出目录的 `verification.json`。调整预设内容时使用新的资源版本、文件名和摘要。
+
+安装器打包会验证加工器具备 `jcy_inventory_preset_v1`。构建和发布使用支持外置预设的加工器提交，并将 CI 的加工器 checkout 固定到该提交。
+
 ## 发布前检查与源码对应
 
 新任务在归档出来的源码快照中执行检查，任何检查失败都会停止准备，不生成可发布的 `job.json`：

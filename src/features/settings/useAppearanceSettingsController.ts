@@ -8,8 +8,8 @@ export function appearanceFromConfig(config: GlobalConfig): AppearanceSettingsDr
     app_language: config.app_language,
     theme: normalizeTheme(config.theme),
     main_opacity: config.main_opacity ?? 95,
+    ui_motion: config.ui_motion ?? "full",
     font_scale: config.font_scale || "default",
-    separate_game_taskbar_icons: !!config.separate_game_taskbar_icons,
   };
 }
 

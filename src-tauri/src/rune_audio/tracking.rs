@@ -198,8 +198,6 @@ pub struct TrackingSnapshot {
     pub current_run_name_en: Option<String>,
     pub current_run_drops: Vec<TrackedDrop>,
     #[serde(default)]
-    pub previous_run_drops: Vec<TrackedDrop>,
-    #[serde(default)]
     pub session_drops: Vec<TrackedDrop>,
     pub session_runs: HashMap<String, u32>,
 }
@@ -220,7 +218,6 @@ struct SceneVisit {
     started_at_ms: i64,
     absolute_time: String,
     last_seen: Instant,
-    drops: Vec<TrackedDrop>,
 }
 
 #[derive(Debug, Clone)]
@@ -334,7 +331,6 @@ pub struct SegmentTracker {
     #[cfg(test)]
     next_segment_index: u32,
     session_runs: HashMap<String, u32>,
-    previous_run_drops: Vec<TrackedDrop>,
     session_drops: Vec<TrackedDrop>,
     revision: u64,
     sample_rate: u32,
@@ -379,7 +375,6 @@ impl SegmentTracker {
             #[cfg(test)]
             next_segment_index: 0,
             session_runs: HashMap::new(),
-            previous_run_drops: Vec::new(),
             session_drops: Vec::new(),
             revision: 0,
             sample_rate,
@@ -438,7 +433,6 @@ impl SegmentTracker {
                     started_at_ms: wall_time.timestamp_millis(),
                     absolute_time: wall_time.format("%Y/%m/%d/%H:%M:%S").to_string(),
                     last_seen: now,
-                    drops: Vec::new(),
                 });
                 self.revision += 1;
                 return true;
@@ -475,7 +469,6 @@ impl SegmentTracker {
             name_en: visit.location.scene_name_en.clone(),
             elapsed_ms: duration.as_millis() as u64,
         });
-        self.previous_run_drops = visit.drops.clone();
         self.completed_visits.push(CompletedSegment {
             source_id: self.source_id.clone(),
             absolute_time: visit.absolute_time,
@@ -488,7 +481,7 @@ impl SegmentTracker {
             journey_id: visit.id,
             segment_index: 0,
             timer_seconds: duration.as_secs_f64(),
-            drops: visit.drops,
+            drops: Vec::new(),
         });
         self.revision += 1;
         true
@@ -769,9 +762,6 @@ impl SegmentTracker {
 
     pub fn observe_drop(&mut self, drop: TrackedDrop) -> TrackingSnapshot {
         if self.activity.is_some() {
-            if let Some(visit) = &mut self.scene_visit {
-                visit.drops.push(drop.clone());
-            }
             self.session_drops.push(drop);
             self.revision += 1;
             return self.snapshot();
@@ -828,9 +818,7 @@ impl SegmentTracker {
                 current_run_key: Some("activity".into()),
                 current_run_name: Some("累计战斗时间".into()),
                 current_run_name_en: Some("Combat time".into()),
-                current_run_drops: visit
-                    .map_or_else(|| self.session_drops.clone(), |visit| visit.drops.clone()),
-                previous_run_drops: self.previous_run_drops.clone(),
+                current_run_drops: Vec::new(),
                 session_drops: self.session_drops.clone(),
                 session_runs: self.session_runs.clone(),
             };
@@ -882,7 +870,6 @@ impl SegmentTracker {
                 .as_ref()
                 .map(|segment| segment.drops.clone())
                 .unwrap_or_default(),
-            previous_run_drops: self.previous_run_drops.clone(),
             session_drops: self.session_drops.clone(),
             session_runs: self.session_runs.clone(),
         }
@@ -917,7 +904,6 @@ impl SegmentTracker {
         observed_at_ms: i64,
     ) -> Option<CompletedSegment> {
         let active = self.active_segment.take()?;
-        self.previous_run_drops = active.drops.clone();
         let elapsed_frames = active
             .started_at_frame
             .and_then(|start| observed_at_frame.checked_sub(start));
@@ -1003,12 +989,16 @@ mod tests {
         tracker.activity.as_mut().unwrap().tick(next, true);
         assert!(tracker.take_completed_visits().is_empty());
 
+        let drop = rune_drop(7, 24, "伊斯特", "Ist");
+        tracker.observe_drop(drop.clone());
         let transition = next + SCENE_HEARTBEAT;
         assert!(tracker.observe_activity_marker(scene(CHAOS_SANCTUARY_AREA_ID), transition));
         assert_eq!(tracker.snapshot().accumulated_ms, Some(500));
         let records = tracker.take_completed_visits();
         assert_eq!(records.len(), 1);
         assert!(records[0].scene_visit);
+        assert!(records[0].drops.is_empty());
+        assert_eq!(tracker.snapshot().session_drops, [drop]);
         assert_eq!(records[0].scene_name, "崔凡克");
         assert_eq!(records[0].timer_seconds, 1.0);
         assert_eq!(tracker.snapshot().session_runs["normal:崔凡克"], 1);

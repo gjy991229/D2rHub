@@ -48,7 +48,7 @@ function InstallationProfileFields({
     : { game: "global_game_path", savedGames: "global_saved_games_path" };
   const hasConfiguration = Object.values(fields).some(field => config[field])
     || (isCn && Boolean(config.cn_battle_net_path));
-  const profileComplete = Boolean(config[fields.game].trim());
+  const profileComplete = Boolean(config[fields.game].trim() && (!isCn || config.cn_battle_net_path?.trim()));
 
   const clearProfile = () => {
     updateConfig(next => {
@@ -74,7 +74,7 @@ function InstallationProfileFields({
 
       {hasConfiguration && !profileComplete && (
         <p className="text-xs text-text-muted leading-relaxed">
-          当前版本尚未配置游戏安装目录；不会开放该版本的账号创建与启动。
+          {isCn ? (en ? "To add a China account, select Battle.net.exe and the game folder." : "添加国服账号需要国服战网客户端和游戏安装目录。") : (en ? "To add an international account, select the game folder." : "添加国际服账号需要游戏安装目录。")}
         </p>
       )}
 

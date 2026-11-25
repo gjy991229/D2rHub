@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from "../../store/motionPreference";
 import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
@@ -56,7 +57,7 @@ export function Modal({
     }
 
     if (!mounted) return;
-    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+    if (prefersReducedMotion()) {
       setMounted(false);
       setClosing(false);
       return;

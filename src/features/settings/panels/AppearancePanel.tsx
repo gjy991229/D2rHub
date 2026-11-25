@@ -13,8 +13,8 @@ export interface AppearanceSettingsDraft {
   app_language: GlobalConfig["app_language"];
   theme: ThemeKey;
   main_opacity: number;
+  ui_motion?: GlobalConfig["ui_motion"];
   font_scale: GlobalConfig["font_scale"];
-  separate_game_taskbar_icons: boolean;
 }
 
 interface AppearancePanelProps {
@@ -55,7 +55,6 @@ export function AppearancePanel({
     opacity: "Main window background opacity", opacityDescription: "Adjusts the background while keeping text and controls clear.", opacityPercent: "Main window background opacity percentage",
     font: "Text size", fontDescription: "Navigation, forms, and status text scale together.",
     overlays: "Overlay appearance and visibility", overlayDescription: "Set overlay themes, background opacity, visibility, and positions independently.", overlaySettings: "Overlay settings",
-    taskbar: "Separate game taskbar icons", taskbarDescription: "Give each account its own taskbar identity. Applies to windows launched or detected afterwards.", taskbarLabel: "Use a separate taskbar icon for each game account",
   } : {
     pending: "外观修改尚未保存", applied: "外观已保存并应用",
     pendingDescription: "点击应用会保存并立即更新外观；离开本页或关闭设置时也会保存并应用。", appliedDescription: "主题、透明度和字号使用当前已保存方案。", apply: "应用外观",
@@ -64,7 +63,6 @@ export function AppearancePanel({
     opacity: "主界面背景不透明度", opacityDescription: "仅调整背景层，文字和控件保持清晰。", opacityPercent: "主界面背景不透明度百分比",
     font: "字体大小", fontDescription: "导航、表单和状态文字会按同一比例调整。",
     overlays: "悬浮窗外观与显示", overlayDescription: "独立设置悬浮窗主题、背景不透明度、显示开关和窗口位置。", overlaySettings: "悬浮窗设置",
-    taskbar: "游戏实例任务栏独立", taskbarDescription: "为每个账号使用独立任务栏标识；对之后启动或重新识别的窗口生效。", taskbarLabel: "让每个游戏账号使用独立任务栏图标",
   };
   const themeEnglish: Record<ThemeKey, { label: string; desc: string }> = {
     onyx: { label: "Dark", desc: "Black surfaces, high contrast" }, light: { label: "Light", desc: "Bright, clear, and quiet" },
@@ -111,6 +109,15 @@ export function AppearancePanel({
           <option value="zh-CN">中文</option>
           <option value="en-US">English</option>
         </select>
+      </section>
+
+      <section className="spatial-panel appearance-section appearance-language-section">
+        <div className="appearance-section-heading">
+          <h3>{en ? "Interface motion" : "界面动效"}</h3>
+        </div>
+        <Toggle checked={draft.ui_motion !== "reduced"}
+          ariaLabel={en ? "Interface motion" : "界面动效"}
+          onChange={enabled => onChange({ ui_motion: enabled ? "full" : "reduced" })} />
       </section>
 
       <section className="spatial-panel appearance-section appearance-theme-section">
@@ -227,17 +234,7 @@ export function AppearancePanel({
         </section>
       )}
 
-      <section className="spatial-panel appearance-section appearance-taskbar-section">
-        <div className="appearance-section-heading">
-          <h3>{copy.taskbar}</h3>
-          <p>{copy.taskbarDescription}</p>
-        </div>
-        <Toggle
-          checked={draft.separate_game_taskbar_icons}
-          ariaLabel={copy.taskbarLabel}
-          onChange={(value) => onChange({ separate_game_taskbar_icons: value })}
-        />
-      </section>
+
     </div>
   );
 }

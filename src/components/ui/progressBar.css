@@ -6,4 +6,4 @@
 .software-update-progress > div:first-child > span:last-child { font-variant-numeric: tabular-nums; }
 .hub-progress[data-indeterminate="true"] > span { width: 32%; animation: hub-progress-travel 1.4s ease-in-out infinite; }
 @keyframes hub-progress-travel { from { transform: translateX(-100%); } to { transform: translateX(320%); } }
-@media (prefers-reduced-motion: reduce) { .hub-progress > span { transition: none; } .hub-progress[data-indeterminate="true"] > span { animation: none; margin-left: 34%; } }
+@scope (:root[data-motion="reduced"]) { .hub-progress > span { transition: none; } .hub-progress[data-indeterminate="true"] > span { animation: none; margin-left: 34%; } }

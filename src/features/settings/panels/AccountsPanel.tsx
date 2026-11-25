@@ -1,4 +1,3 @@
-import { AccountMonogram } from "../../../components/accounts/AccountMonogram";
 import { type Dispatch, type SetStateAction } from "react";
 import { Input } from "../../../components/ui/Input";
 import { ResolutionInput } from "../../../components/ui/ResolutionInput";
@@ -164,7 +163,7 @@ export function AccountsPanel({
                 }}
                 className="absolute inset-0 z-0 rounded-[inherit] focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-2"
               />
-              <div className="settings-account-name account-option-name pointer-events-none relative z-[1]"><AccountMonogram id={a.id} name={a.display_name || a.id} /><span className="truncate">{a.display_name || a.id}</span></div>
+              <div className="settings-account-name account-option-name pointer-events-none relative z-[1]"><span className="truncate">{a.display_name || a.id}</span></div>
               <div className="account-option-meta pointer-events-none relative z-[1]">
                 <span className="hig-badge hig-badge-neutral">{en ? ({ CN: "China", KR: "Asia", NA: "Americas", EU: "Europe", Global: "Global" } as Record<string, string>)[a.region || "CN"] || a.region : accountRegionLabel(a.region)}</span>
                 <span className={a.auth_mode === "token" ? "hig-badge hig-badge-violet" : "hig-badge hig-badge-blue"}>
@@ -239,6 +238,7 @@ export function AccountsPanel({
           </div>
 
           <div
+            key={gameSettingsTab}
             id="account-settings-panel"
             role="tabpanel"
             aria-labelledby={`account-settings-tab-${gameSettingsTab}`}

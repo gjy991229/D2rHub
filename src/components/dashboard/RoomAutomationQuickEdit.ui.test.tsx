@@ -16,6 +16,26 @@ beforeEach(() => {
   mocks.config = { enabled: true, name_prefix: "run-", password: "", next_sequence: 1, sequence_width: 3, primary_account_id: "keep-primary" };
   mocks.save.mockImplementation(async (_generation, config) => ({ snapshot: { generation: 6, config } }));
 });
+
+it("opens participant and rule editing on every panel visit", async () => {
+  const user = userEvent.setup();
+  render(<RoomAutomationQuickEdit active onOpenSettings={() => {}} />);
+  const trigger = await screen.findByRole("button", { name: "跟房配置" });
+  await user.click(trigger);
+  const editing = screen.getByRole("button", { name: "收起详情", expanded: true });
+  expect(screen.getByRole("combobox", { name: "主号" })).toBeTruthy();
+  expect(screen.getByLabelText("房名开头")).toBeTruthy();
+
+  await user.click(editing);
+  expect(screen.getByRole("button", { name: "编辑跟房设置", expanded: false })).toBeTruthy();
+  expect(screen.queryByRole("combobox", { name: "主号" })).toBeNull();
+  await user.click(trigger);
+  await user.click(trigger);
+
+  expect(screen.getByRole("button", { name: "收起详情", expanded: true })).toBeTruthy();
+  expect(screen.getByRole("combobox", { name: "主号" })).toBeTruthy();
+});
+
 it("saves in place, syncs Uber Diablo visibility, and autosaves the next edit on exit", async () => {
   const user = userEvent.setup();
   render(<RoomAutomationQuickEdit active onOpenSettings={() => {}} />);

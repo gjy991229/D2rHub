@@ -314,7 +314,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               />
               <FeatureChoice
                 title={isEnglish ? "Inventory and stash" : "背包与仓库"}
-                detail={!inventory && !inheritedFeatureGroups.includes("jcy_inventory") ? (isEnglish ? "This processor has no inventory preset." : "当前加工器未内置背包预设。") : isEnglish ? "Applies the packaged JCY reference layout and sprites, including the embedded cube and stash page shortcuts." : "使用内置的 JCY 参考布局和贴图，含背包内嵌方盒和共享仓库直达。"}
+                detail={!inventory && !inheritedFeatureGroups.includes("jcy_inventory") ? (isEnglish ? "This processor does not support the JCY preset." : "当前加工器不支持 JCY 预设。") : isEnglish ? "Apply the JCY layout, sprites, and embedded cube. The preset downloads when processing needs it." : "应用 JCY 布局、贴图与内嵌方盒。加工需要时下载预设。"}
                 checked={!!analysis.selection.includeJcyInventory}
                 locked={inheritedFeatureGroups.includes("jcy_inventory")}
                 lockLabel={isEnglish ? "Installed" : "已安装"}

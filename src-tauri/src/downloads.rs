@@ -438,17 +438,34 @@ async fn await_cancellable<T>(
     }
     result
 }
+
+type ProgressObserver<'a> = &'a (dyn Fn(u8, &str) + Sync);
+
+struct DownloadProgress<'a> {
+    task: &'a TaskHandle,
+    ceiling: u8,
+    percent: u8,
+    observer: Option<ProgressObserver<'a>>,
+}
+
+impl DownloadProgress<'_> {
+    fn report(&self, message: &str) {
+        let _ = self.task.update(self.percent, "download", message);
+        if let Some(observer) = self.observer {
+            observer(self.percent, message);
+        }
+    }
+}
+
 async fn attempt(
     client: &reqwest::Client,
     m: &Mirror,
     p: &Payload,
     target: &Path,
-    task: &TaskHandle,
-    progress: &mut u8,
-    ceiling: u8,
+    progress: &mut DownloadProgress<'_>,
 ) -> Result<(), String> {
     let send = tokio::time::timeout(Duration::from_secs(15), client.get(&m.url).send());
-    let mut response = await_cancellable(task, async {
+    let mut response = await_cancellable(progress.task, async {
         send.await
             .map_err(|_| "连接下载源超时")?
             .map_err(|e| e.to_string())?
@@ -464,7 +481,7 @@ async fn attempt(
     let mut count = 0u64;
     loop {
         let pending = tokio::time::timeout(Duration::from_secs(20), response.chunk());
-        let chunk = await_cancellable(task, async {
+        let chunk = await_cancellable(progress.task, async {
             pending
                 .await
                 .map_err(|_| "下载长时间无进度")?
@@ -479,17 +496,15 @@ async fn attempt(
             return Err("下载文件大于清单声明".into());
         }
         f.write_all(&chunk).map_err(|e| e.to_string())?;
-        *progress = (*progress).max((count * u64::from(ceiling) / p.size) as u8);
-        let _ = task.update(
-            *progress,
-            "download",
-            &format!(
-                "正在从 {} 下载：{} / {} MB",
-                label(&m.platform),
-                count / 1048576,
-                p.size / 1048576
-            ),
-        );
+        progress.percent = progress
+            .percent
+            .max((count * u64::from(progress.ceiling) / p.size) as u8);
+        progress.report(&format!(
+            "正在从 {} 下载：{} / {} MB",
+            label(&m.platform),
+            count / 1048576,
+            p.size / 1048576
+        ));
     }
     f.sync_all().map_err(|e| e.to_string())?;
     drop(f);
@@ -510,27 +525,49 @@ pub async fn download(
     task: &TaskHandle,
     ceiling: u8,
 ) -> Result<(), String> {
+    download_with_progress(app, state, p, target, task, ceiling, None).await
+}
+
+pub(crate) async fn download_with_progress(
+    app: &tauri::AppHandle,
+    state: &SharedState,
+    p: &Payload,
+    target: &Path,
+    task: &TaskHandle,
+    ceiling: u8,
+    observer: Option<ProgressObserver<'_>>,
+) -> Result<(), String> {
     validate_payload(p)?;
     let preferred = tokio::select! {_=cancelled(task)=>return Err("下载已取消".into()),r=preference(app,state)=>r?};
     let mut mirrors = p.mirrors.clone();
     mirrors.sort_by_key(|m| usize::from(m.platform != preferred));
-    download_ordered(&client()?, p, &mirrors, target, task, ceiling).await
+    download_ordered(
+        &client()?,
+        p,
+        &mirrors,
+        target,
+        DownloadProgress {
+            task,
+            ceiling,
+            percent: 0,
+            observer,
+        },
+    )
+    .await
 }
 async fn download_ordered(
     client: &reqwest::Client,
     p: &Payload,
     mirrors: &[Mirror],
     target: &Path,
-    task: &TaskHandle,
-    ceiling: u8,
+    mut progress: DownloadProgress<'_>,
 ) -> Result<(), String> {
     if target.exists() {
         return Err("下载临时文件已存在".into());
     }
-    let mut progress = 0;
     let mut errors = Vec::new();
     for (i, m) in mirrors.iter().enumerate() {
-        if task.cancellation_requested() {
+        if progress.task.cancellation_requested() {
             return Err("下载已取消".into());
         }
         let message = if i == 0 {
@@ -542,12 +579,12 @@ async fn download_ordered(
                 label(&m.platform)
             )
         };
-        let _ = task.update(progress, "download", &message);
-        match attempt(client, m, p, target, task, &mut progress, ceiling).await {
+        progress.report(&message);
+        match attempt(client, m, p, target, &mut progress).await {
             Ok(()) => return Ok(()),
             Err(e) => {
                 let _ = fs::remove_file(target);
-                if task.cancellation_requested() {
+                if progress.task.cancellation_requested() {
                     return Err("下载已取消".into());
                 }
                 errors.push(format!("{}：{e}", label(&m.platform)));
@@ -692,13 +729,21 @@ mod tests {
         let path = std::env::temp_dir().join(format!("hub-download-test-{}", uuid::Uuid::new_v4()));
         let runtime = TaskRuntime::new(4);
         let task = runtime.begin(TaskRequest::new("download-test")).unwrap();
+        let updates = std::sync::Mutex::new(Vec::new());
+        let observer = |percent, message: &str| {
+            updates.lock().unwrap().push((percent, message.to_owned()));
+        };
         tauri::async_runtime::block_on(download_ordered(
             &client,
             &payload(),
             &mirrors,
             &path,
-            &task,
-            95,
+            DownloadProgress {
+                task: &task,
+                ceiling: 95,
+                percent: 0,
+                observer: Some(&observer),
+            },
         ))
         .unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"good");
@@ -707,6 +752,12 @@ mod tests {
         jb.join().unwrap();
         assert_eq!(ha.load(Ordering::SeqCst), 1);
         assert_eq!(hb.load(Ordering::SeqCst), 1);
+        let updates = updates.into_inner().unwrap();
+        assert!(updates.windows(2).all(|pair| pair[0].0 <= pair[1].0));
+        assert!(updates
+            .iter()
+            .any(|(_, message)| message.contains("切换 GitHub")));
+        assert_eq!(updates.last().unwrap().0, 95);
     }
     #[test]
     fn missing_primary_switches_once() {
@@ -755,8 +806,12 @@ mod tests {
             &payload(),
             &mirrors,
             &path,
-            &task,
-            95,
+            DownloadProgress {
+                task: &task,
+                ceiling: 95,
+                percent: 0,
+                observer: None,
+            },
         ));
         assert!(result.unwrap_err().contains("取消"));
         assert!(!path.exists());

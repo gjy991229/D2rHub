@@ -20,7 +20,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
     ["includeRoomTools", en ? "In-game room tools" : "局内房间工具", en ? "Create, join, and follow games" : "创建、加入与自动跟房"],
     ["includeHostileAutoRestart", en ? "Hostile auto-restart" : "敌对自动重开", en ? "Requires sound; includes Double Esc" : "需开启声音，自动包含双击 Esc 下一局"],
     ["includePartyLoot", en ? "Player loot buttons" : "左侧玩家尸体拾取按钮", en ? "Native per-player permission controls; no image recognition" : "点击左侧玩家头像上的原生按钮切换尸体拾取权限，无需图像识别"],
-    ["includeJcyInventory", en ? "Inventory and stash" : "背包与仓库", en ? "Apply the packaged JCY reference layout, sprites, and embedded cube" : "应用内置的 JCY 布局、贴图和内嵌方盒"],
+    ["includeJcyInventory", en ? "Inventory and stash" : "背包与仓库", en ? "Apply the JCY layout and sprites. Download the preset once when needed." : "应用 JCY 布局与贴图，首次需要时下载预设。"],
     ["includeSceneShortcuts", en ? "Scene restart" : "场景重开", en ? "Restart or create at an A3, Travincal, or A4 waypoint; no image recognition" : "需在 A3、崔凡克或 A4 小站处重开或创房，无需图像识别"],
     ["includeEscNextGame", en ? "Double Esc: next Hell game" : "双 Esc 下一局地狱", en ? "Press Esc twice to start the next game" : "快速双击 Esc，进入下一局地狱"],
     ["includeAudioTelemetry", en ? "Audio recognition" : "声纹识别", en ? "Drop audio and an OCR scene catalog" : "掉落声纹与 OCR 地区目录"],
@@ -59,7 +59,7 @@ export function ModBatchPanel({ workflow }: { workflow: ModWorkflowController })
       {batch.mode !== "rebuild" && <fieldset className="mod-processing-section mod-batch-features">
         <legend>{en ? "Modules for this batch" : "本批次添加的模块"}</legend>
         <ModProcessorStatus edition={batch.edition} en={en} onInventory={setInventory} />
-        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={key === "includeJcyInventory" && !inventory ? (en ? "This processor has no inventory preset." : "当前加工器未内置背包预设。") : detail}
+        <div className="mod-feature-grid">{featureLabels.map(([key, title, detail]) => <div key={key} className="mod-feature-with-options"><ModFeatureChoice title={title} detail={key === "includeJcyInventory" && !inventory ? (en ? "This processor does not support the JCY preset." : "当前加工器不支持 JCY 预设。") : detail}
           checked={!!batch.features[key] || (key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart)}
           locked={key === "includeEscNextGame" && !!batch.features.includeHostileAutoRestart}
           lockLabel={en ? "Required by hostile auto-restart" : "敌对自动重开必选"} disabled={batch.busy || (key === "includeJcyInventory" && !inventory && !batch.features[key])}

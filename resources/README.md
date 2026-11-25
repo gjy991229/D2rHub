@@ -8,6 +8,7 @@
 | `mod-resources-v1.json` | 旧客户端的历史资源目录 | 跟踪并冻结语义；不由新工作流改写 |
 | `scene-shortcuts-v6.json`、`scene-shortcuts-v7-actinfo.json` | 快捷场景配方的布局摘要与小站映射基线 | 跟踪；Rust 校验器通过 `include_str!` 编译嵌入，不能作为临时输出清理 |
 | `vision-resources-v1.json` | 视觉识别模型与运行库的版本、下载地址和摘要 | 跟踪；编译嵌入作为资源下载的固定回退清单，模型和 DLL 本体不入库 |
+| `jcy-inventory-v1.json` | JCY 背包与仓库预设的大小、摘要和双端下载地址 | 跟踪；加工需要时下载到应用数据目录的 `resources/jcy-inventory`，预设本体不进入源码或安装包 |
 | `area-name-aliases.json` | 从用户提供的瓜哥计时器 5.29 `levels-ch.json`、`levels-chtw.json`、`levels-mdk.json` 提取 zhCN / zhTW / zhTWO 地图名称及入场提示译名，保留源文件 SHA-256 | 跟踪；由 `scripts/generate-area-name-aliases.py <原 resources 目录>` 重建，Rust 编译嵌入；按原始 Key 关联，去掉颜色码、任务横幅与数字等级标注，不推测近似译名 |
 | `public/logo.png`、根 `logo.png` | 项目作者提供的同一 Logo | 跟踪；`public/` 进入前端构建，根文件保留兼容引用 |
 | `public/bongo-cat-*.svg` | 项目作者原创文件，形象灵感另有声明 | 跟踪；运行时资源 |

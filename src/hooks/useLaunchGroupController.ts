@@ -72,7 +72,7 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
           if (config[key] !== undefined) Object.assign(environment.settings, { [key]: structuredClone(config[key]) });
         }
         if (config.rune_audio_external_target) environment.settings.rune_audio_target_account = "";
-        environment.layout = structuredClone(config.window_layout_enabled ? config.window_layouts?.find(layout => layout.id === config.active_window_layout_id) ?? null : null);
+        environment.layout_id = config.window_layout_enabled ? config.active_window_layout_id ?? null : null;
       }
       if (request !== opening.current) return;
       setDraft({ key: createLaunchGroupId(), id: duplicate ? null : group?.id || null,
@@ -129,12 +129,7 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
     const members = [...current.members], index = members.findIndex(member => member.account_id === id), next = index + offset;
     if (index < 0 || next < 0 || next >= members.length) return current;
     [members[index], members[next]] = [members[next], members[index]];
-    // Keep layout slots attached to their account while changing launch order.
-    const environment = structuredClone(current.environment);
-    if (environment.layout && environment.layout.windows[index] && environment.layout.windows[next]) {
-      [environment.layout.windows[index], environment.layout.windows[next]] = [environment.layout.windows[next], environment.layout.windows[index]];
-    }
-    return { ...current, members, environment };
+    return { ...current, members };
   });
 
   const renameDraft = (name: string) => {
@@ -161,7 +156,6 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
     setDraft(current => current ? { ...current, members: [], environment: { ...current.environment,
       room: { primary_account_id: "", follower_account_ids: [] },
       settings: { rune_audio_target_account: "", keep_battle_net_account_id: null },
-      layout: current.environment.layout ? { ...current.environment.layout, windows: [] } : null,
     } } : current);
   };
 
@@ -170,12 +164,10 @@ export function useLaunchGroupController(modCapsulePool?: ModCapsulePool | null)
       if (!current) return current;
       if (current.members.some(member => member.account_id === accountId)) {
         const environment = structuredClone(current.environment);
-        const index = current.members.findIndex(member => member.account_id === accountId);
         environment.room.follower_account_ids = environment.room.follower_account_ids.filter(id => id !== accountId);
         if (environment.room.primary_account_id === accountId) environment.room.primary_account_id = "";
         if (environment.settings.rune_audio_target_account === accountId) environment.settings.rune_audio_target_account = "";
         if (environment.settings.keep_battle_net_account_id === accountId) environment.settings.keep_battle_net_account_id = null;
-        if (environment.layout) environment.layout.windows.splice(index, 1);
         return { ...current, environment, members: current.members.filter(member => member.account_id !== accountId) };
       }
       const account = accounts.find(candidate => candidate.id === accountId);

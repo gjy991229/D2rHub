@@ -8,7 +8,7 @@ afterEach(cleanup);
 
 function Harness({ english = false, dirty = true }: { english?: boolean; dirty?: boolean }) {
   const [draft, setDraft] = useState<AppearanceSettingsDraft>({ app_language: english ? "en-US" : "zh-CN", theme: "light", main_opacity: 96,
-    font_scale: "default", separate_game_taskbar_icons: false });
+    font_scale: "default" });
   return <AppearancePanel draft={draft} dirty={dirty} applying={false} navigationSaving={false}
     onApply={async () => true} onChange={patch => setDraft(current => ({ ...current, ...patch }))} />;
 }

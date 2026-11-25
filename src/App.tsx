@@ -566,6 +566,7 @@ function App() {
         {miniMode.mini ? <MiniDashboard
           busy={miniMode.busy}
           pinned={miniMode.pinned}
+          modCapsulePool={modCapsules.pool}
           onPin={miniMode.togglePin}
           onExpand={() => miniMode.switchMode(false)}
           onConfigure={account => {

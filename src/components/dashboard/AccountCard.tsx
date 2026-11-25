@@ -1,4 +1,3 @@
-import { AccountMonogram } from "../accounts/AccountMonogram";
 import React, { useState, useEffect, useRef } from "react";
 import { invokeCommand } from "../../platform/tauri";
 import {
@@ -405,9 +404,6 @@ export function AccountGridItem({
   const effectiveFps = isSelectionMode
     ? schemeMember?.fps ?? drawer.fps
     : drawer.fps;
-  const configModeLabel = isSelectionMode
-    ? (english ? "Scheme settings" : "方案画质")
-    : account.has_customized_settings ? (english ? "Custom settings" : "独立配置") : (english ? "System settings" : "系统配置");
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
@@ -631,7 +627,6 @@ export function AccountGridItem({
       <div className="tile-core">
         <div className="tile-top">
           <div className="account-identity min-w-0">
-            <AccountMonogram id={account.id} name={display} />
             <div className="account-identity-text">
               <div className="title-mod-row">
                 {isSelectionMode && (
@@ -729,11 +724,9 @@ export function AccountGridItem({
           )}
           {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">{english ? "Token migration" : "需迁移 Token"}</span>}
           {!account.initialized && <span className="hig-badge hig-badge-red">{english ? "Not initialized" : "未初始化"}</span>}
-          {account.initialized && (
-            <span className={`hig-badge config-chip ${isSelectionMode
-              ? "hig-badge-blue"
-              : account.has_customized_settings ? "hig-badge-green" : "hig-badge-neutral"}`}>
-              {configModeLabel}
+          {account.initialized && isSelectionMode && (
+            <span className="hig-badge config-chip hig-badge-blue">
+              {english ? "Scheme settings" : "方案画质"}
             </span>
           )}
         </div>
@@ -810,7 +803,6 @@ export function AccountGridItem({
       {isSelectionMode ? quickFields : (
         <AnchoredPanel open={expanded} anchor={quickAnchor} title={display + (english ? ' · Quick settings' : ' · 快捷配置')}
           onClose={() => void closeQuick()} closeLabel={english ? 'Close quick settings' : '关闭快捷配置'} className="account-quick-popover" width={460}>
-          <p className="quick-account-context">{regionLabel} · {account.auth_mode === "token" ? "Web Token" : "Battle.net"} · {configModeLabel}</p>
           {quickFields}
           <p className="quick-save-note" role="status">{quickClosing ? (english ? 'Saving changes…' : '正在保存更改…') : drawerLoadError ? (english ? 'Changes are retained. Resolve the error before closing.' : '编辑内容已保留，请处理错误后再关闭。') : (english ? 'Changes save automatically · Apply on next launch' : '更改自动保存 · 下次启动生效')}</p>
         </AnchoredPanel>

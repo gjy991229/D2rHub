@@ -1,0 +1,44 @@
+.about-links { position: relative; display: flex; justify-content: center; flex-wrap: wrap; gap: 8px; }
+.about-links button {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 8px 11px; border: 1px solid var(--border-default); border-radius: 8px;
+  background: var(--surface-hover); color: var(--text-primary); font-size: var(--text-xs);
+  transition: background-color var(--motion-change), border-color var(--motion-change);
+}
+.about-links button:hover { background: var(--surface-active); border-color: var(--border-strong); }
+.about-links button svg { color: var(--accent); }
+.about-links small { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.about-links button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+.about-fireworks { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.about-burst { position: absolute; left: 15%; top: -4px; color: #be8743; --delay: 170ms; }
+.about-burst:nth-child(2) { left: 78%; top: -18px; color: #cc7288; --delay: 300ms; }
+.about-burst:nth-child(3) { left: 47%; top: -34px; color: #579c91; --delay: 450ms; }
+.about-burst i { position: absolute; width: 3px; height: 6px; border-radius: 100%; background: currentColor; opacity: 0; }
+@scope (:root[data-motion="full"]) {
+  .about-burst i { animation: about-spark 800ms cubic-bezier(.15,.68,.32,1) var(--delay) both; }
+}
+@keyframes about-spark {
+  0% { opacity: 0; transform: rotate(var(--angle)) translateY(0) scale(.4); }
+  18% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(7px) rotate(var(--angle)) translateY(var(--reach)) scale(.6); }
+}
+.about-sponsors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  list-style: none;
+  padding-block: 4px;
+}
+.about-sponsors li {
+  max-width: 100%;
+  padding: 5px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 999px;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.about-payment-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 14px; align-items: center; }
+.about-payment-options img { display: block; width: 100%; height: auto; max-height: 70dvh; object-fit: contain; border-radius: 8px; }

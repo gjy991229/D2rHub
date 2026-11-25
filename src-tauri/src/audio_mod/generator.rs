@@ -1,9 +1,10 @@
 //! Adapter for the external processor executable and its progress/report stream.
 //! Trust validation of the returned report belongs to `validation`.
-use super::AudioModPrepareProgress;
+use super::{inventory_resource, AudioModPrepareProgress};
 use crate::application::task_runtime::TaskHandle;
 use crate::domain::mod_processing::{GeneratorReport, RequestedFeatureGroups};
 use crate::infrastructure::managed_process;
+use crate::state::SharedState;
 use std::path::Path;
 use tauri::Emitter;
 
@@ -44,6 +45,7 @@ pub(super) fn emit_prepare_progress(
 
 pub(super) async fn run_audio_mod_generator(
     app: &tauri::AppHandle,
+    state: &SharedState,
     task: &TaskHandle,
     invocation: GeneratorInvocation<'_>,
 ) -> Result<GeneratorReport, String> {
@@ -86,10 +88,39 @@ pub(super) async fn run_audio_mod_generator(
         arguments.push("--source".to_string());
         arguments.push(source.to_string_lossy().into_owned());
     }
+    let mut progress_floor = 0;
+    if inventory_resource::needed(requested_features.jcy_inventory, source_directory)? {
+        emit_prepare_progress(
+            app,
+            Some(task),
+            account_id,
+            "inventory_resource",
+            1,
+            "正在准备 JCY 背包与仓库资源…",
+        );
+        progress_floor = 12.min(progress_ceiling);
+        let preset =
+            inventory_resource::ensure(app, state, task, progress_floor, &|percent, message| {
+                emit_prepare_progress(
+                    app,
+                    None, // The download adapter already updated the task center.
+                    account_id,
+                    "inventory_resource",
+                    percent.max(1),
+                    message,
+                );
+            })
+            .await
+            .map_err(|error| format!("准备 JCY 背包与仓库资源失败：{error}"))?;
+        arguments.push("--inventory-preset".to_string());
+        arguments.push(preset.to_string_lossy().into_owned());
+    }
     arguments.push("--events".to_string());
 
     let mut command = managed_process::command(processor);
-    command.args(arguments);
+    command
+        .args(arguments)
+        .env_remove("D2RHUB_INVENTORY_PRESET");
     let mut report: Option<GeneratorReport> = None;
     let mut reported_error = String::new();
     let output = managed_process::run(
@@ -115,7 +146,10 @@ pub(super) async fn run_audio_mod_generator(
                             .get("phase")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("working"),
-                        ((u16::from(reported_percent) * u16::from(progress_ceiling)) / 100) as u8,
+                        progress_floor
+                            + ((u16::from(reported_percent.min(100))
+                                * u16::from(progress_ceiling - progress_floor))
+                                / 100) as u8,
                         value
                             .get("message")
                             .and_then(serde_json::Value::as_str)

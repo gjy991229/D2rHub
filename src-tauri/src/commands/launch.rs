@@ -338,7 +338,6 @@ impl WindowGeometryRequest {
             layout_slot: account.as_ref().and_then(|account| {
                 super::window_layout::slot_for_account(
                     layout?,
-                    config,
                     account_id,
                     &account_window_title(account),
                 )
@@ -381,7 +380,6 @@ impl WindowGeometryRequest {
                 == self.layout.as_ref().and_then(|layout| {
                     super::window_layout::slot_for_account(
                         layout,
-                        config,
                         &account.id,
                         &account_window_title(account),
                     )
@@ -1994,14 +1992,20 @@ pub(crate) async fn launch_saved_scheme(
     state: tauri::State<'_, SharedState>,
     id: String,
     revision: u64,
+    account_ids: Option<Vec<String>>,
 ) -> Result<Vec<LaunchResult>, AppError> {
     let shared = state.inner().clone();
     let _admission = shared
         .launch_admission
         .try_lock()
         .map_err(|_| AppError::ConfigReadError("另一个启动任务正在执行".into()))?;
-    let entries =
-        crate::commands::launch_scheme::prepare_scheme_launch(&app, &state, &id, revision)?;
+    let entries = crate::commands::launch_scheme::prepare_scheme_launch(
+        &app,
+        &state,
+        &id,
+        revision,
+        account_ids.as_deref(),
+    )?;
     let result = launch_accounts_task(app.clone(), state.clone(), None, Some(entries), None).await;
     let survivors = crate::commands::account::list_accounts(state.clone())?
         .iter()

@@ -83,6 +83,6 @@
   .account-init-footer { gap: 6px; }
   .account-init-footer-actions { flex-wrap: wrap; justify-content: flex-end; }
 }
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   .account-init-region, .account-init-auth-option { transition: none; }
 }

@@ -229,8 +229,13 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
   });
   const remove = () => {
     if (!editor?.baseline) return;
-    if (!confirmDelete) { setConfirmDelete(true); return; }
     const deleting = editor.baseline;
+    const scheme = (readDraft() ?? config).launch_groups?.find(group => group.environment?.layout_id === deleting.id);
+    if (scheme) {
+      setFeedback({ text: english ? "Change the window layout in “" + scheme.name + "” before deleting it." : "请先调整启动方案“" + scheme.name + "”的布局绑定。", error: true });
+      return;
+    }
+    if (!confirmDelete) { setConfirmDelete(true); return; }
     void run(async () => {
       await commit(current => {
         current.window_layouts = (current.window_layouts ?? []).filter(candidate => candidate.id !== deleting.id);
@@ -350,11 +355,21 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           </button>)}
         </div>
         {slot && monitor && rect && <div className="layout-inspector">
-          <label className="layout-monitor-field"><span>{english ? "Window title" : "窗口名称"}</span>
-            <input className="settings-input" list={titleSuggestionsId} value={boundTitle(slot) ?? ""}
-              placeholder={english ? "Select or enter a title" : "选择或输入窗口名称"}
-              onChange={event => changeSlot({ account_id: undefined, window_title: event.target.value || undefined })} />
+          <label className="layout-monitor-field"><span>{english ? "Account binding" : "绑定账号"}</span>
+            <select className="settings-input" value={slot.account_id ?? ""} onChange={event => {
+              const accountId = event.target.value;
+              changeSlot(accountId ? { account_id: accountId, window_title: undefined } : { account_id: undefined });
+            }}>
+              <option value="">{english ? "Match window title" : "按窗口名称匹配"}</option>
+              {slot.account_id && !accounts.some(account => account.id === slot.account_id) && <option value={slot.account_id}>{slot.account_id}</option>}
+              {accounts.map(account => <option key={account.id} value={account.id} disabled={layout.windows.some((other, index) => index !== selectedIndex && other.account_id === account.id)}>{account.display_name.trim() || account.id}</option>)}
+            </select>
           </label>
+          {!slot.account_id && <label className="layout-monitor-field"><span>{english ? "Window title" : "窗口名称"}</span>
+            <input className="settings-input" list={titleSuggestionsId} value={slot.window_title ?? ""}
+              placeholder={english ? "Select or enter a title" : "选择或输入窗口名称"}
+              onChange={event => changeSlot({ window_title: event.target.value || undefined })} />
+          </label>}
           <datalist id={titleSuggestionsId}>{windowTitles.map(title => <option key={title} value={title} />)}</datalist>
           <div className="layout-inspector-heading"><strong>{labels[selectedIndex]}</strong><span>{english ? "Window position and game resolution" : "窗口位置与游戏分辨率"}</span></div>
           <label className="layout-monitor-field layout-mode-field"><span>{english ? "Window mode" : "窗口模式"}</span><select className="settings-input"

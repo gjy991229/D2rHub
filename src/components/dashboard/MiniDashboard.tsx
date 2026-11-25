@@ -1,4 +1,3 @@
-import { AccountMonogram } from "../accounts/AccountMonogram";
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, Circle, ListChecks, LoaderCircle, Maximize2, Minus, MoreHorizontal, Pin, Play, Settings, Users } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -6,10 +5,10 @@ import { invokeCommand } from "../../platform/tauri";
 import { useAccounts } from "../../store/accounts";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useLaunch } from "../../store/launch";
-import type { AccountMeta } from "../../store/types";
+import type { AccountMeta, ModCapsulePool } from "../../store/types";
 import { sortAccountsByCardOrder } from "../../utils/accountOrder";
 import { accountRegionLabel, requiresTokenMigration } from "../../utils/regionPaths";
-import { inspectLaunchGroup, launchEntriesForGroup, launchGroupAccountIds, launchGroupIssueDetails } from "../../utils/launchGroups";
+import { inspectLaunchGroup, launchGroupAccountIds, launchGroupIssueDetails } from "../../utils/launchGroups";
 import { optionalFeaturesAreAvailable } from "../../features/profile/featureProfile";
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import type { RoomAutomationWorkflowStatus } from "../../features/roomAutomation/types";
@@ -18,6 +17,7 @@ import "../../styles/miniMode.css";
 
 interface MiniDashboardProps {
   busy: boolean;
+  modCapsulePool?: ModCapsulePool | null;
   pinned: boolean;
   onPin: () => Promise<void>;
   onExpand: () => Promise<boolean>;
@@ -69,7 +69,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
   const menuId = useId();
   const groups = config?.launch_groups ?? [];
   const group = groups.find(item => item.id === groupId);
-  const availability = group ? inspectLaunchGroup(group, accounts, config) : null;
+  const availability = group ? inspectLaunchGroup(group, accounts, config, props.modCapsulePool) : null;
   const members = group ? new Set(launchGroupAccountIds(group)) : null;
   const visible = sortAccountsByCardOrder(accounts).filter(account => !members || members.has(account.id));
   const eligible = (account: AccountMeta) => account.initialized
@@ -147,11 +147,10 @@ export function MiniDashboard(props: MiniDashboardProps) {
       if (!targets.length) return;
       // A selected scheme always supplies its overrides, including single-row launches.
       if (selected) {
-        const inspected = inspectLaunchGroup(selected, latest, currentConfig);
+        const inspected = inspectLaunchGroup(selected, latest, currentConfig, props.modCapsulePool);
         if (!inspected.can_launch) throw new Error(launchGroupIssueDetails(inspected.issues));
-        const targetIds = new Set(targets.map(account => account.id));
-        await useLaunch.getState().startSchemeLaunch(launchEntriesForGroup(selected, latest)
-          .filter(entry => targetIds.has(entry.account_id)));
+        await useLaunch.getState().startSavedScheme(selected.id, selected.revision ?? 0,
+          targets.map(account => account.id));
       } else await useLaunch.getState().startLaunch(targets.map(account => account.id));
       await refreshRunning();
     } finally { actionLock.current = false; setDispatching(false); }
@@ -212,7 +211,6 @@ export function MiniDashboard(props: MiniDashboardProps) {
         const label = active ? copy("启动中", "Starting") : account.is_running ? copy("切回", "Switch")
           : needsConfig ? copy("配置", "Setup") : failure ? copy("重试", "Retry") : copy("启动", "Start");
         return <article key={account.id} className="mini-account" data-state={active ? "busy" : account.is_running ? "running" : needsConfig ? "warning" : failure ? "error" : "idle"}>
-          <AccountMonogram id={account.id} name={account.display_name || account.id} />
           <div className="mini-account-copy"><strong title={account.display_name || account.id}>{account.display_name || account.id}</strong>
             <div className="mini-account-meta"><span className="hig-badge hig-badge-neutral">{english ? regionLabels[accountRegionLabel(account.region)] : accountRegionLabel(account.region)}</span>
               <span className="mini-status" title={failure || status}>{active ? <LoaderCircle size={10} className="animate-spin" aria-hidden="true" /> : <Circle size={6} fill="currentColor" aria-hidden="true" />}<span>{status}</span></span></div>

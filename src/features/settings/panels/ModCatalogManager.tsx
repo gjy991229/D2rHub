@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, FolderOpen, Layers3, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, FolderOpen, LayoutGrid, Rows3, Layers3, PackageOpen, PackagePlus, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 import { ProgressBar } from "../../../components/ui/ProgressBar";
 import { Button } from "../../../components/ui/Button";
@@ -69,6 +69,14 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
   );
   const edition = controlledEdition ?? localEdition;
   const setEdition = (next: "CN" | "Global") => { setLocalEdition(next); onEditionChange?.(next); };
+  const [view, setView] = useState<"cards" | "list">(() => {
+    try { return localStorage.getItem("hub-installed-mod-view") === "list" ? "list" : "cards"; }
+    catch { return "cards"; }
+  });
+  const changeView = (next: "cards" | "list") => {
+    setView(next);
+    try { localStorage.setItem("hub-installed-mod-view", next); } catch { /* Use the in-memory preference. */ }
+  };
   const [generateOpen, setGenerateOpen] = useState(false);
   const [downloadBusy, setDownloadBusy] = useState(false);
   const operationLock = useRef(false);
@@ -165,6 +173,12 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setGenerateOpen(false); setAddOpen(true); setAddDraft(""); }}>
           <Plus size={13} />{isEnglish ? "Custom launch preset" : "自定义启动预设"}
         </Button>
+        <div className="roster-views" role="group" aria-label={isEnglish ? "Installed Mod view" : "已安装 Mod 视图"}>
+          {([["cards", isEnglish ? "Cards" : "卡片", LayoutGrid], ["list", isEnglish ? "List" : "列表", Rows3]] as const).map(([id, label, Icon]) =>
+            <button key={id} type="button" title={label} aria-label={label} aria-pressed={view === id} onClick={() => changeView(id)}>
+              <Icon size={15} aria-hidden="true" />
+            </button>)}
+        </div>
       </div>}
 
       {generateOpen ? <ModResourceLibrary edition={edition} en={isEnglish} catalog={catalog} onBusy={setDownloadBusy} /> : <>
@@ -217,7 +231,7 @@ export function ModCatalogManager({ catalog, accounts, autoOpenAdd, initialEditi
         {catalog.unpackResult.escaped_name_count > 0 && <><br />{isEnglish ? "Some resource names were escaped; the original names are recorded with the backup." : "部分资源文件名已转义，原始名称记录在备份清单中。"}</>}
       </p>}
       {catalog.error && <p className="mod-catalog-error" role="status">{catalog.error}</p>}
-      <div className="mod-catalog-list" aria-busy={busy}>
+      <div className="mod-catalog-list" data-mod-view={view} aria-busy={busy}>
         {capsules.map(capsule => <ModCatalogEntry key={capsule.id} capsule={capsule}
           accounts={accounts} en={isEnglish} minimalMode={minimalMode} busy={busy}
           onUpdate={args => run(() => catalog.update(capsule.id, args), copy.updateSuccess)}

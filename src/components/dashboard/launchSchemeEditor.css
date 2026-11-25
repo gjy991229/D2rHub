@@ -36,3 +36,7 @@
 .scheme-slot-heading { display: flex; align-items: baseline; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border-default); }
 .scheme-slot-heading span { color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .scheme-slot-heading strong { color: var(--text-primary); font-size: var(--text-sm); overflow-wrap: anywhere; }
+
+.launch-group-panel :is(h2, h3, .launch-group-create) { font-family: inherit; letter-spacing: 0; }
+.launch-group-panel-header h2, .launch-group-panel .launch-scheme-heading h3 { font-size: var(--text-sm); font-weight: 650; line-height: 1.5; }
+.launch-group-panel-header .launch-group-create { font-size: var(--text-xs); font-weight: 600; line-height: 1.5; }

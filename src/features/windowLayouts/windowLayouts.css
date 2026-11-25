@@ -70,7 +70,7 @@
   .layout-panel-heading { align-items: flex-start; }
   .layout-panel-heading > label { flex-shrink: 0; }
 }
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   .window-layout-panel { animation: none; }
   .layout-window-body, .layout-preset { transition: none; }
 }
@@ -138,7 +138,7 @@
   .layout-editor-heading > div { flex-wrap: wrap; gap: 4px; }
   .layout-inspector { gap: 8px; }
 }
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   .layout-capsule, .layout-quick-trigger-group, .layout-quick-power > span, .layout-preset-disclosure > svg { transition: none; }
   .layout-preset-shelf { animation: none; }
 }

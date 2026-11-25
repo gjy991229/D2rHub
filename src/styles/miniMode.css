@@ -14,9 +14,9 @@
 .mini-scope > svg:last-child { left: auto; right: 8px; }
 .mini-scope select { width: 100%; min-width: 0; height: 34px; padding: 0 26px 0 32px; appearance: none; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-control); color: var(--text-primary); font: inherit; font-size: var(--text-xs); text-overflow: ellipsis; cursor: pointer; }
 .mini-summary { color: var(--text-muted); font-size: var(--text-2xs); padding: 4px 16px; flex-shrink: 0; }
-.mini-account-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 8px; display: flex; flex-direction: column; gap: 6px; scrollbar-gutter: stable; }
-.mini-account { display: flex; align-items: center; gap: 10px; min-height: 64px; flex-shrink: 0; padding: 10px 12px; border: 1px solid var(--border-default); border-radius: var(--radius-md); background: var(--surface-card); }
-.mini-account:hover { border-color: var(--border-strong); }
+.mini-account-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 14px 8px; display: flex; flex-direction: column; gap: 0; scrollbar-gutter: stable; }
+.mini-account { display: flex; align-items: center; gap: 10px; min-height: 48px; flex-shrink: 0; padding: 6px 4px; border-bottom: 1px solid var(--border-default); }
+.mini-account:hover { background: var(--surface-hover); }
 .mini-index { align-self: flex-start; padding-top: 2px; color: var(--text-muted); font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
 .mini-account-copy { flex: 1; min-width: 0; }
 .mini-account-copy > strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--text-sm); font-weight: 600; }

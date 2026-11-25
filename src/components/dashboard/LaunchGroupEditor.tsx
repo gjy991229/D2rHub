@@ -5,11 +5,11 @@ import { ArrowDown, ArrowUp, Copy, Trash2 } from "lucide-react";
 import type { LaunchGroupController } from "../../hooks/useLaunchGroupController";
 import { useGlobalConfig } from "../../store/globalConfig";
 import { useAccounts } from "../../store/accounts";
-import type { ModCapsulePool, SchemeEnvironment } from "../../store/types";
+import type { LayoutSlot, ModCapsulePool, SchemeEnvironment, WindowLayout } from "../../store/types";
 import { DisplaySection, GraphicsSection, AudioSection, GameplaySection, AutomapSection } from "../../features/settings/gameSettings/fields";
 import { Modal } from "../ui/Modal";
 import { invokeCommand } from "../../platform/tauri";
-import { getLayoutMonitors } from "../../features/windowLayouts/gateway";
+import { createGameWindowLayout, getLayoutMonitors } from "../../features/windowLayouts/gateway";
 import { presetSlots, validateLayout } from "../../features/windowLayouts/model";
 import type { RoomAutomationConfigSnapshot } from "../../features/roomAutomation/types";
 import { showToast } from "../ui/Toast";
@@ -26,6 +26,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
   const accounts = useAccounts(state => state.accounts);
   const [tab, setTab] = useState("accounts");
   const [layoutBusy, setLayoutBusy] = useState(false);
+  const [layoutDraft, setLayoutDraft] = useState<{ schemeKey: string; layout: WindowLayout } | null>(null);
   const draft = controller.draft;
   if (!draft || !config || controller.pendingDelete || hidden) return null;
   const en = config.app_language === "en-US";
@@ -35,15 +36,19 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     const title = accounts.find(account => account.id === id)?.display_name;
     return title?.trim() ? title : id;
   };
-  const slots = env.layout?.windows ?? [];
-  const legacyOrder = slots.every(slot => !slot.account_id && !slot.window_title);
-  const bindings = slots.map((slot, index) => {
-    if (slot.account_id) return slot.account_id;
-    if (legacyOrder) return draft.members[index]?.account_id;
+  const layouts = config.window_layouts ?? [];
+  const savedLayout = layouts.find(layout => layout.id === env.layout_id);
+  const newLayout = layoutDraft?.schemeKey === draft.key ? layoutDraft.layout : null;
+  const layoutAccount = (slot: LayoutSlot) => {
+    if (slot.account_id) return accounts.find(account => account.id.toLowerCase() === slot.account_id!.toLowerCase())?.id;
     const title = slot.window_title?.trim().toLowerCase();
-    const matches = draft.members.filter(member => name(member.account_id).trim().toLowerCase() === title);
-    return matches.length === 1 ? matches[0].account_id : undefined;
-  });
+    if (!title) return undefined;
+    const matches = accounts.filter(account => name(account.id).trim().toLowerCase() === title);
+    return matches.length === 1 ? matches[0].id : undefined;
+  };
+  const layoutLabel = (slot: LayoutSlot) => slot.account_id
+    ? name(slot.account_id)
+    : slot.window_title || (en ? "Unassigned" : "未绑定");
   const edit = controller.updateEnvironment;
   const setting = <K extends keyof SchemeEnvironment["settings"]>(key: K, value: SchemeEnvironment["settings"][K]) => edit(env => { env.settings[key] = value; });
   const errors: string[] = [];
@@ -52,17 +57,40 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
     if (room.follower_account_ids.some(id => !selected.some(account => account.id === id) || id === room.primary_account_id)) errors.push("跟房：请选择有效的小号");
   }
   if (settings.rune_audio_target_account && !selected.some(account => account.id === settings.rune_audio_target_account)) errors.push("识别：请选择方案内的账号");
-  if (bindings.some(id => !draft.members.some(member => member.account_id === id))) errors.push("布局：请为每个位置选择方案账号");
-  if (new Set(bindings).size !== bindings.length) errors.push("布局：同一账号只能绑定一个位置");
-  const layoutError = env.layout && validateLayout(env.layout);
-  if (layoutError) errors.push(layoutError);
-  const ready = draft.name.trim() && draft.members.length && draft.members.every(member => member.snapshot && member.resolution && member.fps != null) && !errors.length;
+  if (env.layout_id && !savedLayout) errors.push(en ? "Select a saved window layout." : "请选择一个已保存的窗口布局");
+  const ready = draft.name.trim() && draft.members.length && draft.members.every(member => member.snapshot && member.resolution && member.fps != null) && !errors.length && !newLayout;
   const createLayout = async () => {
     setLayoutBusy(true);
     try {
       const monitors = await getLayoutMonitors();
       if (!monitors.length) throw new Error("未检测到显示器");
-      edit(env => { env.layout = { id: crypto.randomUUID(), name: "方案布局", monitors, windows: presetSlots(monitors, draft.members.length, "1080p").map((slot, index) => ({ ...slot, account_id: draft.members[index].account_id })) }; });
+      const base = (draft.name.trim() || (en ? "New layout" : "新布局")).slice(0, 35);
+      let name = base;
+      let suffix = 2;
+      while (layouts.some(layout => layout.name.trim().toLowerCase() === name.toLowerCase())) name = base + " " + suffix++;
+      const windows = presetSlots(monitors, draft.members.length, "1080p")
+        .map((slot, index) => ({ ...slot, account_id: draft.members[index].account_id }));
+      setLayoutDraft({ schemeKey: draft.key, layout: { id: crypto.randomUUID(), name, monitors, windows } });
+    } catch (error) { showToast("error", String(error)); }
+    finally { setLayoutBusy(false); }
+  };
+  const updateNewLayout = (layout: WindowLayout) => setLayoutDraft({ schemeKey: draft.key, layout });
+  const updateNewSlot = (index: number, patch: Partial<LayoutSlot>) => {
+    if (!newLayout) return;
+    updateNewLayout({ ...newLayout, windows: newLayout.windows.map((slot, at) => at === index ? { ...slot, ...patch } : slot) });
+  };
+  const saveNewLayout = async () => {
+    if (!newLayout) return;
+    const layout = { ...newLayout, name: newLayout.name.trim() };
+    const layoutError = validateLayout(layout);
+    if (layoutError) return showToast("warning", layoutError);
+    setLayoutBusy(true);
+    try {
+      await createGameWindowLayout(layout);
+      await useGlobalConfig.getState().load();
+      edit(env => { env.layout_id = layout.id; });
+      setLayoutDraft(null);
+      showToast("success", en ? "Window layout saved" : "窗口布局已保存");
     } catch (error) { showToast("error", String(error)); }
     finally { setLayoutBusy(false); }
   };
@@ -83,7 +111,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
         env.room.follower_account_ids = env.room.follower_account_ids.filter(id => ids.has(id));
         if (!ids.has(env.settings.rune_audio_target_account)) env.settings.rune_audio_target_account = "";
         if (!ids.has(env.settings.keep_battle_net_account_id ?? "")) env.settings.keep_battle_net_account_id = null;
-        env.layout = structuredClone(config.window_layout_enabled ? config.window_layouts?.find(layout => layout.id === config.active_window_layout_id) ?? null : null);
+        env.layout_id = config.window_layout_enabled ? config.active_window_layout_id ?? null : null;
       });
       showToast("info", "已填入草稿，检查后保存方案；当前运行不会改变");
     } catch (error) { showToast("error", `读取当前设置失败：${error}`); }
@@ -92,7 +120,7 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
   const options = <><option value="">不指定账号</option>{selected.map(account => <option key={account.id} value={account.id}>{name(account.id)}</option>)}</>;
   return createPortal(<Modal open title={draft.id ? `编辑方案：${draft.name}` : "新建启动方案"} width="max-w-4xl"
     onClose={controller.cancelDraft} dismissible={!controller.busy && !layoutBusy} footer={<>
-      {draft.id && <button className="control-btn" disabled={controller.busy} onClick={controller.duplicate}><Copy size={14} />复制为新方案</button>}
+      {draft.id && <button className="control-btn" disabled={controller.busy || layoutBusy || !!newLayout} onClick={controller.duplicate}><Copy size={14} />复制为新方案</button>}
       <button className="control-btn" disabled={controller.busy || layoutBusy} onClick={controller.cancelDraft}>取消</button>
       <Button variant="primary" size="sm" disabled={!ready || controller.busy || layoutBusy} onClick={() => void controller.saveDraft()}>{controller.busy ? "正在保存…" : "保存方案"}</Button>
     </>}>
@@ -100,15 +128,15 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
       <label>方案名称<input autoFocus maxLength={32} value={draft.name} disabled={controller.busy} onChange={event => controller.renameDraft(event.target.value)} /></label>
       <p className="scheme-note" data-i18n-skip>{en ? "Save to use these values on future scheme launches. Running games and account defaults stay unchanged." : "保存后在下次按此方案启动时使用，当前游戏与账号默认配置保持不变。"}</p>
       <nav className="section-nav" aria-label="方案设置">{[["accounts", "账号与启动"], ["room", "跟房"], ["recognition", "识别"], ["layout", "窗口布局"]].map(([id, label]) => <button type="button" key={id} aria-pressed={tab === id} onClick={() => setTab(id)}>{label}</button>)}</nav>
-      <fieldset disabled={controller.busy || layoutBusy} className="scheme-body">
+      <fieldset key={tab} disabled={controller.busy || layoutBusy} className="scheme-body">
         {tab === "accounts" && <>
           <div className="scheme-account-picker" aria-label="选择方案账号">{accounts.map(account => <label key={account.id}><input type="checkbox" disabled={!account.initialized} checked={draft.members.some(member => member.account_id === account.id)} onChange={() => controller.toggleAccount(account.id)} />{name(account.id)}{!account.initialized && "（未初始化）"}</label>)}</div>
           {!draft.members.length && <p className="scheme-note">先选择账号，再配置跟房、识别和布局。</p>}
           {draft.members.map((member, index) => {
             const account = accounts.find(account => account.id === member.account_id), snapshot = member.snapshot;
             const update = (patch: Partial<typeof member>) => controller.updateMember(member.account_id, patch);
-            const layoutIndex = bindings.indexOf(member.account_id);
-            const layoutSlot = env.layout?.windows[layoutIndex];
+            const layoutIndex = savedLayout?.windows.findIndex(slot => layoutAccount(slot) === member.account_id) ?? -1;
+            const layoutSlot = savedLayout?.windows[layoutIndex];
             const edition = modCapsulePool?.accounts.find(account => account.account_id === member.account_id)?.edition;
             const mods = modCapsulePool?.capsules.filter(capsule => capsule.edition === edition && capsule.ready) ?? [];
             return <section className="scheme-account" key={member.account_id}>
@@ -157,17 +185,45 @@ export function LaunchGroupEditor({ launchGroups: controller, modCapsulePool, on
           <p className="scheme-note">改变跟房主号不会自动改变已选的识别账号；公共模块关闭时不运行。</p>
         </>}
         {tab === "layout" && <>
-          <div className="scheme-fields"><label>布局模板<select value="" onChange={event => { const layout = config.window_layouts?.find(layout => layout.id === event.target.value); if (layout) edit(env => { env.layout = structuredClone(layout); }); }}><option value="">选择模板，复制到方案…</option>{config.window_layouts?.map(layout => <option key={layout.id} value={layout.id}>{layout.name}</option>)}</select></label><button className="control-btn" disabled={!draft.members.length} onClick={() => void createLayout()}>生成 {draft.members.length || 1} 窗口布局</button><button className="control-btn" onClick={() => edit(env => { env.layout = null; })}>不使用统一布局</button></div>
-          {env.layout ? <><SchemeLayoutPreview layout={env.layout} names={bindings.map(id => id ? name(id) : "待绑定")}/><p className="scheme-note">窗口位置绑定方案账号，修改昵称后仍然有效。</p><label>布局名称<input value={env.layout.name} onChange={event => edit(env => { env.layout!.name = event.target.value; })}/></label>
-          {env.layout.windows.map((slot, index) => <section className="scheme-account" key={index}><header className="scheme-slot-heading"><span>位置 {index + 1}</span><strong>{bindings[index] ? name(bindings[index]!) : "待绑定"}</strong></header><div className="scheme-fields"><label>绑定账号<select value={bindings[index] ?? ""} onChange={event => {
-            const id = event.target.value;
-            edit(env => { env.layout!.windows.forEach((item, i) => { item.account_id = i === index ? id : bindings[i]; delete item.window_title; }); });
-          }}><option value="" disabled>请选择账号</option>{draft.members.map(member => <option key={member.account_id} value={member.account_id}>{name(member.account_id)}</option>)}</select></label><label>显示器<select value={slot.monitor_id} onChange={event => edit(env => { env.layout!.windows[index].monitor_id = event.target.value; })}>{env.layout!.monitors.map(monitor => <option key={monitor.id} value={monitor.id}>{monitor.name}</option>)}</select></label><label>窗口模式<select value={slot.fullscreen ? "fullscreen" : "windowed"} onChange={event => edit(env => { env.layout!.windows[index].fullscreen = event.target.value === "fullscreen" || undefined; })}><option value="windowed">窗口化</option><option value="fullscreen">无边框全屏</option></select></label>{!slot.fullscreen && ([["x", "X"], ["y", "Y"], ["width", "分辨率宽"], ["height", "分辨率高"]] as const).map(([key, label]) => <label key={key}>{label}<input type="number" value={slot[key]} onChange={event => edit(env => { env.layout!.windows[index][key] = Number(event.target.value); })}/></label>)}</div></section>)}</> : <p className="scheme-note">使用方案内各账号自己的位置与分辨率。</p>}
+          {newLayout ? <>
+            <label>{en ? "Layout name" : "布局名称"}<input maxLength={40} value={newLayout.name} onChange={event => updateNewLayout({ ...newLayout, name: event.target.value })} /></label>
+            <SchemeLayoutPreview layout={newLayout} names={newLayout.windows.map(layoutLabel)} />
+            {newLayout.windows.map((slot, index) => <section className="scheme-account" key={index}>
+              <header className="scheme-slot-heading"><span>{en ? "Position" : "位置"} {index + 1}</span><strong>{layoutLabel(slot)}</strong></header>
+              <div className="scheme-fields">
+                <label>{en ? "Account" : "绑定账号"}<select value={slot.account_id ?? ""} onChange={event => updateNewSlot(index, { account_id: event.target.value })}>
+                  {draft.members.map(member => <option key={member.account_id} value={member.account_id}>{name(member.account_id)}</option>)}
+                </select></label>
+                <label>{en ? "Display" : "显示器"}<select value={slot.monitor_id} onChange={event => updateNewSlot(index, { monitor_id: event.target.value })}>
+                  {newLayout.monitors.map(monitor => <option key={monitor.id} value={monitor.id}>{monitor.name}</option>)}
+                </select></label>
+                <label>{en ? "Window mode" : "窗口模式"}<select value={slot.fullscreen ? "fullscreen" : "windowed"} onChange={event => updateNewSlot(index, { fullscreen: event.target.value === "fullscreen" || undefined })}>
+                  <option value="windowed">{en ? "Windowed" : "窗口化"}</option><option value="fullscreen">{en ? "Borderless fullscreen" : "无边框全屏"}</option>
+                </select></label>
+                {!slot.fullscreen && ([["x", "X"], ["y", "Y"], ["width", en ? "Width" : "分辨率宽"], ["height", en ? "Height" : "分辨率高"]] as const)
+                  .map(([key, label]) => <label key={key}>{label}<input type="number" value={slot[key]} onChange={event => updateNewSlot(index, { [key]: Number(event.target.value) })} /></label>)}
+              </div>
+            </section>)}
+            <div className="scheme-row">
+              <Button type="button" size="sm" onClick={() => setLayoutDraft(null)}>{en ? "Cancel layout" : "取消新建布局"}</Button>
+              <Button type="button" variant="primary" size="sm" onClick={() => void saveNewLayout()}>{en ? "Save layout" : "保存布局"}</Button>
+            </div>
+          </> : <>
+            <div className="scheme-fields">
+              <label>{en ? "Saved layout" : "已保存布局"}<select value={env.layout_id ?? ""} onChange={event => edit(env => { env.layout_id = event.target.value || null; })}>
+                <option value="">{en ? "Use account positions" : "使用账号独立位置"}</option>
+                {layouts.map(layout => <option key={layout.id} value={layout.id}>{layout.name}</option>)}
+              </select></label>
+              <button type="button" className="control-btn" disabled={!draft.members.length || layouts.length >= 64} onClick={() => void createLayout()}>{en ? "New layout" : "新建布局"}</button>
+              {savedLayout && onOpenSettings && <button type="button" className="control-btn" onClick={() => onOpenSettings("window-layouts")}>{en ? "Manage saved layouts" : "管理已保存布局"}</button>}
+            </div>
+            {savedLayout && <SchemeLayoutPreview layout={savedLayout} names={savedLayout.windows.map(layoutLabel)} />}
+          </>}
         </>}
       </fieldset>
       {controller.loadError && <p role="alert" className="scheme-error">{controller.loadError}。可移除后重新添加该账号以重试。</p>}
       {!!errors.length && <div role="alert" className="scheme-error">{errors.map(error => <p key={error}>{error}</p>)}</div>}
-      <div className="scheme-row"><button className="control-btn" disabled={controller.busy || layoutBusy} onClick={() => void importCurrent()}>从当前账号选择和布局填入</button><span className="scheme-spacer"/>{draft.id && <button className="control-btn" disabled={controller.busy || layoutBusy} onClick={controller.requestDraftDelete}>删除方案</button>}</div>
+      <div className="scheme-row"><button className="control-btn" disabled={controller.busy || layoutBusy || !!newLayout} onClick={() => void importCurrent()}>从当前账号选择和布局填入</button><span className="scheme-spacer"/>{draft.id && <button className="control-btn" disabled={controller.busy || layoutBusy || !!newLayout} onClick={controller.requestDraftDelete}>删除方案</button>}</div>
     </div>
   </Modal>, document.body);
 }

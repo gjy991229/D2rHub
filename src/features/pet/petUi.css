@@ -33,4 +33,4 @@
 .pet-context-menu button { min-height: 32px; padding: 6px 9px; border-radius: 5px; color: var(--text-secondary); text-align: left; font-size: var(--text-xs); line-height: 1.4; }
 .pet-context-menu button:hover, .pet-context-menu button:focus-visible { background: var(--surface-hover); color: var(--text-primary); }
 .pet-context-menu hr { border-color: var(--border-default); margin: 4px 0; }
-@media (prefers-reduced-motion: reduce) { .pet-option-button { transition: none; } }
+@scope (:root[data-motion="reduced"]) { .pet-option-button { transition: none; } }

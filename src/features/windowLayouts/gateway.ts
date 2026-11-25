@@ -7,6 +7,7 @@ export interface LayoutRestoreResult {
 }
 
 export const getLayoutMonitors = () => invokeCommand<LayoutMonitor[]>("get_game_layout_monitors");
+export const createGameWindowLayout = (layout: WindowLayout) => invokeCommand<void>("create_game_window_layout", { layout });
 export const getLayoutAccountOrder = () => invokeCommand<string[]>("get_game_layout_account_order");
 export const restoreGameLayout = () => invokeCommand<LayoutRestoreResult>("restore_game_window_layout");
 

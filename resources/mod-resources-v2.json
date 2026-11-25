@@ -1,74 +1,74 @@
 {
   "schema": 2,
   "channel": "hub-bundled-processor-v1",
-  "revision": 20260930050812,
+  "revision": 20261113104350,
   "release_url": "https://github.com/gjy991229/D2rHub/releases/tag/mod-resources-20260927.1",
   "kind": "resources",
   "hub_min": "0.9.112",
-  "hub_max_exclusive": "0.9.124",
+  "hub_max_exclusive": "0.9.125",
   "assets": [
     {
       "id": "LiteHub",
-      "version": "mod-resources-20260928164931",
+      "version": "mod-resources-20261113063101",
       "mod_name": "LiteHub",
       "profile": "main",
-      "game_data_version": "93854",
-      "size": 49283700,
-      "sha256": "10942e38fe446c3d9d68c76dd52a794c12a37998dfb25ba3022cb4c7613e8d59",
+      "game_data_version": "95039",
+      "size": 49284125,
+      "sha256": "890e35915e688a4fe70c1b4a122deaecaa2fc586db12d8142a131f322f2b5f79",
       "mirrors": [
         {
           "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/LiteHub-mod-resources-20260928164931.zip"
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/LiteHub-mod-resources-20261113063101.zip"
         },
         {
           "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260928164931/LiteHub-mod-resources-20260928164931.zip"
-        }
-      ],
-      "sequence": 1,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/LiteHub-mod-resources-20260928164931.zip"
-    },
-    {
-      "id": "NullHub",
-      "version": "mod-resources-20260928164931",
-      "mod_name": "NullHub",
-      "profile": "min",
-      "game_data_version": "93854",
-      "size": 25767537,
-      "sha256": "b92704a1c68d2306336071c245083b2ef282bab82a6ec7ff48740551ecc3fbf9",
-      "mirrors": [
-        {
-          "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/NullHub-mod-resources-20260928164931.zip"
-        },
-        {
-          "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260928164931/NullHub-mod-resources-20260928164931.zip"
-        }
-      ],
-      "sequence": 1,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260928164931/NullHub-mod-resources-20260928164931.zip"
-    },
-    {
-      "id": "BoHub",
-      "version": "mod-resources-20260929142304",
-      "mod_name": "BoHub",
-      "profile": "filler",
-      "game_data_version": "93854",
-      "size": 23978631,
-      "sha256": "09ecbb3549621e1e7b6b6c64300ea9f87b4ffeaa60e361a460c887f9f2048cd2",
-      "mirrors": [
-        {
-          "platform": "github",
-          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
-        },
-        {
-          "platform": "gitee",
-          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20261113063101/LiteHub-mod-resources-20261113063101.zip"
         }
       ],
       "sequence": 2,
-      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20260929142304/BoHub-mod-resources-20260929142304.zip"
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/LiteHub-mod-resources-20261113063101.zip"
+    },
+    {
+      "id": "NullHub",
+      "version": "mod-resources-20261113063101",
+      "mod_name": "NullHub",
+      "profile": "min",
+      "game_data_version": "95039",
+      "size": 25767778,
+      "sha256": "a5fe99bcefcce17dc3e417c1253ab63fba25019bd82fa3311a5568e72e424524",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/NullHub-mod-resources-20261113063101.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20261113063101/NullHub-mod-resources-20261113063101.zip"
+        }
+      ],
+      "sequence": 2,
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/NullHub-mod-resources-20261113063101.zip"
+    },
+    {
+      "id": "BoHub",
+      "version": "mod-resources-20261113063101",
+      "mod_name": "BoHub",
+      "profile": "filler",
+      "game_data_version": "95039",
+      "size": 23866580,
+      "sha256": "91f79957f3aeb9fd2104d752a34d081d101a847b353a535fa9df5b42aae85228",
+      "mirrors": [
+        {
+          "platform": "github",
+          "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/BoHub-mod-resources-20261113063101.zip"
+        },
+        {
+          "platform": "gitee",
+          "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/mod-resources-20261113063101/BoHub-mod-resources-20261113063101.zip"
+        }
+      ],
+      "sequence": 3,
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/mod-resources-20261113063101/BoHub-mod-resources-20261113063101.zip"
     }
   ]
 }

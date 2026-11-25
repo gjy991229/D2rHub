@@ -11,64 +11,6 @@ use crate::{
 };
 use tauri::Manager;
 
-fn bind_scheme_layout(
-    scheme: &mut LaunchGroup,
-    config: &crate::domain::config::GlobalConfig,
-) -> Result<(), AppError> {
-    let Some(layout) = scheme
-        .environment
-        .as_mut()
-        .and_then(|env| env.layout.as_mut())
-    else {
-        return Ok(());
-    };
-    let legacy_order = layout
-        .windows
-        .iter()
-        .all(|slot| slot.account_id.is_none() && slot.window_title.is_none());
-    let mut by_title = std::collections::HashMap::new();
-    if layout
-        .windows
-        .iter()
-        .any(|slot| slot.account_id.is_none() && slot.window_title.is_some())
-    {
-        for id in &scheme.account_ids {
-            let account = AccountManager::load_meta(&config.accounts_dir, id)?;
-            let title = super::launch::account_window_title(&account);
-            by_title
-                .entry(crate::domain::window_layout::window_title_key(&title))
-                .and_modify(|unique| *unique = None)
-                .or_insert(Some(id));
-        }
-    }
-    let mut used = std::collections::HashSet::new();
-    for (index, slot) in layout.windows.iter_mut().enumerate() {
-        let id = if let Some(id) = &slot.account_id {
-            Some(id.clone())
-        } else if legacy_order {
-            scheme.account_ids.get(index).cloned()
-        } else {
-            slot.window_title.as_deref().and_then(|title| {
-                by_title
-                    .get(&crate::domain::window_layout::window_title_key(title))
-                    .copied()
-                    .flatten()
-                    .cloned()
-            })
-        };
-        let Some(id) = id.filter(|id| scheme.account_ids.contains(id) && used.insert(id.clone()))
-        else {
-            return Err(AppError::ConfigReadError(format!(
-                "方案布局的位置 {} 需要重新绑定账号，请编辑方案",
-                index + 1
-            )));
-        };
-        slot.account_id = Some(id);
-        slot.window_title = None;
-    }
-    Ok(())
-}
-
 #[tauri::command]
 pub(crate) fn save_launch_scheme(
     app: tauri::AppHandle,
@@ -91,7 +33,6 @@ pub(crate) fn save_launch_scheme(
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))?;
-    bind_scheme_layout(&mut scheme, &config)?;
     let environment = scheme
         .environment
         .as_ref()
@@ -217,7 +158,7 @@ pub(crate) fn get_launch_scheme_defaults(
         schema_version: crate::domain::launch_scheme::SCHEME_SCHEMA_VERSION,
         settings,
         room: Default::default(),
-        layout: None,
+        layout_id: None,
     })
 }
 
@@ -228,6 +169,7 @@ pub(crate) fn prepare_scheme_launch(
     state: &tauri::State<'_, SharedState>,
     id: &str,
     revision: u64,
+    requested: Option<&[String]>,
 ) -> Result<Vec<crate::application::multi_instance::LaunchAccountEntry>, AppError> {
     let _activation = state
         .runtime_activation_lock
@@ -237,13 +179,12 @@ pub(crate) fn prepare_scheme_launch(
         .configuration()
         .snapshot()
         .ok_or_else(|| AppError::ConfigReadError("配置尚未加载".into()))?;
-    let mut scheme = config
+    let scheme = config
         .launch_groups
         .iter()
         .find(|scheme| scheme.id == id && scheme.revision == revision)
         .cloned()
         .ok_or_else(|| AppError::ConfigReadError("方案已修改，请刷新后再启动".into()))?;
-    bind_scheme_layout(&mut scheme, &config)?;
     let environment = scheme.environment.as_ref().ok_or_else(|| {
         AppError::ConfigReadError("旧方案需要先编辑并保存，以明确跟房、识别和布局配置".into())
     })?;
@@ -280,6 +221,12 @@ pub(crate) fn prepare_scheme_launch(
     }
     let mut projected = environment.project(&config)?;
     let mut members = scheme.members.clone();
+    if let Some(ids) = requested {
+        members.retain(|member| ids.contains(&member.account_id));
+        if members.is_empty() || members.len() != ids.len() {
+            return Err(AppError::ConfigReadError("请选择方案内的账号".into()));
+        }
+    }
     for member in &mut members {
         let snapshot = member
             .snapshot
@@ -298,7 +245,14 @@ pub(crate) fn prepare_scheme_launch(
         id: uuid::Uuid::new_v4().to_string(),
         scheme: scheme.clone(),
         started_at: chrono::Utc::now().to_rfc3339(),
-        processes: Vec::new(),
+        processes: config
+            .launch_session
+            .as_ref()
+            .filter(|previous| {
+                previous.scheme.id == scheme.id && previous.scheme.revision == revision
+            })
+            .map(|previous| previous.processes.clone())
+            .unwrap_or_default(),
         members: members.clone(),
     };
     projected.launch_session = Some(session.clone());
@@ -367,35 +321,4 @@ pub(crate) fn prepare_scheme_launch(
     }
     crate::commands::launch_scheme_recovery::write(state.inner(), None)?;
     Ok(entries)
-}
-
-#[cfg(test)]
-mod layout_tests {
-    use super::*;
-
-    #[test]
-    fn legacy_slots_bind_once_and_keep_the_same_account_after_reorder() {
-        let slot = serde_json::json!({"monitor_id":"screen","x":0,"y":0,"width":1280,"height":720});
-        let mut scheme: LaunchGroup = serde_json::from_value(serde_json::json!({
-            "id":"daily","name":"daily","account_ids":["acount1","acount2"],
-            "environment":{"settings":{},"room":{"primary_account_id":"","follower_account_ids":[]},
-            "layout":{"id":"layout","name":"layout","monitors":[],"windows":[slot,slot]}}
-        }))
-        .unwrap();
-        let config = crate::domain::config::GlobalConfig::default();
-        bind_scheme_layout(&mut scheme, &config).unwrap();
-        scheme.account_ids.reverse();
-        bind_scheme_layout(&mut scheme, &config).unwrap();
-        let layout = scheme
-            .environment
-            .as_ref()
-            .unwrap()
-            .layout
-            .as_ref()
-            .unwrap();
-        assert_eq!(layout.windows[0].account_id.as_deref(), Some("acount1"));
-        assert_eq!(layout.windows[1].account_id.as_deref(), Some("acount2"));
-        scheme.account_ids.pop();
-        assert!(bind_scheme_layout(&mut scheme, &config).is_err());
-    }
 }

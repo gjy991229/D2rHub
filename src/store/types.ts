@@ -7,10 +7,10 @@ export interface LegacyPathMigration {
 }
 
 export interface SchemeEnvironment {
-  schema_version: 2;
+  schema_version: 3;
   settings: Pick<GlobalConfig, "rune_audio_target_account" | "keep_battle_net_account_id">;
   room: { primary_account_id: string; follower_account_ids: string[] };
-  layout: WindowLayout | null;
+  layout_id: string | null;
 }
 
 export interface AccountLaunchSnapshot {
@@ -94,6 +94,8 @@ export interface WindowLayout {
   windows: LayoutSlot[];
 }
 
+export type AccountRosterView = "cards" | "list";
+
 export interface GlobalConfig {
   launch_session?: { id: string; scheme: LaunchGroup; started_at: string; members?: LaunchGroupMember[] } | null;
   version: number;
@@ -150,8 +152,10 @@ export interface GlobalConfig {
   overlay_opacity: number;
   main_opacity: number;
   font_scale: string;
+  ui_motion?: "full" | "reduced";
   separate_game_taskbar_icons?: boolean;
   app_language?: string;
+  account_roster_view?: AccountRosterView | null;
   agent_mode?: number;
   agent_delay_secs?: number;
   agent_threshold?: number;
@@ -317,7 +321,6 @@ export interface TrackingSnapshot {
   current_run_name: string | null;
   current_run_name_en: string | null;
   current_run_drops: TrackingDropSnapshot[];
-  previous_run_drops?: TrackingDropSnapshot[];
   session_drops?: TrackingDropSnapshot[];
   session_runs: Record<string, number>;
 }

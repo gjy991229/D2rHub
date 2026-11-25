@@ -140,7 +140,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
   };
 
   const steps = [
-    { key: "cn_battle_net_path" as const, title: "国服战网客户端", desc: "最终选择 Battle.net.exe；前缀路径不限，Token 模式可留空",
+    { key: "cn_battle_net_path" as const, title: "国服战网客户端", desc: "最终选择 Battle.net.exe；添加国服账号时必填，仅使用国际服时可跳过",
       icon: <HardDrive size={20} />,
       placeholder: "浏览选择国服 Battle.net.exe", isFile: true, required: false,
       value: config.cn_battle_net_path, setValue: (v:string)=>setConfig(c=>({...c,cn_battle_net_path:v})), detected: null },
@@ -428,7 +428,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
             <p className="text-xs text-text-muted mt-3">
               {current.key.startsWith("global_")
                 ? "国际服仅支持 Token 直启；核心启动只要求正确的游戏安装目录。"
-                : "国服可留空跳过；核心启动只要求游戏安装目录，Battle.net 仅在战网认证时需要。"}
+                : "添加国服账号需要国服战网客户端和游戏安装目录；仅使用国际服时可跳过。"}
             </p>
           )}
 

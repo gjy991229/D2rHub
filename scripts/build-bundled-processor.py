@@ -1,4 +1,5 @@
 """Build the processor into the resources included by every Hub installer."""
+import argparse
 import hashlib
 import json
 import os
@@ -10,11 +11,24 @@ ROOT = Path(__file__).resolve().parents[1]
 DESTINATION = ROOT / 'src-tauri' / 'processor' / 'd2r-audio-mod.exe'
 
 
+def verify_prepared():
+    manifest = json.loads(DESTINATION.with_suffix('.json').read_text(encoding='utf-8'))
+    if hashlib.sha256(DESTINATION.read_bytes()).hexdigest() != manifest['sha256']:
+        raise RuntimeError('Prepared bundled processor integrity check failed')
+    return manifest
+
+
+def check_compatibility():
+    if 'jcy_inventory_preset_v1' not in verify_prepared()['capabilities']:
+        raise RuntimeError(
+            'Bundled processor does not support external JCY presets; '
+            'update the processor source checkout before building an installer'
+        )
+
+
 def build():
     if os.environ.get('D2RHUB_PROCESSOR_PREBUILT') == '1':
-        manifest = json.loads(DESTINATION.with_suffix('.json').read_text(encoding='utf-8'))
-        if hashlib.sha256(DESTINATION.read_bytes()).hexdigest() != manifest['sha256']:
-            raise RuntimeError('Prepared bundled processor integrity check failed')
+        verify_prepared()
         return
     repo = Path(os.environ.get('D2RHUB_PROCESSOR_REPO', str(ROOT.parent / 'd2r-audio-mod')))
     target = repo / 'target'
@@ -34,4 +48,9 @@ def build():
 
 
 if __name__ == '__main__':
-    build()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check-compatibility', action='store_true')
+    if parser.parse_args().check_compatibility:
+        check_compatibility()
+    else:
+        build()

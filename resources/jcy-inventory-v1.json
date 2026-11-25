@@ -1,0 +1,15 @@
+{
+  "version": "1",
+  "size": 9240162,
+  "sha256": "52f0bad311665d115d8fb59c712f1f28153dc6b54885785e079e995f59a4fa66",
+  "mirrors": [
+    {
+      "platform": "github",
+      "url": "https://github.com/gjy991229/D2rHub/releases/download/jcy-inventory-v1/jcy-inventory-v1.preset.gz"
+    },
+    {
+      "platform": "gitee",
+      "url": "https://gitee.com/garyi7e/d2-rhub_-resource/releases/download/jcy-inventory-v1/jcy-inventory-v1.preset.gz"
+    }
+  ]
+}

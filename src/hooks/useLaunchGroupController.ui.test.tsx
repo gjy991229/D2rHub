@@ -4,7 +4,7 @@ import { useLaunchGroupController } from "./useLaunchGroupController";
 import { useAccounts } from "../store/accounts";
 import { useGlobalConfig } from "../store/globalConfig";
 import { useLaunch } from "../store/launch";
-import type { AccountMeta, GlobalConfig, LaunchGroup, SchemeEnvironment } from "../store/types";
+import type { AccountMeta, GlobalConfig, LaunchGroup, SchemeEnvironment, WindowLayout } from "../store/types";
 import { invokeCommand } from "../platform/tauri";
 import { LaunchGroupEditor } from "../components/dashboard/LaunchGroupEditor";
 
@@ -12,10 +12,10 @@ vi.mock("../platform/tauri", () => ({ invokeCommand: vi.fn(), listenEvent: vi.fn
 vi.mock("../components/ui/Toast", () => ({ showToast: vi.fn() }));
 
 const environment: SchemeEnvironment = {
-  schema_version: 2,
+  schema_version: 3,
   settings: { rune_audio_target_account: "", keep_battle_net_account_id: null },
   room: { primary_account_id: "", follower_account_ids: [] },
-  layout: null,
+  layout_id: null,
 };
 const accounts = ["a", "b"].map((id, order) => ({ id, display_name: id, initialized: true, order, region: "KR", auth_mode: "token", mod_args: "", position_presets: [] })) as unknown as AccountMeta[];
 const scheme: LaunchGroup = { id: "one", name: "三开", revision: 4, account_ids: ["b", "a"],
@@ -40,10 +40,11 @@ describe("independent launch scheme drafts", () => {
   it("uses the bound window title and keeps position fields available for unmatched accounts", async () => {
     const { result } = renderHook(() => useLaunchGroupController());
     await act(async () => result.current.edit(scheme));
-    act(() => result.current.updateEnvironment(env => { env.layout = {
+    act(() => useGlobalConfig.setState(state => ({ config: { ...state.config!, window_layouts: [{
       id: "layout", name: "One slot", monitors: [],
       windows: [{ monitor_id: "display", window_title: "a", x: 0, y: 0, width: 1600, height: 900 }],
-    }; }));
+    }] } })));
+    act(() => result.current.updateEnvironment(env => { env.layout_id = "layout"; }));
     const view = render(<LaunchGroupEditor launchGroups={result.current} />);
     expect(screen.getByText(/方案布局 · 位置 1/)).toBeTruthy();
     expect(screen.queryByRole("textbox", { name: "a 分辨率" })).toBeNull();
@@ -51,6 +52,43 @@ describe("independent launch scheme drafts", () => {
     act(() => result.current.updateMember("a", { snapshot: { ...result.current.draft!.members[1].snapshot!, game_settings: {} } }));
     view.rerender(<LaunchGroupEditor launchGroups={result.current} />);
     expect(mutatingCalls()).toEqual([]);
+  });
+
+  it("saves a newly created layout to the library before saving its ID to the scheme", async () => {
+    const commands = vi.mocked(invokeCommand);
+    commands.mockImplementation(async (command, args) => {
+      if (command === "get_game_layout_monitors") {
+        const bounds = { x: 0, y: 0, width: 2560, height: 1440 };
+        return [{ id: "main", name: "Main", bounds, work_area: bounds, primary: true, scale_factor: 1 }] as never;
+      }
+      if (command === "create_game_window_layout") {
+        const { layout } = args as { layout: WindowLayout };
+        useGlobalConfig.setState(state => ({ config: { ...state.config!, window_layouts: [layout] } }));
+      }
+      return undefined as never;
+    });
+    function EditorHarness() {
+      const controller = useLaunchGroupController();
+      return <><button onClick={() => controller.edit(scheme)}>打开方案</button><LaunchGroupEditor launchGroups={controller} /></>;
+    }
+    render(<EditorHarness />);
+    fireEvent.click(screen.getByRole("button", { name: "打开方案" }));
+    fireEvent.click(await screen.findByRole("button", { name: "窗口布局" }));
+    fireEvent.click(screen.getByRole("button", { name: "新建布局" }));
+    const saveLayout = await screen.findByRole("button", { name: "保存布局" });
+    expect(mutatingCalls()).toEqual([]);
+    expect((screen.getByRole("button", { name: "保存方案" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(saveLayout);
+    const saved = await screen.findByRole("combobox", { name: "已保存布局" }) as HTMLSelectElement;
+    const layoutId = useGlobalConfig.getState().config!.window_layouts![0].id;
+    expect(saved.value).toBe(layoutId);
+    fireEvent.click(screen.getByRole("button", { name: "保存方案" }));
+    await waitFor(() => expect(mutatingCalls()).toMatchObject([
+      ["create_game_window_layout", { layout: { id: layoutId } }],
+      ["save_launch_scheme", { scheme: { environment: { layout_id: layoutId } } }],
+    ]));
+    const schemeWrite = mutatingCalls()[1][1] as { scheme: LaunchGroup };
+    expect(schemeWrite.scheme.environment).not.toHaveProperty("layout");
   });
 
   it("cancelling nested edits never writes the scheme, account or current settings", async () => {

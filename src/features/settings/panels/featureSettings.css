@@ -50,7 +50,7 @@ details[open] > summary > .feature-chevron { transform: rotate(180deg); }
   .feature-account > select { width: 100%; }
   .feature-settings-heading small { max-width: 28ch; }
 }
-@media (prefers-reduced-motion: reduce) { .feature-chevron { transition: none; } }
+@scope (:root[data-motion="reduced"]) { .feature-chevron { transition: none; } }
 @container (max-width: 400px) {
   .feature-roi { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .feature-save-state { flex-wrap: wrap; gap: 4px 12px; }

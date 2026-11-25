@@ -8,9 +8,9 @@ use super::{
 };
 use crate::{domain::room_automation::RoomAutomationConfig, error::AppError};
 
-pub const RUNTIME_LAYOUT_ID: &str = "__launch_session_layout__";
 pub const SETTING_KEYS: &[&str] = &["rune_audio_target_account", "keep_battle_net_account_id"];
-pub const SCHEME_SCHEMA_VERSION: u32 = 2;
+pub const SCHEME_SCHEMA_VERSION: u32 = 3;
+const LEGACY_LAYOUT_ID: &str = "__launch_session_layout__";
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SchemeRoomAccounts {
@@ -34,7 +34,8 @@ pub struct SchemeEnvironment {
     pub schema_version: u32,
     pub settings: Map<String, Value>,
     pub room: SchemeRoomAccounts,
-    pub layout: Option<WindowLayout>,
+    #[serde(default)]
+    pub layout_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,100 +81,177 @@ pub fn settings_snapshot(config: &GlobalConfig) -> Map<String, Value> {
 
 /// Run on raw JSON before deserialization so a durable backup can retain every old value.
 pub fn migrate_schemes(value: &mut Value) -> bool {
-    let mut changed = false;
+    let mut library: Vec<WindowLayout> = match value.get("window_layouts") {
+        Some(layouts) => match serde_json::from_value(layouts.clone()) {
+            Ok(layouts) => layouts,
+            Err(_) => return false,
+        },
+        None => Vec::new(),
+    };
+    let legacy_active = library
+        .iter()
+        .position(|layout| layout.id == LEGACY_LAYOUT_ID)
+        .map(|index| library.remove(index));
+    let mut changed = legacy_active.is_some();
     if let Some(groups) = value.get_mut("launch_groups").and_then(Value::as_array_mut) {
         for group in groups {
-            let Some(env) = group.get_mut("environment").and_then(Value::as_object_mut) else {
-                continue;
-            };
-            if env
-                .get("schema_version")
-                .and_then(Value::as_u64)
-                .unwrap_or(1)
-                >= u64::from(SCHEME_SCHEMA_VERSION)
-            {
-                continue;
-            }
-            if let Some(settings) = env.get_mut("settings").and_then(Value::as_object_mut) {
-                if settings.get("rune_audio_enabled").and_then(Value::as_bool) == Some(false)
-                    || settings
-                        .get("rune_audio_external_target")
-                        .is_some_and(|target| !target.is_null())
-                {
-                    settings.insert("rune_audio_target_account".into(), "".into());
-                }
-                settings.retain(|key, _| SETTING_KEYS.contains(&key.as_str()));
-                settings
-                    .entry("rune_audio_target_account")
-                    .or_insert_with(|| "".into());
-                settings
-                    .entry("keep_battle_net_account_id")
-                    .or_insert(Value::Null);
-            }
-            if let Some(room) = env.get_mut("room").and_then(Value::as_object_mut) {
-                if room.get("enabled").and_then(Value::as_bool) == Some(false) {
-                    room.insert("primary_account_id".into(), "".into());
-                    room.insert("follower_account_ids".into(), Value::Array(vec![]));
-                }
-                room.retain(|key, _| {
-                    matches!(key.as_str(), "primary_account_id" | "follower_account_ids")
-                });
-            }
-            env.insert("schema_version".into(), SCHEME_SCHEMA_VERSION.into());
-            // Previously these were implicit full copies, rather than explicit overrides.
-            if let Some(members) = group.get_mut("members").and_then(Value::as_array_mut) {
-                for member in members {
-                    if let Some(snapshot) =
-                        member.get_mut("snapshot").and_then(Value::as_object_mut)
-                    {
-                        snapshot.insert("game_settings".into(), Value::Object(Map::new()));
-                    }
-                }
-            }
-            changed = true;
+            changed |= migrate_scheme(group, &mut library);
         }
     }
-    // Active sessions retain their already resolved settings until they finish.
-    if let Some(session) = value
-        .get_mut("launch_session")
-        .and_then(Value::as_object_mut)
-    {
-        if let Some(scheme) = session.get_mut("scheme") {
-            let mut wrapper = serde_json::json!({"launch_groups": [scheme.clone()]});
-            if migrate_schemes(&mut wrapper) {
-                *scheme = wrapper["launch_groups"][0].take();
-                changed = true;
-            }
+    if let Some(scheme) = value.pointer_mut("/launch_session/scheme") {
+        changed |= migrate_scheme(scheme, &mut library);
+    }
+    let active = legacy_active.and_then(|mut layout| {
+        let accounts = value
+            .pointer("/launch_session/scheme/account_ids")
+            .and_then(Value::as_array)
+            .map(|ids| ids.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+            .unwrap_or_default();
+        recover_account_bindings(&mut layout, &accounts);
+        save_migrated_layout(layout, &mut library)
+    });
+    if value.get("active_window_layout_id").and_then(Value::as_str) == Some(LEGACY_LAYOUT_ID) {
+        if active.is_none() {
+            value["window_layout_enabled"] = false.into();
         }
+        value["active_window_layout_id"] = serde_json::json!(active);
+        changed = true;
+    }
+    if changed {
+        value["window_layouts"] = serde_json::json!(library);
     }
     changed
 }
 
-/// The working copy lives beside library templates for compatibility with the
-/// layout UI. Give only that copy a distinct display name, using the same
-/// whitespace/case rules and 40-character bound as layout validation.
-fn runtime_layout_name(source: &str, library: &[WindowLayout]) -> String {
-    let occupied: std::collections::HashSet<_> = library
-        .iter()
-        .map(|layout| layout.name.trim().to_lowercase())
-        .collect();
-    for index in 1..=library.len() + 1 {
-        let suffix = if index == 1 {
-            "（本次运行）".to_string()
-        } else {
-            format!("（本次运行 {index}）")
-        };
-        let base: String = source
-            .trim()
-            .chars()
-            .take(40 - suffix.chars().count())
-            .collect();
-        let candidate = format!("{}{suffix}", base.trim_end());
-        if !occupied.contains(&candidate.to_lowercase()) {
-            return candidate;
+fn migrate_scheme(group: &mut Value, library: &mut Vec<WindowLayout>) -> bool {
+    let accounts = group
+        .get("account_ids")
+        .and_then(Value::as_array)
+        .map(|ids| {
+            ids.iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let Some(env) = group.get_mut("environment").and_then(Value::as_object_mut) else {
+        return false;
+    };
+    let version = env
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    if version >= u64::from(SCHEME_SCHEMA_VERSION) {
+        return false;
+    }
+    let layout_id = env
+        .remove("layout")
+        .and_then(|value| serde_json::from_value::<WindowLayout>(value).ok())
+        .and_then(|mut layout| {
+            let accounts: Vec<_> = accounts.iter().map(String::as_str).collect();
+            recover_account_bindings(&mut layout, &accounts);
+            save_migrated_layout(layout, library)
+        });
+    env.insert("layout_id".into(), serde_json::json!(layout_id));
+    env.insert("schema_version".into(), SCHEME_SCHEMA_VERSION.into());
+    // Schema 2 already contains explicit overrides and must keep them.
+    if version < 2 {
+        if let Some(settings) = env.get_mut("settings").and_then(Value::as_object_mut) {
+            if settings.get("rune_audio_enabled").and_then(Value::as_bool) == Some(false)
+                || settings
+                    .get("rune_audio_external_target")
+                    .is_some_and(|target| !target.is_null())
+            {
+                settings.insert("rune_audio_target_account".into(), "".into());
+            }
+            settings.retain(|key, _| SETTING_KEYS.contains(&key.as_str()));
+            settings
+                .entry("rune_audio_target_account")
+                .or_insert_with(|| "".into());
+            settings
+                .entry("keep_battle_net_account_id")
+                .or_insert(Value::Null);
+        }
+        if let Some(room) = env.get_mut("room").and_then(Value::as_object_mut) {
+            if room.get("enabled").and_then(Value::as_bool) == Some(false) {
+                room.insert("primary_account_id".into(), "".into());
+                room.insert("follower_account_ids".into(), Value::Array(vec![]));
+            }
+            room.retain(|key, _| {
+                matches!(key.as_str(), "primary_account_id" | "follower_account_ids")
+            });
+        }
+        // Previously these were implicit full copies, rather than explicit overrides.
+        if let Some(members) = group.get_mut("members").and_then(Value::as_array_mut) {
+            for member in members {
+                if let Some(snapshot) = member.get_mut("snapshot").and_then(Value::as_object_mut) {
+                    snapshot.insert("game_settings".into(), Value::Object(Map::new()));
+                }
+            }
         }
     }
-    unreachable!("a finite layout library cannot occupy every generated name")
+    true
+}
+
+fn recover_account_bindings(layout: &mut WindowLayout, account_ids: &[&str]) {
+    if layout
+        .windows
+        .iter()
+        .all(|slot| slot.account_id.is_none() && slot.window_title.is_none())
+    {
+        for (slot, account_id) in layout.windows.iter_mut().zip(account_ids) {
+            slot.account_id = Some((*account_id).into());
+        }
+    }
+}
+
+fn save_migrated_layout(
+    mut layout: WindowLayout,
+    library: &mut Vec<WindowLayout>,
+) -> Option<String> {
+    if layout.id == LEGACY_LAYOUT_ID {
+        layout.id.clear();
+        layout.name = layout
+            .name
+            .split_once("（本次运行")
+            .map_or(layout.name.as_str(), |(name, _)| name)
+            .trim()
+            .into();
+    }
+    let name = layout.name.trim();
+    let base = if name.is_empty() {
+        "恢复的窗口布局"
+    } else {
+        name
+    };
+    for index in 1..=library.len() + 1 {
+        let suffix = if index == 1 {
+            String::new()
+        } else {
+            format!(" {index}")
+        };
+        let prefix: String = base.chars().take(40 - suffix.chars().count()).collect();
+        let candidate = format!("{}{suffix}", prefix.trim_end());
+        let key = candidate.to_lowercase();
+        if let Some(saved) = library
+            .iter()
+            .find(|saved| saved.name.trim().to_lowercase() == key)
+        {
+            if saved.monitors == layout.monitors && saved.windows == layout.windows {
+                return Some(saved.id.clone());
+            }
+        } else {
+            layout.name = candidate;
+            break;
+        }
+    }
+    if layout.id.is_empty() || library.iter().any(|saved| saved.id == layout.id) {
+        layout.id = uuid::Uuid::new_v4().to_string();
+    }
+    layout.validate().ok()?;
+    let id = layout.id.clone();
+    library.push(layout);
+    Some(id)
 }
 
 impl SchemeEnvironment {
@@ -193,20 +271,8 @@ impl SchemeEnvironment {
         value.as_object_mut().unwrap().extend(self.settings.clone());
         let mut config: GlobalConfig = serde_json::from_value(value)?;
         config.rune_audio_external_target = None;
-        config
-            .window_layouts
-            .retain(|layout| layout.id != RUNTIME_LAYOUT_ID);
-        config.window_layout_enabled = self.layout.is_some();
-        config.active_window_layout_id = self.layout.as_ref().map(|_| RUNTIME_LAYOUT_ID.into());
-        if let Some(mut layout) = self.layout.clone() {
-            // Do not hide invalid saved names by truncating them during projection.
-            layout.validate()?;
-            layout.id = RUNTIME_LAYOUT_ID.into();
-            layout.name = runtime_layout_name(&layout.name, &config.window_layouts);
-            config.window_layouts.push(layout);
-        }
-        // Validate the complete projected state before any module settings are
-        // committed, not only the standalone layout held in the recipe.
+        config.window_layout_enabled = self.layout_id.is_some();
+        config.active_window_layout_id.clone_from(&self.layout_id);
         super::window_layout::validate_layout_configuration(
             &config.window_layouts,
             config.active_window_layout_id.as_deref(),
@@ -250,12 +316,6 @@ impl SchemeEnvironment {
                     return Err(AppError::ConfigReadError("跟随账号重复或与主号相同".into()));
                 }
             }
-        }
-        if let Some(layout) = &self.layout {
-            super::window_layout::validate_layout_configuration(
-                std::slice::from_ref(layout),
-                Some(&layout.id),
-            )?;
         }
         Ok(())
     }
@@ -302,105 +362,108 @@ mod tests {
     }
 
     #[test]
-    fn launching_a_copied_library_layout_keeps_both_layouts_valid_and_independent() {
-        let template = layout("desk", "日常多开");
+    fn projection_selects_the_saved_layout_and_uses_its_latest_geometry() {
+        let saved = layout("desk", "日常多开");
         let config = GlobalConfig {
-            window_layouts: vec![template.clone()],
+            window_layouts: vec![saved.clone()],
             ..Default::default()
         };
         let mut recipe = environment(&config);
-        recipe.layout = Some(template.clone());
+        recipe.layout_id = Some(saved.id.clone());
         let mut projected = recipe.project(&config).unwrap();
-        validate_layout_configuration(
-            &projected.window_layouts,
-            projected.active_window_layout_id.as_deref(),
-        )
-        .unwrap();
-        assert_eq!(projected.window_layouts[0], template);
-        assert_eq!(
-            projected.active_window_layout_id.as_deref(),
-            Some(RUNTIME_LAYOUT_ID)
-        );
-        assert_ne!(projected.window_layouts[1].name, template.name);
-        projected.window_layouts[1].windows[0].x = 100;
-        assert_eq!(recipe.layout, Some(template.clone()));
-        assert_eq!(
-            config.window_layouts.as_slice(),
-            std::slice::from_ref(&template)
-        );
+        assert!(projected.window_layout_enabled);
+        assert_eq!(projected.active_window_layout_id.as_deref(), Some("desk"));
+        assert_eq!(projected.window_layouts, [saved]);
+        projected.window_layouts[0].windows[0].x = 100;
 
         let relaunched = recipe.project(&projected).unwrap();
-        assert_eq!(relaunched.window_layouts.len(), 2);
-        assert_eq!(relaunched.window_layouts[1].windows, template.windows);
-        validate_layout_configuration(
-            &relaunched.window_layouts,
-            relaunched.active_window_layout_id.as_deref(),
-        )
-        .unwrap();
-    }
+        assert_eq!(relaunched.window_layouts, projected.window_layouts);
+        assert_eq!(relaunched.window_layouts[0].windows[0].x, 100);
 
-    #[test]
-    fn runtime_name_handles_case_whitespace_and_existing_numbered_names() {
-        let config = GlobalConfig {
-            window_layouts: vec![
-                layout("one", " DESK（本次运行） "),
-                layout("two", "Desk（本次运行 2）"),
-            ],
-            ..Default::default()
-        };
-        let mut recipe = environment(&config);
-        recipe.layout = Some(layout("source", "desk"));
-        let first = recipe.project(&config).unwrap();
-        assert_eq!(
-            first.window_layouts.last().unwrap().name,
-            "desk（本次运行 3）"
-        );
-        let second = recipe.project(&first).unwrap();
-        assert_eq!(first.window_layouts, second.window_layouts);
-        recipe.layout = None;
-        let disabled = recipe.project(&second).unwrap();
-        assert_eq!(disabled.window_layouts, config.window_layouts);
+        recipe.layout_id = None;
+        let disabled = recipe.project(&projected).unwrap();
         assert!(!disabled.window_layout_enabled);
         assert!(disabled.active_window_layout_id.is_none());
+        assert_eq!(disabled.window_layouts, projected.window_layouts);
     }
 
     #[test]
-    fn runtime_names_respect_unicode_length_without_changing_the_saved_name() {
-        let name = "窗".repeat(40);
-        let template = layout("long", &name);
-        let config = GlobalConfig {
-            window_layouts: vec![template.clone()],
-            ..Default::default()
-        };
-        let mut recipe = environment(&config);
-        recipe.layout = Some(template);
-        let first = recipe.project(&config).unwrap();
-        let mut collision = first.window_layouts.last().unwrap().clone();
-        assert_eq!(collision.name.chars().count(), 40);
-        collision.id = "another-template".into();
-        let mut occupied = config.clone();
-        occupied.window_layouts.push(collision);
-        let projected = recipe.project(&occupied).unwrap();
+    fn migration_preserves_embedded_layouts_and_recovers_the_selected_layout() {
+        let public = layout("desk", "日常多开");
+        let mut embedded = public.clone();
+        embedded.windows[0].x = 80;
+        let mut active = embedded.clone();
+        active.id = "__launch_session_layout__".into();
+        active.name = "日常多开（本次运行）".into();
+        active.windows[0].account_id = Some("a".into());
+        let scheme = json!({
+            "account_ids": ["a"],
+            "members": [{"account_id": "a", "snapshot": {"game_settings": {"Quality": 1}}}],
+            "environment": {
+                "schema_version": 2,
+                "settings": {"rune_audio_target_account": "", "keep_battle_net_account_id": null},
+                "room": {"primary_account_id": "", "follower_account_ids": []},
+                "layout": embedded
+            }
+        });
+        let mut value = json!({
+            "window_layouts": [public.clone(), active],
+            "active_window_layout_id": "__launch_session_layout__",
+            "window_layout_enabled": true,
+            "launch_groups": [scheme.clone()],
+            "launch_session": {"scheme": scheme}
+        });
+        assert!(migrate_schemes(&mut value));
+        let layouts: Vec<WindowLayout> =
+            serde_json::from_value(value["window_layouts"].clone()).unwrap();
+        let binding = value["launch_groups"][0]["environment"]["layout_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(layouts[0], public);
+        assert_eq!(layouts[1].windows[0].account_id.as_deref(), Some("a"));
+        assert_eq!(layouts[1].windows[0].x, 80);
+        assert_eq!(layouts[1].id, binding);
+        assert_eq!(layouts.len(), 2);
+        assert_eq!(value["active_window_layout_id"], binding);
         assert_eq!(
-            projected
-                .window_layouts
-                .last()
-                .unwrap()
-                .name
-                .chars()
-                .count(),
-            40
+            value["launch_session"]["scheme"]["environment"]["layout_id"],
+            binding
         );
-        assert_eq!(recipe.layout.as_ref().unwrap().name, name);
-        validate_layout_configuration(
-            &projected.window_layouts,
-            projected.active_window_layout_id.as_deref(),
-        )
-        .unwrap();
+        assert_eq!(
+            value["launch_groups"][0]["members"][0]["snapshot"]["game_settings"]["Quality"],
+            1
+        );
+        assert!(value["launch_groups"][0]["environment"]
+            .get("layout")
+            .is_none());
+        validate_layout_configuration(&layouts, Some(binding)).unwrap();
+        assert!(!migrate_schemes(&mut value));
     }
 
     #[test]
-    fn projection_rejects_invalid_library_before_any_settings_can_be_applied() {
+    fn migration_keeps_an_unselected_session_layout_and_normalizes_embedded_copies() {
+        let mut legacy = layout(LEGACY_LAYOUT_ID, "Desk（本次运行 2）");
+        legacy.windows[0].account_id = Some("a".into());
+        let mut config = json!({
+            "window_layouts": [layout("other", "Other"), legacy],
+            "active_window_layout_id": "other",
+            "launch_groups": [{"account_ids": ["a"], "environment": {"layout": legacy}}]
+        });
+        assert!(migrate_schemes(&mut config));
+        assert_eq!(config["active_window_layout_id"], "other");
+        let saved = &config["window_layouts"][1];
+        assert_eq!(saved["name"], "Desk");
+        assert_ne!(saved["id"], LEGACY_LAYOUT_ID);
+        assert_eq!(
+            config["launch_groups"][0]["environment"]["layout_id"],
+            saved["id"]
+        );
+        assert_eq!(config["window_layouts"].as_array().unwrap().len(), 2);
+        assert!(!migrate_schemes(&mut config));
+    }
+
+    #[test]
+    fn projection_rejects_invalid_library_or_missing_layout_before_applying_settings() {
         let config = GlobalConfig {
             window_layouts: vec![layout("one", "duplicate"), layout("two", " DUPLICATE ")],
             ..Default::default()
@@ -408,7 +471,7 @@ mod tests {
         assert!(environment(&config).project(&config).is_err());
         let valid = GlobalConfig::default();
         let mut recipe = environment(&valid);
-        recipe.layout = Some(layout("source", &"窗".repeat(41)));
+        recipe.layout_id = Some("missing".into());
         assert!(recipe.project(&valid).is_err());
     }
 
@@ -417,7 +480,7 @@ mod tests {
             schema_version: SCHEME_SCHEMA_VERSION,
             settings: settings_snapshot(config),
             room: Default::default(),
-            layout: None,
+            layout_id: None,
         }
     }
 

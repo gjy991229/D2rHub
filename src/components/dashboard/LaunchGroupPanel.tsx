@@ -90,6 +90,8 @@ export function LaunchGroupPanel({
               ? t("launch.scheme.status.unavailable", { count: availability.issues.length })
               : t("launch.scheme.status.ready", { count: memberCount });
           const issueTitle = launchGroupIssueDetails(availability.issues);
+          const layoutId = group.environment?.layout_id;
+          const layoutName = layoutId ? config?.window_layouts?.find(layout => layout.id === layoutId)?.name : null;
           return (
             <article
               className="launch-group-panel-row"
@@ -137,7 +139,7 @@ export function LaunchGroupPanel({
                   {canLaunch ? (english ? "Launch" : "启动") : (english ? "Configure" : "完善配置")}
                 </button>
                 <span className="launch-scheme-summary">{group.environment
-                  ? [(group.environment.room.primary_account_id || group.environment.room.follower_account_ids.length > 0) && (english ? "Follow" : "跟房"), group.environment.settings.rune_audio_target_account && (english ? "Recognition" : "识别"), group.environment.layout?.name || (english ? "Individual positions" : "独立位置")].filter(Boolean).join(" · ")
+                  ? [(group.environment.room.primary_account_id || group.environment.room.follower_account_ids.length > 0) && (english ? "Follow" : "跟房"), group.environment.settings.rune_audio_target_account && (english ? "Recognition" : "识别"), layoutName ?? (layoutId ? (english ? "Layout missing" : "布局缺失") : (english ? "Individual positions" : "独立位置"))].filter(Boolean).join(" · ")
                   : (english ? "Accounts, recognition & layout" : "账号、识别与布局")}</span>
               </div>
             </article>

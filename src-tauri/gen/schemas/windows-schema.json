@@ -513,6 +513,12 @@
           "markdownDescription": "Enables the create_account command without any pre-configured scope."
         },
         {
+          "description": "Enables the create_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-create-game-window-layout",
+          "markdownDescription": "Enables the create_game_window_layout command without any pre-configured scope."
+        },
+        {
           "description": "Enables the delete_account command without any pre-configured scope.",
           "type": "string",
           "const": "allow-delete-account",
@@ -1525,6 +1531,12 @@
           "type": "string",
           "const": "deny-create-account",
           "markdownDescription": "Denies the create_account command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the create_game_window_layout command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-create-game-window-layout",
+          "markdownDescription": "Denies the create_game_window_layout command without any pre-configured scope."
         },
         {
           "description": "Denies the delete_account command without any pre-configured scope.",

@@ -184,7 +184,11 @@ export function validateLayout(layout: WindowLayout): string | null {
   if (!layout.name.trim() || layout.name.trim().length > 40) return "请输入布局名称（最多 40 字）";
   if (layout.windows.length < 1 || layout.windows.length > MAX_LAYOUT_WINDOWS) return "窗口数量须在 1 到 32 之间";
   const titles = new Set<string>();
+  const accountIds = new Set<string>();
   for (const slot of layout.windows) {
+    const accountId = slot.account_id?.trim().toLowerCase();
+    if (accountId && accountIds.has(accountId)) return "同一账号只能绑定一个位置";
+    if (accountId) accountIds.add(accountId);
     const title = slot.window_title?.trim().toLowerCase();
     if (title && titles.has(title)) return "窗口名称不能重复";
     if (title) titles.add(title);

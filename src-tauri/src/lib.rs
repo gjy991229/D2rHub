@@ -296,6 +296,7 @@ pub fn run() {
             commands::account::set_account_window_position,
             commands::account::update_account_positions,
             commands::window_layout::get_game_layout_monitors,
+            commands::window_layout::create_game_window_layout,
             commands::window_layout::get_game_layout_account_order,
             commands::window_layout::capture_game_window_layout,
             commands::window_layout::capture_account_window_position,

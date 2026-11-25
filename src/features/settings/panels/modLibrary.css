@@ -213,3 +213,23 @@
 .mod-output-summary { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(10rem,100%),1fr)); gap: 8px 16px; border-block: 1px solid var(--border-default); padding: 10px 0; }
 .mod-output-summary dt { color: var(--text-muted); font-size: var(--text-2xs); }
 .mod-output-summary dd { margin: 2px 0 0; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+
+.mod-library-custom-actions .roster-views { margin-inline-start: auto; align-self: center; }
+.mod-library .mod-catalog-list[data-mod-view="list"] { grid-template-columns: minmax(0, 1fr); gap: 0; }
+[data-mod-view="list"] .mod-library-entry { border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; padding: 10px 6px; }
+[data-mod-view="list"] .mod-library-entry-summary { align-items: center; }
+[data-mod-view="list"] .mod-library-entry-copy { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; }
+[data-mod-view="list"] .mod-library-entry-copy :is(p, small) { margin: 0; }
+[data-mod-view="list"] .mod-library-feature-list { flex-basis: 100%; }
+[data-mod-view="list"] .mod-library-entry-copy h3 { overflow-wrap: anywhere; }
+.mod-catalog-list[data-mod-view="list"] { container-type: inline-size; }
+@container (min-width: 540px) {
+  [data-mod-view="list"] .mod-library-entry-copy {
+    display: grid;
+    grid-template-columns: minmax(6rem, 1fr) minmax(0, 1.2fr) minmax(0, 1fr);
+    align-items: baseline;
+  }
+  [data-mod-view="list"] .mod-library-entry-copy h3 { margin: 0; }
+  [data-mod-view="list"] .mod-library-entry-copy > small:first-of-type { grid-column: 3; grid-row: 1; }
+  [data-mod-view="list"] :is(.mod-library-feature-list, .mod-catalog-error, .mod-library-update) { grid-column: 1 / -1; }
+}

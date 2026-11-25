@@ -98,6 +98,33 @@ pub async fn get_game_layout_monitors(
         .map_err(|error| AppError::FileError(error.to_string()))?
 }
 
+#[tauri::command]
+pub(crate) fn create_game_window_layout(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, SharedState>,
+    mut layout: WindowLayout,
+) -> Result<(), AppError> {
+    use crate::application::configuration::ConfigurationMutation;
+
+    layout.name = layout.name.trim().to_owned();
+    layout.validate()?;
+    let result = crate::commands::global_config::mutate_loaded_global_config(
+        state.inner(),
+        &app,
+        |config| {
+            if config.window_layouts.contains(&layout) {
+                return Ok(false);
+            }
+            config.window_layouts.push(layout);
+            Ok(true)
+        },
+    )?;
+    if matches!(result, ConfigurationMutation::Missing) {
+        return Err(AppError::ConfigReadError("配置尚未加载".into()));
+    }
+    Ok(())
+}
+
 pub(crate) fn configured_monitors(
     config: Option<&GlobalConfig>,
 ) -> Result<Vec<LayoutMonitor>, AppError> {
@@ -181,7 +208,7 @@ pub(crate) fn calibrate_game_frame(
     }
     let observed = windows::snapshot()?;
     for (id, window) in match_accounts(&identities(&config, state), &observed) {
-        let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
+        let Some(index) = slot_for_account(layout, &id, &window.title) else {
             continue;
         };
         if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title)
@@ -450,42 +477,20 @@ impl LaunchLayoutPlan {
     }
 }
 
-pub(super) fn slot_for_account(
-    layout: &WindowLayout,
-    config: &GlobalConfig,
-    id: &str,
-    title: &str,
-) -> Option<usize> {
-    if layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID {
-        if let Some(index) = layout
-            .windows
-            .iter()
-            .position(|slot| slot.account_id.as_deref() == Some(id))
-        {
-            return Some(index);
-        }
-        if layout
-            .windows
-            .iter()
-            .all(|slot| slot.window_title.is_none() && slot.account_id.is_none())
-        {
-            return config
-                .launch_session
-                .as_ref()?
-                .scheme
-                .account_ids
-                .iter()
-                .position(|member| member == id)
-                .filter(|index| *index < layout.windows.len());
-        }
-    }
-    layout.slot_index_for_title(title)
+pub(super) fn slot_for_account(layout: &WindowLayout, id: &str, title: &str) -> Option<usize> {
+    layout
+        .windows
+        .iter()
+        .position(|slot| {
+            slot.account_id
+                .as_deref()
+                .is_some_and(|bound| bound.eq_ignore_ascii_case(id))
+        })
+        .or_else(|| layout.slot_index_for_title(title))
 }
 
 fn uses_account_binding(layout: &WindowLayout, index: usize) -> bool {
-    layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
-        && (layout.windows[index].account_id.is_some()
-            || layout.windows[index].window_title.is_none())
+    layout.windows[index].account_id.is_some()
 }
 
 fn unique_observed_title(observed: &[GameLayoutWindow], title: &str) -> bool {
@@ -513,11 +518,10 @@ pub(crate) fn prepare_launch_layout(
         .iter()
         .find(|layout| layout.id == id)
         .ok_or_else(|| AppError::ConfigReadError("所选窗口布局不存在，请重新选择".into()))?;
-    if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
-        && layout
-            .windows
-            .iter()
-            .all(|slot| slot.window_title.is_none())
+    if layout
+        .windows
+        .iter()
+        .all(|slot| slot.account_id.is_none() && slot.window_title.is_none())
     {
         return Err(AppError::ConfigReadError(format!(
             "布局“{}”尚未绑定窗口。请在设置的窗口布局中填写窗口名称，或关闭窗口布局后启动",
@@ -539,7 +543,7 @@ pub(crate) fn prepare_launch_layout(
         {
             continue;
         }
-        let Some(index) = slot_for_account(layout, config, &account.id, &account.title) else {
+        let Some(index) = slot_for_account(layout, &account.id, &account.title) else {
             continue;
         };
         let key = window_title_key(&account.title);
@@ -587,7 +591,7 @@ pub(crate) fn restore_layout(
     };
     let mut placements = Vec::new();
     for (id, window) in matched {
-        let Some(index) = slot_for_account(layout, config, &id, &window.title) else {
+        let Some(index) = slot_for_account(layout, &id, &window.title) else {
             continue;
         };
         if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title)

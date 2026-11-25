@@ -4,6 +4,7 @@
 //! generator IPC and replacement recovery have independent adapter boundaries.
 mod filesystem;
 mod generator;
+mod inventory_resource;
 mod modification;
 mod rebuild;
 mod replacement;
@@ -778,6 +779,7 @@ async fn prepare_audio_mod_impl(
     );
     let report = run_audio_mod_generator(
         &app,
+        &shared_state,
         task,
         GeneratorInvocation {
             processor: &processor,
@@ -1224,6 +1226,7 @@ async fn upgrade_audio_mod_impl(
     )))?;
     let report = run_audio_mod_generator(
         &app,
+        &shared_state,
         task,
         GeneratorInvocation {
             processor: &processor,

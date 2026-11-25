@@ -1,14 +1,14 @@
 {
     "$schema": "https://raw.githubusercontent.com/tauri-apps/tauri/dev/crates/tauri-config-schema/schema.json",
     "productName": "D2RHub",
-    "version": "0.9.124-beta.2",
+    "version": "0.9.124",
     "identifier": "com.d2rhub.app",
     "build": {
         "frontendDist": "../dist",
         "devUrl": "http://localhost:1420",
         "beforeDevCommand": "npm run build:processor && npm run dev",
         "beforeBuildCommand": "npm run build:processor && npm run build",
-        "beforeBundleCommand": "npm run check:guide"
+        "beforeBundleCommand": "npm run check:guide && python scripts/build-bundled-processor.py --check-compatibility"
     },
     "app": {
         "windows": [

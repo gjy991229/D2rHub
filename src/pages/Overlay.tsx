@@ -1,3 +1,4 @@
+import { prefersReducedMotion } from "../store/motionPreference";
 import { formatCombatTime } from "../utils/combatTimeFormat";
 import { matchesRecognitionSource } from "../utils/recognitionSource";
 import React, { useEffect, useState, useRef } from "react";
@@ -6,7 +7,7 @@ import { useTheme, syncThemeFromConfig } from "../store/theme";
 import { useGlobalConfig, initConfigSync } from "../store/globalConfig";
 import { useStats, isHighRune, getSessionRunKey, MANUAL_FINISH_SCENE } from "../store/stats";
 import { invokeCommand, listenEvent } from "../platform/tauri";
-import type { ItemAudioEvent, RuneAudioEvent, TrackingSnapshot } from "../store/types";
+import type { TrackingSnapshot } from "../store/types";
 import {
   aggregateOverlayDrops,
   getAppendedOverlayDrops,
@@ -122,7 +123,6 @@ const DEFAULT_STATS_MINI_OVERLAY_SIZE: OverlaySize = { width: 320, height: 48 };
 const OVERLAY_WINDOW_DRAG_THRESHOLD_PX = 4;
 const OVERLAY_DOCK_SETTLE_DELAY_MS = 260;
 const OVERLAY_DOCK_HIDE_DELAY_MS = 420;
-const COLLAPSED_DROP_GROUP_LIMIT = 5;
 const RECENT_DROP_HIGHLIGHT_DURATION_MS = 1600;
 
 type OverlayDockPhase = "shown" | "hidden" | "moving";
@@ -354,9 +354,32 @@ function getImmunityTitle(immunity: TerrorZoneImmunity, useEnglish: boolean) {
 
 function translateOverlaySceneName(sceneName: string, useEnglish: boolean) {
   if (sceneName === MANUAL_FINISH_SCENE) return useEnglish ? "Run ended" : "已手动结束";
-  if (!useEnglish) return sceneName;
-  if (sceneName === "等待识别...") return "Waiting for detection...";
+  if (!useEnglish) return sceneName === "等待识别..." ? "等待识别" : sceneName;
+  const statuses: Record<string, string> = {
+    "等待识别...": "Waiting for detection", "等待进入游戏": "Waiting for game",
+    "等待游戏声音": "Waiting for game audio", "主城": "Town", "主界面": "Main menu", "战斗中": "In combat",
+  };
+  if (statuses[sceneName]) return statuses[sceneName];
   return translateTerrorZoneAreaName(sceneName, true);
+}
+
+interface VisitDetail {
+  label: string;
+  round: string;
+  average: string;
+}
+
+function VisitReadout({ detail }: { detail: VisitDetail | null }) {
+  const previous = useRef<VisitDetail | null>(null);
+  React.useLayoutEffect(() => {
+    if (detail) previous.current = detail;
+  }, [detail]);
+  const reading = detail ?? previous.current;
+  return <div className="combat-visit-space" data-visible={!!detail} aria-hidden={!detail}>
+    <div>{reading && <div className="combat-visit" key={reading.label}>
+      <strong>{reading.label}</strong><span>{reading.round}</span><small>{reading.average}</small>
+    </div>}</div>
+  </div>;
 }
 
 function TerrorZoneInfo({
@@ -452,7 +475,6 @@ export function Overlay() {
   const useEnglish = isEnglishLanguage(config?.app_language);
   const [recentDropHighlights, setRecentDropHighlights] = useState<RecentDropHighlight[]>([]);
   const [recentDropAnnouncement, setRecentDropAnnouncement] = useState("");
-  const [showAllDropGroups, setShowAllDropGroups] = useState(false);
   const observedDropsRef = useRef(stats.currentDrops);
   const dropHighlightSequenceRef = useRef(0);
   const [displayMode, setDisplayMode] = useState<OverlayDisplayMode>(() =>
@@ -593,7 +615,7 @@ export function Overlay() {
     updateDockState({ ...state, phase: "moving" });
 
     const motion = finalPhase === "hidden" ? "hide" : "reveal";
-    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const reducedMotion = prefersReducedMotion();
     const duration = reducedMotion ? 0 : calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
     let animationFailed = false;
 
@@ -1580,45 +1602,7 @@ export function Overlay() {
   // Metadata only: the overlay no longer monitors account windows.
   useEffect(() => { if (isAudioTrackingActive) void loadAccounts(); }, [isAudioTrackingActive, loadAccounts]);
 
-  // ── 音频遥测事件（后端实时捕获并推送）──
-  useEffect(() => {
-    if (!isAudioTrackingActive) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listenEvent<RuneAudioEvent>("rune-audio-detected", (event) => {
-      if (cancelled || !matchesRecognitionSource(config, event.payload)) return;
-      stats.processRuneDrop({
-        rune_number: event.payload.rune_number,
-        rune_name: event.payload.rune_name,
-        rune_name_en: event.payload.rune_name_en,
-      });
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    }).catch((error) => reportOverlayIssue("ERROR", "监听符文声纹事件失败", error));
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, stats.processRuneDrop]);
-
-  useEffect(() => {
-    if (!isAudioTrackingActive) return;
-    let cancelled = false;
-    let unlisten: (() => void) | undefined;
-    void listenEvent<ItemAudioEvent>("item-audio-detected", (event) => {
-      if (cancelled || !matchesRecognitionSource(config, event.payload)) return;
-      stats.processItemDrop(event.payload);
-    }).then((stop) => {
-      if (cancelled) stop();
-      else unlisten = stop;
-    }).catch((error) => reportOverlayIssue("ERROR", "监听物品声纹事件失败", error));
-    return () => {
-      cancelled = true;
-      unlisten?.();
-    };
-  }, [config?.rune_audio_target_account, config?.rune_audio_external_target, isAudioTrackingActive, stats.processItemDrop]);
-
+  // The tracker publishes the updated session total with every confirmed drop.
   useEffect(() => {
     if (!isAudioTrackingActive) return;
     let cancelled = false;
@@ -1706,35 +1690,45 @@ export function Overlay() {
     () => aggregateOverlayDrops(stats.currentDrops),
     [stats.currentDrops],
   );
-  const displayedDropGroups = showAllDropGroups
-    ? aggregatedDrops
-    : aggregatedDrops.slice(0, COLLAPSED_DROP_GROUP_LIMIT);
-  const hiddenDropGroupCount = Math.max(0, aggregatedDrops.length - COLLAPSED_DROP_GROUP_LIMIT);
+  const dropList = useRef<HTMLDivElement>(null);
+  const dropPositions = useRef(new Map<string, { x: number; y: number }>());
+  React.useLayoutEffect(() => {
+    const previous = dropPositions.current;
+    const positions = new Map<string, { x: number; y: number }>();
+    const reduced = prefersReducedMotion();
+    for (const pill of dropList.current?.querySelectorAll<HTMLElement>("[data-drop-key]") ?? []) {
+      const key = pill.dataset.dropKey!;
+      const x = pill.offsetLeft, y = pill.offsetTop;
+      positions.set(key, { x, y });
+      const before = previous.get(key);
+      if (!reduced && before && (before.x !== x || before.y !== y)) {
+        pill.animate?.([{ translate: `${before.x - x}px ${before.y - y}px` }, { translate: "0 0" }],
+          { duration: 180, easing: "ease-out" });
+      }
+    }
+    dropPositions.current = positions;
+  }, [aggregatedDrops, displayMode]);
   const recentDropHighlightIds = React.useMemo(
     () => new Map(recentDropHighlights.map((highlight) => [highlight.key, highlight.id])),
     [recentDropHighlights],
   );
 
-  useEffect(() => {
-    if (aggregatedDrops.length <= COLLAPSED_DROP_GROUP_LIMIT) {
-      setShowAllDropGroups(false);
-    }
-  }, [aggregatedDrops.length]);
-
-
-  const showingVisit = Boolean(stats.sceneVisitName);
+  const visitName = stats.sceneVisitName;
+  const hasVisit = visitName === "崔凡克" || visitName === "混沌魔殿";
+  const visit = hasVisit ? {
+    label: useEnglish ? (visitName === "崔凡克" ? "Travincal" : "Chaos Sanctuary") : visitName,
+    round: (stats.sessionRuns[getSessionRunKey(visitName, false)] ?? 0) + Number(stats.sceneVisitStart != null),
+  } : null;
+  const activityMode = stats.currentRunKey === "activity";
+  const timerLabel = activityMode || !stats.currentRunKey
+    ? (useEnglish ? "Combat time" : "累计战斗时间")
+    : (useEnglish ? "Scene time" : "场景用时");
   const visitLabel = stats.sceneVisitStart != null
-    ? (useEnglish ? "Current visit" : "本次场景")
-    : (useEnglish ? "Last visit" : "上次场景");
-  const sceneLabel = useEnglish && stats.sceneVisitNameEn
-    ? stats.sceneVisitNameEn : translateOverlaySceneName(stats.sceneVisitName || stats.currentScene, useEnglish);
+    ? (useEnglish ? "Current visit" : "本场") : (useEnglish ? "Last visit" : "上一场");
+  const sceneLabel = translateOverlaySceneName(stats.currentScene, useEnglish);
   const sceneElapsed = formatCombatTime(stats.sceneVisitElapsedMs, config?.combat_time_format, useEnglish);
-  const avgTime = stats.dbAvgTime;
-  const currentSessionRuns = stats.sessionRuns[
-    getSessionRunKey(stats.sceneVisitName || stats.currentRunName || stats.currentScene, stats.currentTz)
-  ] || 0;
   const formattedTime = formatCombatTime(stats.elapsedMs, config?.combat_time_format, useEnglish);
-  const elapsedDisplay = formattedTime.value;
+  const canFinishTimer = stats.isTiming && !activityMode;
   const currentTerrorZone = terrorZones.current;
   const nextTerrorZone = terrorZones.next;
   const hasTerrorZoneData = !!(currentTerrorZone || nextTerrorZone);
@@ -1772,19 +1766,12 @@ export function Overlay() {
     ? (useEnglish ? "Double-click to end and save this run" : "双击结束当前计时并保存")
     : (useEnglish ? "No active timer" : "当前没有正在进行的计时");
 
-  const averageTimeLabel = useEnglish ? "Average" : "平均";
-  const totalRunsLabel = useEnglish ? "Total" : "总计";
-  const currentSessionRunsLabel = useEnglish ? "This session" : "本次";
-  const runUnitLabel = useEnglish ? "runs" : "场";
-  const dropsLabel = useEnglish ? "Drops" : "掉落";
+  const roundLabel = visit ? (useEnglish ? `Run ${visit.round}` : `第 ${visit.round} 场`) : "";
+  const dropsLabel = useEnglish ? "Total drops" : "总掉落";
   const emptyDropsLabel = useEnglish ? "None" : "暂无";
   const uniqueDropCountLabel = useEnglish
     ? `${aggregatedDrops.length} types`
     : `${aggregatedDrops.length} 种`;
-  const showMoreDropsLabel = useEnglish
-    ? `Show ${hiddenDropGroupCount} more`
-    : `展开其余 ${hiddenDropGroupCount} 种`;
-  const collapseDropsLabel = useEnglish ? "Show latest 5" : "收起至最近 5 种";
   const deleteDropTitle = useEnglish ? "Remove the latest occurrence" : "移除最近一次掉落";
   const terrorZoneTitle = useEnglish ? "Terror Zone" : "邪恶区域";
   const terrorZoneEmptyMessage = terrorZoneStatus === "error"
@@ -1856,47 +1843,19 @@ export function Overlay() {
           1. 账号胶囊（现有）
           ═══════════════════════════════════════════ */}
       {isStatsOverlay && displayMode === "mini" ? (
-        <div
-          className="relative flex h-full min-w-0 flex-1 items-center gap-2"
-          aria-label={useEnglish
-            ? `${sceneLabel}, ${elapsedDisplay} ${formattedTime.unit}`
-            : `${sceneLabel}，${elapsedDisplay} ${formattedTime.unit}`}
-        >
-          <div className="flex min-w-0 flex-1 flex-col justify-center leading-none">
-            <span className="text-2xs font-medium text-text-muted">
-              {useEnglish ? "Detected scene" : "识别场景"}
-            </span>
-            <span
-              className={`mt-1 truncate text-xs font-semibold ${
-                stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-primary"
-              }`}
-            >
-              {sceneLabel}
-            </span>
+        <div className="combat-mini combat-arrival">
+          <div className="combat-mini-clock">
+            <small>{timerLabel}</small>
+            <strong data-running={stats.isTiming}>{formattedTime.value} <small>{formattedTime.unit}</small></strong>
           </div>
-          <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
-          <div className="flex shrink-0 flex-col items-end justify-center font-mono leading-none tabular-nums">
-            <span
-              className="text-sm font-bold"
-              style={{ color: stats.isTiming ? "var(--success)" : "var(--text-muted)" }}
-            >
-              {elapsedDisplay} {formattedTime.unit}
-            </span>
-            <span className="mt-1 text-2xs font-medium text-text-muted">
-              {useEnglish ? "Combat" : "战斗"}
-            </span>
+          <div className="combat-mini-context" key={sceneLabel + visitLabel}>
+            <strong title={sceneLabel}>{sceneLabel}</strong>
+            <small title={visit ? visit.label : dropsLabel}>{visit
+              ? stats.sceneVisitStart != null
+                ? `${visitLabel} ${sceneElapsed.value} ${sceneElapsed.unit} · ${roundLabel}`
+                : `${visitLabel} · ${visit.label} ${sceneElapsed.value} ${sceneElapsed.unit}`
+              : `${dropsLabel} ${stats.currentDrops.length}`}</small>
           </div>
-          <span className="h-6 w-px shrink-0 bg-border-default" aria-hidden="true" />
-          <div className="flex shrink-0 flex-col items-end justify-center leading-none">
-            {showingVisit && <span className="text-xs font-mono tabular-nums text-accent" title={visitLabel}>
-              {sceneElapsed.value} {sceneElapsed.unit}
-            </span>}
-            <span className="text-sm font-bold tabular-nums text-accent">{currentSessionRuns}</span>
-            <span className="mt-1 text-2xs font-medium text-text-muted">
-              {useEnglish ? "Runs" : "场次"}
-            </span>
-          </div>
-
         </div>
       ) : !isStatsOverlay && displayMode === "mini" ? (
           <div
@@ -1913,68 +1872,37 @@ export function Overlay() {
             </span>
           </div>
       ) : (
-      <div className={`flex min-h-0 flex-1 flex-col gap-2 ${isStatsOverlay ? "mt-2.5" : ""}`}>
+      <div className={`flex min-h-0 flex-1 flex-col gap-2 ${isStatsOverlay ? "combat-expanded combat-arrival" : ""}`}>
 
         {isStatsOverlay && (
           <>
-        {/* 计时器 — 大字居中，无背景容器 */}
-        <div
-          className={`overlay-timer-action flex flex-col items-center rounded-lg py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 ${
-            stats.isTiming ? "cursor-pointer" : "cursor-default"
-          }`}
-          data-overlay-interactive="true"
-          role="button"
-          tabIndex={0}
-          aria-disabled={!stats.isTiming || stats.currentRunKey === "activity"}
-          aria-label={timerActionTitle}
-          aria-keyshortcuts="Enter Space"
-          title={timerActionTitle}
-          onDoubleClick={handleTimerDoubleClick}
-          onKeyDown={handleTimerKeyDown}
-        >
-          <div className="overlay-reading">
-            <div className="overlay-reading-context">
-              <span>{showingVisit ? visitLabel : useEnglish ? "Combat time" : "战斗耗时"}</span>
-              <strong title={sceneLabel} data-terror={stats.currentTz}>{sceneLabel}</strong>
-            </div>
-            <div className="overlay-reading-value" data-running={showingVisit ? stats.sceneVisitStart != null : stats.isTiming}>
-              <b>{showingVisit ? sceneElapsed.value : elapsedDisplay}</b>
-              <small>{showingVisit ? sceneElapsed.unit : formattedTime.unit}</small>
-            </div>
+        <section className="combat-summary" aria-label={timerLabel}>
+          {(!visit || stats.sceneVisitStart == null) && <div className="combat-caption">
+            <span key={sceneLabel} className="combat-context" data-running={stats.isTiming} title={sceneLabel}>{sceneLabel}</span>
+          </div>}
+          <div className="combat-reading" data-running={stats.isTiming}
+            role={canFinishTimer ? "button" : undefined} tabIndex={canFinishTimer ? 0 : undefined}
+            data-overlay-interactive={canFinishTimer || undefined}
+            aria-keyshortcuts={canFinishTimer ? "Enter Space" : undefined}
+            title={timerActionTitle}
+            onDoubleClick={canFinishTimer ? handleTimerDoubleClick : undefined}
+            onKeyDown={canFinishTimer ? handleTimerKeyDown : undefined}>
+            <strong>{formattedTime.value}</strong>
+            <small className={formattedTime.value.includes(":") ? "sr-only" : undefined}>{formattedTime.unit}</small>
           </div>
-          {showingVisit && <span className="mt-1.5 text-xs font-mono tabular-nums text-accent">
-            {useEnglish ? "Total combat" : "累计战斗"} {elapsedDisplay} {formattedTime.unit}
-          </span>}
-          {(showingVisit || (stats.currentRunKey !== "activity" && avgTime !== null)) && (
-            <div className="flex flex-col items-center mt-1.5 gap-0.5">
-              {avgTime !== null && <span
-                className="text-xs font-medium select-none"
-                style={{ color: "var(--accent)" }}
-              >
-                {averageTimeLabel} {avgTime.toFixed(1)}s
-              </span>}
-              <span
-                className="text-2xs font-medium select-none"
-                style={{ color: "var(--text-secondary)", opacity: 0.8 }}
-              >
-                {totalRunsLabel} {stats.dbTotalRuns ?? 0} {runUnitLabel} · {currentSessionRunsLabel} {currentSessionRuns} {runUnitLabel}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* 分隔线 */}
-        <div
-          className="w-full shrink-0"
-          style={{ height: 1, background: "var(--border-default)" }}
-        />
+          <VisitReadout detail={visit ? {
+            label: visit.label,
+            round: roundLabel,
+            average: `${useEnglish ? "Avg" : "平均耗时"} ${stats.dbAvgTime == null ? "—" : stats.dbAvgTime.toFixed(1) + (useEnglish ? "s" : " 秒")}`,
+          } : null} />
+        </section>
 
         {/* 掉落分组；新识别结果在原胶囊上短时强调 */}
-        <div className="flex flex-col gap-1 flex-1 min-h-0">
-          <div className="overlay-drop-scope-header flex items-center justify-between gap-2 px-1">
+        <div className="combat-drops flex flex-col gap-1 flex-1 min-h-0">
+          <div className="overlay-total-heading flex items-center justify-between gap-2 px-1">
             <span className="overlay-drop-heading">
               {dropsLabel}
-              {stats.currentDrops.length > 0 && <em>({stats.currentDrops.length})</em>}
+              <em>({stats.currentDrops.length})</em>
             </span>
             {aggregatedDrops.length > 0 && (
               <span className="text-2xs text-text-muted tabular-nums">
@@ -1988,17 +1916,19 @@ export function Overlay() {
           </span>
 
           <div
-            className="flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
+            ref={dropList}
+            className="relative flex flex-wrap gap-1 pr-1 overflow-y-auto content-start"
             style={{ flex: 1, scrollbarWidth: "thin" }}
           >
-            {displayedDropGroups.length > 0 ? (
+            {aggregatedDrops.length > 0 ? (
               <>
-                {displayedDropGroups.map(({ key, drop, count, latestIndex }) => {
+                {aggregatedDrops.map(({ key, drop, count, latestIndex }) => {
                   const high = drop.runeNumber !== null && isHighRune(drop.runeNumber);
                   const highlightId = recentDropHighlightIds.get(key);
                   return (
                     <span
                       key={key}
+                      data-drop-key={key}
                       className="overlay-drop-pill relative inline-flex items-center overflow-hidden pl-1.5 pr-4 py-0.5 rounded-md text-2xs font-medium
                         transition-all duration-200 hover:brightness-110 group"
                       style={{
@@ -2028,25 +1958,6 @@ export function Overlay() {
                     </span>
                   );
                 })}
-                {hiddenDropGroupCount > 0 && (
-                  <button
-                    type="button"
-                    className="rounded-md px-1.5 py-0.5 text-2xs font-medium text-text-secondary transition-colors hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-                    style={{
-                      background: "var(--surface-hover)",
-                      border: "1px solid var(--border-default)",
-                      WebkitAppRegion: "no-drag",
-                    } as React.CSSProperties}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setShowAllDropGroups((current) => !current);
-                    }}
-                    aria-expanded={showAllDropGroups}
-                    title={showAllDropGroups ? collapseDropsLabel : showMoreDropsLabel}
-                  >
-                    {showAllDropGroups ? collapseDropsLabel : showMoreDropsLabel}
-                  </button>
-                )}
               </>
             ) : (
               <span className="text-2xs text-text-muted italic px-1">

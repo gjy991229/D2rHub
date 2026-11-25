@@ -1,10 +1,12 @@
-import { useState, useEffect } from "react";
-import { Heart, HeartHandshake, Copy, Check, ZoomIn, ChevronRight, ChevronDown, Github } from "lucide-react";
+import { useState, useEffect, type CSSProperties } from "react";
+import { Heart, HeartHandshake, Copy, Check, Github } from "lucide-react";
 import { Modal } from "../components/ui/Modal";
 import UpdateConfirmModal from "../components/ui/UpdateConfirmModal";
 import { invokeCommand } from "../platform/tauri";
 import { showToast } from "../components/ui/Toast";
 import { useI18n } from "../i18n";
+import "./about.css";
+import { prefersReducedMotion } from "../store/motionPreference";
 
 interface Props {
   open: boolean;
@@ -14,11 +16,13 @@ interface Props {
 export function AboutModal({ open, onClose }: Props) {
   const { language } = useI18n();
   const [copied, setCopied] = useState(false);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [celebrating, setCelebrating] = useState(false);
   const [sponsors, setSponsors] = useState<string[]>([]);
   const [sponsorsLoaded, setSponsorsLoaded] = useState(false);
-  const [showSponsors, setShowSponsors] = useState(false);
-  const [showDonation, setShowDonation] = useState(false);
+  const [page, setPage] = useState<"thanks" | "support" | null>(null);
+  const en = language === "en-US";
+  const thanksTitle = en ? "Sponsor acknowledgements" : "感谢赞助名单";
+  const supportTitle = en ? "Support the author" : "赞助支持作者";
   const [version, setVersion] = useState("0.1.0");
   const [checking, setChecking] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<string | null>(null);
@@ -66,7 +70,11 @@ export function AboutModal({ open, onClose }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPage(null);
+      setCelebrating(false);
+      return;
+    }
     (async () => {
       try {
         const ver = await invokeCommand<string>("get_app_version");
@@ -83,6 +91,17 @@ export function AboutModal({ open, onClose }: Props) {
       } catch {}
     })();
   }, [open]);
+
+  useEffect(() => {
+    if (!celebrating) return;
+    const timer = window.setTimeout(() => setCelebrating(false), 1350);
+    return () => window.clearTimeout(timer);
+  }, [celebrating]);
+
+  const closeSupport = () => {
+    setPage(null);
+    setCelebrating(!prefersReducedMotion());
+  };
 
   const copyQQ = async () => {
     try {
@@ -205,149 +224,22 @@ export function AboutModal({ open, onClose }: Props) {
             </button>
           </div>
 
-          {/* Sponsors */}
-          <div className="pt-1">
-            <button
-              type="button"
-              aria-expanded={showSponsors}
-              aria-controls="about-sponsor-list"
-              onClick={() => {
-                const nextOpen = !showSponsors;
-                setShowSponsors(nextOpen);
-                if (nextOpen) setShowDonation(false);
-              }}
-              className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
-            >
-              <div className="flex items-center gap-1.5">
-                <HeartHandshake size={12} className="text-accent" />
-                <span className="text-md font-medium text-text-primary">感谢赞助</span>
-                {sponsorsLoaded && sponsors.length > 0 && (
-                  <span
-                    className="min-w-[18px] h-[18px] px-1.5 rounded-full inline-flex items-center justify-center bg-surface-active text-2xs font-semibold text-text-muted"
-                    aria-hidden="true"
-                  >
-                    {sponsors.length}
-                  </span>
-                )}
-              </div>
-              <span className="text-text-muted text-xs flex items-center gap-0.5 font-medium">
-                {showSponsors ? "折叠" : "展开"}
-                {showSponsors ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </span>
+          <div className="about-links">
+            {celebrating && <div className="about-fireworks" aria-hidden="true">
+              {[0, 1, 2].map(burst => <div className="about-burst" key={burst}>
+                {Array.from({ length: 12 }, (_, i) => <i key={i} style={{
+                  "--angle": `${i * 30 + burst * 12}deg`,
+                  "--reach": i % 2 ? "-30px" : "-44px",
+                } as CSSProperties} />)}
+              </div>)}
+            </div>}
+            <button type="button" aria-haspopup="dialog" onClick={() => setPage("thanks")}>
+              <HeartHandshake size={16} aria-hidden="true" /><span>{thanksTitle}</span>
+              {sponsors.length > 0 && <small aria-hidden="true">{sponsors.length}</small>}
             </button>
-
-            <div
-              id="about-sponsor-list"
-              aria-hidden={!showSponsors}
-              className="overflow-hidden transition-all duration-200 ease-in-out motion-reduce:transition-none"
-              style={{
-                maxHeight: showSponsors ? "188px" : "0px",
-                opacity: showSponsors ? 1 : 0,
-              }}
-            >
-              <div
-                className="mt-3 rounded-xl overflow-hidden"
-                style={{ background: "var(--surface-hover)" }}
-              >
-                {!sponsorsLoaded ? (
-                  <div className="px-3.5 py-3" aria-hidden="true">
-                    <div className="skeleton h-3 w-24" />
-                  </div>
-                ) : sponsors.length > 0 ? (
-                  <ul
-                    className="max-h-[156px] overflow-y-auto overscroll-contain px-3.5"
-                    aria-label="赞助者名单"
-                  >
-                    {sponsors.map((sponsor, index) => (
-                      <li
-                        key={sponsor}
-                        className="flex items-start gap-2.5 py-2.5"
-                        style={index > 0 ? { borderTop: "1px solid var(--border-default)" } : undefined}
-                      >
-                        <span className="w-1.5 h-1.5 mt-1 rounded-full bg-accent shrink-0" aria-hidden="true" />
-                        <span className="min-w-0 break-words text-sm leading-snug font-medium text-text-secondary">
-                          {sponsor}
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="px-3.5 py-3 text-sm text-text-muted">暂无赞助名单</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Donation */}
-          <div className="pt-1">
-            <button
-              type="button"
-              aria-expanded={showDonation}
-              aria-controls="about-donation-codes"
-              onClick={() => {
-                const nextOpen = !showDonation;
-                setShowDonation(nextOpen);
-                if (nextOpen) setShowSponsors(false);
-              }}
-              className="w-full flex items-center justify-between py-1 hover:text-text-primary transition-colors cursor-pointer text-left"
-            >
-              <div className="flex items-center gap-1.5">
-                <Heart size={12} className="text-accent" />
-                <span className="text-md font-medium text-text-primary">赞助支持作者</span>
-              </div>
-              <span className="text-text-muted text-xs flex items-center gap-0.5 font-medium">
-                {showDonation ? "折叠" : "展开"}
-                {showDonation ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-              </span>
+            <button type="button" aria-haspopup="dialog" onClick={() => { setCelebrating(false); setPage("support"); }}>
+              <Heart size={16} aria-hidden="true" /><span>{supportTitle}</span>
             </button>
-
-            <div
-              id="about-donation-codes"
-              aria-hidden={!showDonation}
-              className="overflow-hidden transition-all duration-200 ease-in-out motion-reduce:transition-none"
-              style={{
-                maxHeight: showDonation ? "300px" : "0px",
-                opacity: showDonation ? 1 : 0,
-              }}
-            >
-              <div className="grid grid-cols-2 gap-3 mt-3">
-                {[
-                  { src: "/vx.jpg", label: "微信" },
-                  { src: "/zfb.jpg", label: "支付宝" },
-                ].map(qr => (
-                  <div key={qr.src} className="text-center group">
-                    <div className="aspect-[3/4] bg-white rounded-xl overflow-hidden relative
-                      hover:ring-1 hover:ring-accent/30 transition-all"
-                      style={{ border: "1px solid var(--border-default)" }}>
-                      <button
-                        onClick={() => setPreviewImage(qr.src)}
-                        tabIndex={showDonation ? 0 : -1}
-                        className="w-full h-full block cursor-pointer border-0 p-0 bg-transparent"
-                        aria-label={`放大 ${qr.label} 收款码`}>
-                        <img src={qr.src} alt={qr.label}
-                          className="w-full h-full object-cover"
-                          onError={e => {
-                            (e.target as HTMLImageElement).style.display = "none";
-                            const p = (e.target as HTMLImageElement).parentElement?.parentElement;
-                            if (p) {
-                              const s = document.createElement("span");
-                              s.className = "text-xs text-text-muted absolute inset-0 flex items-center justify-center";
-                              s.textContent = `缺少 ${qr.src}`;
-                              p.appendChild(s);
-                            }
-                          }}
-                        />
-                      </button>
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30
-                        flex items-center justify-center transition-colors pointer-events-none">
-                        <ZoomIn size={22} className="text-white opacity-0 group-hover:opacity-100 transition-opacity" />
-                      </div>
-                    </div>
-                    <p className="text-xs text-text-muted mt-1.5">{qr.label}</p>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
           <p className="text-2xs text-text-muted text-center">
@@ -356,16 +248,24 @@ export function AboutModal({ open, onClose }: Props) {
         </div>
       </Modal>
 
-      {/* Full-screen preview */}
-      {previewImage && (
-        <Modal open onClose={() => setPreviewImage(null)} title={language === "en-US" ? "Payment code preview" : "收款码预览"} width="max-w-sm">
-          <div className="rounded-xl bg-white p-3">
-            <img src={previewImage} alt="收款码"
-              className="w-full object-contain max-h-[60vh] rounded-lg" />
-          </div>
-          <p className="text-center text-text-secondary text-xs mt-3">{language === "en-US" ? "Scan with the corresponding app" : "请使用对应 App 扫描"}</p>
-        </Modal>
-      )}
+      <Modal open={open && page === "thanks"} onClose={() => setPage(null)} title={thanksTitle} width="max-w-md">
+        {!sponsorsLoaded ? (
+          <p role="status" className="text-sm text-text-muted">{en ? "Loading sponsors…" : "正在加载名单…"}</p>
+        ) : sponsors.length ? (
+          <ul className="about-sponsors" aria-label={en ? "Sponsors" : "赞助者名单"} data-i18n-skip>
+            {sponsors.map(name => <li key={name}>{name}</li>)}
+          </ul>
+        ) : (
+          <p className="text-sm text-text-muted">{en ? "No sponsors listed" : "暂无赞助名单"}</p>
+        )}
+      </Modal>
+
+      <Modal open={open && page === "support"} onClose={closeSupport} title={supportTitle} width="max-w-3xl">
+        <div className="about-payment-options">
+          <img src="/vx.jpg" alt={en ? "WeChat Pay QR code" : "微信收款码"} />
+          <img src="/zfb.jpg" alt={en ? "Alipay QR code" : "支付宝收款码"} />
+        </div>
+      </Modal>
 
       <UpdateConfirmModal
         open={showUpdateConfirm}

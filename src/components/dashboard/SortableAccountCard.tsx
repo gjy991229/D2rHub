@@ -22,6 +22,7 @@ export function SortableAccountCard({
   } = useSortable({
     id: account.id,
     disabled: sortingDisabled,
+    transition: { duration: 200, easing: "cubic-bezier(.2,.8,.2,1)" },
   });
   const { progress } = useLaunch();
   const canStartDrag = (event: SyntheticEvent<HTMLElement>) => {
@@ -39,6 +40,7 @@ export function SortableAccountCard({
       tabIndex={sortingDisabled ? -1 : 0}
       aria-label={`${account.display_name || account.id} · ${english ? "Drag empty areas to reorder; press Space then arrow keys" : "拖动空白区域排序；键盘按空格后使用方向键移动"}`}
       className="sortable-account-card"
+      data-dragging={isDragging || undefined}
       data-sortable-disabled={sortingDisabled || undefined}
       data-sortable-account-id={account.id}
       onMouseDown={event => { if (canStartDrag(event)) listeners?.onMouseDown?.(event); }}
@@ -47,9 +49,6 @@ export function SortableAccountCard({
       style={{
         transform: CSS.Transform.toString(transform),
         transition,
-        opacity: isDragging ? 0.5 : 1,
-        zIndex: isDragging ? 10 : undefined,
-        width: "100%",
       }}
     >
       <AccountGridItem

@@ -14,6 +14,7 @@ export type LaunchGroupIssueReason =
   | "not_initialized"
   | "token_migration"
   | "missing_mod"
+  | "missing_layout"
   | "missing_position";
 
 export interface LaunchGroupMemberIssue {
@@ -36,6 +37,7 @@ export function launchGroupIssueReason(issue: LaunchGroupMemberIssue): string {
   if (issue.reason === "not_initialized") return "尚未初始化";
   if (issue.reason === "token_migration") return "需要迁移 Token";
   if (issue.reason === "missing_mod") return "Mod 已删除";
+  if (issue.reason === "missing_layout") return "请调整窗口布局绑定";
   return "位置已删除";
 }
 
@@ -158,6 +160,10 @@ export function inspectLaunchGroup(
   const accountsById = new Map(accounts.map(account => [account.id, account]));
   const issues: LaunchGroupMemberIssue[] = [];
   const accountIds = launchGroupAccountIds(group);
+  const layoutId = group.environment?.layout_id;
+  if (config && layoutId && !config.window_layouts?.some(layout => layout.id === layoutId)) {
+    issues.push({ account_id: "", account_name: "窗口布局", reason: "missing_layout" });
+  }
 
   for (const accountId of accountIds) {
     const account = accountsById.get(accountId);

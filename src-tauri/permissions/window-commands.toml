@@ -28,7 +28,7 @@ commands.allow = [
   "list_accounts", "get_account", "create_account", "update_account_meta", "update_account_region",
   "delete_account", "rename_account", "mark_settings_customized", "set_settings_customized",
   "set_account_window_position", "update_account_positions", "initialize_bnet_account", "reinitialize_account",
-  "get_game_layout_monitors", "get_game_layout_account_order", "capture_game_window_layout", "capture_account_window_position", "restore_game_window_layout",
+  "get_game_layout_monitors", "get_game_layout_account_order", "create_game_window_layout", "capture_game_window_layout", "capture_account_window_position", "restore_game_window_layout",
   "reorder_accounts", "get_account_dir_path", "open_account_dir", "move_game_window", "focus_game_window",
   "export_accounts", "import_accounts",
   "launch_saved_scheme", "save_launch_scheme", "delete_launch_scheme", "get_launch_scheme_defaults",

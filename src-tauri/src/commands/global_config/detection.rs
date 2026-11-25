@@ -68,7 +68,7 @@ fn detect_saved_games_path_for_edition(cn: bool) -> Option<String> {
         .flatten()
         .find_map(|entry| {
             let name = entry.file_name().to_string_lossy().to_string();
-            let is_d2r = name.starts_with("Diablo II Resurrected");
+            let is_d2r = entry.path().is_dir() && name.starts_with("Diablo II Resurrected");
             let is_cn = name.to_ascii_lowercase().contains("(cn)");
             (is_d2r && is_cn == cn).then(|| saved_games.join(name).to_string_lossy().to_string())
         })

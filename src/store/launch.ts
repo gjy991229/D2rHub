@@ -20,7 +20,7 @@ interface LaunchState {
   drawerOpen: boolean;
 
   startLaunch: (accountIds: string[]) => Promise<void>;
-  startSavedScheme: (id: string, revision: number) => Promise<void>;
+  startSavedScheme: (id: string, revision: number, accountIds?: string[]) => Promise<void>;
   startSchemeLaunch: (entries: LaunchAccountEntry[]) => Promise<void>;
   startBattleNetOnly: (accountIds: string[]) => Promise<void>;
   cancelLaunch: () => Promise<void>;
@@ -62,10 +62,10 @@ export const useLaunch = create<LaunchState>((set, _get) => ({
     }
   },
 
-  startSavedScheme: async (id, revision) => {
+  startSavedScheme: async (id, revision, accountIds) => {
     set({ launching: true, progress: {}, results: [], error: null });
     try {
-      const results = await invokeCommand<LaunchResult[]>("launch_saved_scheme", { id, revision });
+      const results = await invokeCommand<LaunchResult[]>("launch_saved_scheme", { id, revision, accountIds });
       set({ results, launching: false });
       results.filter(result => result.error).forEach(result => showToast(result.success ? "warning" : "error", result.error!));
       emitEvent("launch-ended", { success: results.every(result => result.success) });

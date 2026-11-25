@@ -100,14 +100,11 @@ describe("account creation wizard", () => {
 
   it("disables unavailable client regions and Battle.net authentication without its executable", async () => {
     mocks.config = { ...mocks.config, global_game_path: "", cn_battle_net_path: "" };
-    const user = userEvent.setup();
     mount();
     for (const name of [/亚洲/, /美洲/, /欧洲/]) {
       expect((screen.getByRole("radio", { name }) as HTMLInputElement).disabled).toBe(true);
     }
-    await enterAuthentication(user);
-    expect((screen.getByRole("radio", { name: /战网客户端认证/ }) as HTMLInputElement).disabled).toBe(true);
-    expect((screen.getByRole("radio", { name: /网页 Token 认证/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByRole("radio", { name: /国服/ }) as HTMLInputElement).disabled).toBe(true);
     expect(mocks.createAccount).not.toHaveBeenCalled();
   });
 

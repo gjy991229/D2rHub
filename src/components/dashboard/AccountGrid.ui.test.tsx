@@ -1,6 +1,7 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import type { AccountMeta } from "../../store/types";
+import { useGlobalConfig } from "../../store/globalConfig";
+import type { AccountMeta, GlobalConfig } from "../../store/types";
 import { AccountGrid } from "./AccountGrid";
 
 it("keeps cards as the default at every account count and remembers an explicit list selection", () => {
@@ -20,4 +21,32 @@ it("keeps cards as the default at every account count and remembers an explicit 
   expect(screen.getAllByTestId("row")).toHaveLength(21);
   reopened.unmount();
   localStorage.removeItem("hub-account-view");
+});
+
+it("persists the roster choice in app configuration and restores it without WebView storage", async () => {
+  const previousStore = useGlobalConfig.getState();
+  const config = { account_roster_view: "cards" } as GlobalConfig;
+  const patch = vi.fn(async (viewPatch: Partial<GlobalConfig>) => {
+    const saved = { ...config, ...viewPatch };
+    useGlobalConfig.setState({ config: saved });
+    return saved;
+  });
+  useGlobalConfig.setState({ config, patch });
+  const accounts = [{ id: "1" } as AccountMeta];
+  const renderGrid = () => render(<AccountGrid accounts={accounts} issue={() => null} onReorder={vi.fn()}>
+    {a => <div key={a.id}>{a.id}</div>}
+  </AccountGrid>);
+
+  try {
+    const first = renderGrid();
+    fireEvent.click(screen.getByRole("button", { name: /^(列表|List)$/ }));
+    await waitFor(() => expect(patch).toHaveBeenCalledWith({ account_roster_view: "list" }));
+    first.unmount();
+    localStorage.removeItem("hub-account-view");
+    const reopened = renderGrid();
+    expect(reopened.container.querySelector(".spatial-grid")?.getAttribute("data-view")).toBe("list");
+    reopened.unmount();
+  } finally {
+    useGlobalConfig.setState(previousStore);
+  }
 });

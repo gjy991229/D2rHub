@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AboutModal } from "./AboutModal";
@@ -12,21 +12,31 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-it("closes only the donation image preview on Escape and restores its opener focus", async () => {
+it("shows both full QR images directly and celebrates when returning to About", async () => {
   const user = userEvent.setup();
   const closeAbout = vi.fn();
   render(<AboutModal open onClose={closeAbout} />);
-  await screen.findByText("版本 v0.9.119");
-  await user.click(screen.getByRole("button", { name: /赞助支持作者/ }));
-  const opener = screen.getByRole("button", { name: "放大 微信 收款码" });
+  const opener = screen.getByRole("button", { name: "赞助支持作者" });
   await user.click(opener);
-  expect(screen.getByRole("dialog", { name: "收款码预览" })).toBeTruthy();
-  expect(screen.getByRole("dialog", { name: "关于" })).toBeTruthy();
+  const support = await screen.findByRole("dialog", { name: "赞助支持作者" });
+  expect(within(support).getByRole("img", { name: "微信收款码" })).toBeTruthy();
+  expect(within(support).getByRole("img", { name: "支付宝收款码" })).toBeTruthy();
   await user.keyboard("{Escape}");
-  expect(screen.queryByRole("dialog", { name: "收款码预览" })).toBeNull();
-  expect(screen.getByRole("dialog", { name: "关于" })).toBeTruthy();
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "赞助支持作者" })).toBeNull());
+  expect(document.activeElement).toBe(opener);
+  expect(document.querySelector(".about-fireworks")).toBeTruthy();
   expect(closeAbout).not.toHaveBeenCalled();
-  await waitFor(() => expect(document.activeElement).toBe(opener));
-  await user.keyboard("{Escape}");
-  expect(closeAbout).toHaveBeenCalledTimes(1);
+});
+
+it("opens the sponsor list in its own dialog and returns to the About entry", async () => {
+  const user = userEvent.setup();
+  render(<AboutModal open onClose={vi.fn()} />);
+  const entry = screen.getByRole("button", { name: "感谢赞助名单" });
+  await user.click(entry);
+  const thanks = await screen.findByRole("dialog", { name: "感谢赞助名单" });
+  expect(within(thanks).getByRole("listitem").textContent).toBe("Sponsor");
+  expect(screen.queryByRole("dialog", { name: "赞助支持作者" })).toBeNull();
+  await user.click(within(thanks).getByRole("button", { name: "关闭对话框" }));
+  await waitFor(() => expect(screen.queryByRole("dialog", { name: "感谢赞助名单" })).toBeNull());
+  expect(document.activeElement).toBe(entry);
 });

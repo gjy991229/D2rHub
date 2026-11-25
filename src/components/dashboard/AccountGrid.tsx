@@ -1,7 +1,10 @@
+import { prefersReducedMotion } from "../../store/motionPreference";
 import { useI18n } from "../../i18n";
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { LayoutGrid, Rows3, Zap } from "lucide-react";
-import type { AccountMeta } from "../../store/types";
+import { useGlobalConfig } from "../../store/globalConfig";
+import type { AccountMeta, AccountRosterView } from "../../store/types";
+import { showToast } from "../ui/Toast";
 import {
   closestCenter,
   DndContext,
@@ -17,7 +20,10 @@ import {
   rectSortingStrategy,
   sortableKeyboardCoordinates,
   SortableContext,
+  verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
+
+const LEGACY_ROSTER_VIEW_KEY = "hub-account-view";
 
 interface AccountGridProps {
   accounts: AccountMeta[];
@@ -30,16 +36,51 @@ interface AccountGridProps {
 export function AccountGrid({ accounts, children, issue, isSelectionMode, onReorder }: AccountGridProps) {
   const en = useI18n().language === "en-US";
   const running = accounts.filter(account => account.is_running).length;
-  const [view, setView] = useState<"list" | "cards">(() => {
-    try { return localStorage.getItem("hub-account-view") === "list" ? "list" : "cards"; }
+  const configuredView = useGlobalConfig(state => state.config?.account_roster_view);
+  const [fallbackView, setFallbackView] = useState<AccountRosterView>(() => {
+    try { return localStorage.getItem(LEGACY_ROSTER_VIEW_KEY) === "list" ? "list" : "cards"; }
     catch { return "cards"; }
   });
+  const [pendingView, setPendingView] = useState<AccountRosterView>();
+  const latestViewChange = useRef(0);
+  const view = pendingView ?? configuredView ?? fallbackView;
   const [filter, setFilter] = useState<"all" | "running" | "attention">("all");
-  const attention = accounts.filter(account => !!issue(account));
-  const visible = filter === "all" ? accounts : filter === "running" ? accounts.filter(account => account.is_running) : attention;
-  const changeView = (next: typeof view) => {
-    setView(next);
-    try { localStorage.setItem("hub-account-view", next); } catch { /* Session preference still applies. */ }
+  const grid = useRef<HTMLDivElement>(null);
+  const [sorting, setSorting] = useState(false);
+  const [pendingOrder, setPendingOrder] = useState<string[]>();
+  const reorderQueue = useRef(Promise.resolve());
+  const orderRanks = new Map(pendingOrder?.map((id, index) => [id, index]));
+  const orderedAccounts = pendingOrder ? [...accounts].sort((a, b) =>
+    (orderRanks.get(a.id) ?? orderRanks.size) - (orderRanks.get(b.id) ?? orderRanks.size)) : accounts;
+  const attention = orderedAccounts.filter(account => !!issue(account));
+  const visible = filter === "all" ? orderedAccounts : filter === "running" ? orderedAccounts.filter(account => account.is_running) : attention;
+
+  useLayoutEffect(() => {
+    if (prefersReducedMotion()) return;
+    const animation = grid.current?.animate?.(
+      [{ opacity: .75, translate: "0 3px" }, { opacity: 1, translate: "0 0" }],
+      { duration: 170, easing: "ease-out" },
+    );
+    return () => animation?.cancel();
+  }, [view, filter]);
+
+  const changeView = async (next: AccountRosterView) => {
+    if (next === view) return;
+    const { config, patch } = useGlobalConfig.getState();
+    if (!config) {
+      setFallbackView(next);
+      try { localStorage.setItem(LEGACY_ROSTER_VIEW_KEY, next); } catch { /* Keep the selection for this session. */ }
+      return;
+    }
+    const change = ++latestViewChange.current;
+    setPendingView(next);
+    try {
+      await patch({ account_roster_view: next });
+    } catch {
+      if (latestViewChange.current === change) showToast("error", en ? "Could not save the account view" : "无法保存账号视图");
+    } finally {
+      if (latestViewChange.current === change) setPendingView(undefined);
+    }
   };
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -48,6 +89,7 @@ export function AccountGrid({ accounts, children, issue, isSelectionMode, onReor
   );
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    setSorting(false);
     if (isSelectionMode || !over || active.id === over.id) return;
     const oldIndex = visible.findIndex(account => account.id === active.id);
     const newIndex = visible.findIndex(account => account.id === over.id);
@@ -55,30 +97,33 @@ export function AccountGrid({ accounts, children, issue, isSelectionMode, onReor
     const reordered = arrayMove(visible, oldIndex, newIndex);
     const visibleIds = new Set(visible.map(account => account.id));
     let next = 0;
-    void onReorder(accounts.map(account => visibleIds.has(account.id) ? reordered[next++].id : account.id));
+    const nextOrder = orderedAccounts.map(account => visibleIds.has(account.id) ? reordered[next++].id : account.id);
+    setPendingOrder(nextOrder);
+    const settle = () => setPendingOrder(current => current === nextOrder ? undefined : current);
+    reorderQueue.current = reorderQueue.current.then(() => onReorder(nextOrder)).then(settle, settle);
   };
 
   return (
     <div className="dashboard-accounts flex-1 overflow-auto px-5 pb-5">
       <header className="account-grid-heading">
-        <h2>{en ? "Accounts" : "账号"}</h2>
         <div className="roster-filters" role="group" aria-label={en ? "Filter accounts" : "筛选账号"}>
           {([["all", en ? "All" : "全部", accounts.length], ["running", en ? "Running" : "运行中", running],
             ["attention", en ? "Needs setup" : "待处理", attention.length]] as const).map(([id, label, count]) =>
-            <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <span>{count}</span></button>)}
+            <button key={id} type="button" disabled={sorting} aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <span>{count}</span></button>)}
         </div>
         <div className="roster-views" role="group" aria-label={en ? "Account view" : "账号视图"}>
           {([["cards", en ? "Cards" : "卡片", LayoutGrid], ["list", en ? "List" : "列表", Rows3]] as const).map(([id,label,Icon]) =>
-            <button key={id} type="button" title={label} aria-label={label} aria-pressed={view === id} onClick={() => changeView(id)}><Icon size={15} /></button>)}
+            <button key={id} type="button" disabled={sorting} title={label} aria-label={label} aria-pressed={view === id} onClick={() => void changeView(id)}><Icon size={15} /></button>)}
         </div>
       </header>
       {view === "list" && visible.length > 0 && <div className="roster-columns" aria-hidden="true">
         {(en ? ["Account", "Region", "Active Mod", "Status", "Actions"] : ["账号名称", "区服", "当前 Mod", "状态", "操作"]).map(label => <span key={label}>{label}</span>)}
       </div>}
       {!visible.length && <p className="roster-empty" role="status">{en ? "No accounts match this filter." : "当前筛选下没有账号。"}</p>}
-      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={visible.map(account => account.id)} strategy={rectSortingStrategy}>
-          <div data-view={view} className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
+      <DndContext sensors={sensors} collisionDetection={closestCenter}
+        onDragStart={() => setSorting(true)} onDragEnd={handleDragEnd} onDragCancel={() => setSorting(false)}>
+        <SortableContext items={visible.map(account => account.id)} strategy={view === "list" ? verticalListSortingStrategy : rectSortingStrategy}>
+          <div ref={grid} data-view={view} className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
             {visible.map(children)}
           </div>
         </SortableContext>

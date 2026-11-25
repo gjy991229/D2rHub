@@ -69,7 +69,7 @@ pub(super) fn source_mod_name_from_manifest(
         })
 }
 
-pub(super) fn processing_manifest_path(mod_directory: &Path) -> Option<PathBuf> {
+pub(in crate::audio_mod) fn processing_manifest_path(mod_directory: &Path) -> Option<PathBuf> {
     [MANIFEST_FILE_NAME, LEGACY_MANIFEST_FILE_NAME]
         .iter()
         .map(|name| mod_directory.join(name))

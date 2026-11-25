@@ -33,3 +33,7 @@ npm 与 Cargo 依赖继续适用各自上游许可证。`package-lock.json` 和
 
 根目录及 `public/` 中的 D2RHub Logo、项目界面截图、使用指引图片和赞助收款码由
 项目作者提供。除本文件另有说明外，这些项目原创素材按根目录 MIT License 提供。
+
+## JCY 背包与仓库预设
+
+JCY 已授权本项目通过 GitHub 和 Gitee 公开分发 `jcy-inventory-v1` 背包与仓库预设。

@@ -59,6 +59,14 @@ export function LaunchStrategyPanel({ config, accounts, updateConfig }: LaunchSt
         <h2 id="application-options-title" className="text-xs font-bold text-text-primary">应用行为</h2>
         <div className="flex items-center justify-between gap-3 py-1.5">
           <div>
+            <span className="text-sm font-semibold text-text-secondary">{en ? "Separate game taskbar icons" : "游戏实例任务栏独立"}</span>
+            <p id="taskbar-identity-help" className="text-2xs text-text-muted">{en ? "Give each account its own taskbar identity. Applies to windows launched or detected afterwards." : "为每个账号使用独立任务栏标识，对之后启动或重新识别的窗口生效。"}</p>
+          </div>
+          <Toggle checked={!!config.separate_game_taskbar_icons} ariaLabel={en ? "Separate game taskbar icons" : "游戏实例任务栏独立"}
+            descriptionId="taskbar-identity-help" onChange={value => updateConfig(c => { c.separate_game_taskbar_icons = value; })} />
+        </div>
+        <div className="flex items-center justify-between gap-3 py-1.5">
+          <div>
             <span className="text-sm font-semibold text-text-secondary">启动时自动整理内存</span>
             <p id="launch-memory-description" className="text-2xs text-text-muted">成功启动数量达到一半（向上取整）和批次结束时，整理已成功启动窗口的内存；单窗口仅整理一次，后续加载可能短暂卡顿。</p>
           </div>

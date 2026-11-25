@@ -7,6 +7,7 @@ use crate::error::AppError;
 pub const MIN_WINDOW_WIDTH: u32 = 800;
 pub const MIN_WINDOW_HEIGHT: u32 = 600;
 pub const MAX_LAYOUT_WINDOWS: usize = 32;
+pub const MAX_SAVED_LAYOUTS: usize = 64;
 pub const MIN_VISIBLE_PIXELS: i32 = 64;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,7 +107,7 @@ pub struct WindowLayout {
     pub id: String,
     pub name: String,
     pub monitors: Vec<LayoutMonitor>,
-    /// Array order controls presentation and stacking. Independent slots match titles; scheme slots bind account IDs.
+    /// Array order controls presentation and stacking. Slots can bind account IDs or match window titles.
     pub windows: Vec<LayoutSlot>,
 }
 
@@ -117,9 +118,11 @@ impl WindowLayout {
             return None;
         }
         self.windows.iter().position(|slot| {
-            slot.window_title
-                .as_deref()
-                .is_some_and(|name| window_title_key(name) == key)
+            slot.account_id.is_none()
+                && slot
+                    .window_title
+                    .as_deref()
+                    .is_some_and(|name| window_title_key(name) == key)
         })
     }
 
@@ -173,7 +176,13 @@ impl WindowLayout {
             return Err(invalid("窗口数量须在 1 到 32 之间"));
         }
         let mut titles = HashSet::new();
+        let mut accounts = HashSet::new();
         for slot in &self.windows {
+            if let Some(id) = &slot.account_id {
+                if id.trim().is_empty() || !accounts.insert(id.to_ascii_lowercase()) {
+                    return Err(invalid("绑定账号不能为空或重复"));
+                }
+            }
             if let Some(title) = &slot.window_title {
                 let key = window_title_key(title);
                 if key.is_empty() || !titles.insert(key) {
@@ -320,9 +329,6 @@ pub fn validate_layout_configuration(
     layouts: &[WindowLayout],
     selected: Option<&str>,
 ) -> Result<(), AppError> {
-    if layouts.len() > 64 {
-        return Err(AppError::ConfigWriteError("最多保存 64 个窗口布局".into()));
-    }
     let mut ids = HashSet::new();
     let mut names = HashSet::new();
     for layout in layouts {

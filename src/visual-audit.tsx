@@ -16,6 +16,7 @@ import type {
 } from "./features/roomAutomation/types";
 import "./styles/globals.css";
 import "./styles/workspace.css";
+import { syncMotionPreference } from "./store/motionPreference";
 import "./styles/visualAudit.css";
 
 type Surface =
@@ -31,6 +32,8 @@ type Surface =
   | "bongo";
 
 type SettingsMap = Record<string, unknown>;
+
+syncMotionPreference();
 
 const params = new URLSearchParams(window.location.search);
 // Isolated browser-only fixture: start at the dashboard when reviewing batch controls.
@@ -496,9 +499,13 @@ function installIpcMock() {
 
     switch (cmd) {
       case "get_launch_scheme_defaults": {
-        const keys = ["rune_audio_enabled", "rune_audio_target_account", "rune_audio_external_target", "rune_audio_detection_threshold", "rune_audio_tracked_categories", "rune_audio_min_rune_number", "rune_audio_min_gem_level", "rune_audio_tracked_charm_codes", "enable_tz_overlay", "enable_stats_overlay", "launch_trim_memory", "keep_battle_net_account_id", "auto_close_browser", "agent_mode", "agent_delay_secs", "agent_threshold"];
-        return { settings: { ...Object.fromEntries(keys.map(key => [key, (persistedGlobalConfig as unknown as Record<string, unknown>)[key]])), rune_audio_enabled: false, rune_audio_target_account: "", rune_audio_external_target: null, keep_battle_net_account_id: null },
-          room: { ...structuredClone(roomAutomationSnapshot.config), enabled: false, primary_account_id: "", follower_account_ids: [] }, layout: null };
+        return { schema_version: 3, settings: { rune_audio_target_account: "", keep_battle_net_account_id: null },
+          room: { primary_account_id: "", follower_account_ids: [] }, layout_id: null };
+      }
+      case "create_game_window_layout": {
+        const { layout } = payload as { layout: NonNullable<GlobalConfig["window_layouts"]>[number] };
+        persistedGlobalConfig.window_layouts = [...(persistedGlobalConfig.window_layouts ?? []), layout];
+        return null;
       }
       case "save_launch_scheme": {
         const { scheme } = payload as { scheme: GlobalConfig["launch_groups"][number] };
@@ -568,6 +575,13 @@ function installIpcMock() {
       }
       case "list_accounts":
         return accounts;
+      case "reorder_accounts": {
+        const { orderedIds } = payload as { orderedIds: string[] };
+        const ranks = new Map(orderedIds.map((id, index) => [id, index]));
+        accounts.sort((a, b) => (ranks.get(a.id) ?? ranks.size) - (ranks.get(b.id) ?? ranks.size));
+        accounts.forEach((account, index) => { account.order = index; });
+        return null;
+      }
       case "get_game_layout_account_order":
         return ["barb-02", "sorc-01"].filter(id => accounts.some(account => account.id === id && account.is_running));
       case "get_game_layout_monitors":
@@ -895,8 +909,12 @@ async function primeStores() {
   if (surface === "stats-overlay" && seedSampleDrops) {
     useStats.setState({
       currentScene: "混沌魔殿",
-      currentRunName: "混沌魔殿",
-      currentRunKey: "area:108",
+      currentRunName: "累计战斗时间",
+      currentRunKey: "activity",
+      sceneVisitName: "混沌魔殿",
+      sceneVisitNameEn: "Chaos Sanctuary",
+      sceneVisitStart: Date.now() - 11_200,
+      sceneVisitElapsedMs: 11_200,
       isTiming: true,
       timerStart: Date.now() - 73_400,
       elapsedMs: 73_400,
@@ -909,14 +927,6 @@ async function primeStores() {
         { kind: "rune", telemetryId: 30, itemCode: "r30", category: "runes", name: "贝", nameEn: "Ber", runeNumber: 30, screenshotPath: null },
         { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
         { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
-        { kind: "item", telemetryId: 36, itemCode: "cm1", category: "charms", name: "小型护身符", nameEn: "Small Charm", runeNumber: null, screenshotPath: null },
-      ],
-      currentRunDrops: [
-        { kind: "rune", telemetryId: 15, itemCode: "r15", category: "runes", name: "海尔", nameEn: "Hel", runeNumber: 15, screenshotPath: null },
-        { kind: "rune", telemetryId: 30, itemCode: "r30", category: "runes", name: "贝", nameEn: "Ber", runeNumber: 30, screenshotPath: null },
-        { kind: "item", telemetryId: 40, itemCode: "pk1", category: "keys", name: "恐惧之钥", nameEn: "Key of Terror", runeNumber: null, screenshotPath: null },
-      ],
-      previousRunDrops: [
         { kind: "item", telemetryId: 36, itemCode: "cm1", category: "charms", name: "小型护身符", nameEn: "Small Charm", runeNumber: null, screenshotPath: null },
       ],
     });

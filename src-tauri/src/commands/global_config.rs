@@ -1017,6 +1017,26 @@ mod validation_tests {
     }
 
     #[test]
+    fn roster_view_round_trips_and_defaults_to_unspecified_for_legacy_configs() {
+        use crate::domain::config::AccountRosterView;
+
+        let mut legacy = serde_json::to_value(GlobalConfig::default()).unwrap();
+        legacy
+            .as_object_mut()
+            .unwrap()
+            .remove("account_roster_view");
+        let legacy: GlobalConfig = serde_json::from_value(legacy).unwrap();
+        assert_eq!(legacy.account_roster_view, None);
+
+        let updated = legacy
+            .apply_user_patch(serde_json::json!({ "account_roster_view": "list" }))
+            .unwrap();
+        let stored = serde_json::to_value(updated).unwrap();
+        let reopened: GlobalConfig = serde_json::from_value(stored).unwrap();
+        assert_eq!(reopened.account_roster_view, Some(AccountRosterView::List));
+    }
+
+    #[test]
     fn user_patch_rejects_unknown_and_server_managed_fields() {
         let config = GlobalConfig::default();
 
@@ -1171,7 +1191,7 @@ mod validation_tests {
                 .as_ref()
                 .unwrap()
                 .schema_version,
-            2
+            crate::domain::launch_scheme::SCHEME_SCHEMA_VERSION
         );
         assert!(loaded.launch_groups[0].members[0]
             .snapshot
@@ -1179,7 +1199,7 @@ mod validation_tests {
             .unwrap()
             .game_settings
             .is_empty());
-        let backup = root.join("global_config.before-shared-schemes.json");
+        let backup = root.join("global_config.before-saved-layout-schemes.json");
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), content);
         GlobalConfig::load(root.to_str().unwrap()).unwrap();
         assert_eq!(std::fs::read_to_string(&backup).unwrap(), content);
@@ -2786,7 +2806,8 @@ impl GlobalConfig {
         };
         if schemes_migrated {
             use std::io::Write;
-            let backup = Path::new(app_data_dir).join("global_config.before-shared-schemes.json");
+            let backup =
+                Path::new(app_data_dir).join("global_config.before-saved-layout-schemes.json");
             match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -3835,10 +3856,29 @@ fn prepare_global_config_with_retired_accounts(
     {
         return Err(AppError::ConfigWriteError("窗口边框校准参数无效".into()));
     }
+    // Migrated schemes can add layouts to a previously full library. Existing
+    // layouts remain usable while the library is at or above the creation limit.
+    if cfg.window_layouts.len() > crate::domain::window_layout::MAX_SAVED_LAYOUTS
+        && previous.is_none_or(|config| config.window_layouts.len() < cfg.window_layouts.len())
+    {
+        return Err(AppError::ConfigWriteError("最多保存 64 个窗口布局".into()));
+    }
     crate::domain::window_layout::validate_layout_configuration(
         &cfg.window_layouts,
         cfg.active_window_layout_id.as_deref(),
     )?;
+    for group in &cfg.launch_groups {
+        let layout_id = group
+            .environment
+            .as_ref()
+            .and_then(|environment| environment.layout_id.as_deref());
+        if layout_id.is_some_and(|id| !cfg.window_layouts.iter().any(|layout| layout.id == id)) {
+            return Err(AppError::ConfigWriteError(format!(
+                "启动方案“{}”绑定的窗口布局不存在，请先调整该方案的布局绑定",
+                group.name
+            )));
+        }
+    }
     cfg.normalize_favorite_launch_group_ids();
 
     if should_validate_installation_paths(previous, &cfg) {

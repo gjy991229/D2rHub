@@ -82,6 +82,20 @@ function controller(overrides: Partial<ModCapsuleController> = {}): ModCapsuleCo
 afterEach(cleanup);
 
 describe("ModCatalogManager", () => {
+  it("keeps the installed list preference and its settings actions on reopen", async () => {
+    const mount = () => render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
+    try {
+      const first = mount();
+      await userEvent.click(screen.getByRole("button", { name: "列表" }));
+      first.unmount();
+      mount();
+      expect(screen.getByRole("button", { name: "列表" }).getAttribute("aria-pressed")).toBe("true");
+      await userEvent.click(screen.getByRole("button", { name: "设置 DeathExit" }));
+      expect(screen.getByRole("button", { name: "设置 DeathExit" }).getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      localStorage.removeItem("hub-installed-mod-view");
+    }
+  });
   it("opens downloads as a sibling page without nesting another modal", async () => {
     render(<ModCatalogManager catalog={controller()} accounts={[]} onProcess={vi.fn()} />);
     await userEvent.click(screen.getByRole("button", { name: "下载与更新" }));

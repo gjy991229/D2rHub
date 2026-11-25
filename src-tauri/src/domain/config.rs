@@ -9,6 +9,22 @@ pub enum DownloadSource {
     Gitee,
     Github,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountRosterView {
+    Cards,
+    List,
+}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum UiMotion {
+    #[default]
+    #[serde(alias = "system")]
+    Full,
+    Reduced,
+}
+
 use serde_json::Value;
 use std::collections::BTreeMap;
 
@@ -251,12 +267,17 @@ pub struct GlobalConfig {
     /// 界面字体缩放 ("small" / "default" / "large")
     #[serde(default = "default_font_scale")]
     pub font_scale: String,
+    #[serde(default)]
+    pub ui_motion: UiMotion,
     /// 是否为每个游戏账号窗口设置独立的任务栏 AppUserModelID。
     #[serde(default)]
     pub separate_game_taskbar_icons: bool,
     /// 应用界面语言 ("zh-CN" / "en-US")
     #[serde(default = "default_app_language")]
     pub app_language: String,
+    /// Missing on older installations that stored their selection in the WebView.
+    #[serde(default)]
+    pub account_roster_view: Option<AccountRosterView>,
     /// Agent 多开模式: 1=延时杀, 2=进程数阈值杀
     #[serde(default = "default_agent_mode")]
     pub agent_mode: u8,
@@ -557,8 +578,10 @@ impl Default for GlobalConfig {
             overlay_opacity: 95,
             main_opacity: 95,
             font_scale: "default".to_string(),
+            ui_motion: UiMotion::Full,
             separate_game_taskbar_icons: false,
             app_language: "zh-CN".to_string(),
+            account_roster_view: None,
             agent_mode: 1,
             agent_delay_secs: 1.0,
             agent_threshold: 5,

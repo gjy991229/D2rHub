@@ -4,6 +4,9 @@ import { Overlay } from "./pages/Overlay";
 import { I18nRuntime } from "./i18n";
 import "./styles/globals.css";
 import "./styles/workspace.css";
+import { syncMotionPreference } from "./store/motionPreference";
+
+syncMotionPreference();
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

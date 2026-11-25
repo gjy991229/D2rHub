@@ -49,25 +49,6 @@ export function getSessionRunKey(sceneName: string, tz: boolean): string {
 
 
 
-function matchRune(text: string): string | null {
-  const sanitized = text.trim().toLowerCase();
-
-  // 合并所有候选项（标准名+别名），按长度降序避免短名抢占长名
-  const candidates: { key: string; name: string }[] = [];
-  for (const rune of RUNE_NAMES) {
-    candidates.push({ key: rune, name: rune });
-  }
-  for (const [alias, standard] of Object.entries(RUNE_ALIASES)) {
-    candidates.push({ key: alias, name: standard });
-  }
-  candidates.sort((a, b) => b.key.length - a.key.length);
-
-  for (const { key, name } of candidates) {
-    if (sanitized.includes(key)) return name;
-  }
-  return null;
-}
-
 /// 单次掉落（前端追踪用，非持久化）
 export interface DropEntry {
   observationId?: number | null;
@@ -110,8 +91,6 @@ interface StatsState {
 
   // ── 累计掉落（悬浮窗展示，跨场景不清空）──
   currentDrops: DropEntry[];
-  // ── 上一把已结束场景的掉落 ──
-  previousRunDrops: DropEntry[];
   // ── 当前单次场景掉落（每次 startTimer 重置，仅用于数据库存储）──
   currentRunDrops: DropEntry[];
   hiddenObservationIds: number[];
@@ -127,18 +106,6 @@ interface StatsState {
   tick: () => void;
   processAreaEvent: (item: { text: string; is_town?: boolean }) => Promise<void>;
   /// 处理声纹解码器产生的符文掉落事件。
-  processRuneDrop: (item: {
-    rune_number: number;
-    rune_name?: string | null;
-    rune_name_en?: string | null;
-  }) => void;
-  processItemDrop: (item: {
-    item_id: number;
-    item_code: string;
-    category: string;
-    item_name: string;
-    item_name_en?: string | null;
-  }) => void;
   applyTrackingSnapshot: (snapshot: TrackingSnapshot) => void;
   fetchDbStats: (sceneName: string, tz?: boolean) => Promise<void>;
   removeCurrentDrop: (index: number) => void;
@@ -164,7 +131,6 @@ export const useStats = create<StatsState>((set, get) => ({
   dbTotalRuns: null,
   sessionRuns: {},
   currentDrops: [],
-  previousRunDrops: [],
   currentRunDrops: [],
   hiddenObservationIds: [],
   characterName: "",
@@ -189,7 +155,6 @@ export const useStats = create<StatsState>((set, get) => ({
       isTiming: false,
       timerStart: null,
       elapsedMs: 0,
-      previousRunDrops: currentRunDrops,
       currentRunDrops: [],
     });
 
@@ -321,61 +286,6 @@ export const useStats = create<StatsState>((set, get) => ({
     }
   },
 
-  processRuneDrop: (item) => {
-    const { rune_number, rune_name, rune_name_en } = item;
-
-    // 优先使用后端匹配的符文编号，其次前端本地匹配
-    let runeName: string;
-    let runeNumber: number;
-
-    if (rune_number >= 1 && rune_number <= 33 && RUNE_NAMES[rune_number - 1]) {
-      runeNumber = rune_number;
-      runeName = RUNE_NAMES[rune_number - 1];
-    } else {
-      const matched = rune_name ? matchRune(rune_name) : null;
-      if (!matched) return;
-      runeName = matched;
-      runeNumber = getRuneNumber(matched);
-    }
-
-    // 每个解码器确认的播放事件 = 一次独立掉落观测；不施加业务冷却。
-    const newDrop: DropEntry = {
-      kind: "rune",
-      telemetryId: runeNumber,
-      itemCode: `r${String(runeNumber).padStart(2, "0")}`,
-      category: "runes",
-      name: runeName,
-      nameEn: rune_name_en || null,
-      runeNumber,
-      screenshotPath: null,
-    };
-
-    const current = get();
-    set({
-      currentDrops: [...current.currentDrops, newDrop],
-      ...(current.isTiming ? { currentRunDrops: [...current.currentRunDrops, newDrop] } : {}),
-    });
-  },
-
-  processItemDrop: (item) => {
-    if (!item.item_id || !item.item_code || !item.item_name) return;
-    const newDrop: DropEntry = {
-      kind: "item",
-      telemetryId: item.item_id,
-      itemCode: item.item_code,
-      category: item.category,
-      name: item.item_name,
-      nameEn: item.item_name_en || null,
-      runeNumber: null,
-      screenshotPath: null,
-    };
-    const current = get();
-    set({
-      currentDrops: [...current.currentDrops, newDrop],
-      ...(current.isTiming ? { currentRunDrops: [...current.currentRunDrops, newDrop] } : {}),
-    });
-  },
-
   applyTrackingSnapshot: (snapshot) => {
     const { currentRunName: previousRunName, sceneVisitName: previousVisitName, sceneVisitStart: previousVisitStart } = get();
     const previousTz = get().currentTz;
@@ -394,7 +304,6 @@ export const useStats = create<StatsState>((set, get) => ({
     const visibleDrops = (drops: TrackingSnapshot["current_run_drops"]) => toDropEntries(drops)
       .filter((drop) => drop.observationId == null || !hiddenObservationIds.has(drop.observationId));
     const currentRunDrops = visibleDrops(snapshot.current_run_drops);
-    const previousRunDrops = visibleDrops(snapshot.previous_run_drops ?? []);
     const sessionDrops = visibleDrops(snapshot.session_drops ?? snapshot.current_run_drops);
     const sceneVisitStart = snapshot.scene_visit_started_at_ms ?? null;
     const finished = snapshot.finished_visit_display;
@@ -417,7 +326,6 @@ export const useStats = create<StatsState>((set, get) => ({
         ? Math.max(0, Date.now() - snapshot.timer_started_at_ms)
         : snapshot.accumulated_ms ?? 0,
       currentRunDrops,
-      previousRunDrops,
       currentDrops: sessionDrops,
       sessionRuns: snapshot.session_runs,
       ...(sceneVisitName !== previousVisitName || (!snapshot.is_timing && !sceneVisitName) ? { dbAvgTime: null, dbTotalRuns: null } : {}),
@@ -444,9 +352,6 @@ export const useStats = create<StatsState>((set, get) => ({
       currentRunDrops: observationId == null
         ? get().currentRunDrops
         : get().currentRunDrops.filter((drop) => drop.observationId !== observationId),
-      previousRunDrops: observationId == null
-        ? get().previousRunDrops
-        : get().previousRunDrops.filter((drop) => drop.observationId !== observationId),
       hiddenObservationIds: observationId == null
         ? get().hiddenObservationIds
         : [...new Set([...get().hiddenObservationIds, observationId])],

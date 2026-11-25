@@ -140,7 +140,7 @@
 
 
 
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   :root[data-theme] :is(.control-btn, .primary-cta, .spatial-tile, .account-option) {
     transition: none;
   }
@@ -178,7 +178,7 @@
   border-color: color-mix(in srgb, var(--border-default) 65%, transparent);
   background: var(--surface-card);
   border-radius: 10px;
-  animation: none;
+  transition: background-color 150ms ease, border-color 150ms ease, box-shadow 170ms ease, scale 170ms var(--ease-settle);
 }
 :root[data-theme] .dashboard-surface .account-tile:hover { background: var(--surface-card); border-color: var(--border-strong); }
 :root[data-theme] .dashboard-surface .account-tile[data-batch-selected="true"],
@@ -276,7 +276,7 @@
 @keyframes control-confirm { from { opacity: 0; } to { opacity: 1; } }
 @keyframes detail-reveal { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes progress-active { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
-@media (prefers-reduced-motion: reduce) {
+@scope (:root[data-motion="reduced"]) {
   :root[data-theme] .account-tile > .grid { transition: none !important; }
   :root[data-theme] :is(.drawer-body, .account-mod-picker, .account-select-check svg, .progress-pulse-glow) { animation: none !important; }
   :root[data-theme] :is(.account-quick-toggle svg, .account-select-check, .settings-navigation-item) { transition: none; }
@@ -294,8 +294,8 @@
   animation: detail-reveal 140ms ease-out both;
 }
 .anchored-panel:focus { outline: none; }
-.anchored-panel-closing { pointer-events: none; animation: panel-dismiss 100ms ease-out both; }
-@keyframes panel-dismiss { from { opacity: 1; } to { opacity: 0; } }
+.anchored-panel-closing { pointer-events: none; animation: panel-dismiss 100ms ease-in both; }
+@keyframes panel-dismiss { to { opacity: 0; transform: translateY(-3px); } }
 .anchored-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px 10px; }
 .anchored-panel-heading h2 { font-size: var(--text-xs); font-weight: 600; overflow-wrap: anywhere; }
 .anchored-panel-heading > button { display: grid; place-items: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 5px; color: var(--text-muted); }
@@ -317,12 +317,19 @@
 .account-more-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .sortable-account-card:not([data-sortable-disabled]) { cursor: grab; }
 .sortable-account-card:not([data-sortable-disabled]):active { cursor: grabbing; }
+.sortable-account-card { position: relative; width: 100%; }
+.sortable-account-card[data-dragging] { z-index: 10; cursor: grabbing; }
+:root[data-theme] .dashboard-surface .sortable-account-card[data-dragging] .account-tile {
+  border-color: var(--border-focus);
+  box-shadow: var(--shadow-elevated);
+  scale: 1.015;
+}
 .sortable-account-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 12px; }
 .sortable-account-card :is(button, input, select, textarea, a, label, summary, [contenteditable="true"]) { cursor: auto; }
 .sortable-account-card :is(button, select, summary, label) { cursor: pointer; }
 .sortable-account-card :is(input, textarea, [contenteditable="true"]) { cursor: text; }
 :root[data-theme] .dashboard-surface .name-row { gap: 4px; }
-@media (prefers-reduced-motion: reduce) { .anchored-panel { animation: none; } }
+@scope (:root[data-motion="reduced"]) { .anchored-panel { animation: none; } }
 @media (max-width: 1000px) {
   /* Intentional two-row toolbar, rather than one orphaned action wrapping. */
   :root[data-theme] .dashboard-actionbar > .flex:first-child { flex-basis: 100%; }
@@ -382,20 +389,6 @@
 :root[data-theme] .launch-group-panel-row[data-selected="true"] { background: var(--surface-active); border-color: var(--border-strong); }
 :root[data-theme] .launch-group-trigger[aria-expanded="true"] .launch-group-trigger-chevron { transform: rotate(90deg); }
 
-:root[data-theme] .room-naming-panel .room-automation-quick-popover {
-  position: static; width: auto; padding: 0 16px 16px; border-radius: 0;
-  background: transparent; box-shadow: none; animation: none;
-}
-:root[data-theme] .room-automation-quick-header { display: block; }
-:root[data-theme] .room-automation-quick-header p { max-width: none; margin: 0 0 14px; font-weight: 400; }
-:root[data-theme] .room-automation-quick-preview { align-items: flex-start; gap: 5px; padding: 10px 0; border-block: 1px solid var(--border-default); }
-:root[data-theme] .room-automation-quick-preview strong { max-width: 100%; white-space: normal; overflow-wrap: anywhere; font-weight: 600; font-size: var(--text-sm); }
-:root[data-theme] .room-automation-quick-fields { grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 12px; margin-top: 16px; }
-:root[data-theme] .room-automation-quick-fields > label:first-child { grid-column: 1 / -1; }
-:root[data-theme] .room-automation-quick-fields label { font-weight: 500; }
-:root[data-theme] .room-automation-quick-fields .line-input { height: 36px; border-radius: 7px; font-weight: 500; box-shadow: none; }
-:root[data-theme] .room-automation-quick-fields .line-input:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
-
 /* All settings pages start on the same left edge and share a reading width. */
 :root[data-theme] .settings-panel-scroll { container-type: inline-size; }
 :root[data-theme] .settings-panel-scroll > * { max-width: 1040px; margin-left: 0; margin-right: 0; }
@@ -411,7 +404,7 @@
 :root[data-theme] .settings-workspace .room-automation-header { border-top: 0; padding-top: 0; }
 :root[data-theme] .settings-workspace :is(.settings-page-heading h2, .room-automation-header h2) { font-size: var(--text-lg); font-weight: 650; }
 @media (max-width: 860px) { :root[data-theme] .launch-group-panel { margin-inline: 20px; } }
-@media (prefers-reduced-motion: reduce) { :root[data-theme] .launch-group-panel { animation: none; } }
+@scope (:root[data-motion="reduced"]) { :root[data-theme] .launch-group-panel { animation: none; } }
 
 :root[data-theme] .dashboard-surface .spatial-grid > * { width: 100%; max-width: 380px; }
 :root[data-theme] .launch-group-panel-header > div { margin-right: auto; }
@@ -495,7 +488,6 @@
 .launch-group-panel-row[data-warning="true"] .launch-scheme-status { color: var(--warning); }
 .room-quick-edit-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
 .room-quick-save-status { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-2xs); color: var(--text-muted); }
-:root[data-theme] .room-automation-quick-footer { justify-content: space-between; }
 .settings-section-body[hidden] { display: none !important; }
 .settings-guided-page { display: flex; flex-direction: column; gap: 18px; width: 100%; max-width: 880px; }
 .settings-guided-page .settings-section-tabs { flex-wrap: wrap; gap: 20px; }
@@ -560,15 +552,26 @@
 :root[data-theme] .settings-workspace .hostile-restart-settings { padding: 0 0 14px; border-top: 0; border-bottom: 1px solid var(--border-default); }
 .hostile-restart-disclosure:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 5px; }
 
-/* Keep primary actions and configuration tools in predictable rows. */
-:root[data-theme] .dashboard-actionbar { align-items: stretch; gap: 10px; }
-.dashboard-launch-controls, .dashboard-tool-controls { display: flex; width: 100%; min-width: 0; align-items: center; gap: 8px; flex-wrap: wrap; }
-.dashboard-close-action { margin-left: auto; padding-left: 16px; }
-.dashboard-quick-controls, .dashboard-manage-controls { display: flex; min-width: 0; align-items: center; gap: 6px; flex-wrap: wrap; }
-.dashboard-manage-controls { margin-left: auto; }
-.dashboard-tool-controls { padding-top: 10px; border-top: 1px solid var(--border-default); }
-@media (max-width: 600px) {
-  .dashboard-manage-controls { width: 100%; margin-left: 0; }
+/* Groups wrap together as the window narrows or favorites are added. */
+:root[data-theme] .dashboard-actionbar {
+  align-items: center;
+  gap: 6px 18px;
+  padding-block: 4px 8px;
+}
+.dashboard-launch-controls, .dashboard-tool-controls,
+.dashboard-quick-controls, .dashboard-manage-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.dashboard-launch-controls { flex: 1 1 auto; }
+.dashboard-close-action:not(:empty) { margin-inline-start: 8px; padding-inline-start: 8px; border-inline-start: 1px solid var(--border-default); }
+.dashboard-tool-controls { flex: 1 1 auto; gap: 4px 12px; }
+.dashboard-manage-controls { margin-inline-start: auto; }
+@media (max-width: 680px) {
+  .dashboard-manage-controls { margin-inline-start: 0; }
 }
 /* Opaque popovers keep underlying card text from bleeding through. */
 .anchored-panel { background: rgb(var(--surface-glass-rgb)); }
@@ -596,13 +599,13 @@
 .account-grid-heading { align-items: center; gap: 10px 18px; }
 .roster-filters, .roster-views { display: flex; align-items: center; gap: 3px; }
 .roster-filters button, .roster-views button { padding: 4px 8px; border-radius: 5px; color: var(--text-muted); font-size: var(--text-2xs); min-height: 30px; }
+.roster-filters button:not(:disabled, [aria-pressed=true]):hover, .roster-views button:not(:disabled, [aria-pressed=true]):hover { color: var(--text-primary); background: var(--surface-hover); }
 .roster-filters button span { margin-inline-start: 3px; font-variant-numeric: tabular-nums; }
 .roster-filters button[aria-pressed=true], .roster-views button[aria-pressed=true] { color: var(--text-primary); background: var(--surface-active); font-weight: 600; }
 .roster-views { margin-inline-start: auto; }
 .roster-views button { display: grid; place-items: center; }
 .roster-filters button:focus-visible, .roster-views button:focus-visible { outline: 2px solid var(--border-focus); }
-.roster-empty, .quick-account-context { color: var(--text-secondary); font-size: var(--text-xs); }
-.roster-empty { padding: 24px 8px; }
+.roster-empty { padding: 24px 8px; color: var(--text-secondary); font-size: var(--text-xs); }
 .roster-columns { display: grid; grid-template-columns: var(--roster-tracks); align-items: center; gap: 10px; padding: 8px 14px; font-size: var(--text-2xs); color: var(--text-secondary); border-bottom: 1px solid var(--border-strong); }
 .roster-columns span:last-child { text-align: end; }
 :root[data-theme] .dashboard-surface .spatial-grid[data-view=list] { display: block; }

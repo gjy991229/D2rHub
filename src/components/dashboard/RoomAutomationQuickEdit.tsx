@@ -13,7 +13,7 @@ import {
   LoaderCircle,
   Settings2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { roomAutomationGateway } from "../../features/roomAutomation/gateway";
 import type {
@@ -49,7 +49,6 @@ interface QuickEditCopy {
   trigger: string;
   triggerTitle: string;
   title: string;
-  description: string;
   preview: string;
   prefix: string;
   sequence: string;
@@ -70,7 +69,6 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     trigger: "跟房配置",
     triggerTitle: "修改下一局跟房配置",
     title: "跟房设置",
-    description: "切换本机拼房身份，与队友同步房间规则。",
     preview: "下一房",
     prefix: "房名开头",
     sequence: "下一个序号",
@@ -89,7 +87,6 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     trigger: "Follow Config",
     triggerTitle: "Edit the next room automation settings",
     title: "Next room",
-    description: "Choose this computer’s role and synchronize the room rule.",
     preview: "Next room",
     prefix: "Room prefix",
     sequence: "Next sequence",
@@ -151,7 +148,9 @@ export function RoomAutomationQuickEdit({
   const allAccounts = useAccounts(state => state.accounts);
   const accounts = allAccounts.filter(account => account.initialized);
   const locale = normalizeSettingsLanguage(language);
+  const en = locale === "en-US";
   const copy = QUICK_EDIT_COPY[locale];
+  const editFieldsId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const openRef = useRef(false);
   const draftDirtyRef = useRef(false);
@@ -167,6 +166,7 @@ export function RoomAutomationQuickEdit({
   const [snapshot, setSnapshot] = useState<RoomAutomationConfigSnapshot | null>(null);
   const [draft, setDraft] = useState<RoomNamingDraft | null>(null);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -302,6 +302,7 @@ export function RoomAutomationQuickEdit({
   const openEditor = () => {
     if (openRef.current) { void closeEditor(); return; }
     if (!snapshot || closingRef.current) return;
+    setEditing(true);
     if (draftDirtyRef.current) { openRef.current = true; setOpen(true); return; }
     setError(null);
     resetChatHistoryRef.current = false;
@@ -314,6 +315,47 @@ export function RoomAutomationQuickEdit({
   };
 
   if (!active || !snapshot?.config.enabled) return null;
+
+  const copyRule = async () => {
+    if (!draft) return;
+    const invalid = validateDraft(draft, copy);
+    if (invalid) { setError(invalid); return; }
+    try {
+      await writeText(copyRoomRule({
+        ...snapshot.config,
+        name_prefix: draft.prefix,
+        password: draft.password,
+        next_sequence: Number(draft.nextSequence),
+        sequence_width: Number(draft.sequenceWidth),
+      }));
+      showToast("success", en ? "Room rule copied (includes password)" : "规则已复制（包含房间密码）");
+    } catch (error) {
+      setError(errorMessage(error));
+    }
+  };
+
+  const pasteRule = async () => {
+    let finishPaste!: () => void;
+    pastePending.current = new Promise(resolve => { finishPaste = resolve; });
+    setSaving(true);
+    setError(null);
+    try {
+      const rule = parseRoomRule(await readText());
+      resetChatHistoryRef.current = true;
+      updateDraft({
+        prefix: rule.name_prefix,
+        password: rule.password,
+        nextSequence: String(rule.next_sequence),
+        sequenceWidth: String(rule.sequence_width),
+      });
+    } catch (error) {
+      setError(errorMessage(error));
+    } finally {
+      pastePending.current = null;
+      finishPaste();
+      if (mountedRef.current) setSaving(false);
+    }
+  };
 
   return (
     <div className="room-automation-quick">
@@ -336,138 +378,162 @@ export function RoomAutomationQuickEdit({
       </button>
 
       {draft && (
-        <AnchoredPanel open={open} anchor={triggerRef} title={copy.title} width={420}
-          className="room-naming-panel" closeLabel={locale === "en-US" ? "Close" : "关闭"} onClose={() => { void closeEditor(); }}>
-        <form
-          className="room-automation-quick-popover"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void saveEditor(false);
-          }}
+        <AnchoredPanel
+          open={open}
+          anchor={triggerRef}
+          title={copy.title}
+          width={760}
+          className="room-naming-panel"
+          closeLabel={en ? "Close" : "关闭"}
+          onClose={() => { void closeEditor(); }}
         >
-          <header className="room-automation-quick-header">
-
-            <div className="room-automation-quick-preview">
-              <span>{copy.preview}</span>
-              <strong data-i18n-skip>{preview}</strong>
+          <form
+            className="room-automation-quick-popover"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveEditor(false);
+            }}
+          >
+            <div className="room-quick-overview">
+              <div className="room-automation-quick-preview">
+                <span>{copy.preview}</span>
+                <strong data-i18n-skip>{preview}</strong>
+              </div>
+              <button
+                type="button"
+                className="room-quick-edit-trigger"
+                aria-controls={editFieldsId}
+                aria-expanded={editing}
+                onClick={() => setEditing(current => !current)}
+              >
+                <ChevronDown size={14} aria-hidden="true" />
+                {editing ? (en ? "Hide details" : "收起详情") : (en ? "Edit room settings" : "编辑跟房设置")}
+              </button>
             </div>
-          </header>
 
-          <dl className="room-quick-summary">
-            <div><dt>{locale === "en-US" ? "Leader" : "主号"}</dt><dd>{accounts.find(a => a.id === draft.primary_account_id)?.display_name || draft.primary_account_id || "—"}</dd></div>
-            <div><dt>{locale === "en-US" ? "Followers" : "小号"}</dt><dd>{draft.follower_account_ids.map(id => accounts.find(a => a.id === id)?.display_name || id).join("、") || "—"}</dd></div>
-            <div><dt>{locale === "en-US" ? "Mode" : "协作方式"}</dt><dd>{roomModeLabel(draft.collaborationMode, locale === "en-US")}</dd></div>
-          </dl>
-          <details className="room-quick-options">
-            <summary>{locale === "en-US" ? "Edit participants and rules" : "编辑参与账号与规则"}</summary>
-          <fieldset className="room-quick-edit-fields" disabled={saving}>
-          <label>{locale === "en-US" ? "Leader" : "主号"}<select aria-label={locale === "en-US" ? "Leader" : "主号"} value={draft.primary_account_id} onChange={event => {
-            const next = switchPrimary(draft, event.target.value);
-            updateDraft({ primary_account_id: next.primary_account_id, follower_account_ids: next.follower_account_ids });
-          }}><option value="">—</option>{accounts.map(account => <option key={account.id} value={account.id}>{account.display_name || account.id}</option>)}</select></label>
-          <p className="room-quick-role-label">{locale === "en-US" ? "Followers" : "小号"}</p>
-          <div className="scheme-account-picker" aria-label={locale === "en-US" ? "Followers" : "小号"}>
-            {accounts.filter(account => account.id !== draft.primary_account_id).map(account => <label key={account.id}><input type="checkbox" checked={draft.follower_account_ids.includes(account.id)} onChange={event => updateDraft({ follower_account_ids: event.target.checked ? [...draft.follower_account_ids, account.id] : draft.follower_account_ids.filter(id => id !== account.id) })}/>{account.display_name || account.id}</label>)}
-          </div>
-          <p className="feature-help">{locale === "en-US" ? "Changing leader keeps the other followers and adds the previous leader as a follower." : "切换主号保留其他小号，旧主号自动加入小号。"}</p>
-          <RoomCollaborationMode compact value={draft.collaborationMode} onChange={collaborationMode => updateDraft({ collaborationMode })} disabled={saving} en={locale === "en-US"}
-            showUberDiablo={!!snapshot.config.show_uber_diablo_in_quick_settings} />
-          <div className="room-quick-toolbar">
-            <span>{locale === "en-US" ? "Room rule" : "房间规则"}</span>
-            <div>
-            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={async () => {
-              const invalid = validateDraft(draft, copy);
-              if (invalid) { setError(invalid); return; }
-              try {
-                await writeText(copyRoomRule({ ...snapshot.config, name_prefix: draft.prefix, password: draft.password,
-                  next_sequence: Number(draft.nextSequence), sequence_width: Number(draft.sequenceWidth) }));
-                showToast("success", locale === "en-US" ? "Room rule copied (includes password)" : "规则已复制（包含房间密码）");
-              } catch (e) { setError(errorMessage(e)); }
-            }}><Copy size={13} aria-hidden="true" />{locale === "en-US" ? "Copy" : "复制"}</Button>
-            <Button type="button" size="sm" variant="ghost" disabled={saving} onClick={async () => {
-              let finishPaste!: () => void;
-              pastePending.current = new Promise(resolve => { finishPaste = resolve; });
-              setSaving(true); setError(null);
-              try {
-                const rule = parseRoomRule(await readText());
-                resetChatHistoryRef.current = true;
-                updateDraft({ prefix: rule.name_prefix, password: rule.password, nextSequence: String(rule.next_sequence), sequenceWidth: String(rule.sequence_width) });
-              } catch (e) { setError(errorMessage(e)); } finally { pastePending.current = null; finishPaste(); if (mountedRef.current) setSaving(false); }
-            }}><ClipboardPaste size={13} aria-hidden="true" />{locale === "en-US" ? "Paste" : "粘贴"}</Button>
+            <div className="room-quick-options" data-expanded={editing}>
+              <div id={editFieldsId} className="room-quick-options-body" inert={!editing} aria-hidden={!editing}>
+                <fieldset className="room-quick-edit-fields" disabled={saving}>
+                  <div className="room-quick-participants">
+                    <h3>{en ? "Participants" : "参与账号"}</h3>
+                    <label className="room-quick-role-label">
+                      <span>{en ? "Leader" : "主号"}</span>
+                      <select
+                        className="line-input"
+                        value={draft.primary_account_id}
+                        onChange={event => {
+                          const next = switchPrimary(draft, event.target.value);
+                          updateDraft({
+                            primary_account_id: next.primary_account_id,
+                            follower_account_ids: next.follower_account_ids,
+                          });
+                        }}
+                      >
+                        <option value="">—</option>
+                        {draft.primary_account_id && !accounts.some(account => account.id === draft.primary_account_id) && (
+                          <option value={draft.primary_account_id}>{draft.primary_account_id}</option>
+                        )}
+                        {accounts.map(account => (
+                          <option key={account.id} value={account.id}>{account.display_name || account.id}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <fieldset className="room-quick-followers">
+                      <legend className="room-quick-role-label">{en ? "Followers" : "小号"}</legend>
+                      <div className="room-quick-account-picker">
+                        {accounts.filter(account => account.id !== draft.primary_account_id).map(account => (
+                          <label key={account.id}>
+                            <input
+                              type="checkbox"
+                              checked={draft.follower_account_ids.includes(account.id)}
+                              onChange={event => updateDraft({
+                                follower_account_ids: event.target.checked
+                                  ? [...draft.follower_account_ids, account.id]
+                                  : draft.follower_account_ids.filter(id => id !== account.id),
+                              })}
+                            />
+                            {account.display_name || account.id}
+                          </label>
+                        ))}
+                      </div>
+                    </fieldset>
+                    <p className="room-quick-role-help">
+                      {en ? "When you switch leaders, the previous leader becomes a follower." : "切换主号时，旧主号自动加入小号。"}
+                    </p>
+                  </div>
+
+                  <div className="room-quick-rules">
+                    <div className="room-quick-toolbar">
+                      <span>{en ? "Room rule" : "房间规则"}</span>
+                      <div>
+                        <Button type="button" size="sm" variant="ghost" onClick={copyRule}>
+                          <Copy size={13} aria-hidden="true" />{en ? "Copy" : "复制"}
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={pasteRule}>
+                          <ClipboardPaste size={13} aria-hidden="true" />{en ? "Paste" : "粘贴"}
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="room-automation-quick-fields">
+                      <label>
+                        <span>{copy.prefix}</span>
+                        <input type="text" className="line-input" maxLength={15} value={draft.prefix}
+                          onChange={event => updateDraft({ prefix: event.target.value })} />
+                      </label>
+                      <label>
+                        <span>{copy.password}</span>
+                        <input type="password" className="line-input" maxLength={15} value={draft.password}
+                          placeholder={copy.passwordPlaceholder} onChange={event => updateDraft({ password: event.target.value })} />
+                      </label>
+                      <label>
+                        <span>{copy.sequence}</span>
+                        <input type="number" className="line-input" min={0} max={4_294_967_295} step={1} value={draft.nextSequence}
+                          onChange={event => updateDraft({ nextSequence: event.target.value })} />
+                      </label>
+                      <label>
+                        <span>{copy.width}</span>
+                        <input type="number" className="line-input" min={1} max={6} step={1} value={draft.sequenceWidth}
+                          onChange={event => updateDraft({ sequenceWidth: event.target.value })} />
+                      </label>
+                    </div>
+                  </div>
+
+                  <RoomCollaborationMode
+                    compact
+                    value={draft.collaborationMode}
+                    onChange={collaborationMode => updateDraft({ collaborationMode })}
+                    disabled={saving}
+                    en={en}
+                    showUberDiablo={!!snapshot.config.show_uber_diablo_in_quick_settings}
+                  />
+                </fieldset>
+              </div>
             </div>
-          </div>
-          <div className="room-automation-quick-fields">
-            <label>
-              <span>{copy.prefix}</span>
-              <input
-                type="text"
-                className="line-input"
-                maxLength={15}
-                value={draft.prefix}
-                onChange={(event) => updateDraft({ prefix: event.target.value })}
-              />
-            </label>
-            <label>
-              <span>{copy.sequence}</span>
-              <input
-                type="number"
-                className="line-input"
-                min={0}
-                max={4_294_967_295}
-                step={1}
-                value={draft.nextSequence}
-                onChange={(event) => updateDraft({ nextSequence: event.target.value })}
-              />
-            </label>
-            <label>
-              <span>{copy.width}</span>
-              <input
-                type="number"
-                className="line-input"
-                min={1}
-                max={6}
-                step={1}
-                value={draft.sequenceWidth}
-                onChange={(event) => updateDraft({ sequenceWidth: event.target.value })}
-              />
-            </label>
-            <label className="room-automation-quick-password">
-              <span>{copy.password}</span>
-              <input
-                type="password"
-                className="line-input"
-                maxLength={15}
-                placeholder={copy.passwordPlaceholder}
-                value={draft.password}
-                onChange={(event) => updateDraft({ password: event.target.value })}
-              />
-            </label>
-          </div>
 
-          </fieldset>
-          </details>
-          {error && (
-            <p className="room-automation-quick-error" role="alert">
-              <AlertCircle size={13} aria-hidden="true" />
-              <span>{error}</span>
-            </p>
-          )}
+            {error && (
+              <p className="room-automation-quick-error" role="alert">
+                <AlertCircle size={13} aria-hidden="true" />
+                <span>{error}</span>
+              </p>
+            )}
 
-          <footer className="room-automation-quick-footer">
-            <div>
-              <Button type="submit" size="sm" variant="secondary" disabled={saving || !draftDirtyRef.current}>{locale === "en-US" ? "Save" : "保存"}</Button>
-              <span className="room-quick-save-status" role="status">
-                {saving && <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />}
-                {saving ? copy.saving : locale === "en-US" ? "Saves when you leave" : "离开时自动保存"}
-              </span>
-            </div>
-            <button type="button" className="room-automation-quick-settings" disabled={saving}
-              onClick={async () => { if (await closeEditor()) onOpenSettings(); }}>
-              <Settings2 size={12} strokeWidth={1.9} aria-hidden="true" />
-              {copy.fullSettings}
-            </button>
-          </footer>
-        </form>
+            <footer className="room-automation-quick-footer">
+              <div>
+                <Button type="submit" size="sm" variant="secondary" disabled={saving || !draftDirtyRef.current}>
+                  {en ? "Save" : "保存"}
+                </Button>
+                <span className="room-quick-save-status" role="status">
+                  {saving && <LoaderCircle className="animate-spin" size={12} aria-hidden="true" />}
+                  {saving ? copy.saving : en ? "Saves when you leave" : "离开时自动保存"}
+                </span>
+              </div>
+              <button type="button" className="room-automation-quick-settings" disabled={saving}
+                onClick={async () => { if (await closeEditor()) onOpenSettings(); }}>
+                <Settings2 size={12} strokeWidth={1.9} aria-hidden="true" />
+                {copy.fullSettings}
+              </button>
+            </footer>
+          </form>
         </AnchoredPanel>
       )}
     </div>

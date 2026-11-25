@@ -68,6 +68,7 @@ const APP_COMMANDS: &[&str] = &[
     "set_account_window_position",
     "update_account_positions",
     "get_game_layout_monitors",
+    "create_game_window_layout",
     "get_game_layout_account_order",
     "capture_game_window_layout",
     "capture_account_window_position",
