@@ -524,6 +524,11 @@ export function drawBattleReport(canvas: HTMLCanvasElement, snapshot: BattleRepo
   ctx.save(); for (let index = 0; index < 900; index++) { const shade = random() > .5 ? 74 : 255; ctx.fillStyle = `rgba(${shade},${shade},${shade},${.009 + random() * .012})`; ctx.fillRect(Math.floor(random() * width), Math.floor(random() * canvas.height), 1, 1); } ctx.restore();
   ctx.fillStyle = clay; ctx.beginPath(); ctx.arc(84, 70, 7, 0, Math.PI * 2); ctx.fill(); canvasText(ctx, "D2RHub", 104, 78, 220, 22, 780, ink); canvasText(ctx, "本地声纹战绩", 226, 77, 200, 14, 600, muted); canvasText(ctx, snapshot.range.label, 1004, 77, 360, 15, 650, muted, "right"); rule(ctx, 105, 76, 928, reportRule);
   canvasText(ctx, snapshot.kicker, 76, 151, 300, 13, 760, clay); canvasText(ctx, snapshot.title, 76, 218, 600, 62, 700, ink, "left", true); canvasText(ctx, snapshot.headline, 76, 265, 860, 25, 650, snapshot.drops[0]?.rune >= 24 ? clayDeep : ink); rule(ctx, 302, 76, 928, reportRule);
+  if (!snapshot.summary.runs && !snapshot.sceneVisits.length) {
+    canvasText(ctx, "当前范围没有战斗记录", 76, 414, 880, 34, 650, ink, "left", true);
+    canvasText(ctx, "更换日期或角色后再生成战报。", 76, 460, 880, 20, 500, muted);
+    return;
+  }
   const metricWidth = 928 / Math.max(1, snapshot.metrics.length); snapshot.metrics.forEach((metric, index) => { const x = 76 + index * metricWidth; const color = metric.tone === "violet" ? violet : metric.tone === "clay" ? clayDeep : ink; if (index) { ctx.fillStyle = reportRule; ctx.fillRect(x - 20, 330, 1, 110); } canvasText(ctx, metric.label, x, 346, metricWidth - 28, 14, 650, metric.tone === "violet" ? violet : muted); canvasText(ctx, metric.value, x, 399, metricWidth - 28, 39, 700, color, "left", true); canvasText(ctx, metric.note, x, 434, metricWidth - 28, 13, 580, muted); });
   rule(ctx, 476, 76, 928, reportRule); sectionTitle(ctx, snapshot.chartTitle, snapshot.chartSubtitle, 76, 530, 928, ink, muted);
   const chartX = 76, chartY = 573, chartWidth = 928, max = Math.max(1, ...snapshot.series.map((item) => item.value)), gap = 16, barWidth = (chartWidth - gap * (snapshot.series.length - 1)) / Math.max(1, snapshot.series.length); ctx.fillStyle = reportRule; ctx.fillRect(chartX, chartY + 99, chartWidth, 1);
@@ -541,7 +546,7 @@ export function drawBattleReport(canvas: HTMLCanvasElement, snapshot: BattleRepo
     return group ? `${name} ${group.summary.runs} 场 · 场均 ${formatDuration(group.summary.average)}` : `${name} 0 场`;
   });
   canvasText(ctx, visits.join("　"), 104, 1232, 848, 17, 600, muted);
-  canvasText(ctx, "每一份收获，都记得。", 76, 1305, 300, 17, 700, ink); const generated = new Date(); const stamp = `D2RHub · 本地声纹统计 · ${generated.getFullYear()}.${String(generated.getMonth() + 1).padStart(2, "0")}.${String(generated.getDate()).padStart(2, "0")}`; canvasText(ctx, stamp, 1004, 1305, 520, 13, 580, muted, "right");
+  const generated = new Date(); const stamp = `D2RHub · 本地声纹统计 · ${generated.getFullYear()}.${String(generated.getMonth() + 1).padStart(2, "0")}.${String(generated.getDate()).padStart(2, "0")}`; canvasText(ctx, stamp, 1004, 1305, 520, 13, 580, muted, "right");
 }
 
 export async function copyBattleReportToClipboard(data: BattleReportStatsData, preferences: StatsPagePreferences = {}) {

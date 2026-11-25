@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { invokeCommand, listenEvent } from "../platform/tauri";
 import { LogicalSize } from "@tauri-apps/api/window";
 import { useLaunch } from "../store/launch";
@@ -92,6 +92,7 @@ export function useAutoUpdate(
   config: GlobalConfig | null,
   onUpdateAvailable: (version: string, url: string) => void
 ) {
+  const [modNotice, setModNotice] = useState(false);
   const checking = useRef(false);
   const attempted = useRef(false);
   const onAvailable = useRef(onUpdateAvailable);
@@ -112,7 +113,7 @@ export function useAutoUpdate(
           } else localStorage.removeItem("d2rhub-update-available-version");
         } else {
           const notices = await invokeCommand<string[]>("check_mod_resource_updates");
-          if (notices.length) showToast("info", `可更新：${notices.join("、")}。请在 Mod 管理 → 下载与更新中更新。`);
+          if (notices.length) setModNotice(true);
         }
         // A network failure must not suppress the next startup's check.
         localStorage.setItem(key, today);
@@ -122,7 +123,7 @@ export function useAutoUpdate(
       const checkModules = async () => {
         const pool = await invokeCommand<ModCapsulePool>("get_mod_capsule_pool");
         const outdated = pool.capsules.filter(mod => mod.update_required);
-        if (outdated.length) showToast("info", `Mod 模块可更新：${outdated.map(mod => `${mod.edition === "CN" ? "国服" : "国际服"} ${mod.name}`).join("、")}。请在 Mod 管理中更新对应 Mod。`);
+        if (outdated.length) setModNotice(true);
       };
       await Promise.allSettled([checkModules(), check("software"), check("resources")]);
       checking.current = false;
@@ -130,6 +131,7 @@ export function useAutoUpdate(
     const timer = setTimeout(() => void run(), 3000);
     return () => clearTimeout(timer);
   }, [loading, config?.first_run_complete, config?.enable_auto_update]);
+  return { modNotice, clearModNotice: () => setModNotice(false) };
 }
 
 export function useFirstLaunch(

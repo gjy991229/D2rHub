@@ -133,7 +133,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
               </select>
             </label>}
           </div>
-          <div className="mod-capsule-pool-summary">
+          {(catalogLoading || catalogError || readyCapsules.length > 0 || operationKind !== "create") && <div className="mod-capsule-pool-summary">
             <div>
               <Layers3 size={14} aria-hidden="true" />
               <span>
@@ -182,7 +182,7 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                 ))}
               </div>
             )}
-          </div>
+          </div>}
         </div>
       </section>
 
@@ -403,6 +403,11 @@ export function ModProcessingPanel({ workflow }: { workflow: ModWorkflowControll
                   {showNameError && <small>{outputNameError}</small>}
                 </label>
               )}
+              <dl className="mod-output-summary">
+                <div><dt>{isEnglish ? "Source" : "来源"}</dt><dd>{isAugment ? targetModName : sourceName || (isEnglish ? "Original game" : "原版游戏")}</dd></div>
+                <div><dt>{isEnglish ? "Output" : "输出"}</dt><dd>{(isAugment ? targetModName : outputName.trim()) || (isEnglish ? "Enter a new name" : "请填写新名称")}</dd></div>
+                <div><dt>{isEnglish ? "Applies to" : "应用位置"}</dt><dd>{draft.installationOnly ? (isEnglish ? "Game directory" : "游戏目录") : trackingTarget.valid ? trackingTarget.account.display_name || trackingTarget.account.id : "—"}</dd></div>
+              </dl>
               {preparing && prepareProgress && (
                 <div className="mod-processing-progress" aria-live="polite">
                   <div><span>{prepareProgress.message}</span><strong>{Math.round(prepareProgress.percent)}%</strong></div>

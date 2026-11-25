@@ -13,7 +13,7 @@ const keyedMessages = {
   "account.selection.uncertain": { zh: "状态待确认", en: "Checking account status" },
   "account.selection.clear": { zh: "取消选择", en: "Clear selection" },
   "account.selection.clearHint": { zh: "取消选择（Esc）", en: "Clear selection (Esc)" },
-  "account.close.all": { zh: "关闭全部", en: "Close all" },
+  "account.close.all": { zh: "关闭所有游戏", en: "Close all games" },
   "account.close.selected": { zh: "关闭选中 ({count})", en: "Close selected ({count})" },
   "account.close.allHint": { zh: "关闭当前系统内所有 D2R.exe 进程，包含未由 Hub 启动的游戏", en: "Close every D2R.exe process on this system, including games started outside Hub" },
   "account.close.selectedHint": { zh: "仅关闭选中账号的游戏进程", en: "Close only the selected accounts' game processes" },

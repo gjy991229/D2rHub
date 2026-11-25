@@ -1,6 +1,6 @@
 import { useI18n } from "../../i18n";
-import React from "react";
-import { Zap } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { LayoutGrid, Rows3, Zap } from "lucide-react";
 import type { AccountMeta } from "../../store/types";
 import {
   closestCenter,
@@ -21,14 +21,26 @@ import {
 
 interface AccountGridProps {
   accounts: AccountMeta[];
-  children: React.ReactNode;
+  children: (account: AccountMeta) => ReactNode;
+  issue: (account: AccountMeta) => string | null | undefined;
   isSelectionMode?: boolean;
   onReorder: (accountIds: string[]) => void | Promise<void>;
 }
 
-export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: AccountGridProps) {
+export function AccountGrid({ accounts, children, issue, isSelectionMode, onReorder }: AccountGridProps) {
   const en = useI18n().language === "en-US";
   const running = accounts.filter(account => account.is_running).length;
+  const [view, setView] = useState<"list" | "cards">(() => {
+    try { return localStorage.getItem("hub-account-view") === "list" ? "list" : "cards"; }
+    catch { return "cards"; }
+  });
+  const [filter, setFilter] = useState<"all" | "running" | "attention">("all");
+  const attention = accounts.filter(account => !!issue(account));
+  const visible = filter === "all" ? accounts : filter === "running" ? accounts.filter(account => account.is_running) : attention;
+  const changeView = (next: typeof view) => {
+    setView(next);
+    try { localStorage.setItem("hub-account-view", next); } catch { /* Session preference still applies. */ }
+  };
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 180, tolerance: 8 } }),
@@ -37,22 +49,37 @@ export function AccountGrid({ accounts, children, isSelectionMode, onReorder }: 
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (isSelectionMode || !over || active.id === over.id) return;
-    const oldIndex = accounts.findIndex(account => account.id === active.id);
-    const newIndex = accounts.findIndex(account => account.id === over.id);
+    const oldIndex = visible.findIndex(account => account.id === active.id);
+    const newIndex = visible.findIndex(account => account.id === over.id);
     if (oldIndex < 0 || newIndex < 0) return;
-    void onReorder(arrayMove(accounts, oldIndex, newIndex).map(account => account.id));
+    const reordered = arrayMove(visible, oldIndex, newIndex);
+    const visibleIds = new Set(visible.map(account => account.id));
+    let next = 0;
+    void onReorder(accounts.map(account => visibleIds.has(account.id) ? reordered[next++].id : account.id));
   };
 
   return (
     <div className="dashboard-accounts flex-1 overflow-auto px-5 pb-5">
       <header className="account-grid-heading">
         <h2>{en ? "Accounts" : "账号"}</h2>
-        <span>{en ? `${running} running · ${accounts.length} total` : `${running} 个运行中 · 共 ${accounts.length} 个`}</span>
+        <div className="roster-filters" role="group" aria-label={en ? "Filter accounts" : "筛选账号"}>
+          {([["all", en ? "All" : "全部", accounts.length], ["running", en ? "Running" : "运行中", running],
+            ["attention", en ? "Needs setup" : "待处理", attention.length]] as const).map(([id, label, count]) =>
+            <button key={id} type="button" aria-pressed={filter === id} onClick={() => setFilter(id)}>{label} <span>{count}</span></button>)}
+        </div>
+        <div className="roster-views" role="group" aria-label={en ? "Account view" : "账号视图"}>
+          {([["cards", en ? "Cards" : "卡片", LayoutGrid], ["list", en ? "List" : "列表", Rows3]] as const).map(([id,label,Icon]) =>
+            <button key={id} type="button" title={label} aria-label={label} aria-pressed={view === id} onClick={() => changeView(id)}><Icon size={15} /></button>)}
+        </div>
       </header>
+      {view === "list" && visible.length > 0 && <div className="roster-columns" aria-hidden="true">
+        {(en ? ["Account", "Region", "Active Mod", "Status", "Actions"] : ["账号名称", "区服", "当前 Mod", "状态", "操作"]).map(label => <span key={label}>{label}</span>)}
+      </div>}
+      {!visible.length && <p className="roster-empty" role="status">{en ? "No accounts match this filter." : "当前筛选下没有账号。"}</p>}
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={accounts.map(account => account.id)} strategy={rectSortingStrategy}>
-          <div className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
-            {children}
+        <SortableContext items={visible.map(account => account.id)} strategy={rectSortingStrategy}>
+          <div data-view={view} className={`spatial-grid ${isSelectionMode ? "scheme-spatial-grid" : ""}`}>
+            {visible.map(children)}
           </div>
         </SortableContext>
       </DndContext>

@@ -26,6 +26,7 @@ interface AccountRegionSwitcherProps {
   accountId: string;
   currentRegion: string | null | undefined;
   isRunning: boolean;
+  english?: boolean;
 }
 
 interface MenuPosition {
@@ -42,7 +43,7 @@ const VIEWPORT_PADDING = 8;
 export function AccountRegionSwitcher({
   accountId,
   currentRegion,
-  isRunning,
+  isRunning, english = false,
 }: AccountRegionSwitcherProps) {
   const updateAccountRegion = useAccounts((state) => state.updateAccountRegion);
   const [open, setOpen] = useState(false);
@@ -53,7 +54,7 @@ export function AccountRegionSwitcher({
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const menuId = `account-region-${useId().replaceAll(":", "")}`;
   const currentCanonicalRegion = normalizeInternationalAccountRegion(currentRegion);
-  const currentLabel = accountRegionLabel(currentRegion);
+  const currentLabel = accountRegionLabel(currentRegion, english);
   const menuReady = menuPosition !== null;
 
   const updateMenuPosition = useCallback(() => {
@@ -176,12 +177,12 @@ export function AccountRegionSwitcher({
       closeMenu(true);
       showToast(
         "success",
-        isRunning
+        english ? `${accountRegionLabel(region, true)} · applies on next launch` : isRunning
           ? `已切换至${ACCOUNT_REGION_LABELS[region]}，当前游戏不变，下次启动生效`
           : `已切换至${ACCOUNT_REGION_LABELS[region]}，下次启动生效`,
       );
     } catch (error) {
-      showToast("error", `切换服务器失败: ${error}`);
+      showToast("error", `${english ? "Could not change server" : "切换服务器失败"}: ${error}`);
     } finally {
       setSwitchingRegion(null);
     }
@@ -200,8 +201,8 @@ export function AccountRegionSwitcher({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        aria-label={`${currentLabel}，切换国际服服务器`}
-        title="复用现有 Token，切换下次启动服务器"
+        aria-label={english ? `${currentLabel}, change server` : `${currentLabel}，切换国际服服务器`}
+        title={english ? "Change server for the next launch" : "复用现有 Token，切换下次启动服务器"}
         onPointerDown={stopPointerPropagation}
         onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
@@ -221,12 +222,12 @@ export function AccountRegionSwitcher({
           onClick={(event) => event.stopPropagation()}
         >
           <div className="account-region-menu-header">
-            <span>切换服务器</span>
-            <span>Token 不变</span>
+            <span>{english ? "Change server" : "切换服务器"}</span>
+            <span>{english ? "Keep token" : "Token 不变"}</span>
           </div>
           <div
             role="listbox"
-            aria-label="选择国际服服务器"
+            aria-label={english ? "Select server" : "选择国际服服务器"}
             aria-busy={switchingRegion !== null}
             onKeyDown={handleListKeyDown}
           >
@@ -248,7 +249,7 @@ export function AccountRegionSwitcher({
                     void switchRegion(region);
                   }}
                 >
-                  <span className="account-region-option-label">{ACCOUNT_REGION_LABELS[region]}</span>
+                  <span className="account-region-option-label">{accountRegionLabel(region, english)}</span>
                   <span className="account-region-option-code">{region}</span>
                   <span className="account-region-option-state" aria-hidden="true">
                     {loading

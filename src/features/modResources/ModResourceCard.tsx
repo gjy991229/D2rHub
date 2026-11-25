@@ -64,7 +64,7 @@ export function ModResourceCard({ asset, state, controller, installed, en }: Pro
     {!location && <p className="resource-note resource-attention">{en ? "Configure a game directory first" : "请先在运行环境中设置游戏目录"}</p>}
     </div>
     <div className="resource-actions">
-      <Button size="sm" variant="primary" disabled={!!blocked} onClick={() => void controller.install(asset, false)}>
+      <Button size="sm" variant="secondary" disabled={!!blocked} onClick={() => void controller.install(asset, false)}>
         <Download size={13} />{actionLabel}
       </Button>
       <Button size="sm" variant="ghost" disabled={!location} onClick={() => void controller.openFolder(asset)}><FolderOpen size={12} />{en ? "Open folder" : "打开目录"}</Button>

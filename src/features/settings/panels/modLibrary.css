@@ -209,3 +209,7 @@
 .mod-feature-options input:disabled { opacity: .55; }
 
 .mod-entry-actions { display:flex; align-items:center; gap:4px; flex-wrap:wrap; }
+
+.mod-output-summary { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(10rem,100%),1fr)); gap: 8px 16px; border-block: 1px solid var(--border-default); padding: 10px 0; }
+.mod-output-summary dt { color: var(--text-muted); font-size: var(--text-2xs); }
+.mod-output-summary dd { margin: 2px 0 0; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }

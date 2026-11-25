@@ -1916,17 +1916,6 @@ export function Overlay() {
 
         {isStatsOverlay && (
           <>
-        {/* 场景名称 — 右上角小字 */}
-        <div className="flex justify-end px-1">
-          <span
-            className={`text-sm font-medium truncate max-w-[180px] text-right ${
-              stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-secondary"
-            }`}
-          >
-            {sceneLabel}
-          </span>
-        </div>
-
         {/* 计时器 — 大字居中，无背景容器 */}
         <div
           className={`overlay-timer-action flex flex-col items-center rounded-lg py-1.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent focus-visible:outline-offset-1 ${
@@ -1942,6 +1931,8 @@ export function Overlay() {
           onDoubleClick={handleTimerDoubleClick}
           onKeyDown={handleTimerKeyDown}
         >
+          <span className={`mb-1 max-w-full truncate text-xs font-semibold ${stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-primary"}`}>{sceneLabel}</span>
+          <span className="text-2xs text-text-muted">{showingVisit ? visitLabel : useEnglish ? "Combat time" : "战斗耗时"}</span>
           <span
             className="text-xl font-mono font-bold tabular-nums leading-none select-none"
             style={{
@@ -1949,7 +1940,7 @@ export function Overlay() {
               transition: "color 180ms ease-out",
             }}
           >
-            {elapsedDisplay}
+            {showingVisit ? sceneElapsed.value : elapsedDisplay}
           </span>
           <span
             className="text-xs font-mono mt-0.5 select-none"
@@ -1957,10 +1948,10 @@ export function Overlay() {
               color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
             }}
           >
-            {formattedTime.unit}
+            {showingVisit ? sceneElapsed.unit : formattedTime.unit}
           </span>
           {showingVisit && <span className="mt-1.5 text-xs font-mono tabular-nums text-accent">
-            {visitLabel} {sceneElapsed.value} {sceneElapsed.unit}
+            {useEnglish ? "Total combat" : "累计战斗"} {elapsedDisplay} {formattedTime.unit}
           </span>}
           {(showingVisit || (stats.currentRunKey !== "activity" && avgTime !== null)) && (
             <div className="flex flex-col items-center mt-1.5 gap-0.5">

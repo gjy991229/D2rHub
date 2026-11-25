@@ -38,9 +38,10 @@ export function normalizeInternationalAccountRegion(
   return normalized && normalized !== "CN" ? normalized : null;
 }
 
-export function accountRegionLabel(region: string | null | undefined): string {
+export function accountRegionLabel(region: string | null | undefined, english = false): string {
   const normalized = normalizeAccountRegion(region);
-  return normalized ? ACCOUNT_REGION_LABELS[normalized] : "国服";
+  if (english) return ({ CN: "China", KR: "Asia", NA: "Americas", EU: "Europe" } as const)[normalized ?? "CN"];
+  return ACCOUNT_REGION_LABELS[normalized ?? "CN"];
 }
 
 export function isCnRegion(region: string | null | undefined): boolean {

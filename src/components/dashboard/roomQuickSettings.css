@@ -21,3 +21,11 @@
 .room-quick-edit-fields .scheme-account-picker label, .recognition-quick-content .scheme-account-picker label { overflow-wrap: anywhere; }
 .room-quick-edit-fields .scheme-account-picker input, .recognition-quick-content .scheme-account-picker input { flex-shrink: 0; accent-color: var(--accent); }
 .room-quick-edit-fields .scheme-account-picker label:has(input:focus-visible), .recognition-quick-content .scheme-account-picker label:has(input:focus-visible) { outline: 2px solid var(--border-focus); outline-offset: 2px; }
+
+.room-quick-summary { display: grid; gap: 6px; margin: 12px 0; }
+.room-quick-summary > div { display: grid; grid-template-columns: 5em minmax(0,1fr); gap: 12px; align-items: baseline; }
+.room-quick-summary dt { color: var(--text-muted); font-size: var(--text-2xs); }
+.room-quick-summary dd { margin: 0; font-size: var(--text-xs); overflow-wrap: anywhere; }
+.room-quick-options { border-block: 1px solid var(--border-default); margin-top: 12px; }
+.room-quick-options summary { padding: 10px 0; cursor: pointer; color: var(--text-secondary); font-size: var(--text-xs); }
+.room-quick-options[open] { padding-bottom: 12px; }

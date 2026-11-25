@@ -19,9 +19,9 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
     ? {
         title: "Choose how you use D2RHub",
         description: "This only changes which features are visible and running. Your settings and data are never deleted.",
-        minimal: "Pure mode",
+        minimal: "Accounts and Mods",
         minimalDetail: "Launch multiple accounts and manage Mods. Overlays, recognition, and room automation stay off.",
-        normal: "Normal mode",
+        normal: "Accounts, tracking and room tools",
         normalDetail: "Keep the current complete experience and resume previously enabled modules.",
         affected: `${installedCount} configured module${installedCount === 1 ? "" : "s"} will be kept for normal mode.`,
         changeLater: "You can change this later in Settings → Maintenance & Transfer.",
@@ -31,9 +31,9 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
     : {
         title: "选择 D2RHub 使用模式",
         description: "模式只改变可见功能和实际运行范围，不会删除任何设置或数据。",
-        minimal: "纯净模式",
+        minimal: "仅多开与 Mod",
         minimalDetail: "保留多账号启动与 Mod 管理，关闭悬浮窗、识别统计和自动跟房。",
-        normal: "正常模式",
+        normal: "多开、识别与跟房",
         normalDetail: "保留当前完整功能，并按原配置恢复已启用模块。",
         affected: `现有 ${installedCount} 个模块配置会为正常模式完整保留。`,
         changeLater: "之后可在“设置 → 维护与迁移”中随时切换。",

@@ -7,7 +7,7 @@ use crate::commands::account::{AccountManager, AccountMeta};
 use crate::domain::account::WindowPositionPreset;
 use crate::domain::config::GlobalConfig;
 use crate::domain::window_layout::{
-    window_title_key, LayoutMonitor, LayoutRect, LayoutSlot, LayoutTarget, WindowFrameProfile, WindowLayout,
+    window_title_key, LayoutMonitor, LayoutSlot, LayoutTarget, WindowFrameProfile, WindowLayout,
 };
 use crate::error::AppError;
 use crate::infrastructure::game_layout_windows::{self as windows, GameLayoutWindow};
@@ -583,6 +583,7 @@ pub async fn restore_game_window_layout(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::window_layout::LayoutRect;
 
     #[test]
     fn rename_after_preflight_only_invalidates_title_based_placement() {

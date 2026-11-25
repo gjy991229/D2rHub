@@ -352,7 +352,7 @@ function App() {
   // Execute App Side Effects
   useBongoCatWindow(startupServicesBlocked || !optionalFeaturesAvailable, config);
   useLaunchEvents(config, optionalFeaturesAvailable, miniMode.mini);
-  useAutoUpdate(startupServicesBlocked, config, (version, url) => {
+  const { modNotice, clearModNotice } = useAutoUpdate(startupServicesBlocked, config, (version, url) => {
     setAutoUpdateVersion(version);
     setAutoUpdateUrl(url);
     setShowAutoUpdateConfirm(true);
@@ -629,6 +629,7 @@ function App() {
           }}
         >
           <MainActionBar
+            modNotice={modNotice} onReadModNotice={clearModNotice}
             batchSelection={batch.selection}
             batchSelectableIds={batch.selectableIds}
             onSelectAllBatch={batch.selectAll}
@@ -724,10 +725,11 @@ function App() {
             ) : (
               <AccountGrid
                 accounts={sortedAccounts}
+                issue={batch.issue}
                 isSelectionMode={false}
                 onReorder={reorderAccounts}
               >
-                {sortedAccounts.map(a => {
+                {a => {
                   const schemeMember = launchGroupDraft?.members.find(member => member.account_id === a.id);
                   return <SortableAccountCard
                     key={a.id}
@@ -770,7 +772,7 @@ function App() {
                     onReinitialize={setReinitializeAccount}
                     config={config}
                   />;
-                })}
+                }}
               </AccountGrid>
             )}
 

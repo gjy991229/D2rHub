@@ -314,17 +314,11 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         <div className="flex items-center justify-center gap-2 mb-5">
           {steps.map((s, i) => (
             <React.Fragment key={i}>
-              <button onClick={()=>setCurrentStep(i)}
-                className="w-8 h-8 rounded-[12px] flex items-center justify-center text-xs font-semibold
-                  transition-all duration-200 ease-out active:scale-[0.97]"
-                style={i === currentStep
-                  ? { background: "var(--cta-bg, var(--accent))", color: "var(--cta-text, #fff)" }
-                  : s.value
-                    ? { background: "rgba(52,199,89,0.10)", color: "var(--success)", border: "1px solid rgba(52,199,89,0.16)" }
-                    : { background: "var(--surface-hover)", color: "var(--text-muted)", border: "1px solid var(--border-default)" }
-                }>{s.value ? <Check size={13} /> : i+1}</button>
+              <button onClick={()=>setCurrentStep(i)} aria-label={`${i + 1}. ${s.title}`} title={s.title}
+                aria-current={i === currentStep ? "step" : undefined}
+                className="setup-step-index">{i + 1}</button>
               {i<steps.length-1 && (
-                <div className="w-5 h-px" style={{ background: s.value ? "rgba(52,199,89,0.20)" : "var(--border-default)" }}/>
+                <div className="w-5 h-px" style={{ background: "var(--border-default)" }}/>
               )}
             </React.Fragment>
           ))}

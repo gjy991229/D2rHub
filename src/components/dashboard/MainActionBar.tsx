@@ -17,6 +17,8 @@ import type { BatchMode } from "../../hooks/useAccountBatch";
 import { WindowLayoutQuickControls } from "../../features/windowLayouts/WindowLayoutQuickControls";
 
 interface MainActionBarProps {
+  modNotice?: boolean;
+  onReadModNotice?: () => void;
   batchSelection?: BatchSelection;
   batchSelectableIds?: Record<Exclude<BatchMode, null>, string[]>;
   onSelectAllBatch?: (mode: Exclude<BatchMode, null>) => void;
@@ -40,7 +42,7 @@ interface MainActionBarProps {
 }
 
 export function MainActionBar({
-  batchSelection, batchBusy, batchUncertain,
+  modNotice, onReadModNotice, batchSelection, batchBusy, batchUncertain,
   batchSelectableIds, onSelectAllBatch, onClearBatch,
   launching,
   launchableAccountIds,
@@ -120,9 +122,10 @@ export function MainActionBar({
           {onOpenWindowLayouts && <WindowLayoutQuickControls onOpenSettings={onOpenWindowLayouts} disabled={launching || !!batchBusy || !!draft} />}
         </div>
         <div className="dashboard-manage-controls" role="group" aria-label={config?.app_language === "en-US" ? "Management" : "管理工具"}>
-        <button type="button" className="control-btn" onClick={onOpenModManager}>
+        <button type="button" className="control-btn" onClick={() => { onReadModNotice?.(); onOpenModManager(); }}>
           <PackageOpen size={13} strokeWidth={1.9} aria-hidden="true" />
-          Mod 管理
+          {config?.app_language === "en-US" ? "Manage Mods" : "Mod 管理"}
+          {modNotice && <small className="mod-update-hint">{config?.app_language === "en-US" ? "Update available" : "可更新"}</small>}
         </button>
         <LaunchGroupMenu
           count={config?.launch_groups.length ?? 0}
@@ -132,7 +135,7 @@ export function MainActionBar({
         />
           <button onClick={onAddAccount} className="control-btn add-account-cta">
             <UserPlus size={13} strokeWidth={1.9} />
-            添加账号
+            {config?.app_language === "en-US" ? "Add account" : "添加账号"}
           </button>
         </div>
         </div>

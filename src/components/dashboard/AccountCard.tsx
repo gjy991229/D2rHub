@@ -394,7 +394,7 @@ export function AccountGridItem({
   };
 
   const lastLaunchText = account.last_launched_at ? fmtRelative(account.last_launched_at) : null;
-  const regionLabel = accountRegionLabel(account.region);
+  const regionLabel = accountRegionLabel(account.region, english);
   const tokenMigrationRequired = requiresTokenMigration(account.auth_mode, account.region, config);
   const canSwitchInternationalRegion = account.auth_mode === "token"
     && isInternationalRegion(account.region);
@@ -405,8 +405,8 @@ export function AccountGridItem({
     ? schemeMember?.fps ?? drawer.fps
     : drawer.fps;
   const configModeLabel = isSelectionMode
-    ? "方案画质"
-    : account.has_customized_settings ? "独立配置" : "系统配置";
+    ? (english ? "Scheme settings" : "方案画质")
+    : account.has_customized_settings ? (english ? "Custom settings" : "独立配置") : (english ? "System settings" : "系统配置");
   const drawerExpanded = isSelectionMode ? !!selected : expanded;
 
   // ── 预置选项 ──
@@ -718,18 +718,18 @@ export function AccountGridItem({
             <AccountRegionSwitcher
               accountId={account.id}
               currentRegion={account.region}
-              isRunning={account.is_running}
+              isRunning={account.is_running} english={english}
             />
           ) : (
-            <span className="hig-badge hig-badge-neutral">{regionLabel}</span>
+            <span className="roster-region hig-badge hig-badge-neutral">{regionLabel}</span>
           )}
           {account.auth_mode === "token" ? (
-            <span className="hig-badge hig-badge-violet">网页 Token</span>
+            <span className="hig-badge hig-badge-violet">{english ? "Web Token" : "网页 Token"}</span>
           ) : (
-            <span className="hig-badge hig-badge-blue">战网认证</span>
+            <span className="hig-badge hig-badge-blue">{english ? "Battle.net" : "战网认证"}</span>
           )}
-          {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">需迁移 Token</span>}
-          {!account.initialized && <span className="hig-badge hig-badge-red">未初始化</span>}
+          {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">{english ? "Token migration" : "需迁移 Token"}</span>}
+          {!account.initialized && <span className="hig-badge hig-badge-red">{english ? "Not initialized" : "未初始化"}</span>}
           {account.initialized && (
             <span className={`hig-badge config-chip ${isSelectionMode
               ? "hig-badge-blue"
@@ -811,6 +811,7 @@ export function AccountGridItem({
       {isSelectionMode ? quickFields : (
         <AnchoredPanel open={expanded} anchor={quickAnchor} title={display + (english ? ' · Quick settings' : ' · 快捷配置')}
           onClose={() => void closeQuick()} closeLabel={english ? 'Close quick settings' : '关闭快捷配置'} className="account-quick-popover" width={460}>
+          <p className="quick-account-context">{regionLabel} · {account.auth_mode === "token" ? "Web Token" : "Battle.net"} · {configModeLabel}</p>
           {quickFields}
           <p className="quick-save-note" role="status">{quickClosing ? (english ? 'Saving changes…' : '正在保存更改…') : drawerLoadError ? (english ? 'Changes are retained. Resolve the error before closing.' : '编辑内容已保留，请处理错误后再关闭。') : (english ? 'Changes save automatically · Apply on next launch' : '更改自动保存 · 下次启动生效')}</p>
         </AnchoredPanel>

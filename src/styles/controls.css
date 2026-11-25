@@ -74,3 +74,6 @@
 .section-nav > button:is([aria-selected=true], [aria-pressed=true]) { color: var(--text-primary); border-bottom-color: currentColor; font-weight: 600; }
 .section-nav > button:focus-visible { outline: 2px solid var(--border-focus); outline-offset: -2px; }
 .mod-library-navigation > .section-nav { border-bottom: 0; }
+
+.setup-step-index { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; background: var(--surface-control); border: 1px solid var(--border-default); color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.setup-step-index[aria-current=step] { background: var(--cta-bg); color: var(--cta-text); }

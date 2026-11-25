@@ -323,3 +323,21 @@
   --toast-info-border: color-mix(in srgb, var(--info) 28%, transparent);
   --toast-info-glow: transparent;
 }
+
+/* Neutral workspace surfaces. Named color themes keep their own palettes. */
+[data-theme="light"] {
+  --surface-base-rgb: 244 244 239; --surface-base: #f4f4ef;
+  --surface-card-rgb: 253 252 248; --surface-card: #fdfcf8;
+  --surface-control: #eeeee8; --surface-modal: #fdfcf8;
+  --surface-hover: #eaece4; --surface-active: #e3e6dc;
+  --text-primary: #242720; --text-secondary: #555b4e; --text-muted: #64695e;
+  --border-default: #d9dcd1; --border-strong: #b4baac;
+  --cta-bg: #2b3029; --cta-text: #fff;
+}
+[data-theme="onyx"] {
+  --surface-base-rgb: 22 25 22; --surface-base: #161916;
+  --surface-card-rgb: 31 35 31; --surface-card: #1f231f;
+  --surface-control: #292e28; --surface-modal: #1f231f;
+  --surface-hover: #2a3029; --surface-active: #343c32;
+  --border-default: #3b4239; --border-strong: #60695c;
+}

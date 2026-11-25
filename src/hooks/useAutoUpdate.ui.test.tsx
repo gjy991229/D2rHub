@@ -26,18 +26,21 @@ describe("daily update checks",()=>{
     localStorage.setItem("d2rhub-v2-software-check-date",today);
     localStorage.setItem("d2rhub-v2-resources-check-date",today);
     invoke.mockResolvedValue({capsules:[{edition:"CN",name:"old-audio",update_required:true},{edition:"CN",name:"current",update_required:false}]});
-    renderHook(()=>useAutoUpdate(false,config,vi.fn()));
+    const {result}=renderHook(()=>useAutoUpdate(false,config,vi.fn()));
     await act(()=>vi.advanceTimersByTimeAsync(3000));
     expect(invoke).toHaveBeenCalledTimes(1);
     expect(invoke).toHaveBeenCalledWith("get_mod_capsule_pool");
-    expect(showToast).toHaveBeenCalledWith("info",expect.stringContaining("国服 old-audio"));
+    expect(result.current.modNotice).toBe(true);
+    act(() => result.current.clearModNotice());
+    expect(result.current.modNotice).toBe(false);
     expect(showToast).not.toHaveBeenCalledWith("info",expect.stringContaining("current"));
   });
   it("reports local module updates when online checks fail",async()=>{
     invoke.mockImplementation(async cmd=>{if(cmd==="get_mod_capsule_pool")return {capsules:[{edition:"Global",name:"old",update_required:true}]};throw new Error("offline");});
-    renderHook(()=>useAutoUpdate(false,config,vi.fn()));
+    const {result}=renderHook(()=>useAutoUpdate(false,config,vi.fn()));
     await act(()=>vi.advanceTimersByTimeAsync(3000));
-    expect(showToast).toHaveBeenCalledWith("info",expect.stringContaining("国际服 old"));
+    expect(result.current.modNotice).toBe(true);
+    expect(showToast).not.toHaveBeenCalled();
   });
   it("does not notify for current modules",async()=>{
     invoke.mockImplementation(async cmd=>cmd==="get_mod_capsule_pool"?{capsules:[{update_required:false}]}:cmd==="check_software_update"?{available:false}:[]);

@@ -590,3 +590,63 @@
 }
 :root[data-theme] .account-status-control:has([data-running="true"]) .account-status-label { color: var(--success); }
 :root[data-theme] .account-status-control:has([data-error="true"]) .account-status-label { color: var(--error); }
+
+/* The roster shares its column tracks with the heading and keeps the card controls live. */
+.dashboard-accounts { --roster-tracks: minmax(120px, 1.35fr) minmax(54px, .45fr) minmax(96px, .85fr) minmax(98px, .8fr) calc(165px * var(--font-scale)); }
+.account-grid-heading { align-items: center; gap: 10px 18px; }
+.roster-filters, .roster-views { display: flex; align-items: center; gap: 3px; }
+.roster-filters button, .roster-views button { padding: 4px 8px; border-radius: 5px; color: var(--text-muted); font-size: var(--text-2xs); min-height: 30px; }
+.roster-filters button span { margin-inline-start: 3px; font-variant-numeric: tabular-nums; }
+.roster-filters button[aria-pressed=true], .roster-views button[aria-pressed=true] { color: var(--text-primary); background: var(--surface-active); font-weight: 600; }
+.roster-views { margin-inline-start: auto; }
+.roster-views button { display: grid; place-items: center; }
+.roster-filters button:focus-visible, .roster-views button:focus-visible { outline: 2px solid var(--border-focus); }
+.roster-empty, .quick-account-context { color: var(--text-secondary); font-size: var(--text-xs); }
+.roster-empty { padding: 24px 8px; }
+.roster-columns { display: grid; grid-template-columns: var(--roster-tracks); align-items: center; gap: 10px; padding: 8px 14px; font-size: var(--text-2xs); color: var(--text-secondary); border-bottom: 1px solid var(--border-strong); }
+.roster-columns span:last-child { text-align: end; }
+:root[data-theme] .dashboard-surface .spatial-grid[data-view=list] { display: block; }
+:root[data-theme] .dashboard-surface [data-view=list] > * { max-width: none; }
+:root[data-theme] .dashboard-surface [data-view=list] .account-tile { border: 0; border-bottom: 1px solid var(--border-default); border-radius: 0; background: transparent; }
+:root[data-theme] .dashboard-surface [data-view=list] .account-tile:hover { background: var(--surface-hover); }
+:root[data-theme] .dashboard-surface [data-view=list] .account-tile[data-batch-selected=true] { background: var(--surface-active); }
+:root[data-theme] .dashboard-surface [data-view=list] .tile-core { display: grid; grid-template-columns: var(--roster-tracks); align-items: center; padding: 9px 14px; gap: 10px; }
+:root[data-theme] .dashboard-surface [data-view=list] :is(.tile-top,.tag-row) { display: contents; }
+:root[data-theme] .dashboard-surface [data-view=list] .tile-name { max-width: 100%; font-size: var(--text-sm); }
+:root[data-theme] .dashboard-surface [data-view=list] .name-row:empty { display: none; }
+[data-view=list] .tile-top > div:first-child { grid-column: 1; grid-row: 1; min-width: 0; }
+[data-view=list] :is(.roster-region,.account-region-trigger) { grid-column: 2; grid-row: 1; justify-self: start; }
+[data-view=list] .account-mod-selector { grid-column: 3; grid-row: 1; min-width: 0; justify-self: start; max-width: 100%; }
+:root[data-theme] .dashboard-surface [data-view=list] .account-status-control { grid-column: 4; grid-row: 1; position: static; justify-self: start; min-width: 0; }
+[data-view=list] .bottom-row { grid-column: 5; grid-row: 1; justify-self: end; }
+[data-view=list] .tag-row > .hig-badge:not(.roster-region):not(.account-region-trigger) { display: none; }
+:root[data-theme] .dashboard-surface [data-view=list] .account-card-actions { justify-content: flex-end; flex-wrap: nowrap; gap: 4px; }
+@container (max-width: 820px) {
+  .dashboard-accounts .roster-columns { display: none; }
+  :root[data-theme] .dashboard-surface [data-view=list] .tile-core { grid-template-columns: minmax(76px,1fr) minmax(64px,.8fr) calc(180px * var(--font-scale)); gap: 5px 10px; padding: 10px 6px; }
+  [data-view=list] .account-mod-selector { grid-row: 2; grid-column: 1; }
+  [data-view=list] :is(.roster-region,.account-region-trigger) { grid-row: 2; grid-column: 2; }
+  :root[data-theme] .dashboard-surface [data-view=list] .account-status-control { grid-row: 1; grid-column: 2; }
+  [data-view=list] .bottom-row { grid-column: 3; grid-row: 1 / 3; }
+}
+@container (max-width: 540px) {
+  :root[data-theme] .dashboard-surface [data-view=list] .tile-core { grid-template-columns: minmax(0,1fr) auto; }
+  [data-view=list] .bottom-row { grid-column: 1 / -1; grid-row: 3; justify-self: stretch; }
+  :root[data-theme] .dashboard-surface [data-view=list] .account-card-actions { justify-content: flex-start; flex-wrap: wrap; }
+}
+
+:root[data-theme] .dashboard-surface .spatial-grid[data-view=cards] {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, max(300px, 19em)), 1fr));
+  align-items: stretch;
+}
+:root[data-theme] .dashboard-surface [data-view=cards] > .sortable-account-card { display: flex; flex-direction: column; max-width: none; }
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile {
+  flex: 1; border: 1px solid var(--border-default); border-radius: 12px; background: var(--surface-card);
+}
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile:is(:hover,:focus-within) { border-color: var(--border-strong); }
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile[data-batch-selected=true] { border-color: var(--border-focus); background: var(--surface-active); }
+:root[data-theme] .dashboard-surface [data-view=cards] .tile-core { flex: 1; padding: 16px 18px 11px; gap: 11px; }
+:root[data-theme] .dashboard-surface [data-view=cards] .bottom-row { margin-top: auto; border-top: 1px solid var(--border-default); padding-top: 8px; }
+:root[data-theme] .dashboard-surface [data-view=cards] .tile-name { line-height: 1.35; }
+.room-quick-summary dd { min-width: 0; }
+.mod-update-hint { color: var(--text-muted); font-size: var(--text-2xs); }

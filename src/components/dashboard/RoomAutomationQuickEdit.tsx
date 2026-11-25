@@ -71,7 +71,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     triggerTitle: "修改下一局跟房配置",
     title: "跟房设置",
     description: "切换本机拼房身份，与队友同步房间规则。",
-    preview: "预览",
+    preview: "下一房",
     prefix: "房名开头",
     sequence: "下一个序号",
     width: "位数",
@@ -90,7 +90,7 @@ const QUICK_EDIT_COPY: Record<SettingsLanguage, QuickEditCopy> = {
     triggerTitle: "Edit the next room automation settings",
     title: "Next room",
     description: "Choose this computer’s role and synchronize the room rule.",
-    preview: "Preview",
+    preview: "Next room",
     prefix: "Room prefix",
     sequence: "Next sequence",
     width: "Width",
@@ -346,15 +346,20 @@ export function RoomAutomationQuickEdit({
           }}
         >
           <header className="room-automation-quick-header">
-            <div>
-              <p>{copy.description}</p>
-            </div>
+
             <div className="room-automation-quick-preview">
               <span>{copy.preview}</span>
               <strong data-i18n-skip>{preview}</strong>
             </div>
           </header>
 
+          <dl className="room-quick-summary">
+            <div><dt>{locale === "en-US" ? "Leader" : "主号"}</dt><dd>{accounts.find(a => a.id === draft.primary_account_id)?.display_name || draft.primary_account_id || "—"}</dd></div>
+            <div><dt>{locale === "en-US" ? "Followers" : "小号"}</dt><dd>{draft.follower_account_ids.map(id => accounts.find(a => a.id === id)?.display_name || id).join("、") || "—"}</dd></div>
+            <div><dt>{locale === "en-US" ? "Mode" : "协作方式"}</dt><dd>{roomModeLabel(draft.collaborationMode, locale === "en-US")}</dd></div>
+          </dl>
+          <details className="room-quick-options">
+            <summary>{locale === "en-US" ? "Edit participants and rules" : "编辑参与账号与规则"}</summary>
           <fieldset className="room-quick-edit-fields" disabled={saving}>
           <label>{locale === "en-US" ? "Leader" : "主号"}<select aria-label={locale === "en-US" ? "Leader" : "主号"} value={draft.primary_account_id} onChange={event => {
             const next = switchPrimary(draft, event.target.value);
@@ -440,6 +445,7 @@ export function RoomAutomationQuickEdit({
           </div>
 
           </fieldset>
+          </details>
           {error && (
             <p className="room-automation-quick-error" role="alert">
               <AlertCircle size={13} aria-hidden="true" />
