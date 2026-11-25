@@ -200,7 +200,9 @@ pub const TRACKED_LOCATIONS: [LocationDefinition; 10] = [
         kind: LocationKind::Wilderness,
     },
     LocationDefinition {
-        marker: TelemetryMarker::Area { area_id: TRAVINCAL_AREA_ID },
+        marker: TelemetryMarker::Area {
+            area_id: TRAVINCAL_AREA_ID,
+        },
         file_stem: "a83",
         scene_key: "travincal",
         scene_name: "崔凡克",
@@ -208,7 +210,9 @@ pub const TRACKED_LOCATIONS: [LocationDefinition; 10] = [
         kind: LocationKind::Wilderness,
     },
     LocationDefinition {
-        marker: TelemetryMarker::Area { area_id: CHAOS_SANCTUARY_AREA_ID },
+        marker: TelemetryMarker::Area {
+            area_id: CHAOS_SANCTUARY_AREA_ID,
+        },
         file_stem: "a108",
         scene_key: "chaos_sanctuary",
         scene_name: "混沌魔殿",

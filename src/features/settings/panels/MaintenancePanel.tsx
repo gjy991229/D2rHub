@@ -2,6 +2,7 @@ import { Download, FileArchive, FolderOpen, Layers3, Minimize2, Settings, Shield
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { Button } from "../../../components/ui/Button";
 import { Modal } from "../../../components/ui/Modal";
+import { useGlobalConfig } from "../../../store/globalConfig";
 import type { FeatureProfile } from "../../profile/featureProfile";
 import type { AccountMeta } from "../../../store/types";
 import type { ConfigRepairReport } from "../useMaintenanceController";
@@ -56,6 +57,7 @@ export function MaintenancePanel({
   onRunSetup,
 }: MaintenancePanelProps) {
   const [pendingProfile, setPendingProfile] = useState<FeatureProfile | null>(null);
+  const en = useGlobalConfig(state => state.config?.app_language === "en-US");
   const switchingToMinimal = pendingProfile === "minimal";
 
   return (
@@ -65,32 +67,39 @@ export function MaintenancePanel({
         <h2 id="maintenance-title" className="text-xs font-bold text-text-primary">应用维护</h2>
         <div className="maintenance-action-row maintenance-primary">
           <div>
-            <span className="text-sm font-semibold text-text-primary">配置检查与修复</span>
-            <p className="text-2xs text-text-muted">检查账号配置文件。自动恢复有效备份，保留损坏原件。</p>
+            <span className="text-sm font-semibold text-text-primary">{en ? "Account configuration repair" : "配置检查与修复"}</span>
+            <p className="text-2xs text-text-muted">{en
+              ? "Check account configuration files and restore valid backups. Damaged originals are kept."
+              : "检查账号配置文件。自动恢复有效备份，保留损坏原件。"}</p>
           </div>
           <Button size="sm" variant="primary" loading={repairBusy} onClick={onRepairConfigs}>
             <Wrench size={14} aria-hidden="true" />
-            {repairBusy ? "正在检查配置…" : "检查并修复配置"}
+            {repairBusy ? (en ? "Checking…" : "正在检查配置…") : (en ? "Check and repair" : "检查并修复配置")}
           </Button>
         </div>
         {typeof repairResult === "string" ? (
-          <p className="text-xs break-all text-text-secondary" role="alert">检查失败：{repairResult}</p>
+          <p className="text-xs break-all text-text-secondary" role="alert">{en ? "Check failed. " : "检查失败："}{repairResult}</p>
         ) : repairResult && (
           <div className="maintenance-report" data-attention={repairResult.issues.length > 0} role="status">
-            <header><strong>{repairResult.issues.length ? "检查需要关注" : "检查完成"}</strong><span>已检查 {repairResult.checked} 个账号</span></header>
+            <header>
+              <strong>{repairResult.issues.length ? (en ? "Issues found" : "检查需要关注") : (en ? "Check complete" : "检查完成")}</strong>
+              <span>{en ? `Checked ${repairResult.checked} accounts` : `已检查 ${repairResult.checked} 个账号`}</span>
+            </header>
             {repairResult.repaired.length > 0 && (
               <div>
-                <p>已修复 {repairResult.repaired.length} 个文件，原件保留在：</p>
+                <p>{en ? `Repaired ${repairResult.repaired.length} files. The originals were saved here.` : `已修复 ${repairResult.repaired.length} 个文件，原件保留在：`}</p>
                 <ul className="list-disc pl-4">{repairResult.repaired.map(path => <li key={path}>{path}</li>)}</ul>
               </div>
             )}
             {repairResult.issues.length > 0 && (
               <div>
-                <p>仍需处理 {repairResult.issues.length} 项：</p>
+                <p>{en ? `Remaining issues (${repairResult.issues.length})` : `仍需处理 ${repairResult.issues.length} 项：`}</p>
                 <ul className="list-disc pl-4">{repairResult.issues.map(issue => <li key={issue}>{issue}</li>)}</ul>
               </div>
             )}
-            {repairResult.repaired.length === 0 && repairResult.issues.length === 0 && <p>{repairResult.checked ? "配置正常。" : "目录中没有账号配置。"}</p>}
+            {repairResult.repaired.length === 0 && repairResult.issues.length === 0 && <p>{repairResult.checked
+              ? (en ? "All account configuration files passed." : "配置正常。")
+              : (en ? "No account configuration files found." : "目录中没有账号配置。")}</p>}
           </div>
         )}
         <div className="maintenance-utilities">

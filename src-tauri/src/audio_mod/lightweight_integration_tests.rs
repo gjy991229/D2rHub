@@ -616,7 +616,8 @@ fn native_inventory_output_validates_in_hub() {
     assert!(!validated.has_audio_telemetry);
     assert!(validated.feature_groups.iter().any(|group| {
         group.id == crate::domain::mod_processing::JCY_INVENTORY_FEATURE_ID
-            && group.recipe_version == crate::domain::mod_processing::JCY_INVENTORY_FEATURE_RECIPE_VERSION
+            && group.recipe_version
+                == crate::domain::mod_processing::JCY_INVENTORY_FEATURE_RECIPE_VERSION
     }));
 }
 

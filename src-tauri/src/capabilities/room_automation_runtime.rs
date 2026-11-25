@@ -597,12 +597,14 @@ pub(crate) struct RoomAutomationManager {
     self_reference: Weak<RoomAutomationManager>,
 }
 
+type ManagerInitialization = Result<Arc<RoomAutomationManager>, CapabilityFailure>;
+
 /// A shared, lazy manager slot. Registering an uninstalled module performs no I/O.
 /// Initialization and explicit retry share one slot across IPC and the supervisor.
 #[derive(Clone, Default)]
 pub(crate) struct RoomAutomationCommandState {
     initialization: Arc<Mutex<()>>,
-    manager: Arc<RwLock<Option<Result<Arc<RoomAutomationManager>, CapabilityFailure>>>>,
+    manager: Arc<RwLock<Option<ManagerInitialization>>>,
 }
 
 /// A successful save means the sidecar commit is durable. Runtime application
@@ -617,8 +619,8 @@ pub(crate) struct RoomAutomationSaveOutcome {
 impl RoomAutomationCommandState {
     fn initialize_with(
         &self,
-        initialize: impl FnOnce() -> Result<Arc<RoomAutomationManager>, CapabilityFailure>,
-    ) -> Result<Arc<RoomAutomationManager>, CapabilityFailure> {
+        initialize: impl FnOnce() -> ManagerInitialization,
+    ) -> ManagerInitialization {
         let _initialization = self.initialization.lock();
         if let Some(result) = self.manager.read().as_ref() {
             return result.clone();

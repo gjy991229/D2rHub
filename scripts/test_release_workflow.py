@@ -304,6 +304,8 @@ class WorkflowTests(unittest.TestCase):
         elif command[:2] == ['cargo', 'build']:
             self.assertIn('--locked', command)
             executable = Path(env['CARGO_TARGET_DIR']) / 'release/d2r-audio-mod.exe'
+        elif command[-2:] == ['capabilities', '--json']:
+            return json.dumps({'capabilities': ['mpq_unpack_v1', 'jcy_inventory']})
         elif command[-1] == '--version':
             return 'd2r-audio-mod 1.4.0-beta.17 (protocol v7)'
         else:
@@ -331,6 +333,9 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(bundled.read_bytes(), b'verified build bytes')
         self.assertEqual(workflow.read_json(folder / 'software.json')['assets'][0]['id'], 'hub')
         commands = [call for call in commands if 'source-hub' in str(call.args[1])]
+        self.assertEqual(list(commands.pop(0).args[0]), [bundled, 'capabilities', '--json'])
+        self.assertEqual(workflow.read_json(bundled.with_suffix('.json'))['capabilities'],
+                         ['mpq_unpack_v1', 'jcy_inventory'])
         self.assertEqual(job['schema'], 2)
         report = workflow.read_json(folder / job['verification']['hub'])
         self.assertEqual(report['source_commit'], job['sources']['hub_commit'])

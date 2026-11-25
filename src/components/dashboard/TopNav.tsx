@@ -161,9 +161,9 @@ export function TopNav({
       >
         <div className="flex items-center gap-2.5 mr-5" data-tauri-drag-region>
           <span className="swiss-mark">
-            <img src="/logo.png" alt="D2RHub" className="w-[18px] h-[18px] object-contain opacity-90" />
+            <img src="/logo.png" alt="" className="w-[18px] h-[18px] object-contain opacity-90" />
           </span>
-          <span className="text-xs font-semibold text-text-secondary tracking-normal h-5 flex items-center">
+          <span data-tauri-drag-region className="text-xs font-semibold text-text-secondary tracking-normal h-5 flex items-center">
             D2RHub
           </span>
         </div>

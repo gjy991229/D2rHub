@@ -65,8 +65,8 @@ function InstallationProfileFields({
           <p className="text-xs font-semibold text-text-secondary">{label}</p>
           <p className="text-2xs text-text-muted mt-0.5">
             {isCn
-              ? "支持战网或 Token；配置目录仅用于账号独立画质。"
-              : "亚/美/欧服共用，仅 Token；配置目录仅用于账号独立画质。"}
+              ? (en ? "Battle.net or Token. The configuration folder is only used for per-account graphics settings." : "支持战网或 Token；配置目录仅用于账号独立画质。")
+              : (en ? "Asia, Americas, and Europe. Token only. The configuration folder is only used for per-account graphics settings." : "亚/美/欧服共用，仅 Token；配置目录仅用于账号独立画质。")}
           </p>
         </div>
         {hasConfiguration && <Button size="sm" className="shrink-0 whitespace-nowrap" onClick={clearProfile}>清除此版本</Button>}

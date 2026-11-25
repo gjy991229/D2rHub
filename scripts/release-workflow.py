@@ -283,7 +283,9 @@ def build_software(destination, processor_repo=None):
     shutil.copyfile(processor_source / 'LICENSE', bundled.parent / 'processor-LICENSE.txt')
     shutil.copytree(processor_source / 'crates/stormlib-sys/LICENSES', bundled.parent / 'LICENSES')
     shutil.copyfile(processor_source / 'crates/stormlib-sys/THIRD_PARTY_NOTICES.md', bundled.parent / 'THIRD_PARTY_NOTICES.md')
-    write_json(bundled.with_suffix('.json'), {'sha256': digest(bundled), 'source_commit': processor_commit})
+    capabilities = json.loads(run([bundled, 'capabilities', '--json'], source, capture=True))['capabilities']
+    write_json(bundled.with_suffix('.json'), {'sha256': digest(bundled), 'source_commit': processor_commit,
+                                             'capabilities': capabilities})
     target = destination / 'build-hub'
     environment = os.environ.copy()
     environment['CARGO_TARGET_DIR'] = str(target)

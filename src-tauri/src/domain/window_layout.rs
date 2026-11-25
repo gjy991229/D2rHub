@@ -377,8 +377,8 @@ mod tests {
             ],
             windows: vec![LayoutSlot {
                 monitor_id: "left".into(),
-            account_id: None,
-            window_title: None,
+                account_id: None,
+                window_title: None,
                 fullscreen: false,
                 x: 640,
                 y: 340,

@@ -184,7 +184,8 @@ pub(crate) fn calibrate_game_frame(
         let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
             continue;
         };
-        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title) {
+        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title)
+        {
             continue;
         }
         let (Some(old), Some(new)) = (before.get(index), after.get(index)) else {
@@ -265,7 +266,10 @@ pub async fn capture_game_window_layout(
         let mut account_ids = Vec::new();
         for (id, window) in matched {
             if window.title.trim().is_empty() || !unique_observed_title(&observed, &window.title) {
-                return Err(AppError::FileError(format!("窗口名称为空或重复：{}", window.title)));
+                return Err(AppError::FileError(format!(
+                    "窗口名称为空或重复：{}",
+                    window.title
+                )));
             }
             if let Some(monitor) = monitors.iter().find(|monitor| {
                 !window.minimized
@@ -436,20 +440,43 @@ impl LaunchLayoutPlan {
 
     pub fn target(&self, account: &AccountMeta) -> Option<LayoutTarget> {
         let (required_title, target) = self.targets.get(&account.id.to_ascii_lowercase())?;
-        required_title.as_ref().is_none_or(|expected| {
-            window_title_key(&crate::commands::launch::account_window_title(account)) == *expected
-        }).then_some(*target)
+        required_title
+            .as_ref()
+            .is_none_or(|expected| {
+                window_title_key(&crate::commands::launch::account_window_title(account))
+                    == *expected
+            })
+            .then_some(*target)
     }
 }
 
-pub(super) fn slot_for_account(layout: &WindowLayout, config: &GlobalConfig, id: &str, title: &str) -> Option<usize> {
+pub(super) fn slot_for_account(
+    layout: &WindowLayout,
+    config: &GlobalConfig,
+    id: &str,
+    title: &str,
+) -> Option<usize> {
     if layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID {
-        if let Some(index) = layout.windows.iter().position(|slot| slot.account_id.as_deref() == Some(id)) {
+        if let Some(index) = layout
+            .windows
+            .iter()
+            .position(|slot| slot.account_id.as_deref() == Some(id))
+        {
             return Some(index);
         }
-        if layout.windows.iter().all(|slot| slot.window_title.is_none() && slot.account_id.is_none()) {
-            return config.launch_session.as_ref()?.scheme.account_ids.iter()
-                .position(|member| member == id).filter(|index| *index < layout.windows.len());
+        if layout
+            .windows
+            .iter()
+            .all(|slot| slot.window_title.is_none() && slot.account_id.is_none())
+        {
+            return config
+                .launch_session
+                .as_ref()?
+                .scheme
+                .account_ids
+                .iter()
+                .position(|member| member == id)
+                .filter(|index| *index < layout.windows.len());
         }
     }
     layout.slot_index_for_title(title)
@@ -457,12 +484,17 @@ pub(super) fn slot_for_account(layout: &WindowLayout, config: &GlobalConfig, id:
 
 fn uses_account_binding(layout: &WindowLayout, index: usize) -> bool {
     layout.id == crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
-        && (layout.windows[index].account_id.is_some() || layout.windows[index].window_title.is_none())
+        && (layout.windows[index].account_id.is_some()
+            || layout.windows[index].window_title.is_none())
 }
 
 fn unique_observed_title(observed: &[GameLayoutWindow], title: &str) -> bool {
     let key = window_title_key(title);
-    observed.iter().filter(|window| window_title_key(&window.title) == key).count() == 1
+    observed
+        .iter()
+        .filter(|window| window_title_key(&window.title) == key)
+        .count()
+        == 1
 }
 
 pub(crate) fn prepare_launch_layout(
@@ -482,9 +514,15 @@ pub(crate) fn prepare_launch_layout(
         .find(|layout| layout.id == id)
         .ok_or_else(|| AppError::ConfigReadError("所选窗口布局不存在，请重新选择".into()))?;
     if layout.id != crate::domain::launch_scheme::RUNTIME_LAYOUT_ID
-        && layout.windows.iter().all(|slot| slot.window_title.is_none())
+        && layout
+            .windows
+            .iter()
+            .all(|slot| slot.window_title.is_none())
     {
-        return Err(AppError::ConfigReadError(format!("布局“{}”尚未绑定窗口。请在设置的窗口布局中填写窗口名称，或关闭窗口布局后启动", layout.name)));
+        return Err(AppError::ConfigReadError(format!(
+            "布局“{}”尚未绑定窗口。请在设置的窗口布局中填写窗口名称，或关闭窗口布局后启动",
+            layout.name
+        )));
     }
     let positions = layout.resolve_targets(&configured_monitors(Some(config))?)?;
     let observed = windows::snapshot()?;
@@ -495,7 +533,10 @@ pub(crate) fn prepare_launch_layout(
         .collect();
     let mut targets = HashMap::new();
     for account in &accounts {
-        if !requested.iter().any(|id| id.eq_ignore_ascii_case(&account.id)) {
+        if !requested
+            .iter()
+            .any(|id| id.eq_ignore_ascii_case(&account.id))
+        {
             continue;
         }
         let Some(index) = slot_for_account(layout, config, &account.id, &account.title) else {
@@ -503,8 +544,17 @@ pub(crate) fn prepare_launch_layout(
         };
         let key = window_title_key(&account.title);
         let bound_by_id = uses_account_binding(layout, index);
-        if bound_by_id || accounts.iter().filter(|other| window_title_key(&other.title) == key).count() == 1 {
-            targets.insert(account.id.to_ascii_lowercase(), ((!bound_by_id).then_some(key), positions[index]));
+        if bound_by_id
+            || accounts
+                .iter()
+                .filter(|other| window_title_key(&other.title) == key)
+                .count()
+                == 1
+        {
+            targets.insert(
+                account.id.to_ascii_lowercase(),
+                ((!bound_by_id).then_some(key), positions[index]),
+            );
         }
     }
     Ok(Some(LaunchLayoutPlan { targets, existing }))
@@ -537,11 +587,14 @@ pub(crate) fn restore_layout(
     };
     let mut placements = Vec::new();
     for (id, window) in matched {
-        let Some(index) = slot_for_account(layout, &config, &id, &window.title) else {
+        let Some(index) = slot_for_account(layout, config, &id, &window.title) else {
             continue;
         };
-        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title) {
-            result.failures.push(format!("{}：窗口名称重复", window.title));
+        if !uses_account_binding(layout, index) && !unique_observed_title(&observed, &window.title)
+        {
+            result
+                .failures
+                .push(format!("{}：窗口名称重复", window.title));
             continue;
         }
         placements.push((index, id, window));
@@ -587,7 +640,15 @@ mod tests {
 
     #[test]
     fn rename_after_preflight_only_invalidates_title_based_placement() {
-        let target = LayoutTarget { rect: LayoutRect { x: 12, y: 34, width: 1280, height: 720 }, fullscreen: false };
+        let target = LayoutTarget {
+            rect: LayoutRect {
+                x: 12,
+                y: 34,
+                width: 1280,
+                height: 720,
+            },
+            fullscreen: false,
+        };
         let mut account = AccountMeta::new("acount1");
         account.display_name = "Renamed".into();
         for (required_title, expected) in [(None, Some(target)), (Some("previous".into()), None)] {
@@ -834,13 +895,22 @@ mod tests {
     }
     #[test]
     fn saved_titles_match_independently_of_process_order() {
-        let accounts = [account("a", "Alpha", Some(10)), account("b", "Beta", Some(20))];
+        let accounts = [
+            account("a", "Alpha", Some(10)),
+            account("b", "Beta", Some(20)),
+        ];
         for windows in [
             [window(10, "Alpha", 1), window(20, "Beta", 2)],
             [window(20, "Beta", 1), window(10, "Alpha", 2)],
         ] {
             let matched = match_accounts(&accounts, &windows);
-            assert_eq!(matched.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
+            assert_eq!(
+                matched
+                    .iter()
+                    .map(|(id, _)| id.as_str())
+                    .collect::<Vec<_>>(),
+                ["a", "b"]
+            );
             assert!(unique_observed_title(&windows, " alpha "));
         }
     }

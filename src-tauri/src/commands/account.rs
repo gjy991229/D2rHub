@@ -640,7 +640,9 @@ impl AccountManager {
             match entry.and_then(|entry| Ok((entry.file_name(), entry.file_type()?))) {
                 Ok((name, kind)) if kind.is_dir() => {
                     let id = name.to_string_lossy();
-                    if Self::is_valid_account_id(&id) { ids.push(id.into_owned()); }
+                    if Self::is_valid_account_id(&id) {
+                        ids.push(id.into_owned());
+                    }
                 }
                 Ok(_) => {}
                 Err(error) => issue(format!("{}：{error}", dir.display())),

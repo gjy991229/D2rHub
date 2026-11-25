@@ -465,7 +465,10 @@ impl SegmentTracker {
             return false;
         };
         let end = now.min(visit.last_seen + SCENE_HEARTBEAT);
-        *self.session_runs.entry(session_run_key(&visit.location.scene_name, false)).or_default() += 1;
+        *self
+            .session_runs
+            .entry(session_run_key(&visit.location.scene_name, false))
+            .or_default() += 1;
         let duration = end.saturating_duration_since(visit.started_at);
         self.finished_visit_display = Some(FinishedVisitDisplay {
             name: visit.location.scene_name.clone(),
@@ -506,7 +509,8 @@ impl SegmentTracker {
         };
         let changed = activity.tick(now, audible);
         // Unmarked wilderness is identified by audible game activity after the town lease ends.
-        let entered_other = activity.running && self.scene_visit.is_none()
+        let entered_other = activity.running
+            && self.scene_visit.is_none()
             && self.finished_visit_display.take().is_some();
         if changed || entered_other {
             self.revision += 1;
@@ -809,8 +813,10 @@ impl SegmentTracker {
                 account_id: self.account_id.clone(),
                 source_id: self.source_id.clone(),
                 current_area_id: visit.map(|visit| visit.area_id),
-                current_scene: visit.map_or_else(|| name.into(), |visit| visit.location.scene_name.clone()),
-                current_scene_en: visit.map_or_else(|| name.into(), |visit| visit.location.scene_name_en.clone()),
+                current_scene: visit
+                    .map_or_else(|| name.into(), |visit| visit.location.scene_name.clone()),
+                current_scene_en: visit
+                    .map_or_else(|| name.into(), |visit| visit.location.scene_name_en.clone()),
                 tz: false,
                 location_kind: kind.or(activity.running.then_some(LocationKind::Wilderness)),
                 is_town: kind == Some(LocationKind::Town),
@@ -822,7 +828,8 @@ impl SegmentTracker {
                 current_run_key: Some("activity".into()),
                 current_run_name: Some("累计战斗时间".into()),
                 current_run_name_en: Some("Combat time".into()),
-                current_run_drops: visit.map_or_else(|| self.session_drops.clone(), |visit| visit.drops.clone()),
+                current_run_drops: visit
+                    .map_or_else(|| self.session_drops.clone(), |visit| visit.drops.clone()),
                 previous_run_drops: self.previous_run_drops.clone(),
                 session_drops: self.session_drops.clone(),
                 session_runs: self.session_runs.clone(),
@@ -944,13 +951,19 @@ mod tests {
 
     #[test]
     fn town_retains_finished_visit_until_another_field_is_detected() {
-        let mut tracker = SegmentTracker::new("a".into(), "char".into(), 48_000).with_activity_timing();
+        let mut tracker =
+            SegmentTracker::new("a".into(), "char".into(), 48_000).with_activity_timing();
         let catalog = LocationCatalog::default();
-        let area = |id| catalog.resolve(TelemetryMarker::Area { area_id: id }).unwrap();
+        let area = |id| {
+            catalog
+                .resolve(TelemetryMarker::Area { area_id: id })
+                .unwrap()
+        };
         let mut now = Instant::now();
         tracker.observe_activity_marker(area(1), now);
         assert!(tracker.snapshot().finished_visit_display.is_none());
-        for (id, name, count) in [(83, "崔凡克", 1), (83, "崔凡克", 2), (108, "混沌魔殿", 1)] {
+        for (id, name, count) in [(83, "崔凡克", 1), (83, "崔凡克", 2), (108, "混沌魔殿", 1)]
+        {
             now += SCENE_HEARTBEAT;
             tracker.observe_activity_marker(area(id), now);
             tracker.tick_activity_at(true, now);
@@ -1008,7 +1021,6 @@ mod tests {
         assert_eq!(records[0].timer_seconds, 0.5);
         assert!(tracker.snapshot().scene_visit_started_at_ms.is_none());
     }
-
 
     #[test]
     fn activity_end_clears_time_and_drops_but_keeps_them_in_the_saved_record() {

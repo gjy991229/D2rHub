@@ -40,6 +40,7 @@ const defaultConfig: GlobalConfig = {
 
 export function SetupWizard({ onComplete, initialConfig }: Props) {
   const { save, detectSavedGamesPath, detectGlobalSavedGamesPath, detectProgramDataAgentPath, detectAppDataRoamingBnetPath, detectBrowserPath } = useGlobalConfig();
+  const en = initialConfig?.app_language === "en-US";
   const [config, setConfig] = useState<GlobalConfig>(initialConfig || defaultConfig);
   const [detected, setDetected] = useState<Record<string, string | null>>({});
   const [saving, setSaving] = useState(false);
@@ -220,7 +221,10 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
           path: step.value,
           isFile: step.isFile,
         });
-        if (active) setIsCurrentStepValid(exists);
+        if (active) {
+          setIsCurrentStepValid(exists);
+          setPathError(exists ? null : en ? "This path does not exist or cannot be accessed." : "路径不存在或无法访问。");
+        }
       } catch (e) {
         if (active) {
           setIsCurrentStepValid(false);
@@ -233,7 +237,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
     return () => {
       active = false;
     };
-  }, [currentStep, config.cn_battle_net_path, config.cn_game_path, config.cn_saved_games_path, config.global_game_path, config.global_saved_games_path, config.browser_path]);
+  }, [en, currentStep, config.cn_battle_net_path, config.cn_game_path, config.cn_saved_games_path, config.global_game_path, config.global_saved_games_path, config.browser_path]);
 
   const current = steps[currentStep];
 
@@ -314,7 +318,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
         <div className="flex items-center justify-center gap-2 mb-5">
           {steps.map((s, i) => (
             <React.Fragment key={i}>
-              <button onClick={()=>setCurrentStep(i)} aria-label={`${i + 1}. ${s.title}`} title={s.title}
+              <button disabled={saving} onClick={()=>setCurrentStep(i)} aria-label={`${i + 1}. ${s.title}`} title={s.title}
                 aria-current={i === currentStep ? "step" : undefined}
                 className="setup-step-index">{i + 1}</button>
               {i<steps.length-1 && (
@@ -342,6 +346,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => handleSelectBrowser("chrome")}
                   className="flex flex-col items-center justify-center p-4 rounded-card transition-all duration-200 ease-out active:scale-[0.97]"
                   style={{
@@ -354,6 +359,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
                 </button>
                 <button
                   type="button"
+                  disabled={saving}
                   onClick={() => handleSelectBrowser("edge")}
                   className="flex flex-col items-center justify-center p-4 rounded-card transition-all duration-200 ease-out active:scale-[0.97]"
                   style={{
@@ -378,10 +384,11 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
             <div className="flex items-center gap-2">
               <input
                 className="line-input flex-1 h-9 px-3.5 text-md font-mono placeholder:text-text-muted/40"
+                disabled={saving} aria-invalid={pathError ? true : undefined} aria-describedby={pathError ? "setup-path-error" : undefined}
                 value={current.value} onChange={e=>current.setValue(e.target.value)}
                 placeholder={current.placeholder}
               />
-              <button onClick={async ()=>{
+              <button disabled={saving} aria-label={en ? "Browse" : "浏览"} onClick={async ()=>{
                 try {
                   if(current.isFile){ const sel=await open({multiple:false,filters:[{name:"可执行文件",extensions:["exe"]}]}); if(sel)current.setValue(sel as string); }
                   else { const sel=await open({directory:true,multiple:false}); if(sel)current.setValue(sel as string); }
@@ -397,6 +404,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
           {current.detected && current.key !== "browser_path" && (
             <button
               type="button"
+              disabled={saving}
               onClick={() => current.setValue(current.detected || "")}
               className="text-sm text-success mt-3 flex items-center gap-1.5 hover:underline"
             >
@@ -431,7 +439,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
           )}
         </div>
 
-        {pathError && <p role="alert" className="text-xs text-error mb-4">{pathError}</p>}
+        {pathError && <p id="setup-path-error" role="alert" className="text-xs text-error mb-4">{pathError}</p>}
 
         {/* Validation error */}
         {showError && !allStepsFilled() && (
@@ -447,11 +455,11 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
         {/* Navigation */}
         <div className="flex items-center justify-between">
-          <button onClick={()=>setCurrentStep(i=>Math.max(0,i-1))} disabled={currentStep===0}
+          <button onClick={()=>setCurrentStep(i=>Math.max(0,i-1))} disabled={currentStep===0 || saving}
             className="control-btn disabled:opacity-30">上一步</button>
           {currentStep<steps.length-1 ? (
             <button onClick={()=>setCurrentStep(i=>Math.min(steps.length-1,i+1))}
-              disabled={!isCurrentStepValid}
+              disabled={!isCurrentStepValid || saving}
               className="primary-cta h-9">下一步 <ArrowRight size={13}/></button>
           ) : (
             <button onClick={handleComplete} disabled={saving || !isCurrentStepValid}

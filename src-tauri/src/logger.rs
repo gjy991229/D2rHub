@@ -16,13 +16,19 @@ pub(crate) fn set_error_window(app: tauri::AppHandle) {
 
 #[tauri::command]
 pub(crate) fn take_background_errors() -> Vec<String> {
-    std::mem::take(&mut *BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner()))
+    std::mem::take(
+        &mut *BACKGROUND_ERRORS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()),
+    )
 }
 
 pub(crate) fn report_background_error(module: &str, message: &str) {
     let entry = format!("{module}：{message}");
     {
-        let mut pending = BACKGROUND_ERRORS.lock().unwrap_or_else(|error| error.into_inner());
+        let mut pending = BACKGROUND_ERRORS
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if pending.contains(&entry) {
             return;
         }
@@ -241,7 +247,6 @@ pub fn log_msg(level: &str, module: &str, message: &str) {
 
     // 输出到标准输出
     print!("{}", log_line);
-
 
     // 写入文件
     if let Some(mutex) = LOG_FILE.get() {

@@ -26,9 +26,10 @@ pub(super) fn recipe(
     document: &serde_json::Value,
     requested: RequestedFeatureGroups,
 ) -> Result<(RequestedFeatureGroups, AudioOptions), String> {
-    if document["recipe_version"].as_u64().is_some_and(|version| {
-        version > super::validation::LATEST_AUDIO_MOD_RECIPE_VERSION as u64
-    }) {
+    if document["recipe_version"]
+        .as_u64()
+        .is_some_and(|version| version > super::validation::LATEST_AUDIO_MOD_RECIPE_VERSION as u64)
+    {
         return Err("旧 Mod 使用更新的加工配方，请升级 Hub 后重做，旧 Mod 未修改".into());
     }
     let groups = crate::domain::mod_processing::parse_feature_groups(document)?;

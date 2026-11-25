@@ -822,14 +822,15 @@ fn capture_loop(
     let mut process_check_ticks = 0u8;
     let mut last_checkpoint = std::time::Instant::now();
     let mut pending_visits = std::collections::VecDeque::new();
-    let flush_visits = |pending: &mut std::collections::VecDeque<super::tracking::CompletedSegment>| {
-        let state = app.state::<crate::state::SharedState>();
-        while let Some(visit) = pending.front() {
-            crate::stats::save_completed_segment(&state, visit)?;
-            pending.pop_front();
-        }
-        Ok::<(), String>(())
-    };
+    let flush_visits =
+        |pending: &mut std::collections::VecDeque<super::tracking::CompletedSegment>| {
+            let state = app.state::<crate::state::SharedState>();
+            while let Some(visit) = pending.front() {
+                crate::stats::save_completed_segment(&state, visit)?;
+                pending.pop_front();
+            }
+            Ok::<(), String>(())
+        };
 
     let capture_result = (|| -> Result<(), String> {
         while RUNNING.load(Ordering::SeqCst) && GENERATION.load(Ordering::SeqCst) == generation {
@@ -962,11 +963,13 @@ fn capture_loop(
             if config.tracking_enabled {
                 for detection in &detections {
                     if let Some(location) = catalog.resolve(detection.marker) {
-                        location_changed |= tracker.observe_activity_marker(location, std::time::Instant::now());
+                        location_changed |=
+                            tracker.observe_activity_marker(location, std::time::Instant::now());
                     }
                 }
             }
-            let activity_changed = tracker.tick_activity(peak > 0.0001 && runtime.rune_audio_enabled);
+            let activity_changed =
+                tracker.tick_activity(peak > 0.0001 && runtime.rune_audio_enabled);
             if activity_changed || location_changed {
                 pending_visits.extend(tracker.take_completed_visits());
                 if let Err(error) = flush_visits(&mut pending_visits) {
