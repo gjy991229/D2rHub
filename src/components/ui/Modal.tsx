@@ -56,6 +56,11 @@ export function Modal({
     }
 
     if (!mounted) return;
+    if (window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches) {
+      setMounted(false);
+      setClosing(false);
+      return;
+    }
     setClosing(true);
     const timer = window.setTimeout(() => {
       setMounted(false);
@@ -137,7 +142,7 @@ export function Modal({
       aria-modal="true"
       aria-label={title || "对话框"}
       className={`fixed inset-0 z-50 flex items-center justify-center ${closing ? "modal-backdrop-exit" : "modal-backdrop"}`}
-      style={{ background: "rgba(18,24,34,0.08)" }}
+      style={{ background: "var(--dialog-scrim)" }}
       onClick={(e) => {
         if (dismissible && closeOnBackdropClick && open && e.target === backdropRef.current) onClose();
       }}

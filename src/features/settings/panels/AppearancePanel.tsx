@@ -1,3 +1,5 @@
+import { surfaceOpacityVars } from "../../../styles/surfaceOpacity";
+import { ThemeSample } from "../ThemeSample";
 import { ArrowRight, Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/Button";
@@ -116,6 +118,13 @@ export function AppearancePanel({
           <h3>{copy.theme}</h3>
           <p>{copy.themeDescription}</p>
         </div>
+        <figure className="theme-live-preview" aria-label={en ? "Appearance preview" : "窗口外观预览"}>
+          <div className="theme-live-window" data-theme={draft.theme} data-font-scale={draft.font_scale}
+            style={surfaceOpacityVars(draft.main_opacity, draft.theme)}>
+            <div className="theme-live-title"><img src="/logo.png" alt="" /><strong>D2RHub</strong></div>
+            <div className="theme-live-readout"><span>{en ? "Background opacity" : "背景不透明度"}</span><b>{draft.main_opacity}%</b></div>
+          </div>
+        </figure>
         <div className="appearance-theme-options">
           {THEME_OPTIONS.map((option) => {
             const active = draft.theme === option.id;
@@ -128,7 +137,7 @@ export function AppearancePanel({
                 data-active={active ? "true" : undefined}
                 onClick={() => onChange({ theme: option.id })}
               >
-                <span className="appearance-theme-swatch" data-theme-preview={option.id} aria-hidden="true" />
+                <ThemeSample theme={option.id} overlay={false} />
                 <span><strong>{en ? themeEnglish[option.id].label : option.label}</strong><small>{en ? themeEnglish[option.id].desc : option.desc}</small></span>
                 {active && <Check size={14} aria-hidden="true" />}
               </button>

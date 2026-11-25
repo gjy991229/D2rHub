@@ -1,3 +1,4 @@
+import { AccountMonogram } from "../accounts/AccountMonogram";
 import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, ChevronDown, Circle, ListChecks, LoaderCircle, Maximize2, Minus, MoreHorizontal, Pin, Play, Settings, Users } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -201,7 +202,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
     {availability && !availability.can_launch && <button className="mini-notice" title={launchGroupIssueDetails(availability.issues)} onClick={() => fullAction(props.onManageGroups)}><AlertCircle size={14} />{copy("方案配置不完整，点击处理", "Scheme needs attention · Edit")}</button>}
     <div className="mini-account-list">
       {!visible.length && <div className="mini-empty"><Users size={26} /><strong>{copy("还没有账号", "No accounts yet")}</strong><p>{copy("添加账号后，即可在这里启动和切回游戏。", "Add an account to launch and switch games here.")}</p><button className="control-btn" onClick={() => fullAction(props.onAddAccount)}>{copy("添加账号", "Add account")}</button></div>}
-      {visible.map((account, index) => {
+      {visible.map(account => {
         const needsConfig = !eligible(account);
         const progress = launch.progress[account.id];
         const active = launch.launching && progress && progress.step !== "done" && progress.status !== "error";
@@ -211,7 +212,7 @@ export function MiniDashboard(props: MiniDashboardProps) {
         const label = active ? copy("启动中", "Starting") : account.is_running ? copy("切回", "Switch")
           : needsConfig ? copy("配置", "Setup") : failure ? copy("重试", "Retry") : copy("启动", "Start");
         return <article key={account.id} className="mini-account" data-state={active ? "busy" : account.is_running ? "running" : needsConfig ? "warning" : failure ? "error" : "idle"}>
-          <span className="mini-index">{String(index + 1).padStart(2, "0")}</span>
+          <AccountMonogram id={account.id} name={account.display_name || account.id} />
           <div className="mini-account-copy"><strong title={account.display_name || account.id}>{account.display_name || account.id}</strong>
             <div className="mini-account-meta"><span className="hig-badge hig-badge-neutral">{english ? regionLabels[accountRegionLabel(account.region)] : accountRegionLabel(account.region)}</span>
               <span className="mini-status" title={failure || status}>{active ? <LoaderCircle size={10} className="animate-spin" aria-hidden="true" /> : <Circle size={6} fill="currentColor" aria-hidden="true" />}<span>{status}</span></span></div>

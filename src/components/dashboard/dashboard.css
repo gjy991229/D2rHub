@@ -4,8 +4,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-:root[data-theme] .dashboard-surface .account-tile .title-mod-row > input {
-  width: calc(100% - 114px);
+:root[data-theme] .dashboard-surface .account-tile .title-mod-row > .line-input {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
 }

@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="sand">
 <head>
-  <meta name="d2rhub-version" content="0.9.124-beta.1">
+  <meta name="d2rhub-version" content="0.9.124-beta.2">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="color-scheme" content="dark light">
@@ -394,13 +394,20 @@
   @media (max-width: 560px) { main { padding-inline: 20px; } .goal-grid { grid-template-columns: 1fr; } .goal-card { padding: 19px 2px; } .guide-heading h1 { font-size: 30px; } h2 { font-size: 21px; } .step-panel h2 { font-size: 23px; } .step-footer { gap: 8px; } .step-panel header { padding-inline: 0; } .step-body { padding-inline: 0; } .reference-search { padding-inline: 0; } }
   @media print { .shell { display: block; } .sidebar, .help-modes { display: none; } main { width: 100%; padding: 0; } }
 
+.goal-grid { gap:12px; }
+.goal-card { grid-template-columns:minmax(0,1fr) auto;align-items:center;padding:18px 20px;border:1px solid var(--border);border-radius:12px;background:var(--surface); }
+.goal-card strong { font-size:17px;letter-spacing:-.02em; }
+.goal-card small { line-height:1.55; }
+.goal-card:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
+@media(prefers-reduced-motion:no-preference) { .goal-arrow {transition:transform 160ms ease-out} .goal-card:hover .goal-arrow {transform:translateX(3px)} }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after {scroll-behavior:auto!important;animation-duration:.01ms!important;transition-duration:.01ms!important} }
 </style>
 </head>
 <body>
 <div class="shell">
   <aside class="sidebar guide-sidebar">
     <div id="guideNav">
-      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.124-beta.1</span></div></div>
+      <div class="brand"><div class="brand-mark">D2</div><div><strong>D2RHub</strong><span>QUICK START · v0.9.124-beta.2</span></div></div>
       <div class="nav-title">你想做什么</div>
       <a class="nav-link" href="#guide-multi">打开多个游戏账号</a>
       <a class="nav-link" href="#guide-audio">自动记录刷图与掉落</a>
@@ -413,7 +420,7 @@
     <div id="referenceNav">
     <div class="brand">
       <div class="brand-mark">D2</div>
-      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.124-beta.1</span></div>
+      <div><strong>D2RHub</strong><span>USER MANUAL · v0.9.124-beta.2</span></div>
     </div>
     <nav id="nav">
       <div class="nav-title">开始</div>
@@ -446,15 +453,15 @@
     </div>
     <div id="guideView" hidden>
       <header class="guide-heading">
-        <p class="eyebrow">选好目标，跟着做</p>
+
         <h1>今天想用上什么功能？</h1>
         <p>选一条路线，每次只看当前要做的事。已经准备好的步骤，可以直接点流程节点跳过。</p>
       </header>
       <div class="goal-grid" aria-label="选择上手目标">
-        <button type="button" class="goal-card" data-route="multi" aria-pressed="false"><span class="goal-number">01</span><span><strong>我要多开</strong><small>让两个账号各自进入游戏<br>从路径配置开始，无需加工 Mod</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
-        <button type="button" class="goal-card" data-route="audio" aria-pressed="false"><span class="goal-number">02</span><span><strong>我要自动记掉落、记用时</strong><small>让软件记录一个账号的刷图过程<br>适合已有可启动账号的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
-        <button type="button" class="goal-card" data-route="room" aria-pressed="false"><span class="goal-number">03</span><span><strong>我要小号自动跟房</strong><small>主号创建新房，小号按顺序加入<br>适合已能多开的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
-        <button type="button" class="goal-card" data-route="all" aria-pressed="false"><span class="goal-number">04</span><span><strong>三个功能，我都要</strong><small>从零配好多开、识别和跟房<br>合并加工步骤，少走重复流程</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="multi" aria-pressed="false"><span><strong>我要多开</strong><small>让两个账号各自进入游戏<br>从路径配置开始，无需加工 Mod</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="audio" aria-pressed="false"><span><strong>我要自动记掉落、记用时</strong><small>让软件记录一个账号的刷图过程<br>适合已有可启动账号的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="room" aria-pressed="false"><span><strong>我要小号自动跟房</strong><small>主号创建新房，小号按顺序加入<br>适合已能多开的用户</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
+        <button type="button" class="goal-card" data-route="all" aria-pressed="false"><span><strong>三个功能，我都要</strong><small>从零配好多开、识别和跟房<br>合并加工步骤，少走重复流程</small></span><span class="goal-arrow" aria-hidden="true">→</span></button>
       </div>
       <div id="routeWorkspace" class="guide-workspace" hidden>
         <div class="route-intro"><strong id="routeTitle"></strong><p id="routePrerequisite"></p></div>
@@ -479,11 +486,11 @@
 
     <header class="hero" id="overview">
       <p class="eyebrow">CURRENT MANUAL · 2026-11-08</p>
-      <h1>D2RHub v0.9.124-beta.1<br>使用手册</h1>
+      <h1>D2RHub v0.9.124-beta.2<br>使用手册</h1>
       <p class="lede">当前版本：视觉资源仅用于拼房跟随，默认不下载，应用跟随模式时确认下载，也可在下载页手动下载。计时按游戏进程累计，主城和主界面暂停，历史时间直接汇总。OCR 仅用于拼房跟随。旧声纹成品通过 Hub 启动时尝试自动升级到 r8；原始加工来源缺失时，请在 Mod 管理中选择来源同名重做。识别设置可选择计时显示格式。主城暂停保留累计值，启动时等待进入游戏。下方旧版场景分段、TZ 和地区 OCR 的说明不适用于本测试版。</p>
-      <p class="lede">依据当前工作区（版本号 v0.9.124-beta.1）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
+      <p class="lede">依据当前工作区（版本号 v0.9.124-beta.2）的最新实现维护，包含尚未发布的变更；已安装发行版可能尚无部分入口。覆盖正常 / 纯净模式、双客户端、多账号认证、Mod 加工、自动跟房与分房、识别统计和悬浮窗。</p>
       <div class="meta-row">
-        <span class="badge accent">适用版本 v0.9.124-beta.1</span>
+        <span class="badge accent">适用版本 v0.9.124-beta.2</span>
         <span class="badge">Windows 11</span>
         <span class="badge">Audio Telemetry</span>
         <span class="badge">本地数据</span>
@@ -928,7 +935,7 @@
 
     </div>
     <footer class="footer">
-      D2RHub v0.9.124-beta.1 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
+      D2RHub v0.9.124-beta.2 · 非 Blizzard Entertainment 官方项目。Diablo、Diablo II: Resurrected 与 Battle.net 为其各自权利人的商标。
     </footer>
   </main>
 </div>

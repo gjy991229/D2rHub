@@ -22,12 +22,12 @@ export function PetWardrobePanel({ english = false }: { english?: boolean }) {
   const today = new Date();
   const dayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
   const text = (zh: string, en: string) => english ? en : zh;
-  return <section className="spatial-panel p-3 space-y-3 text-text-primary" aria-label={text("装扮衣柜", "Wardrobe")}>
+  return <section className="pet-wardrobe spatial-panel p-3 space-y-3 text-text-primary" aria-label={text("装扮衣柜", "Wardrobe")}>
     <div className="flex items-center justify-between"><h3 className="text-sm font-bold">{text("装扮衣柜", "Wardrobe")}</h3>
       {w && <span className="text-xs text-accent">{text("碎片", "Fragments")} {w.fragments} · {w.owned.length}/{PET_ITEMS.length}</span>}</div>
     {error && <div role="alert" className="text-xs text-red-400">{error} <button className={button} onClick={() => void reloadWardrobe()}>{text("重试", "Retry")}</button></div>}
     {!w ? <p className="text-xs text-text-muted">{text("正在读取衣柜…", "Loading wardrobe…")}</p> : <>
-      <div className="flex flex-wrap items-center justify-center gap-3 rounded-lg bg-surface-hover p-2">
+      <div className="wardrobe-fitting-room">
         <PetAvatar frame={frame} equipped={preview ? { ...w.equipped, [slot]: preview } : w.equipped} />
         <div className="space-y-2 text-xs">
           <p>{preview ? text("试穿预览 · 尚未装备", "Preview · not equipped") : text("当前搭配", "Current outfit")}</p>
@@ -35,13 +35,13 @@ export function PetWardrobePanel({ english = false }: { english?: boolean }) {
           <div className="flex gap-1"><button className={button} disabled={busy} onClick={() => void act({ kind: "clear" })}>{text("全部卸下", "Clear outfit")}</button>{preview && <button className={button} onClick={() => setPreview(null)}>{text("结束试穿", "End preview")}</button>}</div>
         </div>
       </div>
-      <div className="flex flex-wrap gap-1" aria-label={text("装扮部位", "Slots")}>{PET_SLOTS.map(s => <button key={s.id} className={`${button} ${slot === s.id ? "text-accent border-accent" : ""}`} aria-pressed={slot === s.id} onClick={() => { setSlot(s.id); setPreview(null); }}>{english ? s.en : s.name}</button>)}</div>
+      <div className="wardrobe-slots" aria-label={text("装扮部位", "Slots")}>{PET_SLOTS.map(s => <button key={s.id} className={`${button} ${slot === s.id ? "text-accent border-accent" : ""}`} aria-pressed={slot === s.id} onClick={() => { setSlot(s.id); setPreview(null); }}>{english ? s.en : s.name}</button>)}</div>
       <p className="text-2xs text-text-muted">{text("翅膀和光环有独立槽位，可与披风及其他装扮一起搭配。", "Wings and auras have their own slots and can be worn with capes and other accessories.")}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">{PET_ITEMS.filter(item => item.slot === slot).map(item => {
         const owned = w.owned.includes(item.id);
         const equipped = w.equipped[slot] === item.id;
         const weightTotal = PET_ITEMS.reduce((sum, entry) => sum + entry.weight, 0);
-        return <article key={item.id} className={`rounded-lg border p-2 space-y-2 ${equipped ? "border-accent" : "border-border-default"}`}>
+        return <article key={item.id} data-preview={preview === item.id || undefined} className={`rounded-lg border p-2 space-y-2 ${equipped ? "border-accent" : "border-border-default"}`}>
           <button className="flex w-full items-center gap-2 text-left" onClick={() => setPreview(item.id)} aria-label={`${text("试穿", "Preview")} ${english ? item.en : item.name}`}>
             <PetAvatar equipped={{ [slot]: item.id }} width={75} /><span className="text-xs font-semibold">{english ? item.en : item.name}<span className="block font-normal text-text-muted">{equipped ? text("已装备", "Equipped") : owned ? text("已拥有", "Owned") : text("未解锁 · 可试穿", "Locked · preview available")}</span></span>
           </button>

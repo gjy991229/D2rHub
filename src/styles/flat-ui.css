@@ -359,7 +359,7 @@
   border: 1px solid var(--border-strong);
 }
 :root[data-theme] .primary-cta:hover:not(:disabled) { background: var(--surface-hover); }
-:root[data-theme] .dashboard-actionbar { padding-top: 18px; padding-bottom: 18px; }
+:root[data-theme] .dashboard-actionbar { padding-top: 8px; padding-bottom: 6px; }
 :root[data-theme] .dashboard-workspace { flex-direction: column; }
 :root[data-theme] .dashboard-accounts { container-type: inline-size; }
 :root[data-theme] .dashboard-surface .spatial-grid {

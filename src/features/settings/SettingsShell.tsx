@@ -94,6 +94,7 @@ export function SettingsShell({
           />
           <div className="settings-panel-column">
             <div
+              key={activeTab}
               id={`settings-panel-${activeTab}`}
               role="tabpanel"
               aria-labelledby={`settings-tab-${activeTab}`}

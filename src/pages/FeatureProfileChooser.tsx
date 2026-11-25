@@ -53,7 +53,7 @@ export function FeatureProfileChooser({ config, saving, onConfirm, onExit }: Fea
 
   return (
     <div className="flex-1 min-h-0 min-w-0 flex flex-col items-center overflow-y-auto px-6 py-8">
-      <div className="my-auto shrink-0 w-full max-w-[680px] account-line px-6 py-6">
+      <div className="my-auto shrink-0 w-full profile-sheet max-w-[680px] account-line px-6 py-6">
         <div className="mb-5" data-tauri-drag-region>
           <h1 className="text-base font-semibold text-text-primary">{copy.title}</h1>
           <p className="mt-1.5 text-sm leading-relaxed text-text-secondary">{copy.description}</p>

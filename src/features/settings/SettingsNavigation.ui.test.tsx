@@ -25,6 +25,26 @@ describe("settings feature registry", () => {
 });
 
 describe("SettingsNavigation", () => {
+  it("keeps a rejected category change on the current page in a compact window", async () => {
+    vi.stubGlobal("matchMedia", () => ({
+      matches: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }));
+    try {
+      const onSelect = vi.fn().mockResolvedValue(false);
+      render(<SettingsNavigation activeTab="accounts" onSelect={onSelect} />);
+      const category = screen.getByRole<HTMLSelectElement>("combobox", { name: "设置分类" });
+      fireEvent.change(category, { target: { value: "paths" } });
+      await waitFor(() => expect(category.getAttribute("aria-busy")).toBe("false"));
+      expect(onSelect).toHaveBeenCalledWith("paths");
+      expect(category.value).toBe("accounts");
+      expect(category.getAttribute("aria-controls")).toBe("settings-panel-accounts");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps every added tool in one sidebar, with no nested navigation", () => {
     render(<Harness />);
     expect(screen.getAllByRole("tablist")).toHaveLength(1);

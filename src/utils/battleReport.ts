@@ -517,12 +517,15 @@ export function drawBattleReport(canvas: HTMLCanvasElement, snapshot: BattleRepo
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法创建战报画布");
   const width = canvas.width;
-  const paper = "#f4f0e8", paperDeep = "#e9e1d7", ink = "#2f2a26", muted = "#766e66", reportRule = "#d8d0c7", clay = "#cc785c", clayDeep = "#ad5f49", clayPale = "#ead8ce", violet = "#7656a4";
+  const paper = "#f7f5ed", paperDeep = "#e5e2d6", ink = "#292c26", muted = "#686b60", reportRule = "#d6d6c9", clay = "#af9670", clayDeep = "#795c37", clayPale = "#eae6d8", violet = "#7656a4";
   ctx.clearRect(0, 0, width, canvas.height); ctx.fillStyle = paper; ctx.fillRect(0, 0, width, canvas.height);
-  const warmWash = ctx.createRadialGradient(940, 0, 0, 940, 0, 520); warmWash.addColorStop(0, "rgba(204,120,92,.13)"); warmWash.addColorStop(1, "rgba(204,120,92,0)"); ctx.fillStyle = warmWash; ctx.fillRect(420, 0, 660, 560);
-  let seed = 0x2d2a29; const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-  ctx.save(); for (let index = 0; index < 900; index++) { const shade = random() > .5 ? 74 : 255; ctx.fillStyle = `rgba(${shade},${shade},${shade},${.009 + random() * .012})`; ctx.fillRect(Math.floor(random() * width), Math.floor(random() * canvas.height), 1, 1); } ctx.restore();
-  ctx.fillStyle = clay; ctx.beginPath(); ctx.arc(84, 70, 7, 0, Math.PI * 2); ctx.fill(); canvasText(ctx, "D2RHub", 104, 78, 220, 22, 780, ink); canvasText(ctx, "本地声纹战绩", 226, 77, 200, 14, 600, muted); canvasText(ctx, snapshot.range.label, 1004, 77, 360, 15, 650, muted, "right"); rule(ctx, 105, 76, 928, reportRule);
+  // Keep the signature and the interval on a single baseline.
+  ctx.fillStyle = clayDeep;
+  ctx.fillRect(76, 60, 3, 20);
+  ctx.fillRect(82, 60, 2, 20);
+  canvasText(ctx, "D2RHub", 98, 78, 220, 22, 700, ink);
+  canvasText(ctx, snapshot.range.label, 1004, 77, 440, 16, 600, muted, "right");
+  rule(ctx, 105, 76, 928, reportRule);
   canvasText(ctx, snapshot.kicker, 76, 151, 300, 13, 760, clay); canvasText(ctx, snapshot.title, 76, 218, 600, 62, 700, ink, "left", true); canvasText(ctx, snapshot.headline, 76, 265, 860, 25, 650, snapshot.drops[0]?.rune >= 24 ? clayDeep : ink); rule(ctx, 302, 76, 928, reportRule);
   if (!snapshot.summary.runs && !snapshot.sceneVisits.length) {
     canvasText(ctx, "当前范围没有战斗记录", 76, 414, 880, 34, 650, ink, "left", true);

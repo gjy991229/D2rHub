@@ -105,13 +105,6 @@
 .appearance-theme-option small { display: block; }
 .appearance-theme-option strong { font-size: var(--text-sm); }
 .appearance-theme-option small { margin-top: 2px; color: var(--text-muted); font-size: var(--text-xs); }
-.appearance-theme-swatch { width: 22px; height: 22px; border: 1px solid var(--border-strong); border-radius: 6px; }
-.appearance-theme-swatch[data-theme-preview="onyx"] { background: #0d0d0d; }
-.appearance-theme-swatch[data-theme-preview="light"] { background: #f7f7f8; }
-.appearance-theme-swatch[data-theme-preview="midnight"] { background: linear-gradient(135deg, #242b35 60%, #a4b6ca 60%); }
-.appearance-theme-swatch[data-theme-preview="forest"] { background: linear-gradient(135deg, #28312c 60%, #a6bcad 60%); }
-.appearance-theme-swatch[data-theme-preview="pink"] { background: linear-gradient(135deg, #fdf9fa 60%, #865e6b 60%); }
-.appearance-theme-swatch[data-theme-preview="sand"] { background: linear-gradient(135deg, #fcfaf6 60%, #75634f 60%); }
 .appearance-theme-option:focus-visible { outline: 2px solid var(--border-focus); outline-offset: 2px; }
 
 .appearance-percent-input { display: flex; align-items: center; gap: 4px; color: var(--text-muted); font-size: var(--text-xs); }

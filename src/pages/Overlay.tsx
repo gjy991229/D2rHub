@@ -593,7 +593,8 @@ export function Overlay() {
     updateDockState({ ...state, phase: "moving" });
 
     const motion = finalPhase === "hidden" ? "hide" : "reveal";
-    const duration = calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
+    const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const duration = reducedMotion ? 0 : calculateOverlayDockAnimationDuration(pointDistance(start, target), motion);
     let animationFailed = false;
 
     await new Promise<void>((resolve) => {
@@ -655,7 +656,7 @@ export function Overlay() {
           return;
         }
         if (startedAt === null) startedAt = now;
-        const progress = Math.min(1, (now - startedAt) / duration);
+        const progress = duration === 0 ? 1 : Math.min(1, (now - startedAt) / duration);
         const eased = easeOverlayDockProgress(progress, motion);
         queueLatestPosition({
           x: Math.round(start.x + (target.x - start.x) * eased),
@@ -1931,25 +1932,16 @@ export function Overlay() {
           onDoubleClick={handleTimerDoubleClick}
           onKeyDown={handleTimerKeyDown}
         >
-          <span className={`mb-1 max-w-full truncate text-xs font-semibold ${stats.currentTz ? "text-[var(--tz-accent)]" : "text-text-primary"}`}>{sceneLabel}</span>
-          <span className="text-2xs text-text-muted">{showingVisit ? visitLabel : useEnglish ? "Combat time" : "战斗耗时"}</span>
-          <span
-            className="text-xl font-mono font-bold tabular-nums leading-none select-none"
-            style={{
-              color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
-              transition: "color 180ms ease-out",
-            }}
-          >
-            {showingVisit ? sceneElapsed.value : elapsedDisplay}
-          </span>
-          <span
-            className="text-xs font-mono mt-0.5 select-none"
-            style={{
-              color: stats.isTiming ? "var(--success)" : "var(--text-muted)",
-            }}
-          >
-            {showingVisit ? sceneElapsed.unit : formattedTime.unit}
-          </span>
+          <div className="overlay-reading">
+            <div className="overlay-reading-context">
+              <span>{showingVisit ? visitLabel : useEnglish ? "Combat time" : "战斗耗时"}</span>
+              <strong title={sceneLabel} data-terror={stats.currentTz}>{sceneLabel}</strong>
+            </div>
+            <div className="overlay-reading-value" data-running={showingVisit ? stats.sceneVisitStart != null : stats.isTiming}>
+              <b>{showingVisit ? sceneElapsed.value : elapsedDisplay}</b>
+              <small>{showingVisit ? sceneElapsed.unit : formattedTime.unit}</small>
+            </div>
+          </div>
           {showingVisit && <span className="mt-1.5 text-xs font-mono tabular-nums text-accent">
             {useEnglish ? "Total combat" : "累计战斗"} {elapsedDisplay} {formattedTime.unit}
           </span>}

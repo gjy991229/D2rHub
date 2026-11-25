@@ -15,6 +15,7 @@ import type {
   RoomAutomationWorkflowStatus,
 } from "./features/roomAutomation/types";
 import "./styles/globals.css";
+import "./styles/workspace.css";
 import "./styles/visualAudit.css";
 
 type Surface =

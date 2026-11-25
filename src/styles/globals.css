@@ -162,21 +162,21 @@ html, body, #root {
 @keyframes fade-in { from{opacity:0} to{opacity:1} }
 @keyframes scale-in { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
 @keyframes slide-up { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-@keyframes slide-in-right { from{opacity:0;transform:translateX(40px)} to{opacity:1;transform:translateX(0)} }
+@keyframes slide-in-right { from{opacity:0;transform:translateX(8px)} to{opacity:1;transform:translateX(0)} }
 
 .modal-backdrop { animation: fade-in var(--duration-fast) ease-out; }
-.modal-content { animation: modal-zoom-in 0.25s var(--ease-spring) forwards; }
+.modal-content { animation: modal-zoom-in var(--motion-enter) var(--ease-settle) forwards; }
 .modal-backdrop-exit { animation: fade-out 180ms ease-in forwards; }
 .modal-content-exit { animation: modal-zoom-out 180ms ease-in forwards; }
 
 @keyframes modal-zoom-in {
-  from { opacity: 0; transform: scale(0.96) translateY(6px); }
+  from { opacity: 0; transform: scale(0.985) translateY(4px); }
   to { opacity: 1; transform: scale(1) translateY(0); }
 }
 @keyframes fade-out { from{opacity:1} to{opacity:0} }
 @keyframes modal-zoom-out {
   from { opacity: 1; transform: scale(1) translateY(0); }
-  to { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to { opacity: 0; transform: scale(0.99) translateY(3px); }
 }
 .toast-enter { animation: slide-in-right 280ms var(--ease-out-expo); }
 .animate-slide-up { animation: slide-up var(--duration-normal) var(--ease-out-expo); }

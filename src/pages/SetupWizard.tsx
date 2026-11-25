@@ -246,7 +246,7 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
     return (
       <div className="flex-1 flex items-center justify-center px-6">
-        <div className="w-[560px] account-line px-6 py-5">
+        <div className="setup-sheet w-[560px] account-line px-6 py-5">
           <div className="flex items-start gap-3 mb-5">
             <div className="swiss-mark shrink-0">
               <AlertTriangle size={16} className="text-warning" strokeWidth={1.8} />
@@ -300,13 +300,13 @@ export function SetupWizard({ onComplete, initialConfig }: Props) {
 
   return (
     <div className="flex-1 flex items-center justify-center px-6">
-      <div className="w-[520px] account-line px-6 py-5">
+      <div className="setup-sheet w-[520px] account-line px-6 py-5">
         <div className="flex items-center gap-3 mb-5">
           <div className="swiss-mark shrink-0">
             <Wrench size={16} className="text-text-secondary" strokeWidth={1.8} />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-text-primary">{setupTitle}</p>
+            <h1>{setupTitle}</h1>
             <p className="micro-meta mt-1">{setupDescription}</p>
           </div>
         </div>

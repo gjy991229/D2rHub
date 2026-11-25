@@ -1,3 +1,4 @@
+import { ThemeSample } from "../ThemeSample";
 import { Check, LocateFixed, MonitorUp } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../../components/ui/Button";
@@ -62,7 +63,7 @@ export function OverlayPanel({
                 className="appearance-theme-option"
                 data-active={active ? "true" : undefined}
               >
-                <span className="appearance-theme-swatch" data-theme-preview={option.id} aria-hidden="true" />
+                <ThemeSample theme={option.id} overlay={true} />
                 <span><strong>{option.label}</strong><small>{option.desc}</small></span>
                 {active && <Check size={14} aria-hidden="true" />}
               </button>

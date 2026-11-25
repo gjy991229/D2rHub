@@ -1,3 +1,4 @@
+import { SchemeLayoutPreview } from "../../components/dashboard/SchemeLayoutPreview";
 import { useEffect, useId, useRef, useState } from "react";
 import { AlignCenter, ArrowLeft, Camera, Check, ChevronDown, LayoutDashboard, Maximize, Monitor, Plus, RefreshCw, Save, Trash2 } from "lucide-react";
 import type { GlobalConfig, LayoutMonitor, LayoutSlot, WindowLayout } from "../../store/types";
@@ -273,7 +274,7 @@ export function WindowLayoutPanel({ config, updateConfig, persistConfig, readDra
           {layouts.map(saved => <button key={saved.id} type="button" className="layout-capsule" data-saved={saved.id === savedId}
             aria-label={english ? `Edit layout: ${saved.name}` : `编辑布局：${saved.name}`} data-applied={!!config.window_layout_enabled && saved.id === active?.id}
             onClick={() => openEditor(saved, saved)}>
-            {!!config.window_layout_enabled && saved.id === active?.id && <Check size={13} aria-hidden="true" />}
+            <SchemeLayoutPreview layout={saved} />
             <span>{saved.name}</span><small>{saved.windows.length}{english ? " windows" : " 开"}</small>
             {saved.id === active?.id && <em>{config.window_layout_enabled ? (english ? "Current" : "当前应用") : (english ? "Selected" : "已选择")}</em>}
           </button>)}

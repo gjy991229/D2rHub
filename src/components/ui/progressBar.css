@@ -1,5 +1,5 @@
 .hub-progress { width: 100%; height: 5px; overflow: hidden; border-radius: 999px; background: color-mix(in srgb, var(--text-muted) 16%, transparent); }
-.hub-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 180ms ease; }
+.hub-progress > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); width: 100%; transform-origin: left center; transition: transform 190ms cubic-bezier(.2,.75,.2,1); }
 .software-update-progress { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border-default); border-radius: 10px; background: var(--surface-hover); }
 .software-update-progress > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: var(--text-xs); line-height: 1.6; color: var(--text-secondary); overflow-wrap: anywhere; }
 .software-update-progress > div:first-child > span:first-child { min-width: 0; overflow-wrap: anywhere; }

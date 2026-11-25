@@ -1,3 +1,4 @@
+import { AccountMonogram } from "../accounts/AccountMonogram";
 import React, { useState, useEffect, useRef } from "react";
 import { invokeCommand } from "../../platform/tauri";
 import {
@@ -629,10 +630,11 @@ export function AccountGridItem({
     >
       <div className="tile-core">
         <div className="tile-top">
-          <div className="min-w-0">
-            <div className="name-row">
-              {isSelectionMode ? (
-                <>
+          <div className="account-identity min-w-0">
+            <AccountMonogram id={account.id} name={display} />
+            <div className="account-identity-text">
+              <div className="title-mod-row">
+                {isSelectionMode && (
                   <input
                     type="checkbox"
                     aria-label={`将 ${display} 加入启动方案`}
@@ -647,39 +649,50 @@ export function AccountGridItem({
                         : undefined}
                     className="h-4 w-4 shrink-0 cursor-pointer rounded border-border-default text-accent accent-accent focus:ring-accent disabled:cursor-not-allowed disabled:opacity-40"
                   />
-
-                </>
-              ) : null}
-            </div>
-
-            <div className="title-mod-row">
-              {editingName ? (
-                <input
-                  aria-label={english ? `Rename ${display}` : `重命名 ${display}`}
-                  className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
-                  value={nameDraft}
-                  onChange={e => setNameDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") void commitName(); if (e.key === "Escape") { cancelledRename.current = true; setNameDraft(display); setEditingName(false); } }}
-                  onBlur={() => { void commitName(); }}
-                  onClick={stop}
-                  autoFocus
-                />
-              ) : (
-                <button
-                  title={`${display}${lastLaunchText ? `\n最近启动：${lastLaunchText}` : ""}`}
-                  className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
-                  onClick={e => {
-                    if (isSelectionMode) return;
-                    e.stopPropagation();
-                    cancelledRename.current = false;
-                    setEditingName(true);
-                  }}
-                >
-                  <span data-i18n-skip>{display}</span>
-                </button>
-              )}
-
-
+                )}
+                {editingName ? (
+                  <input
+                    aria-label={english ? `Rename ${display}` : `重命名 ${display}`}
+                    className="line-input h-8 min-w-[128px] flex-1 px-2.5 text-base font-semibold"
+                    value={nameDraft}
+                    onChange={e => setNameDraft(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") void commitName(); if (e.key === "Escape") { cancelledRename.current = true; setNameDraft(display); setEditingName(false); } }}
+                    onBlur={() => { void commitName(); }}
+                    onClick={stop}
+                    autoFocus
+                  />
+                ) : (
+                  <button
+                    title={`${display}${lastLaunchText ? `\n最近启动：${lastLaunchText}` : ""}`}
+                    className="tile-name name min-w-0 max-w-full text-left transition-colors duration-200 hover:text-text-secondary"
+                    onClick={e => {
+                      if (isSelectionMode) return;
+                      e.stopPropagation();
+                      cancelledRename.current = false;
+                      setEditingName(true);
+                    }}
+                  >
+                    <span data-i18n-skip>{display}</span>
+                  </button>
+                )}
+              </div>
+              <div className="account-location">
+                {canSwitchInternationalRegion && !isSelectionMode ? (
+                  <AccountRegionSwitcher
+                    accountId={account.id}
+                    currentRegion={account.region}
+                    isRunning={account.is_running}
+                    english={english}
+                  />
+                ) : (
+                  <span className="roster-region hig-badge hig-badge-neutral">{regionLabel}</span>
+                )}
+                {account.auth_mode === "token" ? (
+                  <span className="hig-badge hig-badge-violet">{english ? "Web Token" : "网页 Token"}</span>
+                ) : (
+                  <span className="hig-badge hig-badge-blue">{english ? "Battle.net" : "战网认证"}</span>
+                )}
+              </div>
             </div>
           </div>
           <AccountStatusLight
@@ -699,34 +712,20 @@ export function AccountGridItem({
         </div>
 
         <div className="tag-row tag-row-offset">
-              {(!isSelectionMode || selected) && (
-                <AccountModEditor
-                  account={account}
-                  isSelectionMode={isSelectionMode}
-                  schemeMember={schemeMember}
-                  onSchemeMemberChange={onSchemeMemberChange}
-                  modCapsulePool={modCapsulePool}
-                  poolLoading={modCapsuleLoading}
-                  poolError={modCapsuleError}
-                  onRequestPool={onRequestModCapsules}
-                  assigning={modCapsuleAssigningAccountId === account.id}
-                  onAssign={onAssignModCapsule}
-                  onOpenModManager={onOpenModManager}
-                />
-              )}
-          {canSwitchInternationalRegion && !isSelectionMode ? (
-            <AccountRegionSwitcher
-              accountId={account.id}
-              currentRegion={account.region}
-              isRunning={account.is_running} english={english}
+          {(!isSelectionMode || selected) && (
+            <AccountModEditor
+              account={account}
+              isSelectionMode={isSelectionMode}
+              schemeMember={schemeMember}
+              onSchemeMemberChange={onSchemeMemberChange}
+              modCapsulePool={modCapsulePool}
+              poolLoading={modCapsuleLoading}
+              poolError={modCapsuleError}
+              onRequestPool={onRequestModCapsules}
+              assigning={modCapsuleAssigningAccountId === account.id}
+              onAssign={onAssignModCapsule}
+              onOpenModManager={onOpenModManager}
             />
-          ) : (
-            <span className="roster-region hig-badge hig-badge-neutral">{regionLabel}</span>
-          )}
-          {account.auth_mode === "token" ? (
-            <span className="hig-badge hig-badge-violet">{english ? "Web Token" : "网页 Token"}</span>
-          ) : (
-            <span className="hig-badge hig-badge-blue">{english ? "Battle.net" : "战网认证"}</span>
           )}
           {tokenMigrationRequired && <span className="hig-badge hig-badge-gold">{english ? "Token migration" : "需迁移 Token"}</span>}
           {!account.initialized && <span className="hig-badge hig-badge-red">{english ? "Not initialized" : "未初始化"}</span>}

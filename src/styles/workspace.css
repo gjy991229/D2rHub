@@ -1,0 +1,600 @@
+/* Shared desktop materials and interaction states across main, auxiliary and settings windows. */
+
+.account-monogram {
+  --ink: #52738d;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 39px;
+  height: 39px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--ink) 15%, var(--surface-card));
+  color: color-mix(in srgb, var(--ink) 62%, var(--text-primary));
+  font: 620 var(--text-xs)/1 "Segoe UI", sans-serif;
+  letter-spacing: -.035em;
+  user-select: none;
+}
+
+.account-monogram[data-tone="1"] {
+  --ink: #917249;
+}
+
+.account-monogram[data-tone="2"] {
+  --ink: #92708e;
+}
+
+.account-monogram[data-tone="3"] {
+  --ink: #508273;
+}
+
+:root[data-theme] .dashboard-surface .account-grid-heading {
+  padding-block: 18px 14px;
+  gap: 10px 18px;
+}
+
+.account-grid-heading h2 {
+  font-size: clamp(21px, 1.6em, 29px);
+  letter-spacing: -.035em;
+  line-height: 1.15;
+}
+
+.roster-filters, .roster-views {
+  border-radius: 9px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+}
+
+.roster-filters button, .roster-views button {
+  padding: 3px 9px;
+  min-height: 26px;
+  border-radius: 6px;
+  transition: background-color var(--motion-change), color var(--motion-change);
+}
+
+.roster-filters button[aria-pressed=true], .roster-views button[aria-pressed=true] {
+  background: var(--surface-card);
+  color: var(--text-primary);
+  box-shadow: 0 1px 3px rgb(0 0 0 / .10);
+}
+
+.roster-filters button span {
+  opacity: .78;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile {
+  border-radius: 16px;
+  border-color: color-mix(in srgb, var(--border-default) 82%, transparent);
+  box-shadow: 0 2px 5px rgb(18 26 30 / .035);
+  transition: border-color var(--motion-change), background-color var(--motion-change), box-shadow var(--motion-change);
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile:focus-within {
+  border-color: var(--border-focus);
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-tile[data-batch-selected=true] {
+  border-color: var(--border-focus);
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .tile-core {
+  padding: 15px 16px 10px;
+  gap: 12px;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .tile-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 8px;
+}
+
+.account-identity, .settings-account-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.account-identity-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.account-location {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 7px;
+  min-width: 0;
+}
+
+:root[data-theme] .account-location .hig-badge {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  min-height: 18px;
+  height: auto;
+  font-size: var(--text-2xs);
+  line-height: 1.3;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .tile-name {
+  max-width: 100%;
+  font-size: var(--text-md);
+  letter-spacing: -.025em;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-status-control {
+  position: static;
+  gap: 4px;
+  min-height: 28px;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-status-label {
+  font-size: var(--text-2xs);
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .tag-row {
+  min-height: 23px;
+  gap: 6px;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .tag-row .config-chip {
+  margin-inline-start: auto;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .bottom-row {
+  padding-top: 8px;
+}
+
+:root[data-theme] .dashboard-surface [data-view=cards] .account-card-actions > .primary-cta:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-color: transparent;
+}
+
+:root[data-theme] .dashboard-surface [data-view=list] :is(.account-identity, .account-identity-text, .account-location) {
+  display: contents;
+}
+
+:root[data-theme] .dashboard-surface .account-tile[data-scheme-edit=true] .title-mod-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+}
+
+[data-view=list] .account-identity .title-mod-row {
+  grid-row: 1;
+  grid-column: 1;
+  min-width: 0;
+}
+
+[data-view=list] .account-identity :is(.account-monogram, .hig-badge-blue, .hig-badge-violet) {
+  display: none;
+}
+
+.settings-account-name .account-monogram, .mini-account .account-monogram {
+  width: 27px;
+  height: 27px;
+  border-radius: 8px;
+  font-size: var(--text-2xs);
+}
+
+:root[data-theme] .settings-workspace .settings-navigation-unified {
+  background: var(--surface-hover);
+  border: 0;
+  border-radius: 13px;
+  padding: 12px 7px;
+}
+
+.settings-navigation-unified .settings-navigation-item {
+  grid-template-columns: 25px minmax(0, 1fr) auto;
+  gap: 7px;
+  padding-inline: 6px;
+}
+
+.settings-nav-symbol {
+  width: 23px;
+  height: 23px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-secondary);
+}
+
+.settings-navigation-item[data-active=true] .settings-nav-symbol {
+  background: var(--cta-bg);
+  color: var(--cta-text);
+}
+
+:root[data-theme] .settings-workspace .settings-navigation-item[data-active=true] {
+  background: var(--surface-card);
+  box-shadow: 0 1px 3px rgb(0 0 0 / .07);
+}
+
+:root[data-theme] .settings-workspace .settings-navigation-heading {
+  font-weight: 600;
+  padding-inline: 9px;
+}
+
+:root[data-theme] .settings-workspace :is(.settings-page-heading h2, .mod-page-header h2, .room-automation-header h2, .task-runtime-heading h2) {
+  font-size: var(--text-xl);
+  letter-spacing: -.03em;
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+:root[data-theme] .settings-workspace .settings-page-heading {
+  padding: 5px 0 15px;
+}
+
+:root[data-theme] .settings-workspace .settings-input {
+  border-radius: 8px;
+}
+
+.settings-panel-scroll {
+  scrollbar-gutter: stable;
+}
+
+:root[data-theme] .settings-workspace .appearance-theme-option {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  padding: 6px 6px 9px;
+  gap: 6px;
+  border-radius: 11px;
+  align-items: center;
+}
+
+.appearance-theme-option .theme-sample {
+  grid-column: 1/-1;
+}
+
+.appearance-theme-option .theme-sample + span {
+  padding-inline-start: 4px;
+}
+
+.appearance-theme-option > svg {
+  margin-inline-end: 4px;
+}
+
+.theme-sample {
+  display: grid;
+  place-items: center;
+  height: 46px;
+  border-radius: 6px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  overflow: hidden;
+}
+
+.sample-window {
+  width: 60px;
+  height: 32px;
+  display: grid;
+  grid-template-columns: 12px 1fr;
+  grid-template-rows: 1fr 1fr;
+  gap: 3px 5px;
+  align-content: center;
+  padding: 5px;
+  border-radius: 5px;
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+}
+
+.sample-window i {
+  grid-row: span 2;
+  border-radius: 3px;
+  background: var(--surface-active);
+}
+
+.sample-window b, .sample-window em {
+  height: 3px;
+  align-self: center;
+  border-radius: 2px;
+  background: var(--text-secondary);
+}
+
+.sample-window em {
+  width: 65%;
+  background: var(--border-strong);
+}
+
+.theme-sample[data-overlay=true] .sample-window {
+  width: 65px;
+  height: 21px;
+  border-radius: 8px;
+  grid-template-columns: 8px 1fr;
+}
+
+.theme-sample[data-overlay=true] i {
+  background: var(--success);
+  height: 6px;
+  width: 6px;
+  align-self: center;
+  border-radius: 50%;
+}
+
+.layout-library-capsules .layout-capsule {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  gap: 0 9px;
+  border-radius: 12px;
+  padding: 8px 12px 8px 8px;
+  text-align: start;
+}
+
+.layout-footprint {
+  grid-row: span 2;
+  width: 58px;
+  height: 38px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--surface-card);
+}
+
+.layout-library-capsules .layout-capsule small {
+  grid-row: 2;
+  grid-column: 2;
+}
+
+.layout-library-capsules .layout-capsule em {
+  grid-column: 3;
+  grid-row: 1/3;
+}
+
+.overlay-reading {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 6px;
+}
+
+.overlay-reading-context {
+  display: grid;
+  min-width: 0;
+  text-align: start;
+}
+
+.overlay-reading-context span, .overlay-reading-value small {
+  color: var(--text-secondary);
+  font-size: var(--text-2xs);
+}
+
+.overlay-reading-context strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-sm);
+}
+
+.overlay-reading-context strong[data-terror=true] {
+  color: var(--tz-accent);
+}
+
+.overlay-reading-value {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: none;
+}
+
+.overlay-reading-value b {
+  font: 600 var(--text-xl)/1 "Segoe UI", sans-serif;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlay-reading-value[data-running=true] b {
+  color: var(--success);
+}
+
+.wardrobe-fitting-room {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 18px 12px;
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  background: var(--surface-hover);
+}
+
+.wardrobe-slots {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.wardrobe-slots button {
+  border-color: transparent;
+}
+
+.wardrobe-slots button[aria-pressed=true] {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.pet-wardrobe article[data-preview=true] {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+
+.task-runtime-timeline-row {
+  position: relative;
+  border-inline-start: 1px solid var(--border-strong);
+  padding-inline-start: 14px;
+  margin-inline-start: 5px;
+}
+
+.task-runtime-timeline-row::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -3.5px;
+  top: 1em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.hub-switch[aria-checked=true] > span {
+  background: var(--cta-text);
+}
+
+.hub-switch[aria-checked=false] > span {
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / .2);
+}
+
+.hub-switch[aria-checked=false] {
+  background: color-mix(in srgb, var(--text-muted) 40%, var(--surface-card));
+}
+
+@keyframes workspace-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion:no-preference) {
+  .settings-panel-scroll {
+    animation: workspace-arrive var(--motion-enter) var(--ease-settle);
+  }
+  .ui-button, .account-quick-toggle, .account-more-trigger {
+    transition: background-color var(--motion-change), border-color var(--motion-change), transform var(--motion-press) var(--ease-settle);
+  }
+  .ui-button:not(:disabled):active, .account-quick-toggle:active, .account-more-trigger:active {
+    transform: scale(.98);
+  }
+  .hub-switch > span {
+    transition: transform var(--motion-change) var(--ease-settle);
+  }
+}
+
+@media (prefers-reduced-motion:reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto!important;
+    animation-duration: .01ms!important;
+    animation-iteration-count: 1!important;
+    transition-duration: .01ms!important;
+  }
+}
+
+.theme-live-preview {
+  margin: 0;
+  padding: 14px;
+  background: repeating-conic-gradient(var(--surface-control) 0 25%, var(--surface-hover) 0 50%) 50% / 16px 16px;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+}
+
+.theme-live-window {
+  border-radius: 10px;
+  max-width: 360px;
+  margin: auto;
+  padding: 12px 16px;
+  background: var(--surface-base);
+  border: 1px solid var(--border-strong);
+  color: var(--text-primary);
+}
+
+.theme-live-title, .theme-live-readout {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.theme-live-title {
+  font-size: var(--text-sm);
+}
+
+.theme-live-title img {
+  width: 18px;
+  height: 18px;
+}
+
+.theme-live-readout {
+  justify-content: space-between;
+  border-top: 1px solid var(--border-default);
+  margin-top: 8px;
+  padding-top: 8px;
+  font-size: var(--text-xs);
+}
+
+.theme-live-readout b {
+  font-variant-numeric: tabular-nums;
+}
+
+:root[data-theme] .setup-sheet, .profile-sheet {
+  max-width: 100%;
+  border: 1px solid var(--border-default);
+  background: var(--surface-card);
+  border-radius: 18px;
+}
+
+.setup-sheet h1, .profile-sheet h1 {
+  font-size: var(--text-xl);
+  line-height: 1.24;
+  font-weight: 630;
+  letter-spacing: -.035em;
+}
+
+.setup-sheet .setup-step-index {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  width: 28px;
+  height: 28px;
+}
+
+.account-init-heading h3 {
+  letter-spacing: -.025em;
+}
+
+.account-init-region-top svg {
+  stroke-width: 1.6;
+}
+
+:root[data-theme] .mod-workspace .mod-processing-section, :root[data-theme] .room-automation-panel .room-automation-section {
+  border-color: var(--border-default);
+}
+
+:root[data-theme] .mod-feature-choice {
+  padding: 13px;
+  border-radius: 10px;
+}
+
+:root[data-theme] .resource-card {
+  border-radius: 13px;
+  background: var(--surface-card);
+  padding: 16px;
+}
+
+:root[data-theme] .mini-account {
+  border-radius: 11px;
+}
+
+.modal-header h2 {
+  letter-spacing: -.025em;
+}
+
+@media (prefers-reduced-motion:no-preference) {
+  .setup-sheet, .profile-sheet {
+    animation: workspace-arrive var(--motion-enter) var(--ease-settle);
+  }
+  .account-init-step-number, .resource-card, .mod-feature-choice, .appearance-theme-option, .layout-capsule {
+    transition: color var(--motion-change), border-color var(--motion-change), background-color var(--motion-change);
+  }
+}
